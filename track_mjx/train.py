@@ -12,8 +12,8 @@ from brax import envs
 from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
 
-import custom_ppo as ppo
-import custom_wrappers
+import track_mjx.agent.custom_ppo as ppo
+from track_mjx.agent import custom_ppo
 from brax.io import model
 import numpy as np
 import pickle
@@ -21,12 +21,13 @@ import warnings
 from jax import numpy as jp
 
 
-from track_mjx.env import RodentMultiClipTracking, RodentTracking
-# from preprocessing.mjx_preprocess import process_clip_to_train
-from track_mjx.io.preprocess import process_clip_to_train
+from track_mjx.environment import RodentMultiClipTracking, RodentTracking
+from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
+from track_mjx.io import preprocess as preprocessing # the pickle file needs it
+from track_mjx.environment import custom_wrappers
 
 # import custom_ppo_networks
-from track_mjx.agent.rl import custom_ppo_networks
+from track_mjx.agent import custom_ppo_networks
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -60,8 +61,8 @@ config = {
     "algo_name": "ppo",
     "task_name": "run",
     "num_envs": 4096 * n_devices,
-    "num_timesteps": 20_000_000_000,
-    "eval_every": 1_000_000, #200_000_000,
+    "num_timesteps": 100_000, #20_000_000_000,
+    "eval_every": 10_000, #200_000_000,
     "episode_length": 200,
     "batch_size": 2048 * n_devices,
     "num_minibatches": 4 * n_devices,
@@ -117,7 +118,7 @@ envs.register_environment("multi clip", RodentMultiClipTracking)
 clip_id = -1
 
 # TODO(Scott): move this to track_mjx.io module
-with open("/root/vast/scott-yang/Brax-Rodent-Run/all_snips_ReferenceClip.p", "rb") as file:
+with open("/root/vast/scott-yang/track-mjx/data/twoClips.p", "rb") as file:
     # Use pickle.load() to load the data from the file
     reference_clip = pickle.load(file)
 
@@ -429,7 +430,9 @@ def policy_params_fn(
     #         length = len(done_array) - start
     #         aligned_traj[start:] = qposes_ref[:length]
 
-    root = mjcf_dm.from_path(f"./models/rodent_ghostpair_scale080.xml")
+    _XML_PATH = os.path.join(os.path.dirname(__file__),
+                         'walker/assets/rodent_ghostpair_scale080.xml') # TODO Better relative path scripts
+    root = mjcf_dm.from_path(_XML_PATH)
     rescale.rescale_subtree(
         root,
         0.9 / 0.8,

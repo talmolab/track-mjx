@@ -1,1 +1,1 @@
-from track_mjx.environment.rodent import RodentTracking, RodentMultiClipTracking, ReferenceClip
+from track_mjx.environment.walker.rodent import RodentTracking, RodentMultiClipTracking, ReferenceClip

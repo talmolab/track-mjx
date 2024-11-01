@@ -431,7 +431,7 @@ def policy_params_fn(
     #         aligned_traj[start:] = qposes_ref[:length]
 
     _XML_PATH = os.path.join(os.path.dirname(__file__),
-                         'walker/assets/rodent_ghostpair_scale080.xml') # TODO Better relative path scripts
+                         'environment/walker/assets/rodent_ghostpair_scale080.xml') # TODO Better relative path scripts
     root = mjcf_dm.from_path(_XML_PATH)
     rescale.rescale_subtree(
         root,

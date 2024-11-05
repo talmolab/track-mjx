@@ -141,8 +141,8 @@ extra:
     - icon: fontawesome/brands/x-twitter
       link: https://twitter.com/talmop
 
-extra_css:
-  - css/mkdocstrings.css
+# extra_css:
+#   - css/mkdocstrings.css
 
 copyright: >
   Copyright &copy; 2022 - 2024 Talmo Lab –

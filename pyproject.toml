@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "track-mjx"
+authors = [
+    {name = "Charles Zhang", email = "charleszhang@fas.harvard.edu"},
+    {name = "Scott Yang", email = "scyang@salk.com"},
+    {name = "Talmo Pereira", email = "talmo@salk.edu"}]
+description=  "Track-MJX: A Python package for fast reinforcement learning-based imitation learning tracking for agents"
+requires-python = ">=3.7"
+keywords = ["tracking", "imitation learning", "deep learning"]
+license = {text = "BSD-3-Clause"}
+classifiers = [
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12"]
+dependencies = [
+    "brax",
+    "wandb",
+    "mujoco",
+    "dm_control",
+    "mujoco-mjx",
+    "mediapy",
+    "jax",
+    "flax",
+    "optax",
+    "mediapy",
+    "imageio[ffmpeg]",
+    "hydra-core",
+    "h5py",
+    "numba",
+    ]
+
+dynamic = ["version", "readme"]
+
+[tool.setuptools.dynamic]
+version = {attr = "track_mjx.version.__version__"}
+readme = {file = ["README.md"], content-type="text/markdown"}
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-watch",
+    "black",
+    "pydocstyle",
+    "toml",
+    "twine",
+    "build",
+    "mkdocs-material[imaging]",
+    "mkdocs-jupyter",
+    "mkdocstrings[python]>=0.18",
+    "mkdocs-gen-files",
+    "mkdocs-literate-nav",
+    "mkdocs-section-index",
+    "mike",
+    ]
+
+with-cuda = [
+    "track-mjx[dev]",
+    "flax[all]",
+    "optax[all]",
+    "jax[cuda12]",
+]
+
+[project.urls]
+Repository = "https://github.com/talmolab/track-mjx"
+
+[tool.setuptools.packages.find]
+exclude = ["site"]
+
+[tool.black]
+line-length = 88
+
+[pydocstyle]
+convention = "google"
+match-dir = "track_mjx"

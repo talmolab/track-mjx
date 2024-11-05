@@ -1,4 +1,5 @@
-FROM ubuntu:jammy
+# Directly from a cuda built image.
+FROM nvidia/cuda:12.6.1-base-ubuntu24.04  
 
 LABEL maintainer="Scott Yang <scyang@salk.edu>"
 
@@ -18,7 +19,7 @@ RUN chmod +x /tini
 ENTRYPOINT ["/tini", "--"]
 
 
-# (Optional) Remote ssh server
+# SSH
 RUN mkdir /var/run/sshd
 RUN echo 'root:root' | chpasswd
 RUN sed -i 's/#*PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config
@@ -33,21 +34,19 @@ EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D"]
 
 # install conda
-RUN apt-get update
-RUN apt-get install -y wget git && rm -rf /var/lib/apt/lists/*
-RUN wget \
-    https://repo.anaconda.com/archive/Anaconda3-2024.06-1-Linux-x86_64.sh \
-    && mkdir /root/.conda \
-    && bash Anaconda3-2024.06-1-Linux-x86_64.sh -b \
-    && rm -f Anaconda3-2024.06-1-Linux-x86_64.sh
+RUN apt-get install -y curl git && rm -rf /var/lib/apt/lists/*
 
-# add conda to PATH and init conda
-ENV PATH "/root/anaconda3/bin:${PATH}"
-RUN conda init bash \
-    && . ~/.bashrc
+RUN curl -fsSL --compressed https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -o "Miniforge3-Linux-x86_64.sh" && \
+    chmod +x "Miniforge3-Linux-x86_64.sh" && \
+    bash "Miniforge3-Linux-x86_64.sh" -b -p "/root/miniforge3" && \
+    rm "Miniforge3-Linux-x86_64.sh" && \
+    /root/miniforge3/bin/conda init bash && \
+    . ~/.bashrc
 
+# add conda to path so we can create env
+ENV PATH "/root/miniforge3/bin:${PATH}"
 
-# installing the conda environment
-COPY environment.yml environment.yml
-COPY requirements.txt requirements.txt
-RUN conda env create -f environment.yml
+# install conda env
+RUN mkdir track
+COPY track track
+RUN conda env create -f track/environment.yml

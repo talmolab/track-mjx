@@ -86,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#higher-level-overview" class="md-skip">
+        <a href="#higher-level-design" class="md-skip">
           Skip to content
         </a>
       
@@ -333,9 +333,9 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#higher-level-overview" class="md-nav__link">
+  <a href="#higher-level-design" class="md-nav__link">
     <span class="md-ellipsis">
-      Higher level overview
+      Higher level design
     </span>
   </a>
   
@@ -423,9 +423,9 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#higher-level-overview" class="md-nav__link">
+  <a href="#higher-level-design" class="md-nav__link">
     <span class="md-ellipsis">
-      Higher level overview
+      Higher level design
     </span>
   </a>
   
@@ -461,11 +461,31 @@
   <h1>Overview</h1>
 
 <p>The following document provides a brief overview of the <code>track-mjx</code> package.</p>
-<h2 id="higher-level-overview">Higher level overview<a class="headerlink" href="#higher-level-overview" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>
-</code></pre></div>
+<h2 id="higher-level-design">Higher level design<a class="headerlink" href="#higher-level-design" title="Permanent link">&para;</a></h2>
+<p>Track-mjx has been designed to be as flexible as possible, allowing the user to train models with different network architectures, learning algorithms, and a variety of different experiment configurations. It is built to support <em>in virtual neuroscience experiments</em> across different bio-mechanically realistic animal models and motion capture registrations that the user specifies. The following sections will provide a brief overview of the higher level structure of the package:</p>
+<pre class="mermaid"><code>graph TD
+    track-mjx -- training scripts and logging --&gt; agent
+    track-mjx -- env / task / walker creation  --&gt; environment
+    track-mjx -- input preprocessing / model checkpoint --&gt; io
+
+    subgraph " "
+    agent --&gt; logging
+    agent --&gt; RL-training-scripts 
+    end
+
+    subgraph " "
+    environment --&gt; wrappers
+    environment --&gt; walker
+    environment --&gt; tasks
+    end
+
+    subgraph " "
+    io --&gt; checkpoint
+    io --&gt; preprocess
+    end
+</code></pre>
 <h2 id="training-pipeline-software-stacks">Training pipeline &amp; software stacks<a class="headerlink" href="#training-pipeline-software-stacks" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>
 </code></pre></div>
 
 

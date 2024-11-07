@@ -2,17 +2,19 @@ run_config:
   agent_name: rodent
   run_name: imitation_debug
   seed: 0
-  num_resets_per_eval: 1
   reward_scaling: 1
   normalize_observations: True
   action_repeat: 1
   unroll_length: 20
 
 env_config:
+  env_name: "multi clip"
   # walker 
   walker_name: rodent
   walker_xml_path: 
   ghost_xml_path: "environment/walker/assets/rodent_ghostpair_scale080.xml"
+  torque_actuators: False 
+  num_resets_per_eval: 1
 
   # task
   task_name: imitation
@@ -32,7 +34,7 @@ env_config:
     healthy_z_range: [0.0325, 0.5]
   
   # Mujoco config
-  solver: cg
+  solver: "cg"
   iterations: 4
   ls_iterations: 4
 
@@ -53,8 +55,7 @@ train_config:
   num_updates_per_batch: 4
   learning_rate: 1e-4
   clipping_epsilon: 0.2
-  episode_length: 200
-  torque_actuators: False          
+  episode_length: 200        
   discounting: 0.95        
   action_repeat: 1
   entropy_cost: 1e-2
@@ -63,3 +64,4 @@ logging_config:
   project_name: "vnl_debug"
   clip_id: -1
   model_path: "model_checkpoints"
+  algo_name: "ppo"

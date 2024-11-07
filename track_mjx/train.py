@@ -26,7 +26,8 @@ import pickle
 import warnings
 from jax import numpy as jp
 
-from track_mjx.environment import RodentMultiClipTracking, RodentTracking
+from track_mjx.environment.task.multi_clip_tracking import RodentMultiClipTracking
+from track_mjx.environment.task.single_clip_tracking import RodentTracking
 from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
 from track_mjx.environment import custom_wrappers
@@ -40,7 +41,7 @@ FLAGS = flags.FLAGS
 
 
 @hydra.main(
-    config_path="track_mjx/config/rodent-mc-intention.yaml", config_name="config"
+    config_path="config", config_name="rodent-mc-intention"
 )
 def main(cfg: DictConfig):
     '''Main function using Hydra configs'''
@@ -148,24 +149,25 @@ def main(cfg: DictConfig):
 
     # Generates a completely random UUID (version 4)
     run_id = uuid.uuid4()
-    model_path = f"./{cfg.model_path}/{run_id}"
+    model_path = f"./{cfg.logging_config.model_path}/{run_id}"
 
     wandb.init(
-        project=cfg.project_name,
+        project=cfg.logging_config.project_name,
         config=dict(cfg),
         notes=f"clip_id: {cfg.logging_config.clip_id}",
     )
-    wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.run_name}_{run_id}"
+    wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps"] = num_steps
         wandb.log(metrics, commit=False)
 
     # pass in some args that this file has
-    policy_params_fn = functools.partial(cfg=cfg, env=env, wandb=wandb, model_path=model_path)
+    policy_params_fn_mod = functools.partial(policy_params_fn,
+                                         cfg=cfg, env=env, wandb=wandb, model_path=model_path)
 
     make_inference_fn, params, _ = train_fn(
-        environment=env, progress_fn=wandb_progress, policy_params_fn=policy_params_fn
+        environment=env, progress_fn=wandb_progress, policy_params_fn=policy_params_fn_mod
     )
 
     final_save_path = f"{model_path}/brax_ppo_rodent_run_finished"

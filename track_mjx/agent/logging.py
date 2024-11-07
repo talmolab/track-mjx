@@ -22,12 +22,7 @@ import pickle
 import warnings
 from jax import numpy as jp
 
-from track_mjx.environment import RodentMultiClipTracking, RodentTracking
-from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
-from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
 from track_mjx.environment import custom_wrappers
-from track_mjx.agent import custom_ppo_networks
-
 
 def policy_params_fn(
         cfg, env, wandb, num_steps, make_policy, params, rollout_key, model_path

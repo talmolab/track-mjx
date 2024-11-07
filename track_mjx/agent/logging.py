@@ -78,7 +78,7 @@ def policy_params_fn(
     state = jit_reset(reset_rng)
 
     rollout = [state]
-    for i in range(int(250 * rollout_env._steps_for_cur_frame)):
+    for i in range(int(250 * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
         ctrl, extras = jit_inference_fn(obs, act_rng)
@@ -151,21 +151,29 @@ def policy_params_fn(
     #         length = len(done_array) - start
     #         aligned_traj[start:] = qposes_ref[:length]
 
+
     # TODO Better relative path scripts
     _XML_PATH = os.path.join(
         os.path.dirname(os.path.dirname(__file__)), # Move one folder up
         cfg.env_config.ghost_xml_path,
     )
-    walker._load_mjcf_model(torque_actuators=cfg.env_config.torque_actuators, path=_XML_PATH)
-    mj_model = walker._mjcf_model.model.ptr
+    root = mjcf_dm.from_path(_XML_PATH)
+    rescale.rescale_subtree(
+        root,
+        0.9 / 0.8,
+        0.9 / 0.8,
+    )
+
+    mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
     mj_model.opt.solver = {
         "cg": mujoco.mjtSolver.mjSOL_CG,
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
-        }["cg"]
-    
+    }["cg"]
     mj_model.opt.iterations = 6
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
+
+    # walker._load_mjcf_model(torque_actuators=cfg.env_config.torque_actuators, path=_XML_PATH)
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
@@ -176,6 +184,9 @@ def policy_params_fn(
 
     with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
+
+            #TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
+            # print(qpos1.shape, qpos2.shape)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(mj_data, camera=f"close_profile")

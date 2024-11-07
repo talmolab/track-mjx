@@ -15,6 +15,11 @@ import numpy as np
 
 import os
 
+import collections
+
+import typing
+from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
+
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from track_mjx.environment.task.single_clip_tracking import RodentTracking
 

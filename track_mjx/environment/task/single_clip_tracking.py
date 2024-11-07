@@ -17,6 +17,11 @@ import numpy as np
 
 import os
 
+import collections
+
+import typing
+from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
+
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
 
@@ -50,7 +55,7 @@ class RodentTracking(PipelineEnv):
         ls_iterations: int = 6,
         **kwargs,
     ):
-        self.walker = walker
+        self.walker = walker(torque_actuators)
         self.walker._initialize_indices()
 
         mj_model = self.walker._mjcf_model.model.ptr
@@ -81,7 +86,7 @@ class RodentTracking(PipelineEnv):
         self._steps_for_cur_frame = (
             max_physics_steps_per_control_step / physics_steps_per_control_step
         )
-        # print(f"self._steps_for_cur_frame: {self._steps_for_cur_frame}")
+        print(f"self._steps_for_cur_frame: {self._steps_for_cur_frame}")
 
         self._reference_clip = reference_clip
         self._bad_pose_dist = bad_pose_dist

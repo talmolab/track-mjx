@@ -94,7 +94,7 @@ def main(cfg: DictConfig):
         reference_clip = pickle.load(file)
     
     #TODO (Kevin): add this as a yaml config
-    walker = Rodent(torque_actuators=cfg.env_config.torque_actuators)
+    walker = Rodent
 
     # instantiate the environment
     env = envs.get_environment(
@@ -175,7 +175,7 @@ def main(cfg: DictConfig):
     def policy_params_fn_wrapper(current_step, make_policy, params, policy_params_fn_key):
         # Calls the original function with the pre-set arguments
         return policy_params_fn(current_step, make_policy, params, policy_params_fn_key, 
-                                cfg=cfg, env=env, wandb=wandb, model_path=model_path, walker=walker)
+                                cfg=cfg, env=env, wandb=wandb, model_path=model_path, walker=walker(cfg.env_config.torque_actuators))
 
     make_inference_fn, params, _ = train_fn(
         environment=env, progress_fn=wandb_progress, policy_params_fn=policy_params_fn_wrapper

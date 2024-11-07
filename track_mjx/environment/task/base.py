@@ -1,3 +1,0 @@
-"""
-Defines base tracking tasks
-"""

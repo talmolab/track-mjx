@@ -15,7 +15,7 @@ dependencies:
   - glfw3
   - ipykernel
   - pip: 
-    - -r requirements.txt 
+    - "--editable=.[dev]"
 
 variables:             # Set MuJoCo environment variables
   MUJOCO_GL: osmesa

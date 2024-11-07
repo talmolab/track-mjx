@@ -39,15 +39,28 @@ class Rodent(BaseWalker):
     """Rodent class that manages the body structure,
     joint configurations, and model loading"""
 
-    def __init__(self, torque_actuators=False, rescale_factor=0.9):
+    def __init__(self,
+                 xml_path=_XML_PATH,
+                 joint_names=_JOINT_NAMES,
+                 body_names=_BODY_NAMES,
+                 end_eff_names=_END_EFF_NAMES,
+                 torque_actuators=False,
+                 rescale_factor=0.9):
         """Initialize the rodent model with optional
         torque actuator settings and rescaling"""
+
+        self._xml = xml_path
+        self._joint_names = joint_names
+        self._body_names = body_names
+        self._end_eff_names = end_eff_names
+
         self._mjcf_model = self._load_mjcf_model(torque_actuators, rescale_factor)
         self.sys = mjcf_brax.load_model(self._mjcf_model.model.ptr)
+
         self._initialize_indices()
 
-    def _load_mjcf_model(self, torque_actuators, rescale_factor):
-        root = mjcf_dm.from_path(_XML_PATH)
+    def _load_mjcf_model(self, torque_actuators=False, rescale_factor=0.9, path=_XML_PATH):
+        root = mjcf_dm.from_path(path)
         
         # torque
         if torque_actuators:
@@ -64,29 +77,33 @@ class Rodent(BaseWalker):
         """Initialize indices for joints, bodies, and end-effectors based on the loaded model"""
         self._joint_idxs = jp.array([
             self._mjcf_model.model.name2id(joint, "joint")
-            for joint in _JOINT_NAMES
+            for joint in self._joint_names
         ])
         
         self._body_idxs = jp.array([
             self._mjcf_model.model.name2id(body, "body")
-            for body in _BODY_NAMES
+            for body in self._body_names
         ])
 
         self._endeff_idxs = jp.array([
             self._mjcf_model.model.name2id(end_eff, "body")
-            for end_eff in _END_EFF_NAMES
+            for end_eff in self._end_eff_names
         ])
 
         self._torso_idx = self._mjcf_model.model.name2id("torso", "body")
 
     def get_joint_positions(self, qpos):
-        return qpos[self.joint_idxs]
+        '''retrieve walker's joint position values'''
+        return qpos[self._joint_idxs]
 
     def get_body_positions(self, xpos):
-        return xpos[self.body_idxs]
+        '''retrieve walker's body position values'''
+        return xpos[self._body_idxs]
 
     def get_end_effector_positions(self, xpos):
-        return xpos[self.endeff_idxs]
+        '''retrieve walker's end effectors positions values'''
+        return xpos[self._endeff_idxs]
 
     def get_torso_position(self, xpos):
-        return xpos[self.torso_idx]
+        '''retrieve walker's torso position values'''
+        return xpos[self._torso_idx]

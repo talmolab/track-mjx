@@ -15,9 +15,13 @@ class BaseWalker(ABC):
     Defines the interface that all walker implementations must follow.
     """
     
-    def __init__(self, xml_path: str, joint_names: List[str], 
-                 body_names: List[str], end_eff_names: List[str],
-                 torque_actuators: bool = False, rescale_factor: float = 1.0):
+    def __init__(self,
+                 xml_path: str,
+                 joint_names: List[str], 
+                 body_names: List[str],
+                 end_eff_names: List[str],
+                 torque_actuators: bool = False,
+                 rescale_factor: float = 1.0):
         """
         Initialize the walker with model configuration.
         
@@ -132,23 +136,3 @@ class BaseWalker(ABC):
             Torso position vector
         """
         return xpos[self.torso_idx]
-    
-    @abstractmethod
-    def default_joint_angles(self) -> jp.ndarray:
-        """
-        Get default joint angles for initialization.
-        
-        Returns:
-            Default joint angles vector
-        """
-        pass
-    
-    @abstractmethod
-    def joint_limits(self) -> Tuple[jp.ndarray, jp.ndarray]:
-        """
-        Get joint angle limits.
-        
-        Returns:
-            Tuple of (lower_limits, upper_limits)
-        """
-        pass

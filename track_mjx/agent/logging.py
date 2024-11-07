@@ -25,7 +25,7 @@ from jax import numpy as jp
 from track_mjx.environment import custom_wrappers
 
 def policy_params_fn(
-        cfg, env, wandb, num_steps, make_policy, params, rollout_key, model_path
+        num_steps, make_policy, params, rollout_key, cfg, env, wandb, model_path, walker
         ):
     """Main logging functions for policy params,
     cfg, wandb, model_path, and env currently func.partial from train.py"""
@@ -191,7 +191,7 @@ def policy_params_fn(
         commit=False,
     )
 
-    torso_heights = [state.pipeline_state.xpos[env._torso_idx][2] for state in rollout]
+    torso_heights = [state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout]
     table = wandb.Table(
         data=[[x, y] for (x, y) in zip(range(len(torso_heights)), torso_heights)],
         columns=["frame", "torso_heights"],
@@ -254,22 +254,18 @@ def policy_params_fn(
     #         length = len(done_array) - start
     #         aligned_traj[start:] = qposes_ref[:length]
 
+    # TODO Better relative path scripts
     _XML_PATH = os.path.join(
         os.path.dirname(__file__),
         cfg.env_config.ghost_xml_path,
-    )  # TODO Better relative path scripts
-    root = mjcf_dm.from_path(_XML_PATH)
-    rescale.rescale_subtree(
-        root,
-        0.9 / 0.8,
-        0.9 / 0.8,
     )
-
-    mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+    walker._load_mjcf_model(torque_actuators=cfg.env_config.torque_actuators, path=_XML_PATH)
+    mj_model = walker._mjcf_model.model.ptr
     mj_model.opt.solver = {
         "cg": mujoco.mjtSolver.mjSOL_CG,
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
-    }["cg"]
+        }["cg"]
+    
     mj_model.opt.iterations = 6
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)

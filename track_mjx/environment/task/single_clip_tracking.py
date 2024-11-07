@@ -19,16 +19,16 @@ import os
 
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
-from track_mjx.environment.walker.rodent import Rodent
 
 _MOCAP_HZ = 50
 
 class RodentTracking(PipelineEnv):
-    """Single clip rodent tracking"""
+    """Single clip walker tracking, agonist of the walker"""
 
     def __init__(
         self,
         reference_clip,
+        walker,
         torque_actuators: bool = False,
         ref_len: int = 5,
         too_far_dist=0.1,
@@ -50,7 +50,7 @@ class RodentTracking(PipelineEnv):
         ls_iterations: int = 6,
         **kwargs,
     ):
-        self.walker = Rodent(torque_actuators=torque_actuators)
+        self.walker = walker
         self.walker._initialize_indices()
 
         mj_model = self.walker._mjcf_model.model.ptr

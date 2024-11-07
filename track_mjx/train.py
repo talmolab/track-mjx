@@ -34,6 +34,8 @@ from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import policy_params_fn
 
+from track_mjx.environment.walker.rodent import Rodent
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 os.environ["MUJOCO_GL"] = "egl"
@@ -90,11 +92,14 @@ def main(cfg: DictConfig):
     with open("/root/vast/scott-yang/track-mjx/data/twoClips.p", "rb") as file:
         # Use pickle.load() to load the data from the file
         reference_clip = pickle.load(file)
+    
+    walker = Rodent(torque_actuators=cfg.env_config.torque_actuators)
 
     # instantiate the environment
     env = envs.get_environment(
         cfg.env_config.env_name,
         reference_clip=reference_clip,
+        walker=walker,
         torque_actuators=cfg.env_config.torque_actuators,
         solver=cfg.env_config.solver,
         iterations=cfg.env_config.iterations,
@@ -163,11 +168,16 @@ def main(cfg: DictConfig):
         wandb.log(metrics, commit=False)
 
     # pass in some args that this file has
-    policy_params_fn_mod = functools.partial(policy_params_fn,
-                                         cfg=cfg, env=env, wandb=wandb, model_path=model_path)
+    # policy_params_fn_mod = functools.partial(policy_params_fn,
+    #                                      cfg=cfg, env=env, wandb=wandb, model_path=model_path)
+    
+    def policy_params_fn_wrapper(current_step, make_policy, params, policy_params_fn_key):
+        # Calls the original function with the pre-set arguments
+        return policy_params_fn(current_step, make_policy, params, policy_params_fn_key, 
+                                cfg=cfg, env=env, wandb=wandb, model_path=model_path, walker=walker)
 
     make_inference_fn, params, _ = train_fn(
-        environment=env, progress_fn=wandb_progress, policy_params_fn=policy_params_fn_mod
+        environment=env, progress_fn=wandb_progress, policy_params_fn=policy_params_fn_wrapper
     )
 
     final_save_path = f"{model_path}/brax_ppo_rodent_run_finished"

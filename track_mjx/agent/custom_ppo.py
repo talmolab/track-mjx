@@ -490,7 +490,7 @@ def train(
                 (training_state.normalizer_params, training_state.params.policy)
             )
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
-            policy_params_fn(current_step, make_policy, params, policy_params_fn_key)
+            policy_params_fn(current_step=current_step, make_policy=make_policy, params=params, policy_params_fn_key=policy_params_fn_key)
 
     total_steps = current_step
     assert total_steps >= num_timesteps

@@ -93,6 +93,7 @@ def main(cfg: DictConfig):
         # Use pickle.load() to load the data from the file
         reference_clip = pickle.load(file)
     
+    #TODO (Kevin): add this as a yaml config
     walker = Rodent(torque_actuators=cfg.env_config.torque_actuators)
 
     # instantiate the environment

@@ -24,6 +24,39 @@ from jax import numpy as jp
 
 from track_mjx.environment import custom_wrappers
 
+def log_metric_to_wandb(metric_name, data, title=""):
+    """
+    Logs a list of metrics to wandb with a specified title.
+    
+    Parameters:
+    - metric_name (str): The key under which to log the metric.
+    - data (list): List of (x, y) tuples or two lists (frames, rewards).
+    - title (str): Title for the wandb plot.
+    """
+    if isinstance(data[0], tuple):
+        # If data is a list of (x, y) tuples, separate it into frames and values
+        frames, values = zip(*data)
+    else:
+        # If data is two lists, use them directly
+        frames, values = data
+    
+    table = wandb.Table(
+        data=[[x, y] for x, y in zip(frames, values)],
+        columns=["frame", metric_name],
+    )
+    
+    wandb.log(
+        {
+            f"eval/rollout_{metric_name}": wandb.plot.line(
+                table,
+                "frame",
+                metric_name,
+                title=title or f"{metric_name} for each rollout frame",
+            )
+        },
+        commit=False,
+    )
+
 def policy_params_fn(
         num_steps, make_policy, params, rollout_key, cfg, env, wandb, model_path, walker
         ):
@@ -53,160 +86,24 @@ def policy_params_fn(
         rollout.append(state)
 
     pos_rewards = [state.metrics["pos_reward"] for state in rollout]
-    table = wandb.Table(
-        data=[[x, y] for (x, y) in zip(range(len(pos_rewards)), pos_rewards)],
-        columns=["frame", "pos_rewards"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_pos_rewards": wandb.plot.line(
-                table,
-                "frame",
-                "pos_rewards",
-                title="pos_rewards for each rollout frame",
-            )
-        },
-        commit=False,
-    )
-
     endeff_rewards = [state.metrics["endeff_reward"] for state in rollout]
-    table = wandb.Table(
-        data=[[x, y] for (x, y) in zip(range(len(endeff_rewards)), endeff_rewards)],
-        columns=["frame", "endeff_rewards"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_endeff_rewards": wandb.plot.line(
-                table,
-                "frame",
-                "endeff_rewards",
-                title="endeff_rewards for each rollout frame",
-            )
-        },
-        commit=False,
-    )
-
     quat_rewards = [state.metrics["quat_reward"] for state in rollout]
-    table = wandb.Table(
-        data=[[x, y] for (x, y) in zip(range(len(quat_rewards)), quat_rewards)],
-        columns=["frame", "quat_rewards"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_quat_rewards": wandb.plot.line(
-                table,
-                "frame",
-                "quat_rewards",
-                title="quat_rewards for each rollout frame",
-            )
-        },
-        commit=False,
-    )
-
     angvel_rewards = [state.metrics["angvel_reward"] for state in rollout]
-    table = wandb.Table(
-        data=[[x, y] for (x, y) in zip(range(len(angvel_rewards)), angvel_rewards)],
-        columns=["frame", "angvel_rewards"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_angvel_rewards": wandb.plot.line(
-                table,
-                "frame",
-                "angvel_rewards",
-                title="angvel_rewards for each rollout frame",
-            )
-        },
-        commit=False,
-    )
-
     bodypos_rewards = [state.metrics["bodypos_reward"] for state in rollout]
-    table = wandb.Table(
-        data=[[x, y] for (x, y) in zip(range(len(bodypos_rewards)), bodypos_rewards)],
-        columns=["frame", "bodypos_rewards"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_bodypos_rewards": wandb.plot.line(
-                table,
-                "frame",
-                "bodypos_rewards",
-                title="bodypos_rewards for each rollout frame",
-            )
-        },
-        commit=False,
-    )
-
     joint_rewards = [state.metrics["joint_reward"] for state in rollout]
-    table = wandb.Table(
-        data=[[x, y] for (x, y) in zip(range(len(joint_rewards)), joint_rewards)],
-        columns=["frame", "joint_rewards"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_joint_rewards": wandb.plot.line(
-                table,
-                "frame",
-                "joint_rewards",
-                title="joint_rewards for each rollout frame",
-            )
-        },
-        commit=False,
-    )
-
     summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
-    table = wandb.Table(
-        data=[
-            [x, y]
-            for (x, y) in zip(range(len(summed_pos_distances)), summed_pos_distances)
-        ],
-        columns=["frame", "summed_pos_distances"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_summed_pos_distances": wandb.plot.line(
-                table,
-                "frame",
-                "summed_pos_distances",
-                title="summed_pos_distances for each rollout frame",
-            )
-        },
-        commit=False,
-    )
-
     joint_distances = [state.info["joint_distance"] for state in rollout]
-    table = wandb.Table(
-        data=[[x, y] for (x, y) in zip(range(len(joint_distances)), joint_distances)],
-        columns=["frame", "joint_distances"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_joint_distances": wandb.plot.line(
-                table,
-                "frame",
-                "joint_distances",
-                title="joint_distances for each rollout frame",
-            )
-        },
-        commit=False,
-    )
-
     torso_heights = [state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout]
-    table = wandb.Table(
-        data=[[x, y] for (x, y) in zip(range(len(torso_heights)), torso_heights)],
-        columns=["frame", "torso_heights"],
-    )
-    wandb.log(
-        {
-            "eval/rollout_torso_heights": wandb.plot.line(
-                table,
-                "frame",
-                "torso_heights",
-                title="torso_heights for each rollout frame",
-            )
-        },
-        commit=False,
-    )
+
+    log_metric_to_wandb("pos_rewards", list(enumerate(pos_rewards)), title="pos_rewards for each rollout frame")
+    log_metric_to_wandb("endeff_rewards", list(enumerate(endeff_rewards)), title="endeff_rewards for each rollout frame")
+    log_metric_to_wandb("quat_rewards", list(enumerate(quat_rewards)), title="quat_rewards for each rollout frame")
+    log_metric_to_wandb("angvel_rewards", list(enumerate(angvel_rewards)), title="angvel_rewards for each rollout frame")
+    log_metric_to_wandb("bodypos_rewards", list(enumerate(bodypos_rewards)), title="bodypos_rewards for each rollout frame")
+    log_metric_to_wandb("joint_rewards", list(enumerate(joint_rewards)), title="joint_rewards for each rollout frame")
+    log_metric_to_wandb("summed_pos_distances", list(enumerate(summed_pos_distances)), title="summed_pos_distances for each rollout frame")
+    log_metric_to_wandb("joint_distances", list(enumerate(joint_distances)), title="joint_distances for each rollout frame")
+    log_metric_to_wandb("torso_heights", list(enumerate(torso_heights)), title="torso_heights for each rollout frame")
 
     # Render the walker with the reference expert demonstration trajectory
     os.environ["MUJOCO_GL"] = "osmesa"
@@ -256,7 +153,7 @@ def policy_params_fn(
 
     # TODO Better relative path scripts
     _XML_PATH = os.path.join(
-        os.path.dirname(__file__),
+        os.path.dirname(os.path.dirname(__file__)), # Move one folder up
         cfg.env_config.ghost_xml_path,
     )
     walker._load_mjcf_model(torque_actuators=cfg.env_config.torque_actuators, path=_XML_PATH)

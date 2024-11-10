@@ -41,6 +41,7 @@ def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     return 0.5 * jp.arccos(dist)[..., np.newaxis]
 
 
+#TODO: using Brax's style, should we keep all the reward separated?
 def compute_tracking_rewards(
     data,
     reference_clip,

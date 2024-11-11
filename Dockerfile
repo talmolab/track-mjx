@@ -47,6 +47,6 @@ RUN curl -fsSL --compressed https://github.com/conda-forge/miniforge/releases/la
 ENV PATH "/root/miniforge3/bin:${PATH}"
 
 # install conda env
-RUN mkdir track
-COPY track track
-RUN conda env create -f track/environment.yml
+RUN mkdir track-mjx
+COPY . ./track-mjx
+RUN conda env create -f track-mjx/environment.yml

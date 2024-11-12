@@ -3,6 +3,13 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 """
 
 import os
+
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["MUJOCO_GL"] = "egl"
+os.environ["XLA_FLAGS"] = (
+    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
+)
+
 from absl import flags
 import hydra
 from omegaconf import DictConfig
@@ -13,7 +20,6 @@ import jax
 from typing import Dict
 import wandb
 import imageio
-import mujoco
 from brax import envs
 from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
@@ -36,10 +42,8 @@ from track_mjx.agent.logging import policy_params_fn
 
 from track_mjx.environment.walker.rodent import Rodent
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
-os.environ["MUJOCO_GL"] = "egl"
 FLAGS = flags.FLAGS
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 @hydra.main(config_path="config", config_name="rodent-mc-intention")
@@ -48,10 +52,6 @@ def main(cfg: DictConfig):
 
     try:
         n_devices = jax.device_count(backend="gpu")
-        os.environ["XLA_FLAGS"] = (
-            "--xla_gpu_enable_triton_softmax_fusion=true "
-            "--xla_gpu_triton_gemm_any=True "
-        )
         print(f"Using {n_devices} GPUs")
     except:
         n_devices = 1

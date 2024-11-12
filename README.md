@@ -24,7 +24,7 @@ The `8888` is the local port that you want to forward to. Choose one that's unoc
 here](https://github.com/talmolab/internal-dockerfiles/tree/3245903ec48b633ae205eeab0583d6413c32530b/remote-dev)
 for more info on our Remote Dev Docker image.
 
-This will soon be defined through the [Dockerfile] in this repo.
+This will soon be defined through the [`Dockerfile`](Dockerfile) in this repo (see [#1](https://github.com/talmolab/track-mjx/issues/1)).
 
 
 ### Run:AI (Salk)
@@ -70,14 +70,14 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
     ```bash
     conda activate track_mjx
     ```
-    Then run `jupyter lab` and execute the tests in [notebooks/test_setup.ipynb]. This will check if MuJoCo, GPU support and Jax appear to be working.
+    Then run `jupyter lab` and execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
 
 
 ## Usage
 
 ### Training
 
-The main training entrypoint is defined in [track_mjx/train.py] and relies on the config in [track_mjx/config/rodent-mc-intention.yaml].
+The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/train.py) and relies on the config in [`track_mjx/config/rodent-mc-intention.yaml`](track_mjx/config/rodent-mc-intention.yaml).
 
 After running `conda activate track_mjx`, you can run training with:
 

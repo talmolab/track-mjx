@@ -3,6 +3,13 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 """
 
 import os
+
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["MUJOCO_GL"] = "egl"
+os.environ["XLA_FLAGS"] = (
+    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
+)
+
 from absl import flags
 import hydra
 from omegaconf import DictConfig
@@ -13,7 +20,6 @@ import jax
 from typing import Dict
 import wandb
 import imageio
-import mujoco
 from brax import envs
 from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
@@ -36,24 +42,16 @@ from track_mjx.agent.logging import policy_params_fn
 
 from track_mjx.environment.walker.rodent import Rodent
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
-os.environ["MUJOCO_GL"] = "egl"
 FLAGS = flags.FLAGS
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(
-    config_path="config", config_name="rodent-mc-intention"
-)
+@hydra.main(config_path="config", config_name="rodent-mc-intention")
 def main(cfg: DictConfig):
-    '''Main function using Hydra configs'''
+    """Main function using Hydra configs"""
 
     try:
         n_devices = jax.device_count(backend="gpu")
-        os.environ["XLA_FLAGS"] = (
-            "--xla_gpu_enable_triton_softmax_fusion=true "
-            "--xla_gpu_triton_gemm_any=True "
-        )
         print(f"Using {n_devices} GPUs")
     except:
         n_devices = 1
@@ -87,13 +85,15 @@ def main(cfg: DictConfig):
     #     with open(reference_path, "rb") as file:
     #         # Use pickle.load() to load the data from the file
     #         reference_clip = pickle.load(file)
-
     # TODO(Scott): move this to track_mjx.io module
-    with open("/root/vast/scott-yang/track-mjx/data/twoClips.p", "rb") as file:
+
+    input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
+    print(f"Loading data: {input_data_path}")
+    with open(input_data_path, "rb") as file:
         # Use pickle.load() to load the data from the file
         reference_clip = pickle.load(file)
-    
-    #TODO (Kevin): add this as a yaml config
+
+    # TODO (Kevin): add this as a yaml config
     walker = Rodent
 
     # instantiate the environment
@@ -171,14 +171,27 @@ def main(cfg: DictConfig):
     # pass in some args that this file has
     # policy_params_fn_mod = functools.partial(policy_params_fn,
     #                                      cfg=cfg, env=env, wandb=wandb, model_path=model_path)
-    
-    def policy_params_fn_wrapper(current_step, make_policy, params, policy_params_fn_key):
+
+    def policy_params_fn_wrapper(
+        current_step, make_policy, params, policy_params_fn_key
+    ):
         # Calls the original function with the pre-set arguments
-        return policy_params_fn(current_step, make_policy, params, policy_params_fn_key, 
-                                cfg=cfg, env=env, wandb=wandb, model_path=model_path, walker=walker(cfg.env_config.torque_actuators))
+        return policy_params_fn(
+            current_step,
+            make_policy,
+            params,
+            policy_params_fn_key,
+            cfg=cfg,
+            env=env,
+            wandb=wandb,
+            model_path=model_path,
+            walker=walker(cfg.env_config.torque_actuators),
+        )
 
     make_inference_fn, params, _ = train_fn(
-        environment=env, progress_fn=wandb_progress, policy_params_fn=policy_params_fn_wrapper
+        environment=env,
+        progress_fn=wandb_progress,
+        policy_params_fn=policy_params_fn_wrapper,
     )
 
     final_save_path = f"{model_path}/brax_ppo_rodent_run_finished"

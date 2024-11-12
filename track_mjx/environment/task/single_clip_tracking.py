@@ -27,6 +27,7 @@ from track_mjx.environment.task.reward import compute_tracking_rewards
 
 _MOCAP_HZ = 50
 
+
 class RodentTracking(PipelineEnv):
     """Single clip walker tracking, agonist of the walker"""
 

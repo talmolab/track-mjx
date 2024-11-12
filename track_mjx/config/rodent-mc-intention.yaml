@@ -5,7 +5,7 @@ run_config:
   run_name: imitation_debug
   seed: 0
   reward_scaling: 1
-  normalize_observations: True
+  normalize_observations: true
   action_repeat: 1
   unroll_length: 20
 
@@ -15,7 +15,7 @@ env_config:
   walker_name: rodent
   walker_xml_path: 
   ghost_xml_path: "environment/walker/assets/rodent_ghostpair_scale080.xml"
-  torque_actuators: False 
+  torque_actuators: true
   num_resets_per_eval: 1
 
   # task
@@ -42,16 +42,16 @@ env_config:
 
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [512,512,512]
-  decoder_layer_sizes: [512,512,512]
-  critic_layer_sizes: [512,512,512,512]
+  encoder_layer_sizes: [512, 512]
+  decoder_layer_sizes: [512, 512]
+  critic_layer_sizes: [512, 512]
   intention_size: 60
   kl_weight: 1e-4
 
 train_config:
-  num_envs: 1024
-  num_timesteps: 1_000_000
-  eval_every: 1_000
+  num_envs: 2048
+  num_timesteps: 10_000_000_000
+  eval_every: 10_000_000
   batch_size: 512
   num_minibatches: 4
   num_updates_per_batch: 4

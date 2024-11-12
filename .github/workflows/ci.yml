@@ -45,11 +45,11 @@ jobs:
 
     - name: Run Black
       run: |
-        black --check sleap_io tests
+        black --check track_mjx/
     
     - name: Run pydocstyle
       run: |
-        pydocstyle --convention=google sleap_io/
+        pydocstyle --convention=google track_mjx/
 
   # Tests with pytest
 #   tests:

@@ -104,7 +104,9 @@ def compute_tracking_rewards(
 
     min_z, max_z = healthy_z_range
     is_healthy = jp.where(walker.get_torso_position(data.xpos)[2] < min_z, 0.0, 1.0)
-    is_healthy = jp.where(walker.get_torso_position(data.xpos)[2] > max_z, 0.0, is_healthy)
+    is_healthy = jp.where(
+        walker.get_torso_position(data.xpos)[2] > max_z, 0.0, is_healthy
+    )
     fall = 1.0 - is_healthy
 
     summed_pos_distance = jp.sum((pos_distance * jp.array([1.0, 1.0, 0.2])) ** 2)

@@ -36,7 +36,9 @@ class PPOImitationNetworks:
 def make_inference_fn(ppo_networks: PPOImitationNetworks):
     """Creates params and inference function for the PPO agent."""
 
-    def make_policy(params: types.PolicyParams, deterministic: bool = False) -> types.Policy:
+    def make_policy(
+        params: types.PolicyParams, deterministic: bool = False
+    ) -> types.Policy:
         policy_network = ppo_networks.policy_network
         # can modify this to provide stochastic action + noise
         parametric_action_distribution = ppo_networks.parametric_action_distribution
@@ -53,12 +55,16 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 return ppo_networks.parametric_action_distribution.mode(logits), {}
 
             # action sampling is happening here, according to distribution parameter logits
-            raw_actions = parametric_action_distribution.sample_no_postprocessing(logits, key_sample)
+            raw_actions = parametric_action_distribution.sample_no_postprocessing(
+                logits, key_sample
+            )
 
             # probability of selection specific action, actions with higher reward should have higher probability
             log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
 
-            postprocessed_actions = parametric_action_distribution.postprocess(raw_actions)
+            postprocessed_actions = parametric_action_distribution.postprocess(
+                raw_actions
+            )
             return postprocessed_actions, {
                 # "latent_mean": latent_mean,
                 # "latent_logvar": latent_logvar,
@@ -84,7 +90,9 @@ def make_intention_ppo_networks(
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
 ) -> PPOImitationNetworks:
     """Make Imitation PPO networks with preprocessor."""
-    parametric_action_distribution = distribution.NormalTanhDistribution(event_size=action_size)
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
     policy_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,

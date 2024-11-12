@@ -1,22 +1,17 @@
 name: track_mjx
 channels:
   - conda-forge
-  - anaconda
-  - menpo
+  # - menpo
+
 dependencies:
   - python=3.11
   - numpy
   - matplotlib
   - pandas
-  - pip
-  - glew
-  - mesalib
-  - mesa-libgl-cos6-x86_64
-  - glfw3
+  - h5py
+  - ffmpeg
   - ipykernel
-  - pip: 
-    - "--editable=.[dev]"
-
-variables:             # Set MuJoCo environment variables
-  MUJOCO_GL: osmesa
-  PYOPENGL_PLATFORM: osmesa
+  - jupyterlab
+  - pip
+  - pip:
+    - "--editable=.[with-cuda]"

@@ -140,7 +140,7 @@ def main(cfg: DictConfig):
             env=env,
             wandb=wandb,
             model_path=model_path,
-            walker=walker(**wlaker_config),
+            walker=walker,
         )
 
     make_inference_fn, params, _ = train_fn(

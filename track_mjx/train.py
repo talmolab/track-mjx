@@ -42,17 +42,15 @@ os.environ["MUJOCO_GL"] = "egl"
 FLAGS = flags.FLAGS
 
 
-@hydra.main(
-    config_path="config", config_name="rodent-mc-intention"
-)
+@hydra.main(config_path="config", config_name="rodent-mc-intention")
 def main(cfg: DictConfig):
-    '''Main function using Hydra configs'''
+    """Main function using Hydra configs"""
     env_cfg = hydra.compose(config_name="rodent-mc-intention")
     env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
     env_args = cfg.env_config["env_args"]
-    env_rewards = cfg.env_config['reward_weights']
-    train_config = cfg.trani_setup['train_config']
-    wlaker_config = cfg['walker_config']
+    env_rewards = cfg.env_config["reward_weights"]
+    train_config = cfg.trani_setup["train_config"]
+    wlaker_config = cfg["walker_config"]
 
     try:
         n_devices = jax.device_count(backend="gpu")
@@ -76,17 +74,17 @@ def main(cfg: DictConfig):
     with open("/root/vast/scott-yang/track-mjx/data/twoClips.p", "rb") as file:
         # Use pickle.load() to load the data from the file
         reference_clip = pickle.load(file)
-    
-    #TODO (Kevin): add this as a yaml config
+
+    # TODO (Kevin): add this as a yaml config
     walker = Rodent(**wlaker_config)
 
-    #Automatically match dict keys and func needs
+    # Automatically match dict keys and func needs
     env = envs.get_environment(
-        env_name = cfg.env_config.env_name,
+        env_name=cfg.env_config.env_name,
         reference_clip=reference_clip,
         walker=walker,
         **env_args,
-        **env_rewards
+        **env_rewards,
     )
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
@@ -97,7 +95,9 @@ def main(cfg: DictConfig):
     train_fn = functools.partial(
         custom_ppo.train,
         **train_config,
-        num_evals=int(cfg.trani_setup.train_config.num_timesteps / cfg.trani_setup.eval_every),
+        num_evals=int(
+            cfg.trani_setup.train_config.num_timesteps / cfg.trani_setup.eval_every
+        ),
         episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
         network_factory=functools.partial(
@@ -126,14 +126,27 @@ def main(cfg: DictConfig):
     # pass in some args that this file has
     # policy_params_fn_mod = functools.partial(policy_params_fn,
     #                                      cfg=cfg, env=env, wandb=wandb, model_path=model_path)
-    
-    def policy_params_fn_wrapper(current_step, make_policy, params, policy_params_fn_key):
+
+    def policy_params_fn_wrapper(
+        current_step, make_policy, params, policy_params_fn_key
+    ):
         # Calls the original function with the pre-set arguments
-        return policy_params_fn(current_step, make_policy, params, policy_params_fn_key, 
-                                cfg=cfg, env=env, wandb=wandb, model_path=model_path, walker=walker(**wlaker_config))
+        return policy_params_fn(
+            current_step,
+            make_policy,
+            params,
+            policy_params_fn_key,
+            cfg=cfg,
+            env=env,
+            wandb=wandb,
+            model_path=model_path,
+            walker=walker(**wlaker_config),
+        )
 
     make_inference_fn, params, _ = train_fn(
-        environment=env, progress_fn=wandb_progress, policy_params_fn=policy_params_fn_wrapper
+        environment=env,
+        progress_fn=wandb_progress,
+        policy_params_fn=policy_params_fn_wrapper,
     )
 
     final_save_path = f"{model_path}/brax_ppo_rodent_run_finished"

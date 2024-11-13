@@ -24,10 +24,11 @@ from jax import numpy as jp
 
 from track_mjx.environment import custom_wrappers
 
+
 def log_metric_to_wandb(metric_name, data, title=""):
     """
     Logs a list of metrics to wandb with a specified title.
-    
+
     Parameters:
     - metric_name (str): The key under which to log the metric.
     - data (list): List of (x, y) tuples or two lists (frames, rewards).
@@ -39,12 +40,12 @@ def log_metric_to_wandb(metric_name, data, title=""):
     else:
         # If data is two lists, use them directly
         frames, values = data
-    
+
     table = wandb.Table(
         data=[[x, y] for x, y in zip(frames, values)],
         columns=["frame", metric_name],
     )
-    
+
     wandb.log(
         {
             f"eval/rollout_{metric_name}": wandb.plot.line(
@@ -57,9 +58,10 @@ def log_metric_to_wandb(metric_name, data, title=""):
         commit=False,
     )
 
+
 def policy_params_fn(
-        num_steps, make_policy, params, rollout_key, cfg, env, wandb, model_path, walker
-        ):
+    num_steps, make_policy, params, rollout_key, cfg, env, wandb, model_path, walker
+):
     """Main logging functions for policy params,
     cfg, wandb, model_path, and env currently func.partial from train.py"""
 
@@ -93,17 +95,55 @@ def policy_params_fn(
     joint_rewards = [state.metrics["joint_reward"] for state in rollout]
     summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
     joint_distances = [state.info["joint_distance"] for state in rollout]
-    torso_heights = [state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout]
+    torso_heights = [
+        state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
+    ]
 
-    log_metric_to_wandb("pos_rewards", list(enumerate(pos_rewards)), title="pos_rewards for each rollout frame")
-    log_metric_to_wandb("endeff_rewards", list(enumerate(endeff_rewards)), title="endeff_rewards for each rollout frame")
-    log_metric_to_wandb("quat_rewards", list(enumerate(quat_rewards)), title="quat_rewards for each rollout frame")
-    log_metric_to_wandb("angvel_rewards", list(enumerate(angvel_rewards)), title="angvel_rewards for each rollout frame")
-    log_metric_to_wandb("bodypos_rewards", list(enumerate(bodypos_rewards)), title="bodypos_rewards for each rollout frame")
-    log_metric_to_wandb("joint_rewards", list(enumerate(joint_rewards)), title="joint_rewards for each rollout frame")
-    log_metric_to_wandb("summed_pos_distances", list(enumerate(summed_pos_distances)), title="summed_pos_distances for each rollout frame")
-    log_metric_to_wandb("joint_distances", list(enumerate(joint_distances)), title="joint_distances for each rollout frame")
-    log_metric_to_wandb("torso_heights", list(enumerate(torso_heights)), title="torso_heights for each rollout frame")
+    log_metric_to_wandb(
+        "pos_rewards",
+        list(enumerate(pos_rewards)),
+        title="pos_rewards for each rollout frame",
+    )
+    log_metric_to_wandb(
+        "endeff_rewards",
+        list(enumerate(endeff_rewards)),
+        title="endeff_rewards for each rollout frame",
+    )
+    log_metric_to_wandb(
+        "quat_rewards",
+        list(enumerate(quat_rewards)),
+        title="quat_rewards for each rollout frame",
+    )
+    log_metric_to_wandb(
+        "angvel_rewards",
+        list(enumerate(angvel_rewards)),
+        title="angvel_rewards for each rollout frame",
+    )
+    log_metric_to_wandb(
+        "bodypos_rewards",
+        list(enumerate(bodypos_rewards)),
+        title="bodypos_rewards for each rollout frame",
+    )
+    log_metric_to_wandb(
+        "joint_rewards",
+        list(enumerate(joint_rewards)),
+        title="joint_rewards for each rollout frame",
+    )
+    log_metric_to_wandb(
+        "summed_pos_distances",
+        list(enumerate(summed_pos_distances)),
+        title="summed_pos_distances for each rollout frame",
+    )
+    log_metric_to_wandb(
+        "joint_distances",
+        list(enumerate(joint_distances)),
+        title="joint_distances for each rollout frame",
+    )
+    log_metric_to_wandb(
+        "torso_heights",
+        list(enumerate(torso_heights)),
+        title="torso_heights for each rollout frame",
+    )
 
     # Render the walker with the reference expert demonstration trajectory
     os.environ["MUJOCO_GL"] = "osmesa"
@@ -151,10 +191,9 @@ def policy_params_fn(
     #         length = len(done_array) - start
     #         aligned_traj[start:] = qposes_ref[:length]
 
-
     # TODO Better relative path scripts
     _XML_PATH = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), # Move one folder up
+        os.path.dirname(os.path.dirname(__file__)),  # Move one folder up
         cfg.env_config.ghost_xml_path,
     )
     root = mjcf_dm.from_path(_XML_PATH)
@@ -185,7 +224,7 @@ def policy_params_fn(
     with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
 
-            #TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
+            # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
             # print(qpos1.shape, qpos2.shape)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)

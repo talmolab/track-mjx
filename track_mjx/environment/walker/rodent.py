@@ -16,37 +16,20 @@ import os
 
 from track_mjx.environment.walker.base import BaseWalker
 
-#TODO: move all of these into config? or is it rodent specific so keep here?
-# _XML_PATH = "/root/vast/scott-yang/Brax-Rodent-Run/models/rodent.xml"
-# _JOINT_NAMES = [
-#     "vertebra_1_extend", "hip_L_supinate", "hip_L_abduct", "hip_L_extend",
-#     "knee_L", "ankle_L", "toe_L", "hip_R_supinate", "hip_R_abduct", "hip_R_extend",
-#     "knee_R", "ankle_R", "toe_R", "vertebra_C11_extend", "vertebra_cervical_1_bend",
-#     "vertebra_axis_twist", "atlas", "mandible", "scapula_L_supinate", "scapula_L_abduct",
-#     "scapula_L_extend", "shoulder_L", "shoulder_sup_L", "elbow_L", "wrist_L",
-#     "scapula_R_supinate", "scapula_R_abduct", "scapula_R_extend", "shoulder_R",
-#     "shoulder_sup_R", "elbow_R", "wrist_R", "finger_R",
-# ]
-# _BODY_NAMES = [
-#     "torso", "pelvis", "upper_leg_L", "lower_leg_L", "foot_L", "upper_leg_R",
-#     "lower_leg_R", "foot_R", "skull", "jaw", "scapula_L", "upper_arm_L",
-#     "lower_arm_L", "finger_L", "scapula_R", "upper_arm_R", "lower_arm_R", "finger_R",
-# ]
-# _END_EFF_NAMES = [
-#     "foot_L", "foot_R", "hand_L", "hand_R", "skull",
-# ]
 
 class Rodent(BaseWalker):
     """Rodent class that manages the body structure,
     joint configurations, and model loading"""
 
-    def __init__(self,
-                 xml_path,
-                 joint_names,
-                 body_names,
-                 end_eff_names,
-                 torque_actuators=False,
-                 rescale_factor=0.9):
+    def __init__(
+        self,
+        xml_path,
+        joint_names,
+        body_names,
+        end_eff_names,
+        torque_actuators=False,
+        rescale_factor=0.9,
+    ):
         """Initialize the rodent model with optional
         torque actuator settings and rescaling"""
 
@@ -61,9 +44,9 @@ class Rodent(BaseWalker):
         self._initialize_indices()
 
     def _load_mjcf_model(self, torque_actuators=False, rescale_factor=0.9):
-        '''Only using this for walker, not its pair'''
+        """Only using this for walker, not its pair"""
         root = mjcf_dm.from_path(self._xml)
-        
+
         # torque
         if torque_actuators:
             for actuator in root.find_all("actuator"):
@@ -77,35 +60,38 @@ class Rodent(BaseWalker):
 
     def _initialize_indices(self):
         """Initialize indices for joints, bodies, and end-effectors based on the loaded model"""
-        self._joint_idxs = jp.array([
-            self._mjcf_model.model.name2id(joint, "joint")
-            for joint in self._joint_names
-        ])
-        
-        self._body_idxs = jp.array([
-            self._mjcf_model.model.name2id(body, "body")
-            for body in self._body_names
-        ])
+        self._joint_idxs = jp.array(
+            [
+                self._mjcf_model.model.name2id(joint, "joint")
+                for joint in self._joint_names
+            ]
+        )
 
-        self._endeff_idxs = jp.array([
-            self._mjcf_model.model.name2id(end_eff, "body")
-            for end_eff in self._end_eff_names
-        ])
+        self._body_idxs = jp.array(
+            [self._mjcf_model.model.name2id(body, "body") for body in self._body_names]
+        )
+
+        self._endeff_idxs = jp.array(
+            [
+                self._mjcf_model.model.name2id(end_eff, "body")
+                for end_eff in self._end_eff_names
+            ]
+        )
 
         self._torso_idx = self._mjcf_model.model.name2id("torso", "body")
 
     def get_joint_positions(self, qpos):
-        '''retrieve walker's joint position values'''
+        """retrieve walker's joint position values"""
         return qpos[self._joint_idxs]
 
     def get_body_positions(self, xpos):
-        '''retrieve walker's body position values'''
+        """retrieve walker's body position values"""
         return xpos[self._body_idxs]
 
     def get_end_effector_positions(self, xpos):
-        '''retrieve walker's end effectors positions values'''
+        """retrieve walker's end effectors positions values"""
         return xpos[self._endeff_idxs]
 
     def get_torso_position(self, xpos):
-        '''retrieve walker's torso position values'''
+        """retrieve walker's torso position values"""
         return xpos[self._torso_idx]

@@ -41,6 +41,10 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 os.environ["MUJOCO_GL"] = "egl"
 FLAGS = flags.FLAGS
 
+flags.DEFINE_enum("solver", "cg", ["cg", "newton"], "constraint solver")
+flags.DEFINE_integer("iterations", 4, "number of solver iterations")
+flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
+
 
 @hydra.main(config_path="config", config_name="rodent-mc-intention")
 def main(cfg: DictConfig):
@@ -62,46 +66,6 @@ def main(cfg: DictConfig):
     except:
         n_devices = 1
         print("Not using GPUs")
-
-flags.DEFINE_enum("solver", "cg", ["cg", "newton"], "constraint solver")
-flags.DEFINE_integer("iterations", 4, "number of solver iterations")
-flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
-
-
-# TODO(Scott): Move this to hydra config file structure
-config = {
-    "env_name": "multi clip",
-    "algo_name": "ppo",
-    "task_name": "run",
-    "num_envs": 4096 * n_devices,
-    "num_timesteps": 100_000, #20_000_000_000,
-    "eval_every": 10_000, #200_000_000,
-    "episode_length": 200,
-    "batch_size": 2048 * n_devices,
-    "num_minibatches": 4 * n_devices,
-    "num_updates_per_batch": 4,
-    "learning_rate": 1e-4,
-    "kl_weight": 5e-3,
-    "clipping_epsilon": 0.2,
-    "torque_actuators": False,
-    "physics_steps_per_control_step": 5,
-    "too_far_dist": 0.01,
-    "bad_pose_dist": 20,
-    "bad_quat_dist": 1,
-    "ctrl_cost_weight": 0.02,
-    "ctrl_diff_cost_weight": 0.02,
-    "pos_reward_weight": 1.0,
-    "quat_reward_weight": 1.0,
-    "joint_reward_weight": 1.0,
-    "angvel_reward_weight": 0.0,
-    "bodypos_reward_weight": 0.0,
-    "endeff_reward_weight": 1.0,
-    "healthy_z_range": (0.0325, 0.5),
-    "run_platform": "Harvard",
-    "solver": "cg",
-    "iterations": 4,
-    "ls_iterations": 4,
-}
 
     envs.register_environment("single clip", RodentTracking)
     envs.register_environment("multi clip", RodentMultiClipTracking)

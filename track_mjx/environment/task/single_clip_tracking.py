@@ -56,7 +56,7 @@ class RodentTracking(PipelineEnv):
         ls_iterations: int = 6,
         **kwargs,
     ):
-        self.walker = walker(torque_actuators)
+        self.walker = walker  # walker(torque_actuators)
         self.walker._initialize_indices()
 
         mj_model = self.walker._mjcf_model.model.ptr

@@ -29,34 +29,61 @@ _MOCAP_HZ = 50
 
 
 class RodentTracking(PipelineEnv):
-    """Single clip walker tracking, agonist of the walker"""
+    """Single clip walker tracking using Brax PiepelineEnv backend, agonist of the walker"""
 
     def __init__(
         self,
-        reference_clip,
-        walker,
+        reference_clip: ReferenceClip,
+        walker: BaseWalker,
         torque_actuators: bool = False,
         ref_len: int = 5,
-        too_far_dist=0.1,
-        bad_pose_dist=jp.inf,
-        bad_quat_dist=jp.inf,
-        ctrl_cost_weight=0.01,
-        ctrl_diff_cost_weight=0.01,
-        pos_reward_weight=1.0,
-        quat_reward_weight=1.0,
-        joint_reward_weight=1.0,
-        angvel_reward_weight=1.0,
-        bodypos_reward_weight=1.0,
-        endeff_reward_weight=1.0,
-        healthy_z_range=(0.03, 0.5),
-        physics_steps_per_control_step=10,
-        reset_noise_scale=1e-3,
-        solver="cg",
+        too_far_dist: float = 0.1,
+        bad_pose_dist: float = jp.inf,
+        bad_quat_dist: float = jp.inf,
+        ctrl_cost_weight: float = 0.01,
+        ctrl_diff_cost_weight: float = 0.01,
+        pos_reward_weight: float = 1.0,
+        quat_reward_weight: float = 1.0,
+        joint_reward_weight: float = 1.0,
+        angvel_reward_weight: float = 1.0,
+        bodypos_reward_weight: float = 1.0,
+        endeff_reward_weight: float = 1.0,
+        healthy_z_range: Tuple[float, float] = (0.03, 0.5),
+        physics_steps_per_control_step: int = 10,
+        reset_noise_scale: float = 1e-3,
+        solver: str = "cg",
         iterations: int = 6,
         ls_iterations: int = 6,
-        **kwargs,
+        **kwargs: Any,
     ):
-        self.walker = walker  # walker(torque_actuators)
+        """
+        Initializes the RodentTracking environment.
+
+        Args:
+            reference_clip (ReferenceClip): The reference trajectory data.
+            walker (BaseWalker): The base walker model.
+            torque_actuators (bool): Whether to use torque actuators. Defaults to False.
+            ref_len (int): Length of the reference trajectory. Defaults to 5.
+            too_far_dist (float): Threshold for "too far" penalty. Defaults to 0.1.
+            bad_pose_dist (float): Threshold for "bad pose" penalty. Defaults to infinity.
+            bad_quat_dist (float): Threshold for "bad quaternion" penalty. Defaults to infinity.
+            ctrl_cost_weight (float): Weight for control cost. Defaults to 0.01.
+            ctrl_diff_cost_weight (float): Weight for control difference cost. Defaults to 0.01.
+            pos_reward_weight (float): Weight for position reward. Defaults to 1.0.
+            quat_reward_weight (float): Weight for quaternion reward. Defaults to 1.0.
+            joint_reward_weight (float): Weight for joint reward. Defaults to 1.0.
+            angvel_reward_weight (float): Weight for angular velocity reward. Defaults to 1.0.
+            bodypos_reward_weight (float): Weight for body position reward. Defaults to 1.0.
+            endeff_reward_weight (float): Weight for end-effector reward. Defaults to 1.0.
+            healthy_z_range (Tuple[float, float]): Range for a healthy z-position. Defaults to (0.03, 0.5).
+            physics_steps_per_control_step (int): Number of physics steps per control step. Defaults to 10.
+            reset_noise_scale (float): Scale of noise for reset. Defaults to 1e-3.
+            solver (str): Solver type for Mujoco. Defaults to "cg".
+            iterations (int): Maximum number of solver iterations. Defaults to 6.
+            ls_iterations (int): Maximum number of line search iterations. Defaults to 6.
+            **kwargs (Any): Additional arguments for the PipelineEnv initialization.
+        """
+        self.walker = walker
         self.walker._initialize_indices()
 
         mj_model = self.walker._mjcf_model.model.ptr
@@ -105,8 +132,16 @@ class RodentTracking(PipelineEnv):
         self._healthy_z_range = healthy_z_range
         self._reset_noise_scale = reset_noise_scale
 
-    def reset(self, rng) -> State:
-        """Resets the environment to an initial state."""
+    def reset(self, rng: jp.ndarray) -> State:
+        """
+        Resets the environment to an initial state.
+
+        Args:
+            rng (jp.ndarray): Random number generator state.
+
+        Returns:
+            State: The reset environment state.
+        """
         _, start_rng, rng = jax.random.split(rng, 3)
 
         start_frame = jax.random.randint(start_rng, (), 0, 44)
@@ -122,8 +157,20 @@ class RodentTracking(PipelineEnv):
 
         return self.reset_from_clip(rng, info, noise=True)
 
-    def reset_from_clip(self, rng, info, noise=True) -> State:
-        """Reset based on a reference clip."""
+    def reset_from_clip(
+        self, rng: jp.ndarray, info: Dict[str, Any], noise: bool = True
+    ) -> State:
+        """
+        Resets the environment using a reference clip.
+
+        Args:
+            rng (jp.ndarray): Random number generator state.
+            info (Dict[str, Any]): Information dictionary.
+            noise (bool): Whether to add noise during reset. Defaults to True.
+
+        Returns:
+            State: The reset environment state.
+        """
         _, rng1, rng2 = jax.random.split(rng, 3)
 
         # Get reference clip and select the start frame
@@ -180,7 +227,17 @@ class RodentTracking(PipelineEnv):
         return State(data, obs, reward, done, metrics, info)
 
     def step(self, state: State, action: jp.ndarray) -> State:
-        """Runs one timestep of the environment's dynamics."""
+        """
+        Executes one timestep of the environment's dynamics.
+
+        Args:
+            state (State): The current environment state.
+            action (jp.ndarray): The action to take.
+
+        Returns:
+            State: The updated environment state.
+        """
+
         data0 = state.pipeline_state
         data = self.pipeline_step(data0, action)
 
@@ -301,43 +358,35 @@ class RodentTracking(PipelineEnv):
 
         return jax.tree_util.tree_map(f, self._get_reference_clip(info))
 
-    def _get_obs(self, data: mjx.Data, info) -> jp.ndarray:
-        """Observes rodent body position, velocities, and angles."""
+    def _get_obs(
+        self, data: mjx.Data, info: Dict[str, Any]
+    ) -> Tuple[jp.ndarray, jp.ndarray]:
+        """
+        Constructs the observation for the environment.
 
-        # TODO: consider not get index, but full get data from walker class?
+        Args:
+            data (mjx.Data): Current Mujoco simulation data.
+            info (Dict[str, Any]): Information dictionary containing the current state and reference trajectory details.
+
+        Returns:
+            Tuple[jp.ndarray, jp.ndarray]:
+                - `reference_obs`: Reference trajectory-based observation.
+                - `proprioceptive_obs`: Observations of the agent's internal state (position and velocity).
+        """
 
         ref_traj = self._get_reference_trajectory(info)
 
-        track_pos_local = jax.vmap(
-            lambda a, b: brax_math.rotate(a, b), in_axes=(0, None)
-        )(
-            ref_traj.position - data.qpos[:3],
-            data.qpos[3:7],
-        ).flatten()
-
-        quat_dist = jax.vmap(
-            lambda a, b: brax_math.relative_quat(a, b), in_axes=(0, None)
-        )(
-            ref_traj.quaternion,
-            data.qpos[3:7],
-        ).flatten()
-
-        joint_dist = (ref_traj.joints - data.qpos[7:])[
-            :, self.walker._joint_idxs
-        ].flatten()
-
-        body_pos_dist_local = jax.vmap(
-            lambda a, b: jax.vmap(brax_math.rotate, in_axes=(0, None))(a, b),
-            in_axes=(0, None),
-        )(
-            (ref_traj.body_positions - data.xpos)[:, self.walker._body_idxs],
-            data.qpos[3:7],
-        ).flatten()
-
-        # print(track_pos_local.shape)
-        # print(quat_dist.shape)
-        # print(joint_dist.shape)
-        # print(body_pos_dist_local.shape)
+        # walker methods to compute the necessary distances and differences
+        track_pos_local = self.walker.compute_local_track_positions(
+            ref_traj.position, data.qpos
+        )
+        quat_dist = self.walker.compute_quat_distances(ref_traj.quaternion, data.qpos)
+        joint_dist = self.walker.compute_local_joint_distances(
+            ref_traj.joints, data.qpos
+        )
+        body_pos_dist_local = self.walker.compute_local_body_positions(
+            ref_traj.body_positions, data.xpos, data.qpos
+        )
 
         reference_obs = jp.concatenate(
             [
@@ -347,8 +396,6 @@ class RodentTracking(PipelineEnv):
                 body_pos_dist_local,
             ]
         )
-
-        print(reference_obs.shape)
 
         # jax.debug.print("track_pos_local: {}", track_pos_local)
         # jax.debug.print("quat_dist: {}", quat_dist)

@@ -8,7 +8,7 @@ from brax import math as brax_math
 from dm_control.locomotion.walkers import rescale
 from dm_control import mjcf as mjcf_dm
 
-from jax.numpy import inf, ndarray
+import jax.numpy as jp
 import mujoco
 from mujoco import mjx
 
@@ -24,15 +24,25 @@ class Rodent(BaseWalker):
 
     def __init__(
         self,
-        xml_path,
-        joint_names,
-        body_names,
-        end_eff_names,
-        torque_actuators=False,
-        rescale_factor=0.9,
+        xml_path: str,
+        joint_names: List[str],
+        body_names: List[str],
+        end_eff_names: List[str],
+        torque_actuators: bool = False,
+        rescale_factor: float = 0.9,
     ):
-        """Initialize the rodent model with optional
-        torque actuator settings and rescaling"""
+        """
+        Initialize the rodent model with optional
+        torque actuator settings and rescaling.
+
+        Args:
+            xml_path (str): Path to the MJCF XML file describing the model.
+            joint_names (List[str]): Names of the joints in the model.
+            body_names (List[str]): Names of the bodies in the model.
+            end_eff_names (List[str]): Names of the end effectors in the model.
+            torque_actuators (bool): Whether to use torque actuators. Default is False.
+            rescale_factor (float): Factor to rescale the model. Default is 0.9.
+        """
 
         self._xml = xml_path
         self._joint_names = joint_names
@@ -44,9 +54,20 @@ class Rodent(BaseWalker):
 
         self._initialize_indices()
 
-    def _load_mjcf_model(self, torque_actuators=False, rescale_factor=0.9):
-        """Only using this for walker, not its pair"""
-        _XML_PATH = Path(__file__).resolve() / self._xml
+    def _load_mjcf_model(
+        self, torque_actuators: bool = False, rescale_factor: float = 0.9
+    ) -> mjcf_dm.Physics:
+        """
+        Load and optionally modify the MJCF model.
+
+        Args:
+            torque_actuators (bool): Whether to use torque actuators. Default is False.
+            rescale_factor (float): Factor to rescale the model. Default is 0.9.
+
+        Returns:
+            mjcf_dm.Physics: Loaded MJCF physics model.
+        """
+        _XML_PATH = Path(__file__).resolve().parent / self._xml
         root = mjcf_dm.from_path(_XML_PATH)
 
         # torque
@@ -60,7 +81,7 @@ class Rodent(BaseWalker):
         rescale.rescale_subtree(root, rescale_factor, rescale_factor)
         return mjcf_dm.Physics.from_mjcf_model(root)
 
-    def _initialize_indices(self):
+    def _initialize_indices(self) -> None:
         """Initialize indices for joints, bodies, and end-effectors based on the loaded model"""
         self._joint_idxs = jp.array(
             [
@@ -82,18 +103,121 @@ class Rodent(BaseWalker):
 
         self._torso_idx = self._mjcf_model.model.name2id("torso", "body")
 
-    def get_joint_positions(self, qpos):
-        """retrieve walker's joint position values"""
+    def get_joint_positions(self, qpos: jp.ndarray) -> jp.ndarray:
+        """
+        Retrieve the rodent's joint position values.
+
+        Args:
+            qpos (jp.ndarray): The full positional state of the model.
+
+        Returns:
+            jp.ndarray: Joint positions.
+        """
         return qpos[self._joint_idxs]
 
-    def get_body_positions(self, xpos):
-        """retrieve walker's body position values"""
+    def get_body_positions(self, xpos: jp.ndarray) -> jp.ndarray:
+        """
+        Retrieve the rodent's body position values.
+
+        Args:
+            xpos (jp.ndarray): The full positional state of the model.
+
+        Returns:
+            jp.ndarray: Body positions.
+        """
         return xpos[self._body_idxs]
 
-    def get_end_effector_positions(self, xpos):
-        """retrieve walker's end effectors positions values"""
+    def get_end_effector_positions(self, xpos: jp.ndarray) -> jp.ndarray:
+        """
+        Retrieve the rodent's end effector positions.
+
+        Args:
+            xpos (jp.ndarray): The full positional state of the model.
+
+        Returns:
+            jp.ndarray: End effector positions.
+        """
         return xpos[self._endeff_idxs]
 
-    def get_torso_position(self, xpos):
-        """retrieve walker's torso position values"""
+    def get_torso_position(self, xpos: jp.ndarray) -> jp.ndarray:
+        """
+        Retrieve the rodent's torso position.
+
+        Args:
+            xpos (jp.ndarray): The full positional state of the model.
+
+        Returns:
+            jp.ndarray: Torso position.
+        """
         return xpos[self._torso_idx]
+
+    def compute_local_body_positions(
+        self, ref_positions: jp.ndarray, xpos: jp.ndarray, qpos: jp.ndarray
+    ) -> jp.ndarray:
+        """
+        Compute local body positions relative to reference positions, rotated by the agent's orientation.
+
+        Args:
+            ref_positions (jp.ndarray): Reference body positions
+            xpos (jp.ndarray): Agent's current body positions
+            qpos (jp.ndarray): Agent's full state vector, including orientation quaternion
+
+        Returns:
+            Local body position differences, rotated to align with agent orientation
+        """
+        return jax.vmap(
+            lambda ref_pos, agent_pos: jax.vmap(brax_math.rotate, in_axes=(0, None))(
+                ref_pos - agent_pos, qpos[3:7]
+            )
+        )(ref_positions, xpos).flatten()
+
+    def compute_local_joint_distances(
+        self, ref_joints: jp.ndarray, qpos: jp.ndarray
+    ) -> jp.ndarray:
+        """
+        Compute joint distances relative to reference joints.
+
+        Args:
+            ref_joints (jp.ndarray): Reference joint positions
+            qpos (jp.ndarray): Full state vector containing joint positions
+
+        Returns:
+            Joint distances
+        """
+        return (ref_joints - self.get_joint_positions(qpos)).flatten()
+
+    def compute_quat_distances(
+        self, ref_quats: jp.ndarray, qpos: jp.ndarray
+    ) -> jp.ndarray:
+        """
+        Compute quaternion distances for rotational alignment.
+
+        Args:
+            ref_quats (jp.ndarray): Reference quaternions
+            qpos (jp.ndarray): Full state vector containing orientation quaternion
+
+        Returns:
+            Quaternion distances
+        """
+        return jax.vmap(
+            lambda ref_quat, agent_quat: brax_math.relative_quat(ref_quat, agent_quat),
+            in_axes=(0, None),
+        )(ref_quats, qpos[3:7]).flatten()
+
+    def compute_local_track_positions(
+        self, ref_positions: jp.ndarray, qpos: jp.ndarray
+    ) -> jp.ndarray:
+        """
+        Compute local position differences for tracking, rotated to align with agent orientation.
+
+        Args:
+            ref_positions (jp.ndarray): Reference positions
+            qpos (jp.ndarray): Full state vector containing orientation quaternion
+
+        Returns:
+            Local position differences rotated to align with agent orientation
+        """
+        return jax.vmap(
+            lambda pos, quat: brax_math.rotate(pos, quat),
+            in_axes=(0, None),
+        )(ref_positions - qpos[:3], qpos[3:7]).flatten()

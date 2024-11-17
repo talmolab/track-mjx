@@ -9,10 +9,11 @@ os.environ["MUJOCO_GL"] = "egl"
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )
+os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 from absl import flags
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import uuid
 
 import functools
@@ -64,15 +65,12 @@ def main(cfg: DictConfig):
     envs.register_environment("multi clip", RodentMultiClipTracking)
 
     # config files
-    additional_cfg = OmegaConf.load("config/rodent-walker.yaml")
-    wlaker_config = additional_cfg["walker_config"]
-
     env_cfg = hydra.compose(config_name="rodent-mc-intention")
     env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
-    # wlaker_config = cfg["walker_config"]
+    wlaker_config = cfg["walker_config"]
 
     # TODO(Scott): move this to track_mjx.io module
     with open("/root/vast/scott-yang/track-mjx/data/twoClips.p", "rb") as file:
@@ -127,10 +125,8 @@ def main(cfg: DictConfig):
         metrics["num_steps"] = num_steps
         wandb.log(metrics, commit=False)
 
-    def policy_params_fn(
-        current_step, make_policy, params, policy_params_fn_key
-    ):
-        '''wrapper function that pass in some args that this file has'''
+    def policy_params_fn(current_step, make_policy, params, policy_params_fn_key):
+        """wrapper function that pass in some args that this file has"""
         return training_logging(
             current_step,
             make_policy,

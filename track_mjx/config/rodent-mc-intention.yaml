@@ -26,6 +26,9 @@ env_config:
     endeff_reward_weight: 1.0
     healthy_z_range: [0.0325, 0.5]
 
+reference_config:
+  clip_length: 250
+
 network_config:
   arch_name: intention
   encoder_layer_sizes: [512,512,512]

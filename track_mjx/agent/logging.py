@@ -2,8 +2,9 @@ import os
 from pathlib import Path
 from absl import flags
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import uuid
+from typing import Callable, Any
 
 import functools
 import jax
@@ -15,8 +16,9 @@ from brax import envs
 from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
 
-import track_mjx.agent.custom_ppo as ppo
 from track_mjx.agent import custom_ppo
+from track_mjx.agent import custom_ppo_networks
+from track_mjx.agent import custom_losses
 from brax.io import model
 import numpy as np
 import pickle
@@ -30,10 +32,10 @@ def log_metric_to_wandb(metric_name, data, title=""):
     """
     Logs a list of metrics to wandb with a specified title.
 
-    Parameters:
-    - metric_name (str): The key under which to log the metric.
-    - data (list): List of (x, y) tuples or two lists (frames, rewards).
-    - title (str): Title for the wandb plot.
+    Args:
+        metric_name (str): The key under which to log the metric.
+        data (list): List of (x, y) tuples or two lists (frames, rewards).
+        title (str): Title for the wandb plot.
     """
     if isinstance(data[0], tuple):
         # If data is a list of (x, y) tuples, separate it into frames and values
@@ -59,15 +61,47 @@ def log_metric_to_wandb(metric_name, data, title=""):
         commit=False,
     )
 
+
 def training_logging(
-    num_steps, make_policy, params, rollout_key, cfg, env, wandb, model_path, walker
-):
-    """Main logging functions for policy params,
-    cfg, wandb, model_path, and env currently func.partial from train.py"""
+    num_steps: int,
+    make_policy: Callable[
+        [custom_losses.PPONetworkParams, bool],
+        Callable[
+            [jax.numpy.ndarray, jax.random.PRNGKey],
+            Tuple[jax.numpy.ndarray, Dict[str, Any]],
+        ],
+    ],
+    params: custom_losses.PPONetworkParams,
+    rollout_key: jax.random.PRNGKey,
+    cfg: DictConfig,
+    env: PipelineEnv,
+    wandb: Callable[[int, Dict[str, jnp.ndarray]], None],
+    model_path: str,
+    walker: BaseWalker,
+) -> None:
+    """
+    Logs metrics and videos for a reinforcement learning training rollout.
+
+    Args:
+        num_steps (int): The number of training steps completed.
+        make_policy (Callable): A function to create the policy with parameters and deterministic mode (reference to custom_ppo_networks).
+        params (custom_losses.PPONetworkParams): Parameters for the policy model (reference to custom_losses).
+        rollout_key (jax.random.PRNGKey): A PRNG key for generating rollout randomness.
+        cfg (DictConfig): Configuration dictionary for the environment and agent.
+        env (PipelineEnv): An instance of the base PipelineEnv envrionment.
+        wandb (Callable): The Weights and Biases logging function (reference to train).
+        model_path (str): The path to save the model parameters and videos.
+        walker (BaseWalker): The walker object used for simulation.
+
+    Returns:
+        None
+    """
+
+    wlaker_config = cfg["reference_config"]
 
     # Wrap the env in the brax autoreset and episode wrappers
-    # rollout_env = custom_wrappers.AutoResetWrapperTracking(env)
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
+
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
@@ -80,7 +114,7 @@ def training_logging(
     state = jit_reset(reset_rng)
 
     rollout = [state]
-    for i in range(int(250 * env._steps_for_cur_frame)):
+    for i in range(int(wlaker_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
         ctrl, extras = jit_inference_fn(obs, act_rng)
@@ -155,8 +189,8 @@ def training_logging(
         axis=0,
     )
 
+    # TODO: Make this ghost rendering walker agonist
     _XML_PATH = Path(__file__).resolve().parent.parent / cfg.env_config.ghost_xml_path
-
     root = mjcf_dm.from_path(_XML_PATH)
     rescale.rescale_subtree(
         root,
@@ -172,8 +206,6 @@ def training_logging(
     mj_model.opt.iterations = 6
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
-
-    # walker._load_mjcf_model(torque_actuators=cfg.env_config.torque_actuators, path=_XML_PATH)
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)

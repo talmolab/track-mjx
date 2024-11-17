@@ -3,9 +3,16 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 """
 
 import os
+
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["MUJOCO_GL"] = "egl"
+os.environ["XLA_FLAGS"] = (
+    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
+)
+
 from absl import flags
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import uuid
 
 import functools
@@ -31,44 +38,41 @@ from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
-from track_mjx.agent.logging import policy_params_fn
+from track_mjx.agent.logging import training_logging
 
 from track_mjx.environment.walker.rodent import Rodent
 
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
-os.environ["MUJOCO_GL"] = "egl"
-FLAGS = flags.FLAGS
-
-flags.DEFINE_enum("solver", "cg", ["cg", "newton"], "constraint solver")
-flags.DEFINE_integer("iterations", 4, "number of solver iterations")
-flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
 
 
 @hydra.main(config_path="config", config_name="rodent-mc-intention")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
-    env_cfg = hydra.compose(config_name="rodent-mc-intention")
-    env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
-    env_args = cfg.env_config["env_args"]
-    env_rewards = cfg.env_config["reward_weights"]
-    train_config = cfg.trani_setup["train_config"]
-    wlaker_config = cfg["walker_config"]
-
     try:
         n_devices = jax.device_count(backend="gpu")
-        os.environ["XLA_FLAGS"] = (
-            "--xla_gpu_enable_triton_softmax_fusion=true "
-            "--xla_gpu_triton_gemm_any=True "
-        )
         print(f"Using {n_devices} GPUs")
     except:
         n_devices = 1
         print("Not using GPUs")
 
+    flags.DEFINE_enum("solver", "cg", ["cg", "newton"], "constraint solver")
+    flags.DEFINE_integer("iterations", 4, "number of solver iterations")
+    flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
+
     envs.register_environment("single clip", RodentTracking)
     envs.register_environment("multi clip", RodentMultiClipTracking)
+
+    # config files
+    additional_cfg = OmegaConf.load("config/rodent-walker.yaml")
+    wlaker_config = additional_cfg["walker_config"]
+
+    env_cfg = hydra.compose(config_name="rodent-mc-intention")
+    env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
+    env_args = cfg.env_config["env_args"]
+    env_rewards = cfg.env_config["reward_weights"]
+    train_config = cfg.train_setup["train_config"]
+    # wlaker_config = cfg["walker_config"]
 
     # TODO(Scott): move this to track_mjx.io module
     with open("/root/vast/scott-yang/track-mjx/data/twoClips.p", "rb") as file:
@@ -96,7 +100,7 @@ def main(cfg: DictConfig):
         custom_ppo.train,
         **train_config,
         num_evals=int(
-            cfg.trani_setup.train_config.num_timesteps / cfg.trani_setup.eval_every
+            cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
         ),
         episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
@@ -123,15 +127,11 @@ def main(cfg: DictConfig):
         metrics["num_steps"] = num_steps
         wandb.log(metrics, commit=False)
 
-    # pass in some args that this file has
-    # policy_params_fn_mod = functools.partial(policy_params_fn,
-    #                                      cfg=cfg, env=env, wandb=wandb, model_path=model_path)
-
-    def policy_params_fn_wrapper(
+    def policy_params_fn(
         current_step, make_policy, params, policy_params_fn_key
     ):
-        # Calls the original function with the pre-set arguments
-        return policy_params_fn(
+        '''wrapper function that pass in some args that this file has'''
+        return training_logging(
             current_step,
             make_policy,
             params,
@@ -146,7 +146,7 @@ def main(cfg: DictConfig):
     make_inference_fn, params, _ = train_fn(
         environment=env,
         progress_fn=wandb_progress,
-        policy_params_fn=policy_params_fn_wrapper,
+        policy_params_fn=policy_params_fn,
     )
 
     final_save_path = f"{model_path}/brax_ppo_rodent_run_finished"

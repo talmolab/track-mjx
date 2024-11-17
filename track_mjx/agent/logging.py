@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from absl import flags
 import hydra
 from omegaconf import DictConfig
@@ -58,8 +59,7 @@ def log_metric_to_wandb(metric_name, data, title=""):
         commit=False,
     )
 
-
-def policy_params_fn(
+def training_logging(
     num_steps, make_policy, params, rollout_key, cfg, env, wandb, model_path, walker
 ):
     """Main logging functions for policy params,
@@ -146,19 +146,7 @@ def policy_params_fn(
     )
 
     # Render the walker with the reference expert demonstration trajectory
-    os.environ["MUJOCO_GL"] = "osmesa"
     qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
-
-    # def f(x):
-    #     if len(x.shape) != 1:
-    #         return jax.lax.dynamic_slice_in_dim(
-    #             x,
-    #             0,
-    #             250,
-    #         )
-    #     return jp.array([])
-
-    # ref_traj = jax.tree_util.tree_map(f, reference_clip)
     ref_traj = rollout_env._get_reference_clip(rollout[0].info)
     print(f"clip_id:{rollout[0].info}")
     qposes_ref = np.repeat(
@@ -167,35 +155,8 @@ def policy_params_fn(
         axis=0,
     )
 
-    # Trying to align them when using the reset wrapper...
-    # Doesn't work bc reset wrapper handles the done under the hood so it's always 0 :(
-    # done_array = np.array([state.done for state in rollout])
-    # reset_indices = np.where(done_array == 1.0)[0]
-    # if reset_indices.shape[0] == 0:
-    #     aligned_traj = qposes_ref
-    # else:
-    #     aligned_traj = np.zeros_like(qposes_rollout)
-    #     # Set the first segment
-    #     aligned_traj[: reset_indices[0] + 1] = qposes_ref[: reset_indices[0] + 1]
+    _XML_PATH = Path(__file__).resolve().parent.parent / cfg.env_config.ghost_xml_path
 
-    #     # Iterate through reset points
-    #     for i in range(len(reset_indices) - 1):
-    #         start = reset_indices[i] + 1
-    #         end = reset_indices[i + 1] + 1
-    #         length = end - start
-    #         aligned_traj[start:end] = qposes_ref[:length]
-
-    #     # Set the last segment
-    #     if reset_indices[-1] < len(done_array) - 1:
-    #         start = reset_indices[-1] + 1
-    #         length = len(done_array) - start
-    #         aligned_traj[start:] = qposes_ref[:length]
-
-    # TODO Better relative path scripts
-    _XML_PATH = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),  # Move one folder up
-        cfg.env_config.ghost_xml_path,
-    )
     root = mjcf_dm.from_path(_XML_PATH)
     rescale.rescale_subtree(
         root,
@@ -225,7 +186,6 @@ def policy_params_fn(
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
 
             # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
-            # print(qpos1.shape, qpos2.shape)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(mj_data, camera=f"close_profile")

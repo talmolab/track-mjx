@@ -2,8 +2,8 @@ env_config:
   env_name: multi clip
   task_name: imitation
   walker_name: rodent
-  walker_xml_path: "/root/vast/scott-yang/Brax-Rodent-Run/models/rodent.xml"
-  ghost_xml_path: "environment/walker/assets/rodent_ghostpair_scale080.xml"
+  walker_xml_path: assets/rodent.xml
+  ghost_xml_path: environment/walker/assets/rodent_ghostpair_scale080.xml
 
   env_args:
     torque_actuators: False 
@@ -34,7 +34,7 @@ network_config:
   intention_size: 60
   kl_weight: 1e-4
 
-trani_setup:
+train_setup:
   agent_name: rodent
   run_name: imitation_debug
   eval_every: 1_000
@@ -64,7 +64,7 @@ logging_config:
 
 walker_config:
   torque_actuators: False 
-  xml_path: /root/vast/scott-yang/Brax-Rodent-Run/models/rodent.xml
+  xml_path: assets/rodent.xml
   joint_names:
     - vertebra_1_extend
     - hip_L_supinate

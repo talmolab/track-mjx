@@ -1,5 +1,6 @@
 import jax
 from jax import numpy as jp
+from pathlib import Path
 
 from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf as mjcf_brax
@@ -45,7 +46,8 @@ class Rodent(BaseWalker):
 
     def _load_mjcf_model(self, torque_actuators=False, rescale_factor=0.9):
         """Only using this for walker, not its pair"""
-        root = mjcf_dm.from_path(self._xml)
+        _XML_PATH = Path(__file__).resolve() / self._xml
+        root = mjcf_dm.from_path(_XML_PATH)
 
         # torque
         if torque_actuators:

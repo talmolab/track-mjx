@@ -297,7 +297,7 @@ def compute_tracking_rewards(
     """
 
     pos_array = data.qpos[:3]
-    reference_clip_pos = reference_clip.pos
+    reference_clip_pos = reference_clip.position
     pos_reward, pos_distance = compute_pos_reward(
         pos_array, reference_clip_pos, pos_reward_weight
     )

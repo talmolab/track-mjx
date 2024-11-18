@@ -8,7 +8,6 @@ from typing import Callable, Any
 
 import functools
 import jax
-from typing import Dict
 import wandb
 import imageio
 import mujoco
@@ -26,16 +25,16 @@ import warnings
 from jax import numpy as jp
 
 from track_mjx.environment import custom_wrappers
+from brax.envs.base import PipelineEnv
 
 
-def log_metric_to_wandb(metric_name, data, title=""):
-    """
-    Logs a list of metrics to wandb with a specified title.
+def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
+    """Logs a list of metrics to wandb with a specified title.
 
     Args:
-        metric_name (str): The key under which to log the metric.
-        data (list): List of (x, y) tuples or two lists (frames, rewards).
-        title (str): Title for the wandb plot.
+        metric_name: The key under which to log the metric.
+        data: List of (x, y) tuples or two lists (frames, rewards).
+        title: Title for the wandb plot.
     """
     if isinstance(data[0], tuple):
         # If data is a list of (x, y) tuples, separate it into frames and values
@@ -62,42 +61,36 @@ def log_metric_to_wandb(metric_name, data, title=""):
     )
 
 
-def training_logging(
+def setup_training_logging(
     num_steps: int,
     make_policy: Callable[
         [custom_losses.PPONetworkParams, bool],
         Callable[
             [jax.numpy.ndarray, jax.random.PRNGKey],
-            Tuple[jax.numpy.ndarray, Dict[str, Any]],
+            tuple[jax.numpy.ndarray, dict[str, Any]],
         ],
     ],
     params: custom_losses.PPONetworkParams,
     rollout_key: jax.random.PRNGKey,
     cfg: DictConfig,
     env: PipelineEnv,
-    wandb: Callable[[int, Dict[str, jnp.ndarray]], None],
+    wandb: Callable[[int, dict[str, jp.ndarray]], None],
     model_path: str,
-    walker: BaseWalker,
 ) -> None:
-    """
-    Logs metrics and videos for a reinforcement learning training rollout.
+    """Logs metrics and videos for a reinforcement learning training rollout.
 
     Args:
-        num_steps (int): The number of training steps completed.
-        make_policy (Callable): A function to create the policy with parameters and deterministic mode (reference to custom_ppo_networks).
-        params (custom_losses.PPONetworkParams): Parameters for the policy model (reference to custom_losses).
-        rollout_key (jax.random.PRNGKey): A PRNG key for generating rollout randomness.
-        cfg (DictConfig): Configuration dictionary for the environment and agent.
-        env (PipelineEnv): An instance of the base PipelineEnv envrionment.
-        wandb (Callable): The Weights and Biases logging function (reference to train).
-        model_path (str): The path to save the model parameters and videos.
-        walker (BaseWalker): The walker object used for simulation.
-
-    Returns:
-        None
+        num_steps: The number of training steps completed.
+        make_policy: A function to create the policy with parameters and deterministic mode (reference to custom_ppo_networks).
+        params: Parameters for the policy model (reference to custom_losses).
+        rollout_key: A PRNG key for generating rollout randomness.
+        cfg: Configuration dictionary for the environment and agent.
+        env: An instance of the base PipelineEnv envrionment.
+        wandb: The Weights and Biases logging function (reference to train).
+        model_path: The path to save the model parameters and videos.
     """
 
-    wlaker_config = cfg["reference_config"]
+    ref_trak_config = cfg["reference_config"]
 
     # Wrap the env in the brax autoreset and episode wrappers
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
@@ -114,7 +107,7 @@ def training_logging(
     state = jit_reset(reset_rng)
 
     rollout = [state]
-    for i in range(int(wlaker_config.clip_length * env._steps_for_cur_frame)):
+    for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
         ctrl, extras = jit_inference_fn(obs, act_rng)

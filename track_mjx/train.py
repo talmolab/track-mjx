@@ -39,7 +39,7 @@ from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
-from track_mjx.agent.logging import training_logging
+from track_mjx.agent.logging import setup_training_logging
 
 from track_mjx.environment.walker.rodent import Rodent
 
@@ -127,7 +127,7 @@ def main(cfg: DictConfig):
 
     def policy_params_fn(current_step, make_policy, params, policy_params_fn_key):
         """wrapper function that pass in some args that this file has"""
-        return training_logging(
+        return setup_training_logging(
             current_step,
             make_policy,
             params,
@@ -136,7 +136,6 @@ def main(cfg: DictConfig):
             env=env,
             wandb=wandb,
             model_path=model_path,
-            walker=walker,
         )
 
     make_inference_fn, params, _ = train_fn(

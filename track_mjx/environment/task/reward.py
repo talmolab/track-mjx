@@ -17,6 +17,10 @@ import numpy as np
 
 import os
 
+from track_mjx.environment.walker.base import BaseWalker
+from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
+from mujoco import MjData
+
 POS_REWARD_EXP_SCALE = 400.0
 QUAT_REWARD_EXP_SCALE = 4.0
 JOINT_REWARD_EXP_SCALE = 0.25
@@ -53,14 +57,13 @@ def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> np.ndarray:
 
 def compute_pos_reward(
     pos_array: jp.ndarray, reference_clip_pos: jp.ndarray, weight: float
-) -> Tuple[jp.ndarray, jp.ndarray]:
-    """
-    Position-based reward.
+) -> tuple[jp.ndarray, jp.ndarray]:
+    """Position-based reward.
 
     Args:
-        pos_array (jp.ndarray): Current position data.
-        reference_clip_pos (jp.ndarray): Reference trajectory position data.
-        weight (float): Weight for the reward.
+        pos_array: Current position data.
+        reference_clip_pos: Reference trajectory position data.
+        weight: Weight for the reward.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray]: Weighted position reward and position distance.
@@ -74,14 +77,13 @@ def compute_pos_reward(
 
 def compute_quat_reward(
     quat_array: jp.ndarray, reference_clip_quat: jp.ndarray, weight: float
-) -> Tuple[jp.ndarray, jp.ndarray]:
-    """
-    Quaternion-based reward.
+) -> tuple[jp.ndarray, jp.ndarray]:
+    """Quaternion-based reward.
 
     Args:
-        quat_array (jp.ndarray): Current quaternion data.
-        reference_clip_quat (jp.ndarray): Reference trajectory data.
-        weight (float): Weight for the reward.
+        quat_array: Current quaternion data.
+        reference_clip_quat: Reference trajectory data.
+        weight: Weight for the reward.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray]: Weighted quaternion reward and quaternion distance.
@@ -93,14 +95,13 @@ def compute_quat_reward(
 
 def compute_joint_reward(
     joint_array: jp.ndarray, reference_clip_joint: jp.ndarray, weight: float
-) -> Tuple[jp.ndarray, jp.ndarray]:
-    """
-    Joint-based reward.
+) -> tuple[jp.ndarray, jp.ndarray]:
+    """Joint-based reward.
 
     Args:
-        joint_array (jp.ndarray): Current joint position data.
-        reference_clip_joint (jp.ndarray): Reference trajectory joint position data.
-        weight (float): Weight for the reward.
+        joint_array: Current joint position data.
+        reference_clip_joint: Reference trajectory joint position data.
+        weight: Weight for the reward.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray]: Weighted joint reward and joint distance.
@@ -113,13 +114,12 @@ def compute_joint_reward(
 def compute_angvel_reward(
     angvel_array: jp.ndarray, reference_clip_angvel: jp.ndarray, weight: float
 ) -> jp.ndarray:
-    """
-    Angular velocity-based reward.
+    """Angular velocity-based reward.
 
     Args:
-        angvel_array (jp.ndarray): Current angular velocity data.
-        reference_clip_angvel (jp.ndarray): Reference trajectory angular velocity data.
-        weight (float): Weight for the reward.
+        angvel_array: Current angular velocity data.
+        reference_clip_angvel: Reference trajectory angular velocity data.
+        weight: Weight for the reward.
 
     Returns:
         jp.ndarray: Weighted angular velocity reward.
@@ -133,13 +133,12 @@ def compute_angvel_reward(
 def compute_bodypos_reward(
     bodypos_array: jp.ndarray, reference_clip_bodypos: jp.ndarray, weight: float
 ) -> jp.ndarray:
-    """
-    Body position-based reward.
+    """Body position-based reward.
 
     Args:
-        bodypos_array (jp.ndarray): Current body position data.
-        reference_clip (jp.ndarray): Reference trajectory body position data.
-        weight (float): Weight for the reward.
+        bodypos_array: Current body position data.
+        reference_clip: Reference trajectory body position data.
+        weight: Weight for the reward.
 
     Returns:
         jp.ndarray: Weighted body position reward.
@@ -154,13 +153,12 @@ def compute_bodypos_reward(
 def compute_endeff_reward(
     endeff_array: jp.ndarray, reference_clip_endeff: jp.ndarray, weight: float
 ) -> jp.ndarray:
-    """
-    End-effector-based reward.
+    """End-effector-based reward.
 
     Args:
-        endeff_array (jp.ndarray): Current end-effector position data.
-        reference_clip_endeff (jp.ndarray): Reference trajectory end-effector position data.
-        weight (float): Weight for the reward.
+        endeff_array: Current end-effector position data.
+        reference_clip_endeff: Reference trajectory end-effector position data.
+        weight: Weight for the reward.
 
     Returns:
         jp.ndarray: Weighted end-effector reward.
@@ -173,12 +171,11 @@ def compute_endeff_reward(
 
 
 def compute_ctrl_cost(action: jp.ndarray, weight: float) -> jp.ndarray:
-    """
-    Control cost of action.
+    """Control cost of action.
 
     Args:
-        action (jp.ndarray): Action array.
-        weight (float): Weight for the control cost.
+        action: Action array.
+        weight: Weight for the control cost.
 
     Returns:
         jp.ndarray: Weighted control cost.
@@ -190,13 +187,12 @@ def compute_ctrl_cost(action: jp.ndarray, weight: float) -> jp.ndarray:
 def compute_ctrl_diff_cost(
     action: jp.ndarray, prev_action: jp.ndarray, weight: float
 ) -> jp.ndarray:
-    """
-    Control cost for differences in actions.
+    """Control cost for differences in actions.
 
     Args:
-        action (jp.ndarray): Current action array.
-        prev_action (jp.ndarray): Previous action array.
-        weight (float): Weight for the control difference cost.
+        action: Current action array.
+        prev_action: Previous action array.
+        weight: Weight for the control difference cost.
 
     Returns:
         jp.ndarray: Weighted control difference cost.
@@ -206,21 +202,20 @@ def compute_ctrl_diff_cost(
 
 
 def compute_health_penalty(
-    xpos: jp.ndarray, torso_index: int, healthy_z_range: Tuple[float, float]
+    xpos_array: jp.ndarray, walker: BaseWalker, healthy_z_range: tuple[float, float]
 ) -> jp.ndarray:
-    """
-    Computes a penalty for being outside the healthy z-range.
+    """Computes a penalty for being outside the healthy z-range.
 
     Args:
-        xpos (jp.ndarray): Body positions array.
-        torso_index (int): Index of the torso in the positions array.
-        healthy_z_range (Tuple[float, float]): Minimum and maximum healthy z-range.
+        xpos: Body positions array.
+        walker: Walker based object.
+        healthy_z_range: Minimum and maximum healthy z-range.
 
     Returns:
         jp.ndarray: Fall penalty (0 for healthy, 1 for unhealthy).
     """
     min_z, max_z = healthy_z_range
-    torso_z = walker.get_torso_position(data.xpos)[2]
+    torso_z = walker.get_torso_position(xpos_array)[2]
     is_healthy = jp.where(torso_z < min_z, 0.0, 1.0)
     is_healthy = jp.where(torso_z > max_z, 0.0, is_healthy)
     fall = 1.0 - is_healthy
@@ -234,17 +229,16 @@ def compute_penalty_terms(
     too_far_dist: float,
     bad_pose_dist: float,
     bad_quat_dist: float,
-) -> Tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
-    """
-    Computes penalty terms based on distances.
+) -> tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
+    """Computes penalty terms based on distances.
 
     Args:
-        pos_distance (jp.ndarray): Distance in position space.
-        joint_distance (jp.ndarray): Distance in joint space.
-        quat_distance (jp.ndarray): Quaternion distance.
-        too_far_dist (float): Threshold for position distance penalty.
-        bad_pose_dist (float): Threshold for joint distance penalty.
-        bad_quat_dist (float): Threshold for quaternion distance penalty.
+        pos_distance: Distance in position space.
+        joint_distance: Distance in joint space.
+        quat_distance: Quaternion distance.
+        too_far_dist: Threshold for position distance penalty.
+        bad_pose_dist: Threshold for joint distance penalty.
+        bad_quat_dist: Threshold for quaternion distance penalty.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
@@ -263,8 +257,8 @@ def compute_tracking_rewards(
     reference_clip: ReferenceClip,
     walker: BaseWalker,
     action: jp.ndarray,
-    prev_action: jp.ndarray,
-    healthy_z_range: Tuple[float, float],
+    info: dict[str, jp.ndarray],
+    healthy_z_range: tuple[float, float],
     too_far_dist: float,
     bad_pose_dist: float,
     bad_quat_dist: float,
@@ -276,28 +270,27 @@ def compute_tracking_rewards(
     endeff_reward_weight: float = 1.0,
     ctrl_cost_weight: float = 1.0,
     ctrl_diff_cost_weight: float = 1.0,
-) -> Tuple[float, Dict[str, float]]:
-    """
-    Computes tracking rewards and penalties for motion imitation.
+) -> tuple[float, dict[str, float]]:
+    """Computes tracking rewards and penalties for motion imitation.
 
     Args:
-        data (MjData): Current state MjData object.
-        reference_clip (ReferenceClip): Reference trajectory objct.
-        walker (BaseWalker): Base walker object.
-        action (jp.ndarray): Current action.
-        prev_action (jp.ndarray): Previous action.
-        healthy_z_range (Tuple[float, float]): Healthy z-range bounds.
-        too_far_dist (float): Threshold for 'too far' penalty.
-        bad_pose_dist (float): Threshold for 'bad pose' penalty.
-        bad_quat_dist (float): Threshold for 'bad quaternion' penalty.
-        pos_reward_weight (float): Weight for position reward.
-        quat_reward_weight (float): Weight for quaternion reward.
-        joint_reward_weight (float): Weight for joint reward.
-        angvel_reward_weight (float): Weight for angular velocity reward.
-        bodypos_reward_weight (float): Weight for body position reward.
-        endeff_reward_weight (float): Weight for end-effector reward.
-        ctrl_cost_weight (float): Weight for control cost.
-        ctrl_diff_cost_weight (float): Weight for control difference cost.
+        data: Current state MjData object.
+        reference_clip: Reference trajectory objct.
+        walker: Base walker object.
+        action: Current action.
+        info: Dictionary of information for logging
+        healthy_z_range: Healthy z-range bounds.
+        too_far_dist: Threshold for 'too far' penalty.
+        bad_pose_dist: Threshold for 'bad pose' penalty.
+        bad_quat_dist: Threshold for 'bad quaternion' penalty.
+        pos_reward_weight: Weight for position reward.
+        quat_reward_weight: Weight for quaternion reward.
+        joint_reward_weight: Weight for joint reward.
+        angvel_reward_weight: Weight for angular velocity reward.
+        bodypos_reward_weight: Weight for body position reward.
+        endeff_reward_weight: Weight for end-effector reward.
+        ctrl_cost_weight: Weight for control cost.
+        ctrl_diff_cost_weight: Weight for control difference cost.
 
     Returns:
         Tuple[float, Dict[str, float]]: Total reward and detailed info dictionary.
@@ -344,7 +337,8 @@ def compute_tracking_rewards(
         action, info["prev_ctrl"], ctrl_diff_cost_weight
     )
 
-    fall = compute_health_penalty(data, walker, healthy_z_range)
+    xpos_array = data.xpos
+    fall = compute_health_penalty(xpos_array, walker, healthy_z_range)
     too_far, bad_pose, bad_quat, summed_pos_distance = compute_penalty_terms(
         pos_distance,
         joint_distance,

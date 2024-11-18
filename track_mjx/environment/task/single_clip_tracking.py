@@ -24,6 +24,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
 
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
+from track_mjx.environment.walker.base import BaseWalker
 
 _MOCAP_HZ = 50
 
@@ -48,7 +49,7 @@ class RodentTracking(PipelineEnv):
         angvel_reward_weight: float = 1.0,
         bodypos_reward_weight: float = 1.0,
         endeff_reward_weight: float = 1.0,
-        healthy_z_range: Tuple[float, float] = (0.03, 0.5),
+        healthy_z_range: tuple[float, float] = (0.03, 0.5),
         physics_steps_per_control_step: int = 10,
         reset_noise_scale: float = 1e-3,
         solver: str = "cg",
@@ -56,32 +57,31 @@ class RodentTracking(PipelineEnv):
         ls_iterations: int = 6,
         **kwargs: Any,
     ):
-        """
-        Initializes the RodentTracking environment.
+        """Initializes the RodentTracking environment.
 
         Args:
-            reference_clip (ReferenceClip): The reference trajectory data.
-            walker (BaseWalker): The base walker model.
-            torque_actuators (bool): Whether to use torque actuators. Defaults to False.
-            ref_len (int): Length of the reference trajectory. Defaults to 5.
-            too_far_dist (float): Threshold for "too far" penalty. Defaults to 0.1.
-            bad_pose_dist (float): Threshold for "bad pose" penalty. Defaults to infinity.
-            bad_quat_dist (float): Threshold for "bad quaternion" penalty. Defaults to infinity.
-            ctrl_cost_weight (float): Weight for control cost. Defaults to 0.01.
-            ctrl_diff_cost_weight (float): Weight for control difference cost. Defaults to 0.01.
-            pos_reward_weight (float): Weight for position reward. Defaults to 1.0.
-            quat_reward_weight (float): Weight for quaternion reward. Defaults to 1.0.
-            joint_reward_weight (float): Weight for joint reward. Defaults to 1.0.
-            angvel_reward_weight (float): Weight for angular velocity reward. Defaults to 1.0.
-            bodypos_reward_weight (float): Weight for body position reward. Defaults to 1.0.
-            endeff_reward_weight (float): Weight for end-effector reward. Defaults to 1.0.
-            healthy_z_range (Tuple[float, float]): Range for a healthy z-position. Defaults to (0.03, 0.5).
-            physics_steps_per_control_step (int): Number of physics steps per control step. Defaults to 10.
-            reset_noise_scale (float): Scale of noise for reset. Defaults to 1e-3.
-            solver (str): Solver type for Mujoco. Defaults to "cg".
-            iterations (int): Maximum number of solver iterations. Defaults to 6.
-            ls_iterations (int): Maximum number of line search iterations. Defaults to 6.
-            **kwargs (Any): Additional arguments for the PipelineEnv initialization.
+            reference_clip: The reference trajectory data.
+            walker: The base walker model.
+            torque_actuators: Whether to use torque actuators. Defaults to False.
+            ref_len: Length of the reference trajectory. Defaults to 5.
+            too_far_dist: Threshold for "too far" penalty. Defaults to 0.1.
+            bad_pose_dist: Threshold for "bad pose" penalty. Defaults to infinity.
+            bad_quat_dist: Threshold for "bad quaternion" penalty. Defaults to infinity.
+            ctrl_cost_weight: Weight for control cost. Defaults to 0.01.
+            ctrl_diff_cost_weight: Weight for control difference cost. Defaults to 0.01.
+            pos_reward_weight: Weight for position reward. Defaults to 1.0.
+            quat_reward_weight: Weight for quaternion reward. Defaults to 1.0.
+            joint_reward_weight: Weight for joint reward. Defaults to 1.0.
+            angvel_reward_weight: Weight for angular velocity reward. Defaults to 1.0.
+            bodypos_reward_weight: Weight for body position reward. Defaults to 1.0.
+            endeff_reward_weight: Weight for end-effector reward. Defaults to 1.0.
+            healthy_z_range: Range for a healthy z-position. Defaults to (0.03, 0.5).
+            physics_steps_per_control_step: Number of physics steps per control step. Defaults to 10.
+            reset_noise_scale: Scale of noise for reset. Defaults to 1e-3.
+            solver: Solver type for Mujoco. Defaults to "cg".
+            iterations: Maximum number of solver iterations. Defaults to 6.
+            ls_iterations: Maximum number of line search iterations. Defaults to 6.
+            **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         self.walker = walker
         self.walker._initialize_indices()
@@ -133,11 +133,10 @@ class RodentTracking(PipelineEnv):
         self._reset_noise_scale = reset_noise_scale
 
     def reset(self, rng: jp.ndarray) -> State:
-        """
-        Resets the environment to an initial state.
+        """Resets the environment to an initial state.
 
         Args:
-            rng (jp.ndarray): Random number generator state.
+            rng: Random number generator state.
 
         Returns:
             State: The reset environment state.
@@ -158,15 +157,14 @@ class RodentTracking(PipelineEnv):
         return self.reset_from_clip(rng, info, noise=True)
 
     def reset_from_clip(
-        self, rng: jp.ndarray, info: Dict[str, Any], noise: bool = True
+        self, rng: jp.ndarray, info: dict[str, Any], noise: bool = True
     ) -> State:
-        """
-        Resets the environment using a reference clip.
+        """Resets the environment using a reference clip.
 
         Args:
-            rng (jp.ndarray): Random number generator state.
-            info (Dict[str, Any]): Information dictionary.
-            noise (bool): Whether to add noise during reset. Defaults to True.
+            rng: Random number generator state.
+            info: Information dictionary.
+            noise: Whether to add noise during reset. Defaults to True.
 
         Returns:
             State: The reset environment state.
@@ -227,12 +225,11 @@ class RodentTracking(PipelineEnv):
         return State(data, obs, reward, done, metrics, info)
 
     def step(self, state: State, action: jp.ndarray) -> State:
-        """
-        Executes one timestep of the environment's dynamics.
+        """Executes one timestep of the environment's dynamics.
 
         Args:
-            state (State): The current environment state.
-            action (jp.ndarray): The action to take.
+            state: The current environment state object.
+            action: The action to take.
 
         Returns:
             State: The updated environment state.
@@ -359,14 +356,13 @@ class RodentTracking(PipelineEnv):
         return jax.tree_util.tree_map(f, self._get_reference_clip(info))
 
     def _get_obs(
-        self, data: mjx.Data, info: Dict[str, Any]
-    ) -> Tuple[jp.ndarray, jp.ndarray]:
-        """
-        Constructs the observation for the environment.
+        self, data: mjx.Data, info: dict[str, Any]
+    ) -> tuple[jp.ndarray, jp.ndarray]:
+        """Constructs the observation for the environment.
 
         Args:
-            data (mjx.Data): Current Mujoco simulation data.
-            info (Dict[str, Any]): Information dictionary containing the current state and reference trajectory details.
+            data: Current Mujoco simulation data.
+            info: Information dictionary containing the current state and reference trajectory details.
 
         Returns:
             Tuple[jp.ndarray, jp.ndarray]:
@@ -375,6 +371,10 @@ class RodentTracking(PipelineEnv):
         """
 
         ref_traj = self._get_reference_trajectory(info)
+
+        # pos_array = data.qpos[:3]
+        # quat_array = data.qpos[3:7]
+        # joint_array = data.qpos[7:]
 
         # walker methods to compute the necessary distances and differences
         track_pos_local = self.walker.compute_local_track_positions(

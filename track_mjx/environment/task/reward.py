@@ -202,7 +202,7 @@ def compute_ctrl_diff_cost(
 
 
 def compute_health_penalty(
-    xpos_array: jp.ndarray, walker: BaseWalker, healthy_z_range: tuple[float, float]
+    xpos: jp.ndarray, walker: BaseWalker, healthy_z_range: tuple[float, float]
 ) -> jp.ndarray:
     """Computes a penalty for being outside the healthy z-range.
 
@@ -215,7 +215,7 @@ def compute_health_penalty(
         jp.ndarray: Fall penalty (0 for healthy, 1 for unhealthy).
     """
     min_z, max_z = healthy_z_range
-    torso_z = walker.get_torso_position(xpos_array)[2]
+    torso_z = walker.get_torso_position(xpos)[2]
     is_healthy = jp.where(torso_z < min_z, 0.0, 1.0)
     is_healthy = jp.where(torso_z > max_z, 0.0, is_healthy)
     fall = 1.0 - is_healthy
@@ -323,13 +323,13 @@ def compute_tracking_rewards(
     bodypos_array = walker.get_body_positions(data.xpos)
     reference_clip_bodypos = reference_clip.body_positions[walker.body_idxs]
     bodypos_reward = compute_bodypos_reward(
-        bodypos_array, reference_clip_bodypos, walker, bodypos_reward_weight
+        bodypos_array, reference_clip_bodypos, bodypos_reward_weight
     )
 
     endeff_array = walker.get_end_effector_positions(data.xpos)
     reference_clip_endeff = reference_clip.body_positions[walker.endeff_idxs]
     endeff_reward = compute_endeff_reward(
-        endeff_array, reference_clip_endeff, walker, endeff_reward_weight
+        endeff_array, reference_clip_endeff, endeff_reward_weight
     )
 
     ctrl_cost = compute_ctrl_cost(action, ctrl_cost_weight)
@@ -337,8 +337,8 @@ def compute_tracking_rewards(
         action, info["prev_ctrl"], ctrl_diff_cost_weight
     )
 
-    xpos_array = data.xpos
-    fall = compute_health_penalty(xpos_array, walker, healthy_z_range)
+    xpos = data.xpos
+    fall = compute_health_penalty(xpos, walker, healthy_z_range)
     too_far, bad_pose, bad_quat, summed_pos_distance = compute_penalty_terms(
         pos_distance,
         joint_distance,

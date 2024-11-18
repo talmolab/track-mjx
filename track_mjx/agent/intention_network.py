@@ -1,20 +1,15 @@
-import dataclasses
-from typing import Any, Callable, Sequence, Tuple
-import warnings
+from typing import Sequence
 
 from brax.training import networks
 from brax.training import types
-from brax.training import distribution
-from brax.training.networks import MLP
-import brax.training.agents.ppo.networks as ppo_networks
 from brax.training.types import PRNGKey
 
 import jax
 import jax.numpy as jnp
 from jax import random
 
-import flax
 from flax import linen as nn
+from flax import nnx
 
 
 class Encoder(nn.Module):
@@ -42,6 +37,38 @@ class Encoder(nn.Module):
         mean_x = nn.Dense(self.latents, name="fc2_mean")(x)
         logvar_x = nn.Dense(self.latents, name="fc2_logvar")(x)
         return mean_x, logvar_x
+
+
+class Encoder(nnx.Module):
+    """Encoder Module for intention network, with NNX"""
+
+    def __init__(
+        self,
+        input_size: int,
+        layer_sizes: Sequence[int],
+        latents: int,
+        activation: networks.ActivationFn = nnx.relu,
+        kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform(),
+        bias: bool = True,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        """Module Initializer to create an Encoder module for intention network
+
+        Args:
+            input_size (int): input shape for the encoder
+            layer_sizes (Sequence[int]): layer size of the Encoder object, with fully connected weights
+            latents (int): output shape for the encoder, latent space size
+            activation (networks.ActivationFn, optional): activation function added between each linear layer, Defaults to nnx.relu.
+            kernel_init (networks.Initializer, optional): kernel initializer for the network Defaults to jax.nn.initializers.lecun_uniform().
+            bias (bool, optional): whether to use bias in the linear layer. Defaults to True.
+
+        Returns:
+            _type_: _description_
+        """
+        
+        nnx.Linear()
+        
 
 
 class Decoder(nn.Module):

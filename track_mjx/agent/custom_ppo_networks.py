@@ -4,23 +4,17 @@ This is needed because we need to route the observations
 to proper places in the network in the case of the VAE (CoMic, Hasenclever 2020)
 """
 
-import dataclasses
-from typing import Any, Callable, Sequence, Tuple
-import warnings
+from typing import Any, Sequence, Tuple
 
 from brax.training import networks
 from brax.training import types
 from brax.training import distribution
-from brax.training.networks import MLP
 
 from brax.training.types import PRNGKey
 
 import jax
-import jax.numpy as jnp
-from jax import random
 
 import flax
-from flax import linen as nn
 
 # import intention_network  # TODO(Scott): Do we need this?
 from track_mjx.agent import intention_network

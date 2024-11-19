@@ -6,7 +6,6 @@ from brax.training.types import PRNGKey
 
 import jax
 import jax.numpy as jnp
-
 from flax import nnx
 
 
@@ -36,6 +35,7 @@ class Encoder(nnx.Module):
         """
         self.layers = []
 
+        # input layer and intermediate layers
         for i, hidden_size in enumerate(layer_sizes[:-1]):
             if i != 0:
                 input_size = hidden_size
@@ -44,6 +44,7 @@ class Encoder(nnx.Module):
             )
             self.layers.append(activation)
             self.layers.append(nnx.LayerNorm(hidden_size, rngs=rngs))
+        # output layer
         self.out_mean = nnx.Linear(layer_sizes[-1], latents, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
         self.out_logvar = nnx.Linear(layer_sizes[-1], latents, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
 
@@ -91,15 +92,20 @@ class Decoder(nnx.Module):
             use_bias (bool, optional): whether to use bias to each layer. Defaults to True.
         """
         self.layers = []
-        for i, hidden_size in enumerate(layer_sizes):
-            if i != 0:
-                input_size = hidden_size
+        # first input layer
+        self.layers.append(nnx.Linear(input_size, layer_sizes[0], kernel_init=kernel_init, use_bias=use_bias, rngs=rngs))
+        # intermediate layers
+        for hidden_size in layer_sizes[1:-1]:
             self.layers.append(
                 nnx.Linear(input_size, hidden_size, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
             )
-            if i != len(layer_sizes) - 1 or activate_final:
-                self.layers.append(activation)
-                self.layers.append(nnx.LayerNorm(hidden_size, rngs=rngs))
+            self.layers.append(activation)
+            self.layers.append(nnx.LayerNorm(hidden_size, rngs=rngs))
+        # final layer
+        self.layers.append(nnx.Linear(layer_sizes[-1], output_size, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs))
+        if activate_final:
+            self.layers.append(activation)
+            self.layers.append(nnx.LayerNorm(output_size, rngs=rngs))
 
     def __call__(self, x: jnp.ndarray):
         """_summary_
@@ -115,7 +121,17 @@ class Decoder(nnx.Module):
         return x
 
 
-def reparameterize(rng, mean, logvar):
+def reparameterize(rng: nnx.Rngs, mean: jnp.ndarray, logvar: jnp.ndarray):
+    """Reparameterization trick for the latent space using multivariate Gaussian distribution
+
+    Args:
+        rng (nnx.Rngs): random number generator
+        mean (jnp.ndarray): the mean of the latent space
+        logvar (jnp.ndarray): the log variance of the latent space
+
+    Returns:
+        jnp.ndarray: reparameterized latent space
+    """
     std = jnp.exp(0.5 * logvar)
     eps = jax.random.normal(rng, logvar.shape)
     return mean + eps * std
@@ -200,7 +216,7 @@ def make_intention_policy(
         egocentric_obs_size=total_obs_size - reference_obs_size,
         latents=latent_size,
         action_size=action_size,
-        rngs=nnx.Rngs(),
+        rngs=nnx.Rngs(0),
     )
 
     def apply(processor_params, policy_params, obs, key):

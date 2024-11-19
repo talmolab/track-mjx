@@ -26,6 +26,8 @@ import flax
 import jax
 import jax.numpy as jnp
 
+from track_mjx.agent.nnx_ppo_network import PPOImitationNetworks
+
 
 @flax.struct.dataclass
 class PPONetworkParams:
@@ -104,7 +106,7 @@ def compute_ppo_loss(
     normalizer_params: Any,
     data: types.Transition,
     rng: jnp.ndarray,
-    ppo_network: ppo_networks.PPONetworks,
+    ppo_network: PPOImitationNetworks,
     entropy_cost: float = 1e-4,
     kl_weight: float = 1e-3,
     discounting: float = 0.9,
@@ -136,18 +138,18 @@ def compute_ppo_loss(
 
     _, policy_key, entropy_key = jax.random.split(rng, 3)
     parametric_action_distribution = ppo_network.parametric_action_distribution
-    policy_apply = ppo_network.policy_network.apply
-    value_apply = ppo_network.value_network.apply
+    policy = ppo_network.policy_network
+    value = ppo_network.value_network
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits, latent_mean, latent_logvar = policy_apply(
+    policy_logits, latent_mean, latent_logvar = policy(
         normalizer_params, params.policy, data.observation, policy_key
     )
 
-    baseline = value_apply(normalizer_params, params.value, data.observation)
+    baseline = value(normalizer_params, data.observation)
 
-    bootstrap_value = value_apply(
+    bootstrap_value = value(
         normalizer_params, params.value, data.next_observation[-1]
     )
 

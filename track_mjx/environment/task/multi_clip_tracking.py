@@ -29,7 +29,6 @@ class RodentMultiClipTracking(RodentTracking):
         self,
         reference_clip,
         walker,
-        torque_actuators: bool = False,
         ref_len: int = 5,
         too_far_dist=0.1,
         bad_pose_dist=jp.inf,
@@ -53,7 +52,6 @@ class RodentMultiClipTracking(RodentTracking):
         super().__init__(
             None,
             walker,
-            torque_actuators,
             ref_len,
             too_far_dist,
             bad_pose_dist,

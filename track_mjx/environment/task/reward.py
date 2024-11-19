@@ -17,6 +17,8 @@ import numpy as np
 
 import os
 
+from typing import Union
+
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from mujoco import MjData
@@ -32,7 +34,7 @@ CTRL_DIFF_COST_EXP_SCALE = 1.0
 PENALTY_POS_DISTANCE_SCALE = jp.array([1.0, 1.0, 0.2])
 
 
-def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> jp.ndarray:
     """Computes a quaternion distance limiting the difference to a max of pi/2.
 
     This function supports an arbitrary number of batch dimensions, B.
@@ -201,21 +203,17 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
-def compute_health_penalty(
-    xpos: jp.ndarray, walker: BaseWalker, healthy_z_range: tuple[float, float]
-) -> jp.ndarray:
+def compute_health_penalty(torso_z: jp.ndarray, healthy_z_range: tuple[float, float]) -> jp.ndarray:
     """Computes a penalty for being outside the healthy z-range.
 
     Args:
-        xpos: Body positions array.
-        walker: Walker based object.
+        torso_z: Torso z-position.
         healthy_z_range: Minimum and maximum healthy z-range.
 
     Returns:
         jp.ndarray: Fall penalty (0 for healthy, 1 for unhealthy).
     """
     min_z, max_z = healthy_z_range
-    torso_z = walker.get_torso_position(xpos)[2]
     is_healthy = jp.where(torso_z < min_z, 0.0, 1.0)
     is_healthy = jp.where(torso_z > max_z, 0.0, is_healthy)
     fall = 1.0 - is_healthy
@@ -270,7 +268,7 @@ def compute_tracking_rewards(
     endeff_reward_weight: float = 1.0,
     ctrl_cost_weight: float = 1.0,
     ctrl_diff_cost_weight: float = 1.0,
-) -> tuple[float, dict[str, float]]:
+) -> tuple[Union[jp.ndarray, dict[str, jp.ndarray]], ...]:
     """Computes tracking rewards and penalties for motion imitation.
 
     Args:
@@ -338,7 +336,8 @@ def compute_tracking_rewards(
     )
 
     xpos = data.xpos
-    fall = compute_health_penalty(xpos, walker, healthy_z_range)
+    torso_z = walker.get_torso_position(xpos)[2]
+    fall = compute_health_penalty(torso_z, healthy_z_range)
     too_far, bad_pose, bad_quat, summed_pos_distance = compute_penalty_terms(
         pos_distance,
         joint_distance,

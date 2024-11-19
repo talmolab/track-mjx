@@ -6,7 +6,6 @@ env_config:
   ghost_xml_path: environment/walker/assets/rodent_ghostpair_scale080.xml
 
   env_args:
-    torque_actuators: False 
     solver: "cg"
     iterations: 4
     ls_iterations: 4

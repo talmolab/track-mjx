@@ -36,7 +36,6 @@ class RodentTracking(PipelineEnv):
         self,
         reference_clip: ReferenceClip,
         walker: BaseWalker,
-        torque_actuators: bool = False,
         ref_len: int = 5,
         too_far_dist: float = 0.1,
         bad_pose_dist: float = jp.inf,

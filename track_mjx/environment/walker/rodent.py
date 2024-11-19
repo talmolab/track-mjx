@@ -143,6 +143,42 @@ class Rodent(BaseWalker):
             jp.ndarray: Torso position.
         """
         return xpos[self._torso_idx]
+    
+    def get_root_from_qpos(self, qpos: jp.ndarray) -> jp.ndarray:
+        """Extracts the root's positional values (x, y, z) from the state vector.
+
+        Args:
+            qpos (jp.ndarray): The full positional state vector of the model. 
+
+        Returns:
+            jp.ndarray: The root's positional values. Shape (3,).
+        """
+        return qpos[:3]
+
+    
+    def get_root_quaternion_from_qpos(self, qpos: jp.ndarray) -> jp.ndarray:
+        """Extracts the root's orientation quaternion (qw, qx, qy, qz) from the state vector.
+
+        Args:
+            qpos (jp.ndarray): The full positional state vector of the model. 
+
+        Returns:
+            jp.ndarray: The root's orientation quaternion. Shape (4,).
+        """
+        return qpos[3:7]
+
+    
+    def get_all_loc_joints(self, qpos: jp.ndarray) -> jp.ndarray:
+        """Extracts all joint positional values (excluding the root position and orientation) from the state vector.
+
+        Args:
+            qpos (jp.ndarray): The full positional state vector of the model.
+            
+        Returns:
+            jp.ndarray: The joint positions. Shape (num_joints,).
+        """
+        return qpos[7:]
+
 
     def compute_local_track_positions(
         self, ref_positions: jp.ndarray, qpos: jp.ndarray
@@ -156,10 +192,13 @@ class Rodent(BaseWalker):
         Returns:
             Local position differences rotated to align with agent orientation
         """
+        root = self.get_root_from_qpos(qpos)
+        quat = self.get_root_quaternion_from_qpos(qpos)
+        
         track_pos_local = jax.vmap(
             lambda pos, quat: brax_math.rotate(pos, quat),
             in_axes=(0, None),
-        )(ref_positions - qpos[:3], qpos[3:7]).flatten()
+        )(ref_positions - root, quat).flatten()
 
         return track_pos_local
 
@@ -175,10 +214,11 @@ class Rodent(BaseWalker):
         Returns:
             Quaternion distances
         """
+        quat = self.get_root_quaternion_from_qpos(qpos)
         quat_dist = jax.vmap(
             lambda ref_quat, agent_quat: brax_math.relative_quat(ref_quat, agent_quat),
             in_axes=(0, None),
-        )(ref_quats, qpos[3:7]).flatten()
+        )(ref_quats, quat).flatten()
 
         return quat_dist
 
@@ -192,9 +232,10 @@ class Rodent(BaseWalker):
             qpos: Full state vector containing joint positions
 
         Returns:
-            Joint distances
+            Joint distances Shape (num_joints,).
         """
-        joint_dist = (ref_joints - qpos[7:])[:, self._joint_idxs].flatten()
+        joints = self.get_all_loc_joints(qpos)
+        joint_dist = (ref_joints - joints)[:, self._joint_idxs].flatten()
 
         return joint_dist
 
@@ -211,12 +252,13 @@ class Rodent(BaseWalker):
         Returns:
             Local body position differences, rotated to align with agent orientation
         """
+        quat = self.get_root_quaternion_from_qpos(qpos)
         body_pos_dist_local = jax.vmap(
             lambda a, b: jax.vmap(brax_math.rotate, in_axes=(0, None))(a, b),
             in_axes=(0, None),
         )(
             (ref_positions - xpos)[:, self._body_idxs],
-            qpos[3:7],
+            quat,
         ).flatten()
 
         return body_pos_dist_local

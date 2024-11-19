@@ -29,7 +29,7 @@ from track_mjx.environment.walker.base import BaseWalker
 _MOCAP_HZ = 50
 
 
-class RodentTracking(PipelineEnv):
+class SingleClipTracking(PipelineEnv):
     """Single clip walker tracking using Brax PiepelineEnv backend, agonist of the walker"""
 
     def __init__(
@@ -370,10 +370,6 @@ class RodentTracking(PipelineEnv):
         """
 
         ref_traj = self._get_reference_trajectory(info)
-
-        # pos_array = data.qpos[:3]
-        # quat_array = data.qpos[3:7]
-        # joint_array = data.qpos[7:]
 
         # walker methods to compute the necessary distances and differences
         track_pos_local = self.walker.compute_local_track_positions(

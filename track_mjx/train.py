@@ -33,8 +33,8 @@ import pickle
 import warnings
 from jax import numpy as jp
 
-from track_mjx.environment.task.multi_clip_tracking import RodentMultiClipTracking
-from track_mjx.environment.task.single_clip_tracking import RodentTracking
+from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
+from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
 from track_mjx.environment import custom_wrappers
@@ -61,8 +61,8 @@ def main(cfg: DictConfig):
     flags.DEFINE_integer("iterations", 4, "number of solver iterations")
     flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
 
-    envs.register_environment("single clip", RodentTracking)
-    envs.register_environment("multi clip", RodentMultiClipTracking)
+    envs.register_environment("single clip", SingleClipTracking)
+    envs.register_environment("multi clip", MultiClipTracking)
 
     # config files
     env_cfg = hydra.compose(config_name="rodent-mc-intention")

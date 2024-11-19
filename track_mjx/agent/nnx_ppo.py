@@ -22,7 +22,7 @@ from brax.training.acme import running_statistics
 from brax.training.acme import specs
 
 # from brax.training.agents.ppo import losses as ppo_losses
-from track_mjx.agent import custom_losses as ppo_losses
+from track_mjx.agent import nnx_ppo_losses as ppo_losses
 from track_mjx.agent import nnx_ppo_network
 from track_mjx.agent.nnx_ppo_network import make_intention_ppo_networks, PPOTrainConfig, make_policy_fn
 from track_mjx.agent.intention_network import IntentionNetwork
@@ -122,7 +122,7 @@ def train(
         intention_latent_size=60,
         encoder_layers=config.encoder_layers,
         decoder_layers=config.decoder_layers,
-        value_hidden_layer_sizes=config.value_hidden_layer_sizes,
+        value_layer_sizes=config.value_layer_sizes,
     )
 
     # create the policy function that takes in observation and spits out action
@@ -130,7 +130,6 @@ def train(
 
     loss_fn = functools.partial(
         ppo_losses.compute_ppo_loss,
-        ppo_network=ppo_network,
         entropy_cost=config.entropy_cost,
         kl_weight=config.kl_weight,
         discounting=config.discounting,
@@ -140,17 +139,36 @@ def train(
         normalize_advantage=config.normalize_advantage,
     )
 
+    # define policy and value optimizer
+    optimizer = nnx.Optimizer(ppo_network, optax.adam(config.learning_rate))
+    
+    # define the metrics
+    metrics = nnx.MultiMetric(
+        total_loss=nnx.metrics.Average(),
+    )
+
     @nnx.jit
     def train_step(
         ppo_network: nnx_ppo_network.PPOImitationNetworks, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric, batch
     ):
         """Train for a single step."""
+        
+        acting.generate_unroll(
+                env,
+                current_state,
+                policy,
+                current_key,
+                unroll_length,
+                extra_fields=("truncation",),
+        )
         grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
-        (loss, logits), grads = grad_fn(, batch)
-        metrics.update(loss=loss, logits=logits, labels=batch["label"])  # In-place updates.
+        # Compute loss and gradients. Loss weights are provided in
+        # the previous partial function.
+        (total_loss, loss_components), grads = grad_fn(ppo_network=ppo_network, data=batch)  
+        # metrics.update(loss=loss, logits=logits, labels=batch["label"])  # In-place updates.
         optimizer.update(grads)  # In-place updates.
 
     @nnx.jit
-    def eval_step(model: CNN, metrics: nnx.MultiMetric, batch):
-        loss, logits = loss_fn(model, batch)
+    def eval_step(model: nnx_ppo_network.PPOImitationNetworks, metrics: nnx.MultiMetric, batch):
+        loss, logits = loss_fn(ppo_network=ppo_network, data=batch)
         metrics.update(loss=loss, logits=logits, labels=batch["label"])  # In-place updates.

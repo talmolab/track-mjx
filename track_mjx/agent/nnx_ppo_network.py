@@ -1,5 +1,6 @@
 from typing import Any, Sequence, Tuple, Callable
 
+from brax import base
 from brax.training import networks
 from brax.training import types
 from brax.training.acme import running_statistics
@@ -9,6 +10,7 @@ from track_mjx.agent import custom_ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
+from brax import envs
 from flax import nnx
 
 from brax.training.types import PRNGKey
@@ -36,7 +38,7 @@ class PPOTrainConfig:
     max_devices_per_host: int | None = None
     encoder_layers: Sequence[int] = (256,) * 2 
     decoder_layers: Sequence[int] = (256,) * 2
-    value_hidden_layer_sizes: Sequence[int] = (512,) * 3
+    value_layer_sizes: Sequence[int] = (512,) * 3
     num_eval_envs: int = 128
     learning_rate: float = 1e-4
     entropy_cost: float = 1e-4
@@ -60,14 +62,46 @@ class PPOTrainConfig:
     eval_env: envs.Env | None = None
     policy_params_fn: Callable[..., None] = lambda *args: None
     randomization_fn: Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]] | None = None
-    
 
 
-@dataclasses.dataclass
-class PPOImitationNetworks:
-    policy_network: IntentionNetwork
-    value_network: MLP
-    parametric_action_distribution: distribution.ParametricDistribution
+# @dataclasses.dataclass
+# class PPOImitationNetworks:
+#     policy_network: IntentionNetwork
+#     value_network: MLP
+#     parametric_action_distribution: distribution.ParametricDistribution
+
+class PPOImitationNetworks(nnx.Module):
+    """PPO Imitation Network class in nnx Module. Does not have a forward method,
+    but rather has the policy and value networks as attributes that can be called directly."""
+
+    def __init__(
+        self,
+        policy_network: IntentionNetwork,
+        value_network: MLP,
+        parametric_action_distribution: distribution.ParametricDistribution,
+    ):
+        self.policy_network = policy_network
+        self.value_network = value_network
+        self.parametric_action_distribution = parametric_action_distribution
+
+
+def make_value_network(
+    obs_size: int,
+    hidden_layer_sizes: Sequence[int] = (256,) * 2,
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = nnx.relu,
+):
+    """Create a policy network with appropriate parameters. The output of the value network is the value of the state, which is a scalar.
+
+    Args:
+        obs_size (int): observation size
+        hidden_layer_sizes (Sequence[int], optional): size of the neural network size. Defaults to (256,)*2.
+        activation (Callable[[jnp.ndarray], jnp.ndarray], optional): activation function to. Defaults to nnx.relu.
+
+    return:
+        MLP: value network
+    """
+    value_module = MLP([obs_size] + list(hidden_layer_sizes) + [1], activation_fn=activation, rngs=nnx.Rngs(0))
+    return value_module
 
 
 def make_intention_ppo_networks(
@@ -78,10 +112,11 @@ def make_intention_ppo_networks(
     intention_latent_size: int = 60,
     encoder_layers: Sequence[int] = (1024,) * 2,
     decoder_layers: Sequence[int] = (1024,) * 2,
-    value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    value_layer_sizes: Sequence[int] = (1024,) * 2,
 ) -> PPOImitationNetworks:
     """Make Imitation PPO networks with preprocessor."""
     parametric_action_distribution = distribution.NormalTanhDistribution(event_size=action_size)
+    # create policy network
     policy_network = IntentionNetwork(
         action_size=parametric_action_distribution.param_size,
         latents=intention_latent_size,
@@ -91,18 +126,14 @@ def make_intention_ppo_networks(
         decoder_layers=decoder_layers,
         rngs=nnx.Rngs(0),
     )
-    value_network = MLP( # TODO(Scott): make a `make_value_network` function
-        layer_sizes=value_hidden_layer_sizes, 
-        # TODO(Scott): since we are using nnx, we need to explicitly pass in input and output sizes, which means we need to know the observation size here
-        activation_fn=nnx.relu,
-        rngs=nnx.Rngs(0),
-    )
-
+    # create value network
+    value_network = make_value_network(observation_size, value_layer_sizes, activation=nnx.relu)
     return PPOImitationNetworks(
         policy_network=policy_network,
         value_network=value_network,
         parametric_action_distribution=parametric_action_distribution,
     )
+
 
 # TODO(scott): is this the right way to do this? Can we use functools.partial instead?
 def make_policy_fn(ppo_networks: PPOImitationNetworks):

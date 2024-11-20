@@ -20,48 +20,11 @@ import dataclasses
 from jax import numpy as jnp
 
 from track_mjx.agent.intention_network import IntentionNetwork
-from track_mjx.agent.nnx_ppo_network import make_intention_ppo_networks
 from track_mjx.agent.nnx_util import MLP
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
-
-@dataclasses.dataclass
-class PPOTrainConfig:
-    """Configuration for PPO training."""
-
-    num_timesteps: int = 1000000
-    episode_length: int = 1000
-    action_repeat: int = 1
-    num_envs: int = 1
-    max_devices_per_host: int | None = None
-    encoder_layers: Sequence[int] = (256,) * 2 
-    decoder_layers: Sequence[int] = (256,) * 2
-    value_layer_sizes: Sequence[int] = (512,) * 3
-    num_eval_envs: int = 128
-    learning_rate: float = 1e-4
-    entropy_cost: float = 1e-4
-    kl_weight: float = 1e-3
-    discounting: float = 0.9
-    seed: int = 0
-    unroll_length: int = 10
-    batch_size: int = 32
-    num_minibatches: int = 16
-    num_updates_per_batch: int = 2
-    num_evals: int = 1
-    num_resets_per_eval: int = 0
-    normalize_observations: bool = False
-    reward_scaling: float = 1.0
-    clipping_epsilon: float = 0.3
-    gae_lambda: float = 0.95
-    deterministic_eval: bool = False
-    network_factory: Callable = make_intention_ppo_networks
-    progress_fn: Callable[[int, Metrics], None] = lambda *args: None
-    normalize_advantage: bool = True
-    eval_env: envs.Env | None = None
-    policy_params_fn: Callable[..., None] = lambda *args: None
-    randomization_fn: Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]] | None = None
 
 
 # @dataclasses.dataclass
@@ -160,9 +123,47 @@ def make_policy_fn(ppo_networks: PPOImitationNetworks):
         log_prob = ppo_networks.parametric_action_distribution.log_prob(logits, raw_actions)
 
         postprocessed_actions = ppo_networks.parametric_action_distribution.postprocess(raw_actions)
+        print(f"Action: {postprocessed_actions}")
         return postprocessed_actions, {
             "log_prob": log_prob,
             "raw_action": raw_actions,
             "logits": logits,
         }
     return policy
+
+
+@dataclasses.dataclass
+class PPOTrainConfig:
+    """Configuration for PPO training."""
+
+    num_timesteps: int = 1000000
+    episode_length: int = 1000
+    action_repeat: int = 1
+    num_envs: int = 1
+    max_devices_per_host: int | None = None
+    encoder_layers: Sequence[int] = (256,) * 2 
+    decoder_layers: Sequence[int] = (256,) * 2
+    value_layer_sizes: Sequence[int] = (512,) * 3
+    num_eval_envs: int = 128
+    learning_rate: float = 1e-4
+    entropy_cost: float = 1e-4
+    kl_weight: float = 1e-3
+    discounting: float = 0.9
+    seed: int = 0
+    unroll_length: int = 10
+    batch_size: int = 32
+    num_minibatches: int = 16
+    num_updates_per_batch: int = 2
+    num_evals: int = 1
+    num_resets_per_eval: int = 0
+    normalize_observations: bool = False
+    reward_scaling: float = 1.0
+    clipping_epsilon: float = 0.3
+    gae_lambda: float = 0.95
+    deterministic_eval: bool = False
+    network_factory: Callable = make_intention_ppo_networks
+    progress_fn: Callable[[int, Metrics], None] = lambda *args: None
+    normalize_advantage: bool = True
+    eval_env: envs.Env | None = None
+    policy_params_fn: Callable[..., None] = lambda *args: None
+    randomization_fn: Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]] | None = None

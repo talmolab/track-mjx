@@ -1,3 +1,4 @@
+data_path:
 env_config:
   env_name: multi clip
   task_name: imitation

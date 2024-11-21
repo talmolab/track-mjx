@@ -27,6 +27,7 @@ from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 
+
 class FlyTracking(SingleClipTracking):
     """Single clip fly tracking"""
 
@@ -53,7 +54,7 @@ class FlyTracking(SingleClipTracking):
         iterations: int = 6,
         ls_iterations: int = 6,
         **kwargs: Any,
-    ): 
+    ):
         """Initializes the FlyTracking environment."""
         super().__init__(
             reference_clip=reference_clip,

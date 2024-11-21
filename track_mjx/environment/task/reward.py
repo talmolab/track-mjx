@@ -23,16 +23,6 @@ from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from mujoco import MjData
 
-POS_REWARD_EXP_SCALE = 400.0
-QUAT_REWARD_EXP_SCALE = 4.0
-JOINT_REWARD_EXP_SCALE = 0.25
-ANGVEL_REWARD_EXP_SCALE = 0.5
-BODYPOS_REWARD_EXP_SCALE = 8.0
-ENDEFF_REWARD_EXP_SCALE = 500.0
-CTRL_COST_EXP_SCALE = 1.0
-CTRL_DIFF_COST_EXP_SCALE = 1.0
-PENALTY_POS_DISTANCE_SCALE = jp.array([1.0, 1.0, 0.2])
-
 
 def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> jp.ndarray:
     """Computes a quaternion distance limiting the difference to a max of pi/2.
@@ -58,7 +48,10 @@ def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> jp.ndarray:
 
 
 def compute_pos_reward(
-    pos_array: jp.ndarray, reference_clip_pos: jp.ndarray, weight: float
+    pos_array: jp.ndarray,
+    reference_clip_pos: jp.ndarray,
+    weight: float,
+    pos_reward_exp_scale: float,
 ) -> tuple[jp.ndarray, jp.ndarray]:
     """Position-based reward.
 
@@ -66,19 +59,23 @@ def compute_pos_reward(
         pos_array: Current position data.
         reference_clip_pos: Reference trajectory position data.
         weight: Weight for the reward.
+        pos_reward_exp_scale: Scaling factor for position rewards.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray]: Weighted position reward and position distance.
     """
     pos_distance = pos_array - reference_clip_pos
     weighted_pos_reward = weight * jp.exp(
-        -POS_REWARD_EXP_SCALE * jp.sum(pos_distance**2)
+        -pos_reward_exp_scale * jp.sum(pos_distance**2)
     )
     return weighted_pos_reward, pos_distance
 
 
 def compute_quat_reward(
-    quat_array: jp.ndarray, reference_clip_quat: jp.ndarray, weight: float
+    quat_array: jp.ndarray,
+    reference_clip_quat: jp.ndarray,
+    weight: float,
+    quat_reward_exp_scale: float,
 ) -> tuple[jp.ndarray, jp.ndarray]:
     """Quaternion-based reward.
 
@@ -86,17 +83,21 @@ def compute_quat_reward(
         quat_array: Current quaternion data.
         reference_clip_quat: Reference trajectory data.
         weight: Weight for the reward.
+        quat_reward_exp_scale: Scaling factor for quaternion rewards.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray]: Weighted quaternion reward and quaternion distance.
     """
     quat_distance = jp.sum(_bounded_quat_dist(quat_array, reference_clip_quat) ** 2)
-    weighted_quat_reward = weight * jp.exp(-QUAT_REWARD_EXP_SCALE * quat_distance)
+    weighted_quat_reward = weight * jp.exp(-quat_reward_exp_scale * quat_distance)
     return weighted_quat_reward, quat_distance
 
 
 def compute_joint_reward(
-    joint_array: jp.ndarray, reference_clip_joint: jp.ndarray, weight: float
+    joint_array: jp.ndarray,
+    reference_clip_joint: jp.ndarray,
+    weight: float,
+    joint_reward_exp_scale: float,
 ) -> tuple[jp.ndarray, jp.ndarray]:
     """Joint-based reward.
 
@@ -104,17 +105,21 @@ def compute_joint_reward(
         joint_array: Current joint position data.
         reference_clip_joint: Reference trajectory joint position data.
         weight: Weight for the reward.
+        joint_reward_exp_scale: Scaling factor for joint rewards.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray]: Weighted joint reward and joint distance.
     """
     joint_distance = jp.sum((joint_array - reference_clip_joint) ** 2)
-    weighted_joint_reward = weight * jp.exp(-JOINT_REWARD_EXP_SCALE * joint_distance)
+    weighted_joint_reward = weight * jp.exp(-joint_reward_exp_scale * joint_distance)
     return weighted_joint_reward, joint_distance
 
 
 def compute_angvel_reward(
-    angvel_array: jp.ndarray, reference_clip_angvel: jp.ndarray, weight: float
+    angvel_array: jp.ndarray,
+    reference_clip_angvel: jp.ndarray,
+    weight: float,
+    angvel_reward_exp_scale: float,
 ) -> jp.ndarray:
     """Angular velocity-based reward.
 
@@ -122,18 +127,22 @@ def compute_angvel_reward(
         angvel_array: Current angular velocity data.
         reference_clip_angvel: Reference trajectory angular velocity data.
         weight: Weight for the reward.
+        angvel_reward_exp_scale: Scaling factor for angular velocity rewards.
 
     Returns:
         jp.ndarray: Weighted angular velocity reward.
     """
     weighted_angvel_reward = weight * jp.exp(
-        -ANGVEL_REWARD_EXP_SCALE * jp.sum((angvel_array - reference_clip_angvel) ** 2)
+        -angvel_reward_exp_scale * jp.sum((angvel_array - reference_clip_angvel) ** 2)
     )
     return weighted_angvel_reward
 
 
 def compute_bodypos_reward(
-    bodypos_array: jp.ndarray, reference_clip_bodypos: jp.ndarray, weight: float
+    bodypos_array: jp.ndarray,
+    reference_clip_bodypos: jp.ndarray,
+    weight: float,
+    bodypos_reward_exp_scale: float,
 ) -> jp.ndarray:
     """Body position-based reward.
 
@@ -141,19 +150,23 @@ def compute_bodypos_reward(
         bodypos_array: Current body position data.
         reference_clip: Reference trajectory body position data.
         weight: Weight for the reward.
-
+        bodypos_reward_exp_scale: Scaling factor for body position rewards.
+        
     Returns:
         jp.ndarray: Weighted body position reward.
     """
     weighted_bodypos_reward = weight * jp.exp(
-        -BODYPOS_REWARD_EXP_SCALE
+        -bodypos_reward_exp_scale
         * jp.sum((bodypos_array - reference_clip_bodypos).flatten() ** 2)
     )
     return weighted_bodypos_reward
 
 
 def compute_endeff_reward(
-    endeff_array: jp.ndarray, reference_clip_endeff: jp.ndarray, weight: float
+    endeff_array: jp.ndarray,
+    reference_clip_endeff: jp.ndarray,
+    weight: float,
+    endeff_reward_exp_scale: float,
 ) -> jp.ndarray:
     """End-effector-based reward.
 
@@ -161,12 +174,13 @@ def compute_endeff_reward(
         endeff_array: Current end-effector position data.
         reference_clip_endeff: Reference trajectory end-effector position data.
         weight: Weight for the reward.
+        endeff_reward_exp_scale: Scaling factor for end-effector rewards.
 
     Returns:
         jp.ndarray: Weighted end-effector reward.
     """
     weighted_endeff_reward = weight * jp.exp(
-        -ENDEFF_REWARD_EXP_SCALE
+        -endeff_reward_exp_scale
         * jp.sum((endeff_array - reference_clip_endeff).flatten() ** 2)
     )
     return weighted_endeff_reward
@@ -203,7 +217,9 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
-def compute_health_penalty(torso_z: jp.ndarray, healthy_z_range: tuple[float, float]) -> jp.ndarray:
+def compute_health_penalty(
+    torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
+) -> jp.ndarray:
     """Computes a penalty for being outside the healthy z-range.
 
     Args:
@@ -227,6 +243,7 @@ def compute_penalty_terms(
     too_far_dist: float,
     bad_pose_dist: float,
     bad_quat_dist: float,
+    penalty_pos_distance_scale: jp.ndarray,
 ) -> tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
     """Computes penalty terms based on distances.
 
@@ -237,13 +254,14 @@ def compute_penalty_terms(
         too_far_dist: Threshold for position distance penalty.
         bad_pose_dist: Threshold for joint distance penalty.
         bad_quat_dist: Threshold for quaternion distance penalty.
+        penalty_pos_distance_scale: Scaling factor for positional penalties as an array.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
             Penalties for being too far, bad pose, bad quaternion,
             and the summed position distance.
     """
-    summed_pos_distance = jp.sum((pos_distance * PENALTY_POS_DISTANCE_SCALE) ** 2)
+    summed_pos_distance = jp.sum((pos_distance * penalty_pos_distance_scale) ** 2)
     too_far = jp.where(summed_pos_distance > too_far_dist, 1.0, 0.0)
     bad_pose = jp.where(joint_distance > bad_pose_dist, 1.0, 0.0)
     bad_quat = jp.where(quat_distance > bad_quat_dist, 1.0, 0.0)
@@ -268,6 +286,15 @@ def compute_tracking_rewards(
     endeff_reward_weight: float = 1.0,
     ctrl_cost_weight: float = 1.0,
     ctrl_diff_cost_weight: float = 1.0,
+    pos_reward_exp_scale: float = 400.0,
+    quat_reward_exp_scale: float = 4.0,
+    joint_reward_exp_scale: float = 0.25,
+    angvel_reward_exp_scale: float = 0.5,
+    bodypos_reward_exp_scale: float = 8.0,
+    endeff_reward_exp_scale: float = 500.0,
+    ctrl_cost_exp_scale: float = 1.0,
+    ctrl_diff_cost_exp_scale: float = 1.0,
+    penalty_pos_distance_scale: jp.ndarray = jp.array([1.0, 1.0, 0.2]),
 ) -> tuple[Union[jp.ndarray, dict[str, jp.ndarray]], ...]:
     """Computes tracking rewards and penalties for motion imitation.
 
@@ -289,6 +316,15 @@ def compute_tracking_rewards(
         endeff_reward_weight: Weight for end-effector reward.
         ctrl_cost_weight: Weight for control cost.
         ctrl_diff_cost_weight: Weight for control difference cost.
+        pos_reward_exp_scale: Scaling factor for position rewards.
+        quat_reward_exp_scale: Scaling factor for quaternion rewards.
+        joint_reward_exp_scale: Scaling factor for joint rewards.
+        angvel_reward_exp_scale: Scaling factor for angular velocity rewards.
+        bodypos_reward_exp_scale: Scaling factor for body position rewards.
+        endeff_reward_exp_scale: Scaling factor for end-effector rewards.
+        ctrl_cost_exp_scale: Scaling factor for control cost.
+        ctrl_diff_cost_exp_scale: Scaling factor for control difference cost.
+        penalty_pos_distance_scale: Scaling factor for positional penalties as an array.
 
     Returns:
         Tuple[float, Dict[str, float]]: Total reward and detailed info dictionary.
@@ -297,37 +333,46 @@ def compute_tracking_rewards(
     pos_array = data.qpos[:3]
     reference_clip_pos = reference_clip.position
     pos_reward, pos_distance = compute_pos_reward(
-        pos_array, reference_clip_pos, pos_reward_weight
+        pos_array, reference_clip_pos, pos_reward_weight, pos_reward_exp_scale
     )
 
     quat_array = data.qpos[3:7]
     reference_clip_quat = reference_clip.quaternion
     quat_reward, quat_distance = compute_quat_reward(
-        quat_array, reference_clip_quat, quat_reward_weight
+        quat_array, reference_clip_quat, quat_reward_weight, quat_reward_exp_scale
     )
 
     joint_array = data.qpos[7:]
     reference_clip_joint = reference_clip.joints
     joint_reward, joint_distance = compute_joint_reward(
-        joint_array, reference_clip_joint, joint_reward_weight
+        joint_array, reference_clip_joint, joint_reward_weight, joint_reward_exp_scale
     )
 
     angvel_array = data.qvel[3:6]
     reference_clip_angvel = reference_clip.angular_velocity
     angvel_reward = compute_angvel_reward(
-        angvel_array, reference_clip_angvel, angvel_reward_weight
+        angvel_array,
+        reference_clip_angvel,
+        angvel_reward_weight,
+        angvel_reward_exp_scale,
     )
 
     bodypos_array = walker.get_body_positions(data.xpos)
     reference_clip_bodypos = reference_clip.body_positions[walker.body_idxs]
     bodypos_reward = compute_bodypos_reward(
-        bodypos_array, reference_clip_bodypos, bodypos_reward_weight
+        bodypos_array,
+        reference_clip_bodypos,
+        bodypos_reward_weight,
+        bodypos_reward_exp_scale,
     )
 
     endeff_array = walker.get_end_effector_positions(data.xpos)
     reference_clip_endeff = reference_clip.body_positions[walker.endeff_idxs]
     endeff_reward = compute_endeff_reward(
-        endeff_array, reference_clip_endeff, endeff_reward_weight
+        endeff_array,
+        reference_clip_endeff,
+        endeff_reward_weight,
+        endeff_reward_exp_scale,
     )
 
     ctrl_cost = compute_ctrl_cost(action, ctrl_cost_weight)
@@ -345,6 +390,7 @@ def compute_tracking_rewards(
         too_far_dist,
         bad_pose_dist,
         bad_quat_dist,
+        penalty_pos_distance_scale,
     )
 
     info["joint_distance"] = joint_distance

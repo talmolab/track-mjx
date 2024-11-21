@@ -49,6 +49,15 @@ class SingleClipTracking(PipelineEnv):
         bodypos_reward_weight: float = 1.0,
         endeff_reward_weight: float = 1.0,
         healthy_z_range: tuple[float, float] = (0.03, 0.5),
+        pos_reward_exp_scale: float = 400.0,
+        quat_reward_exp_scale: float = 4.0,
+        joint_reward_exp_scale: float = 0.25,
+        angvel_reward_exp_scale: float = 0.5,
+        bodypos_reward_exp_scale: float = 8.0,
+        endeff_reward_exp_scale: float = 500.0,
+        ctrl_cost_exp_scale: float = 1.0,
+        ctrl_diff_cost_exp_scale: float = 1.0,
+        penalty_pos_distance_scale: jp.ndarray = jp.array([1.0, 1.0, 0.2]),
         physics_steps_per_control_step: int = 10,
         reset_noise_scale: float = 1e-3,
         solver: str = "cg",
@@ -61,25 +70,34 @@ class SingleClipTracking(PipelineEnv):
         Args:
             reference_clip: The reference trajectory data.
             walker: The base walker model.
-            torque_actuators: Whether to use torque actuators. Defaults to False.
-            ref_len: Length of the reference trajectory. Defaults to 5.
-            too_far_dist: Threshold for "too far" penalty. Defaults to 0.1.
-            bad_pose_dist: Threshold for "bad pose" penalty. Defaults to infinity.
-            bad_quat_dist: Threshold for "bad quaternion" penalty. Defaults to infinity.
-            ctrl_cost_weight: Weight for control cost. Defaults to 0.01.
-            ctrl_diff_cost_weight: Weight for control difference cost. Defaults to 0.01.
-            pos_reward_weight: Weight for position reward. Defaults to 1.0.
-            quat_reward_weight: Weight for quaternion reward. Defaults to 1.0.
-            joint_reward_weight: Weight for joint reward. Defaults to 1.0.
-            angvel_reward_weight: Weight for angular velocity reward. Defaults to 1.0.
-            bodypos_reward_weight: Weight for body position reward. Defaults to 1.0.
-            endeff_reward_weight: Weight for end-effector reward. Defaults to 1.0.
-            healthy_z_range: Range for a healthy z-position. Defaults to (0.03, 0.5).
-            physics_steps_per_control_step: Number of physics steps per control step. Defaults to 10.
-            reset_noise_scale: Scale of noise for reset. Defaults to 1e-3.
-            solver: Solver type for Mujoco. Defaults to "cg".
-            iterations: Maximum number of solver iterations. Defaults to 6.
-            ls_iterations: Maximum number of line search iterations. Defaults to 6.
+            torque_actuators: Whether to use torque actuators.
+            ref_len: Length of the reference trajectory.
+            too_far_dist: Threshold for "too far" penalty.
+            bad_pose_dist: Threshold for "bad pose" penalty.
+            bad_quat_dist: Threshold for "bad quaternion" penalty.
+            ctrl_cost_weight: Weight for control cost.
+            ctrl_diff_cost_weight: Weight for control difference cost.
+            pos_reward_weight: Weight for position reward.
+            quat_reward_weight: Weight for quaternion reward.
+            joint_reward_weight: Weight for joint reward.
+            angvel_reward_weight: Weight for angular velocity reward.
+            bodypos_reward_weight: Weight for body position reward.
+            endeff_reward_weight: Weight for end-effector reward.
+            healthy_z_range: Range for a healthy z-position.
+            pos_reward_exp_scale: Scaling factor for position rewards.
+            quat_reward_exp_scale: Scaling factor for quaternion rewards.
+            joint_reward_exp_scale: Scaling factor for joint rewards.
+            angvel_reward_exp_scale: Scaling factor for angular velocity rewards.
+            bodypos_reward_exp_scale: Scaling factor for body position rewards.
+            endeff_reward_exp_scale: Scaling factor for end-effector rewards.
+            ctrl_cost_exp_scale: Scaling factor for control cost.
+            ctrl_diff_cost_exp_scale: Scaling factor for control difference cost.
+            penalty_pos_distance_scale: Scaling factor for positional penalties as an array.
+            physics_steps_per_control_step: Number of physics steps per control step.
+            reset_noise_scale: Scale of noise for reset.
+            solver: Solver type for Mujoco.
+            iterations: Maximum number of solver iterations.
+            ls_iterations: Maximum number of line search iterations.
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         self.walker = walker
@@ -115,6 +133,7 @@ class SingleClipTracking(PipelineEnv):
         )
         print(f"self._steps_for_cur_frame: {self._steps_for_cur_frame}")
 
+        # TODO: wrap together rewards terms to data class? (Kevin)
         self._reference_clip = reference_clip
         self._bad_pose_dist = bad_pose_dist
         self._too_far_dist = too_far_dist
@@ -129,6 +148,15 @@ class SingleClipTracking(PipelineEnv):
         self._ctrl_cost_weight = ctrl_cost_weight
         self._ctrl_diff_cost_weight = ctrl_diff_cost_weight
         self._healthy_z_range = healthy_z_range
+        self._pos_reward_exp_scale = pos_reward_exp_scale
+        self._quat_reward_exp_scale = quat_reward_exp_scale
+        self._joint_reward_exp_scale = joint_reward_exp_scale
+        self._angvel_reward_exp_scale = angvel_reward_exp_scale
+        self._bodypos_reward_exp_scale = bodypos_reward_exp_scale
+        self._endeff_reward_exp_scale = endeff_reward_exp_scale
+        self._ctrl_cost_exp_scale = ctrl_cost_exp_scale
+        self._ctrl_diff_cost_exp_scale = ctrl_diff_cost_exp_scale
+        self._penalty_pos_distance_scale = penalty_pos_distance_scale
         self._reset_noise_scale = reset_noise_scale
 
     def reset(self, rng: jp.ndarray) -> State:
@@ -286,6 +314,15 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward_weight=self._endeff_reward_weight,
             ctrl_cost_weight=self._ctrl_cost_weight,
             ctrl_diff_cost_weight=self._ctrl_diff_cost_weight,
+            pos_reward_exp_scale=self._pos_reward_exp_scale,
+            quat_reward_exp_scale=self._quat_reward_exp_scale,
+            joint_reward_exp_scale=self._joint_reward_exp_scale,
+            angvel_reward_exp_scale=self._angvel_reward_exp_scale,
+            bodypos_reward_exp_scale=self._bodypos_reward_exp_scale,
+            endeff_reward_exp_scale=self._endeff_reward_exp_scale,
+            ctrl_cost_exp_scale=self._ctrl_cost_exp_scale,
+            ctrl_diff_cost_exp_scale=self._ctrl_diff_cost_exp_scale,
+            penalty_pos_distance_scale=self._penalty_pos_distance_scale,
         )
 
         info["prev_ctrl"] = action

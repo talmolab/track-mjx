@@ -73,8 +73,9 @@ def main(cfg: DictConfig):
     wlaker_config = cfg["walker_config"]
 
     # TODO(Scott): move this to track_mjx.io module
-    with open("/root/vast/scott-yang/track-mjx/data/twoClips.p", "rb") as file:
-        # Use pickle.load() to load the data from the file
+    input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
+    print(f"Loading data: {input_data_path}")
+    with open(input_data_path, "rb") as file:
         reference_clip = pickle.load(file)
 
     # TODO (Kevin): add this as a yaml config

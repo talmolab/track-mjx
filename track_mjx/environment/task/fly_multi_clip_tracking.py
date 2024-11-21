@@ -25,8 +25,8 @@ from track_mjx.environment.task.fly_single_clip_tracking import FlyTracking
 
 
 class FlyMultiClipTracking(FlyTracking):
-    '''Multiclip Fly tracking using FlyTracking environment'''
-    
+    """Multiclip Fly tracking using FlyTracking environment"""
+
     def __init__(
         self,
         reference_clip,

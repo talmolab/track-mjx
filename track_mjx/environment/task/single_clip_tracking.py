@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
+from track_mjx.environment.task.reward import RewardConfig
 
 _MOCAP_HZ = 50
 
@@ -129,28 +130,29 @@ class SingleClipTracking(PipelineEnv):
         )
         print(f"self._steps_for_cur_frame: {self._steps_for_cur_frame}")
 
-        # TODO: wrap together rewards terms to data class? (Kevin)
+        self._reward_config = RewardConfig(
+            too_far_dist=too_far_dist,
+            bad_pose_dist=bad_pose_dist,
+            bad_quat_dist=bad_quat_dist,
+            ctrl_cost_weight=ctrl_cost_weight,
+            ctrl_diff_cost_weight=ctrl_diff_cost_weight,
+            pos_reward_weight=pos_reward_weight,
+            quat_reward_weight=quat_reward_weight,
+            joint_reward_weight=joint_reward_weight,
+            angvel_reward_weight=angvel_reward_weight,
+            bodypos_reward_weight=bodypos_reward_weight,
+            endeff_reward_weight=endeff_reward_weight,
+            healthy_z_range=healthy_z_range,
+            pos_reward_exp_scale=pos_reward_exp_scale,
+            quat_reward_exp_scale=quat_reward_exp_scale,
+            joint_reward_exp_scale=joint_reward_exp_scale,
+            angvel_reward_exp_scale=angvel_reward_exp_scale,
+            bodypos_reward_exp_scale=bodypos_reward_exp_scale,
+            endeff_reward_exp_scale=endeff_reward_exp_scale,
+            penalty_pos_distance_scale=penalty_pos_distance_scale,
+        )
         self._reference_clip = reference_clip
-        self._bad_pose_dist = bad_pose_dist
-        self._too_far_dist = too_far_dist
-        self._bad_quat_dist = bad_quat_dist
         self._ref_len = ref_len
-        self._pos_reward_weight = pos_reward_weight
-        self._quat_reward_weight = quat_reward_weight
-        self._joint_reward_weight = joint_reward_weight
-        self._angvel_reward_weight = angvel_reward_weight
-        self._bodypos_reward_weight = bodypos_reward_weight
-        self._endeff_reward_weight = endeff_reward_weight
-        self._ctrl_cost_weight = ctrl_cost_weight
-        self._ctrl_diff_cost_weight = ctrl_diff_cost_weight
-        self._healthy_z_range = healthy_z_range
-        self._pos_reward_exp_scale = pos_reward_exp_scale
-        self._quat_reward_exp_scale = quat_reward_exp_scale
-        self._joint_reward_exp_scale = joint_reward_exp_scale
-        self._angvel_reward_exp_scale = angvel_reward_exp_scale
-        self._bodypos_reward_exp_scale = bodypos_reward_exp_scale
-        self._endeff_reward_exp_scale = endeff_reward_exp_scale
-        self._penalty_pos_distance_scale = penalty_pos_distance_scale
         self._reset_noise_scale = reset_noise_scale
 
     def reset(self, rng: jp.ndarray) -> State:
@@ -296,25 +298,7 @@ class SingleClipTracking(PipelineEnv):
             walker=self.walker,
             action=action,
             info=info,
-            healthy_z_range=self._healthy_z_range,
-            too_far_dist=self._too_far_dist,
-            bad_pose_dist=self._bad_pose_dist,
-            bad_quat_dist=self._bad_quat_dist,
-            pos_reward_weight=self._pos_reward_weight,
-            quat_reward_weight=self._quat_reward_weight,
-            joint_reward_weight=self._joint_reward_weight,
-            angvel_reward_weight=self._angvel_reward_weight,
-            bodypos_reward_weight=self._bodypos_reward_weight,
-            endeff_reward_weight=self._endeff_reward_weight,
-            ctrl_cost_weight=self._ctrl_cost_weight,
-            ctrl_diff_cost_weight=self._ctrl_diff_cost_weight,
-            pos_reward_exp_scale=self._pos_reward_exp_scale,
-            quat_reward_exp_scale=self._quat_reward_exp_scale,
-            joint_reward_exp_scale=self._joint_reward_exp_scale,
-            angvel_reward_exp_scale=self._angvel_reward_exp_scale,
-            bodypos_reward_exp_scale=self._bodypos_reward_exp_scale,
-            endeff_reward_exp_scale=self._endeff_reward_exp_scale,
-            penalty_pos_distance_scale=self._penalty_pos_distance_scale,
+            reward_config=self._reward_config,
         )
 
         info["prev_ctrl"] = action

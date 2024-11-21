@@ -32,8 +32,6 @@ env_config:
     angvel_reward_exp_scale: 0.5
     bodypos_reward_exp_scale: 8.0
     endeff_reward_exp_scale: 500.0
-    ctrl_cost_exp_scale: 1.0
-    ctrl_diff_cost_exp_scale: 1.0
     penalty_pos_distance_scale: !jp.array[1.0, 1.0, 0.2]
 
 reference_config:

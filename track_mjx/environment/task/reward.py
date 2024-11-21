@@ -151,7 +151,7 @@ def compute_bodypos_reward(
         reference_clip: Reference trajectory body position data.
         weight: Weight for the reward.
         bodypos_reward_exp_scale: Scaling factor for body position rewards.
-        
+
     Returns:
         jp.ndarray: Weighted body position reward.
     """
@@ -292,8 +292,6 @@ def compute_tracking_rewards(
     angvel_reward_exp_scale: float = 0.5,
     bodypos_reward_exp_scale: float = 8.0,
     endeff_reward_exp_scale: float = 500.0,
-    ctrl_cost_exp_scale: float = 1.0,
-    ctrl_diff_cost_exp_scale: float = 1.0,
     penalty_pos_distance_scale: jp.ndarray = jp.array([1.0, 1.0, 0.2]),
 ) -> tuple[Union[jp.ndarray, dict[str, jp.ndarray]], ...]:
     """Computes tracking rewards and penalties for motion imitation.
@@ -322,8 +320,6 @@ def compute_tracking_rewards(
         angvel_reward_exp_scale: Scaling factor for angular velocity rewards.
         bodypos_reward_exp_scale: Scaling factor for body position rewards.
         endeff_reward_exp_scale: Scaling factor for end-effector rewards.
-        ctrl_cost_exp_scale: Scaling factor for control cost.
-        ctrl_diff_cost_exp_scale: Scaling factor for control difference cost.
         penalty_pos_distance_scale: Scaling factor for positional penalties as an array.
 
     Returns:

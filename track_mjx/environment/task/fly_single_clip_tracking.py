@@ -29,7 +29,7 @@ from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 
 
 class FlyTracking(SingleClipTracking):
-    """Single clip fly tracking"""
+    """Single clip fly tracking using SingleClipTracking environment"""
 
     def __init__(
         self,
@@ -48,6 +48,13 @@ class FlyTracking(SingleClipTracking):
         bodypos_reward_weight=1.0,
         endeff_reward_weight=1.0,
         healthy_z_range=(-0.03, 0.1),
+        pos_reward_exp_scale: float = 400.0,
+        quat_reward_exp_scale: float = 4.0,
+        joint_reward_exp_scale: float = 0.25,
+        angvel_reward_exp_scale: float = 0.5,
+        bodypos_reward_exp_scale: float = 8.0,
+        endeff_reward_exp_scale: float = 500.0,
+        penalty_pos_distance_scale: jp.ndarray = jp.array([1.0, 1.0, 0.2]),
         physics_steps_per_control_step=10,
         reset_noise_scale=1e-3,
         solver="cg",
@@ -72,6 +79,13 @@ class FlyTracking(SingleClipTracking):
             bodypos_reward_weight=bodypos_reward_weight,
             endeff_reward_weight=endeff_reward_weight,
             healthy_z_range=healthy_z_range,
+            pos_reward_exp_scale=pos_reward_exp_scale,
+            quat_reward_exp_scale=quat_reward_exp_scale,
+            joint_reward_exp_scale=joint_reward_exp_scale,
+            angvel_reward_exp_scale=angvel_reward_exp_scale,
+            bodypos_reward_exp_scale=bodypos_reward_exp_scale,
+            endeff_reward_exp_scale=endeff_reward_exp_scale,
+            penalty_pos_distance_scale=penalty_pos_distance_scale,
             physics_steps_per_control_step=physics_steps_per_control_step,
             reset_noise_scale=reset_noise_scale,
             solver=solver,

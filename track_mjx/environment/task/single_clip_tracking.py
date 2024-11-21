@@ -55,8 +55,6 @@ class SingleClipTracking(PipelineEnv):
         angvel_reward_exp_scale: float = 0.5,
         bodypos_reward_exp_scale: float = 8.0,
         endeff_reward_exp_scale: float = 500.0,
-        ctrl_cost_exp_scale: float = 1.0,
-        ctrl_diff_cost_exp_scale: float = 1.0,
         penalty_pos_distance_scale: jp.ndarray = jp.array([1.0, 1.0, 0.2]),
         physics_steps_per_control_step: int = 10,
         reset_noise_scale: float = 1e-3,
@@ -90,8 +88,6 @@ class SingleClipTracking(PipelineEnv):
             angvel_reward_exp_scale: Scaling factor for angular velocity rewards.
             bodypos_reward_exp_scale: Scaling factor for body position rewards.
             endeff_reward_exp_scale: Scaling factor for end-effector rewards.
-            ctrl_cost_exp_scale: Scaling factor for control cost.
-            ctrl_diff_cost_exp_scale: Scaling factor for control difference cost.
             penalty_pos_distance_scale: Scaling factor for positional penalties as an array.
             physics_steps_per_control_step: Number of physics steps per control step.
             reset_noise_scale: Scale of noise for reset.
@@ -154,8 +150,6 @@ class SingleClipTracking(PipelineEnv):
         self._angvel_reward_exp_scale = angvel_reward_exp_scale
         self._bodypos_reward_exp_scale = bodypos_reward_exp_scale
         self._endeff_reward_exp_scale = endeff_reward_exp_scale
-        self._ctrl_cost_exp_scale = ctrl_cost_exp_scale
-        self._ctrl_diff_cost_exp_scale = ctrl_diff_cost_exp_scale
         self._penalty_pos_distance_scale = penalty_pos_distance_scale
         self._reset_noise_scale = reset_noise_scale
 
@@ -320,8 +314,6 @@ class SingleClipTracking(PipelineEnv):
             angvel_reward_exp_scale=self._angvel_reward_exp_scale,
             bodypos_reward_exp_scale=self._bodypos_reward_exp_scale,
             endeff_reward_exp_scale=self._endeff_reward_exp_scale,
-            ctrl_cost_exp_scale=self._ctrl_cost_exp_scale,
-            ctrl_diff_cost_exp_scale=self._ctrl_diff_cost_exp_scale,
             penalty_pos_distance_scale=self._penalty_pos_distance_scale,
         )
 

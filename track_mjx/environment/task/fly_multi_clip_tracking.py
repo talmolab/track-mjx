@@ -21,10 +21,12 @@ import typing
 from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
 
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
-from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+from track_mjx.environment.task.fly_single_clip_tracking import FlyTracking
 
 
-class MultiClipTracking(SingleClipTracking):
+class FlyMultiClipTracking(FlyTracking):
+    '''Multiclip Fly tracking using FlyTracking environment'''
+    
     def __init__(
         self,
         reference_clip,

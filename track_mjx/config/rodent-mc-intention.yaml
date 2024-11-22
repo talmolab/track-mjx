@@ -74,6 +74,7 @@ logging_config:
   algo_name: ppo
 
 walker_config:
+  walker_type: Rodent
   torque_actuators: False 
   xml_path: assets/rodent.xml
   joint_names:

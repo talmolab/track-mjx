@@ -74,6 +74,7 @@ logging_config:
   algo_name: ppo
 
 walker_config:
+  walker_type: FlyBody
   torque_actuators: False 
   xml_path: assets/fruitfly/fruitfly_fast.xml
   joint_names:

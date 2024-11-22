@@ -42,6 +42,7 @@ from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import setup_training_logging
 
 from track_mjx.environment.walker.rodent import Rodent
+from track_mjx.environment.walker.fly import FlyBody
 
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -70,16 +71,20 @@ def main(cfg: DictConfig):
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
-    wlaker_config = cfg["walker_config"]
+    walker_config = cfg["walker_config"]
 
-    # TODO(Scott): move this to track_mjx.io module
     input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
     print(f"Loading data: {input_data_path}")
     with open(input_data_path, "rb") as file:
         reference_clip = pickle.load(file)
 
-    # TODO (Kevin): add this as a yaml config
-    walker = Rodent(**wlaker_config)
+    walker_map = {
+        "Rodent": Rodent,
+        "FlyBody": FlyBody,
+    }
+    
+    walker_class = walker_map[walker_config['walker_type']]
+    walker = walker_class(**walker_config)
 
     # Automatically match dict keys and func needs
     env = envs.get_environment(

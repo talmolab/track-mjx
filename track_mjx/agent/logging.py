@@ -182,7 +182,7 @@ def setup_training_logging(
         axis=0,
     )
 
-    # TODO: Make this ghost rendering walker agonist
+    # TODO: Make this ghost rendering walker agonist (Kevin)
     _XML_PATH = Path(__file__).resolve().parent.parent / cfg.env_config.ghost_xml_path
     root = mjcf_dm.from_path(_XML_PATH)
     rescale.rescale_subtree(

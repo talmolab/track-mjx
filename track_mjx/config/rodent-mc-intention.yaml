@@ -1,11 +1,11 @@
 data_path:
+walker_type: Rodent
 
 env_config:
-  env_name: multi clip
+  env_name: rodent_multi_clip
   task_name: imitation
   walker_name: rodent
-  walker_xml_path: assets/rodent.xml
-  ghost_xml_path: environment/walker/assets/rodent_ghostpair_scale080.xml
+  ghost_xml_path: assets/rodent/rodent_ghostpair_scale080.xml
 
   env_args:
     solver: "cg"
@@ -32,10 +32,12 @@ env_config:
     angvel_reward_exp_scale: 0.5
     bodypos_reward_exp_scale: 8.0
     endeff_reward_exp_scale: 500.0
-    penalty_pos_distance_scale: !jp.array[1.0, 1.0, 0.2]
+    penalty_pos_distance_scale: [1.0, 1.0, 0.2]
 
 reference_config:
   clip_length: 250
+  random_init_range: 50
+  traj_length: 5
 
 network_config:
   arch_name: intention
@@ -74,9 +76,8 @@ logging_config:
   algo_name: ppo
 
 walker_config:
-  walker_type: Rodent
   torque_actuators: False 
-  xml_path: assets/rodent.xml
+  xml_path: assets/rodent/rodent.xml
   joint_names:
     - vertebra_1_extend
     - hip_L_supinate

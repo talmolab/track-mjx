@@ -16,6 +16,8 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import uuid
 
+from pathlib import Path
+
 import functools
 import jax
 from typing import Dict
@@ -48,7 +50,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(config_path="config", config_name="rodent-mc-intention")
+@hydra.main(config_path="config", config_name="fly-mc-intention")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -62,17 +64,23 @@ def main(cfg: DictConfig):
     flags.DEFINE_integer("iterations", 4, "number of solver iterations")
     flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
 
-    envs.register_environment("single clip", SingleClipTracking)
-    envs.register_environment("multi clip", MultiClipTracking)
+    envs.register_environment("rodent_single_clip", SingleClipTracking)
+    envs.register_environment("rodent_multi_clip", MultiClipTracking)
+    envs.register_environment("fly_multi_clip", MultiClipTracking)
 
     # config files
-    env_cfg = hydra.compose(config_name="rodent-mc-intention")
+    env_cfg = hydra.compose(config_name="fly-mc-intention")
     env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
     walker_config = cfg["walker_config"]
+    traj_config = cfg["reference_config"]
 
+    # TODO: Fix this dependency issue
+    import sys
+
+    sys.modules["preprocessing"] = preprocessing
     input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
     print(f"Loading data: {input_data_path}")
     with open(input_data_path, "rb") as file:
@@ -82,8 +90,8 @@ def main(cfg: DictConfig):
         "Rodent": Rodent,
         "FlyBody": FlyBody,
     }
-    
-    walker_class = walker_map[walker_config['walker_type']]
+
+    walker_class = walker_map[env_cfg["walker_type"]]
     walker = walker_class(**walker_config)
 
     # Automatically match dict keys and func needs
@@ -97,7 +105,7 @@ def main(cfg: DictConfig):
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     # Will work on not hardcoding these values later
-    episode_length = (250 - 50 - 5) * env._steps_for_cur_frame
+    episode_length = (traj_config.clip_length - traj_config.random_init_range - traj_config.traj_length) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
 
     train_fn = functools.partial(

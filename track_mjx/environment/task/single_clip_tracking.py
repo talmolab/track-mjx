@@ -64,7 +64,7 @@ class SingleClipTracking(PipelineEnv):
         ls_iterations: int = 6,
         **kwargs: Any,
     ):
-        """Initializes the RodentTracking environment.
+        """Initializes the SingleTracking environment.
 
         Args:
             reference_clip: The reference trajectory data.
@@ -149,7 +149,7 @@ class SingleClipTracking(PipelineEnv):
             angvel_reward_exp_scale=angvel_reward_exp_scale,
             bodypos_reward_exp_scale=bodypos_reward_exp_scale,
             endeff_reward_exp_scale=endeff_reward_exp_scale,
-            penalty_pos_distance_scale=penalty_pos_distance_scale,
+            penalty_pos_distance_scale=jp.array(penalty_pos_distance_scale),
         )
         self._reference_clip = reference_clip
         self._ref_len = ref_len

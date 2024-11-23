@@ -142,3 +142,36 @@ class BaseWalker(ABC):
             Torso position vector
         """
         return xpos[self.torso_idx]
+
+    def get_root_from_qpos(self, qpos: jp.ndarray) -> jp.ndarray:
+        """Extracts the root's positional values (x, y, z) from the state vector.
+
+        Args:
+            qpos (jp.ndarray): The full positional state vector of the model.
+
+        Returns:
+            jp.ndarray: The root's positional values. Shape (3,).
+        """
+        return qpos[:3]
+
+    def get_root_quaternion_from_qpos(self, qpos: jp.ndarray) -> jp.ndarray:
+        """Extracts the root's orientation quaternion (qw, qx, qy, qz) from the state vector.
+
+        Args:
+            qpos (jp.ndarray): The full positional state vector of the model.
+
+        Returns:
+            jp.ndarray: The root's orientation quaternion. Shape (4,).
+        """
+        return qpos[3:7]
+
+    def get_all_loc_joints(self, qpos: jp.ndarray) -> jp.ndarray:
+        """Extracts all joint positional values (excluding the root position and orientation) from the state vector.
+
+        Args:
+            qpos (jp.ndarray): The full positional state vector of the model.
+
+        Returns:
+            jp.ndarray: The joint positions. Shape (num_joints,).
+        """
+        return qpos[7:]

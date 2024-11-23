@@ -90,18 +90,8 @@ class FlyBody(BaseWalker):
             ]
         )
 
-        self._thorax_idx = self._mjcf_model.model.name2id("thorax", "body")
-
-    def get_thorax_position(self, xpos: jp.ndarray) -> jp.ndarray:
-        """Retrieve the thorax's position.
-
-        Args:
-            xpos: The full positional state of the model.
-
-        Returns:
-            jp.ndarray: Thorax position.
-        """
-        return xpos[self._thorax_idx]
+        # Treat thorax as torso
+        self._torso_idx = self._mjcf_model.model.name2id("thorax", "body")
 
     def compute_local_track_positions(
         self, ref_positions: jp.ndarray, qpos: jp.ndarray
@@ -144,6 +134,23 @@ class FlyBody(BaseWalker):
         )(ref_quats, quat).flatten()
 
         return quat_dist
+
+    def compute_local_joint_distances(
+        self, ref_joints: jp.ndarray, qpos: jp.ndarray
+    ) -> jp.ndarray:
+        """Compute joint distances relative to reference joints.
+
+        Args:
+            ref_joints: Reference joint positions
+            qpos: Full state vector containing joint positions
+
+        Returns:
+            Joint distances Shape (num_joints,).
+        """
+        joints = self.get_all_loc_joints(qpos)
+        joint_dist = (ref_joints - joints)[:, self._joint_idxs].flatten()
+
+        return joint_dist
 
     def compute_local_body_positions(
         self, ref_positions: jp.ndarray, xpos: jp.ndarray, qpos: jp.ndarray

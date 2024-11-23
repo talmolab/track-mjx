@@ -5,7 +5,7 @@ env_config:
   env_name: fly_multi_clip
   task_name: imitation
   walker_name: fly
-  ghost_xml_path: assets/fruitfly/fruitfly_force_fast_ghostpair.xml
+  ghost_xml_path: environment/walker/assets/fruitfly/fruitfly_force_fast_ghostpair.xml
 
   env_args:
     solver: "cg"

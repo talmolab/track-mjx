@@ -44,13 +44,15 @@ from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import setup_training_logging
 
 from track_mjx.environment.walker.rodent import Rodent
-from track_mjx.environment.walker.fly import FlyBody
+from track_mjx.environment.walker.fly import Fly
+
+from track_mjx.environment.task.reward import RewardConfig
 
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(config_path="config", config_name="fly-mc-intention")
+@hydra.main(config_path="config", config_name="rodent-mc-intention")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -69,7 +71,7 @@ def main(cfg: DictConfig):
     envs.register_environment("fly_multi_clip", MultiClipTracking)
 
     # config files
-    env_cfg = hydra.compose(config_name="fly-mc-intention")
+    env_cfg = hydra.compose(config_name="rodent-mc-intention")
     env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
@@ -87,25 +89,51 @@ def main(cfg: DictConfig):
         reference_clip = pickle.load(file)
 
     walker_map = {
-        "Rodent": Rodent,
-        "FlyBody": FlyBody,
+        "rodent": Rodent,
+        "fly": Fly,
     }
 
     walker_class = walker_map[env_cfg["walker_type"]]
     walker = walker_class(**walker_config)
+    
+    reward_config = RewardConfig(
+            too_far_dist=env_rewards.too_far_dist,
+            bad_pose_dist=env_rewards.bad_pose_dist,
+            bad_quat_dist=env_rewards.bad_quat_dist,
+            ctrl_cost_weight=env_rewards.ctrl_cost_weight,
+            ctrl_diff_cost_weight=env_rewards.ctrl_diff_cost_weight,
+            pos_reward_weight=env_rewards.pos_reward_weight,
+            quat_reward_weight=env_rewards.quat_reward_weight,
+            joint_reward_weight=env_rewards.joint_reward_weight,
+            angvel_reward_weight=env_rewards.angvel_reward_weight,
+            bodypos_reward_weight=env_rewards.bodypos_reward_weight,
+            endeff_reward_weight=env_rewards.endeff_reward_weight,
+            healthy_z_range=env_rewards.healthy_z_range,
+            pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
+            quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
+            joint_reward_exp_scale=env_rewards.joint_reward_exp_scale,
+            angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
+            bodypos_reward_exp_scale=env_rewards.bodypos_reward_exp_scale,
+            endeff_reward_exp_scale=env_rewards.endeff_reward_exp_scale,
+            penalty_pos_distance_scale=jp.array(env_rewards.penalty_pos_distance_scale),
+        )
 
     # Automatically match dict keys and func needs
     env = envs.get_environment(
         env_name=cfg.env_config.env_name,
         reference_clip=reference_clip,
         walker=walker,
+        reward_config=reward_config,
         **env_args,
-        **env_rewards,
     )
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     # Will work on not hardcoding these values later
-    episode_length = (traj_config.clip_length - traj_config.random_init_range - traj_config.traj_length) * env._steps_for_cur_frame
+    episode_length = (
+        traj_config.clip_length
+        - traj_config.random_init_range
+        - traj_config.traj_length
+    ) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
 
     train_fn = functools.partial(

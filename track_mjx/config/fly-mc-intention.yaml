@@ -1,11 +1,11 @@
 data_path:
-walker_type: FlyBody
+walker_type: fly
 
 env_config:
   env_name: fly_multi_clip
   task_name: imitation
   walker_name: fly
-  ghost_xml_path: environment/walker/assets/fruitfly/fruitfly_force_fast_ghostpair.xml
+  ghost_xml_path: environment/walker/assets/fruitfly/fruitfly_force_pair.xml
 
   env_args:
     solver: "cg"
@@ -77,7 +77,6 @@ logging_config:
 
 walker_config:
   torque_actuators: False 
-  xml_path: assets/fruitfly/fruitfly_force_fast.xml
   joint_names:
     - coxa_flexion_T1_left
     - coxa_twist_T1_left

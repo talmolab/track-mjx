@@ -1,11 +1,11 @@
 data_path:
-walker_type: Rodent
+walker_type: rodent
 
 env_config:
   env_name: rodent_multi_clip
   task_name: imitation
   walker_name: rodent
-  ghost_xml_path: environment/walker/assets/rodent/rodent_ghostpair_scale080.xml
+  ghost_xml_path: environment/walker/assets/rodent/rodent_ghostpair_scale.xml
 
   env_args:
     solver: "cg"
@@ -77,7 +77,6 @@ logging_config:
 
 walker_config:
   torque_actuators: False 
-  xml_path: assets/rodent/rodent.xml
   joint_names:
     - vertebra_1_extend
     - hip_L_supinate

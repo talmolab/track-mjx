@@ -44,7 +44,7 @@ class RewardConfig:
     angvel_reward_weight: float
     bodypos_reward_weight: float
     endeff_reward_weight: float
-    healthy_z_range: Tuple[float, float]
+    healthy_z_range: tuple[float, float]
     pos_reward_exp_scale: float
     quat_reward_exp_scale: float
     joint_reward_exp_scale: float

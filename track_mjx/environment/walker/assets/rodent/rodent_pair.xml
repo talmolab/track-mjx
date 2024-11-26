@@ -158,6 +158,7 @@
     <worldbody>
       <geom name="floor" class="collision_floor" pos="0 0 -0.005" size="10 10 0.025" type="plane" material="grid"/>
       <!-- <light name="spotlight" mode="targetbodycom" target="world"/> -->
+      
       <camera name="top" mode="fixed" fovy="100.0" pos="0 0 1" xyaxes="1 0 0 0 1 0"/>
       <camera name="close_profile" mode="trackcom" pos=".5 -.5 0.5" xyaxes="1 1 0 -1 1 2"/>
       <replicate count="2" euler="0 0 180" sep="-">

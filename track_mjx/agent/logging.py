@@ -182,16 +182,20 @@ def setup_training_logging(
         axis=0,
     )
 
-    # TODO: Make this ghost rendering walker agonist (Kevin)
     _XML_PATH = Path(__file__).resolve().parent.parent / cfg.env_config.ghost_xml_path
-    root = mjcf_dm.from_path(_XML_PATH)
-    rescale.rescale_subtree(
-        root,
-        0.9 / 0.8,
-        0.9 / 0.8,
-    )
 
-    mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+    # root = mjcf_dm.from_path(_XML_PATH)
+    # rescale.rescale_subtree(
+    #     root,
+    #     0.9 / 0.8,
+    #     0.9 / 0.8,
+    # )
+    # mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+
+    spec = mujoco.MjSpec()
+    spec = spec.from_file(str(_XML_PATH))
+    mj_model = spec.compile()
+
     mj_model.opt.solver = {
         "cg": mujoco.mjtSolver.mjSOL_CG,
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
@@ -200,6 +204,19 @@ def setup_training_logging(
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
 
+    site_id = [
+        mj_model.site(i).id
+        for i in range(mj_model.nsite)
+        if "-0" in mj_model.site(i).name
+    ]
+    for id in site_id:
+        mj_model.site(id).rgba = [1, 0, 0, 1]
+
+    scene_option = mujoco.MjvOption()
+    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+    scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
+    scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
+
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
     renderer = mujoco.Renderer(mj_model, height=512, width=512)
@@ -207,13 +224,13 @@ def setup_training_logging(
     # render while stepping using mujoco
     video_path = f"{model_path}/{num_steps}.mp4"
 
-    with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
+    with imageio.get_writer(video_path, fps=50) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
 
             # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera=f"close_profile")
+            renderer.update_scene(mj_data, camera=1)
             pixels = renderer.render()
             video.append_data(pixels)
 

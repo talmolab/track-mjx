@@ -37,26 +37,8 @@ class SingleClipTracking(PipelineEnv):
         self,
         reference_clip: ReferenceClip,
         walker: BaseWalker,
+        reward_config: RewardConfig,
         ref_len: int = 5,
-        too_far_dist: float = 0.1,
-        bad_pose_dist: float = jp.inf,
-        bad_quat_dist: float = jp.inf,
-        ctrl_cost_weight: float = 0.01,
-        ctrl_diff_cost_weight: float = 0.01,
-        pos_reward_weight: float = 1.0,
-        quat_reward_weight: float = 1.0,
-        joint_reward_weight: float = 1.0,
-        angvel_reward_weight: float = 1.0,
-        bodypos_reward_weight: float = 1.0,
-        endeff_reward_weight: float = 1.0,
-        healthy_z_range: tuple[float, float] = (0.03, 0.5),
-        pos_reward_exp_scale: float = 400.0,
-        quat_reward_exp_scale: float = 4.0,
-        joint_reward_exp_scale: float = 0.25,
-        angvel_reward_exp_scale: float = 0.5,
-        bodypos_reward_exp_scale: float = 8.0,
-        endeff_reward_exp_scale: float = 500.0,
-        penalty_pos_distance_scale: jp.ndarray = jp.array([1.0, 1.0, 0.2]),
         physics_steps_per_control_step: int = 10,
         reset_noise_scale: float = 1e-3,
         solver: str = "cg",
@@ -71,25 +53,7 @@ class SingleClipTracking(PipelineEnv):
             walker: The base walker model.
             torque_actuators: Whether to use torque actuators.
             ref_len: Length of the reference trajectory.
-            too_far_dist: Threshold for "too far" penalty.
-            bad_pose_dist: Threshold for "bad pose" penalty.
-            bad_quat_dist: Threshold for "bad quaternion" penalty.
-            ctrl_cost_weight: Weight for control cost.
-            ctrl_diff_cost_weight: Weight for control difference cost.
-            pos_reward_weight: Weight for position reward.
-            quat_reward_weight: Weight for quaternion reward.
-            joint_reward_weight: Weight for joint reward.
-            angvel_reward_weight: Weight for angular velocity reward.
-            bodypos_reward_weight: Weight for body position reward.
-            endeff_reward_weight: Weight for end-effector reward.
-            healthy_z_range: Range for a healthy z-position.
-            pos_reward_exp_scale: Scaling factor for position rewards.
-            quat_reward_exp_scale: Scaling factor for quaternion rewards.
-            joint_reward_exp_scale: Scaling factor for joint rewards.
-            angvel_reward_exp_scale: Scaling factor for angular velocity rewards.
-            bodypos_reward_exp_scale: Scaling factor for body position rewards.
-            endeff_reward_exp_scale: Scaling factor for end-effector rewards.
-            penalty_pos_distance_scale: Scaling factor for positional penalties as an array.
+            reward_config: Reward configuration.
             physics_steps_per_control_step: Number of physics steps per control step.
             reset_noise_scale: Scale of noise for reset.
             solver: Solver type for Mujoco.
@@ -130,27 +94,7 @@ class SingleClipTracking(PipelineEnv):
         )
         print(f"self._steps_for_cur_frame: {self._steps_for_cur_frame}")
 
-        self._reward_config = RewardConfig(
-            too_far_dist=too_far_dist,
-            bad_pose_dist=bad_pose_dist,
-            bad_quat_dist=bad_quat_dist,
-            ctrl_cost_weight=ctrl_cost_weight,
-            ctrl_diff_cost_weight=ctrl_diff_cost_weight,
-            pos_reward_weight=pos_reward_weight,
-            quat_reward_weight=quat_reward_weight,
-            joint_reward_weight=joint_reward_weight,
-            angvel_reward_weight=angvel_reward_weight,
-            bodypos_reward_weight=bodypos_reward_weight,
-            endeff_reward_weight=endeff_reward_weight,
-            healthy_z_range=healthy_z_range,
-            pos_reward_exp_scale=pos_reward_exp_scale,
-            quat_reward_exp_scale=quat_reward_exp_scale,
-            joint_reward_exp_scale=joint_reward_exp_scale,
-            angvel_reward_exp_scale=angvel_reward_exp_scale,
-            bodypos_reward_exp_scale=bodypos_reward_exp_scale,
-            endeff_reward_exp_scale=endeff_reward_exp_scale,
-            penalty_pos_distance_scale=jp.array(penalty_pos_distance_scale),
-        )
+        self._reward_config = reward_config
         self._reference_clip = reference_clip
         self._ref_len = ref_len
         self._reset_noise_scale = reset_noise_scale

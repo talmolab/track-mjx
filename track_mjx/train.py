@@ -176,7 +176,6 @@ def main(cfg: DictConfig):
             params,
             policy_params_fn_key,
             cfg=cfg,
-            pair_render_xml_path=env.walker._pair_rendering_xml_path, 
             env=env,
             wandb=wandb,
             model_path=model_path,

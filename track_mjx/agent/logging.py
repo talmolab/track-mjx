@@ -73,7 +73,6 @@ def setup_training_logging(
     params: custom_losses.PPONetworkParams,
     rollout_key: jax.random.PRNGKey,
     cfg: DictConfig,
-    pair_render_xml_path: str,
     env: PipelineEnv,
     wandb: Callable[[int, dict[str, jp.ndarray]], None],
     model_path: str,
@@ -86,7 +85,6 @@ def setup_training_logging(
         params: Parameters for the policy model (reference to custom_losses).
         rollout_key: A PRNG key for generating rollout randomness.
         cfg: Configuration dictionary for the environment and agent.
-        pair_render_xml_path: The path to the ghost pair rendering XML file.
         env: An instance of the base PipelineEnv envrionment.
         wandb: The Weights and Biases logging function (reference to train).
         model_path: The path to save the model parameters and videos.
@@ -184,7 +182,8 @@ def setup_training_logging(
         env._steps_for_cur_frame,
         axis=0,
     )
-
+    
+    pair_render_xml_path = env.walker._pair_rendering_xml_path
     _XML_PATH = Path(__file__).resolve().parent.parent / "environment" / "walker" / pair_render_xml_path
 
     # root = mjcf_dm.from_path(_XML_PATH)

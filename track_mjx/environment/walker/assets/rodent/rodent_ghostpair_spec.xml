@@ -171,7 +171,6 @@
     <body name="rodent">
       <freejoint name="root"/>
     <body name="torso" pos="0.024796208436626305 1.6468199501211665e-07 0.052071658104959742">
-     
       <light name="tracking_light" class="default" mode="trackcom" pos="0 0 2.4000000000000004"/>
       <camera name="back" class="default" mode="trackcom" pos="-0.80000000000000004 0 0.40000000000000002" xyaxes="0 -1 0 1 0 2"/>
       <camera name="side" class="default" mode="trackcom" pos="0 -0.80000000000000004 0.40000000000000002" xyaxes="1 0 0 0 1 2"/>

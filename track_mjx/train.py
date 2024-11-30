@@ -96,6 +96,7 @@ def main(cfg: DictConfig):
     walker_class = walker_map[env_cfg["walker_type"]]
     walker = walker_class(**walker_config)
     
+    # didn't use args** since penalty_pos_distance_scale need conversion
     reward_config = RewardConfig(
             too_far_dist=env_rewards.too_far_dist,
             bad_pose_dist=env_rewards.bad_pose_dist,
@@ -175,6 +176,7 @@ def main(cfg: DictConfig):
             params,
             policy_params_fn_key,
             cfg=cfg,
+            pair_render_xml_path=env.walker._pair_rendering_xml_path, 
             env=env,
             wandb=wandb,
             model_path=model_path,

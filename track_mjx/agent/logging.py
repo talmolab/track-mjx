@@ -73,6 +73,7 @@ def setup_training_logging(
     params: custom_losses.PPONetworkParams,
     rollout_key: jax.random.PRNGKey,
     cfg: DictConfig,
+    pair_render_xml_path: str,
     env: PipelineEnv,
     wandb: Callable[[int, dict[str, jp.ndarray]], None],
     model_path: str,
@@ -85,12 +86,14 @@ def setup_training_logging(
         params: Parameters for the policy model (reference to custom_losses).
         rollout_key: A PRNG key for generating rollout randomness.
         cfg: Configuration dictionary for the environment and agent.
+        pair_render_xml_path: The path to the ghost pair rendering XML file.
         env: An instance of the base PipelineEnv envrionment.
         wandb: The Weights and Biases logging function (reference to train).
         model_path: The path to save the model parameters and videos.
     """
 
     ref_trak_config = cfg["reference_config"]
+    env_config = cfg["env_config"]
 
     # Wrap the env in the brax autoreset and episode wrappers
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
@@ -182,7 +185,7 @@ def setup_training_logging(
         axis=0,
     )
 
-    _XML_PATH = Path(__file__).resolve().parent.parent / cfg.env_config.ghost_xml_path
+    _XML_PATH = Path(__file__).resolve().parent.parent / "environment" / "walker" / pair_render_xml_path
 
     # root = mjcf_dm.from_path(_XML_PATH)
     # rescale.rescale_subtree(
@@ -191,15 +194,25 @@ def setup_training_logging(
     #     0.9 / 0.8,
     # )
     # mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
-
+    
     spec = mujoco.MjSpec()
     spec = spec.from_file(str(_XML_PATH))
+    
+    # in training scaled by this amount as well
+    scaling_factor = 0.9
+    for geom in spec.geoms:
+        if geom.size is not None:
+            geom.size *= scaling_factor
+        if geom.pos is not None:
+            geom.pos *= scaling_factor
+
     mj_model = spec.compile()
 
     mj_model.opt.solver = {
         "cg": mujoco.mjtSolver.mjSOL_CG,
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
     }["cg"]
+    
     mj_model.opt.iterations = 6
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
@@ -224,13 +237,13 @@ def setup_training_logging(
     # render while stepping using mujoco
     video_path = f"{model_path}/{num_steps}.mp4"
 
-    with imageio.get_writer(video_path, fps=50) as video:
+    with imageio.get_writer(video_path, fps=env_config.render_fps) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
 
             # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera=1)
+            renderer.update_scene(mj_data, camera=env_config.render_camera_name)
             pixels = renderer.render()
             video.append_data(pixels)
 

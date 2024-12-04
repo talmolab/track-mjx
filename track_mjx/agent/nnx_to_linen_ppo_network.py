@@ -5,6 +5,7 @@ from brax.training import networks
 from brax.training import types
 from brax.training.acme import running_statistics
 from brax.training import distribution
+
 # from brax.training.agents.ppo import networks as ppo_networks
 from track_mjx.agent import custom_ppo_networks
 from brax.training.types import Params
@@ -19,33 +20,34 @@ from flax import nnx
 import dataclasses
 from jax import numpy as jnp
 
-from track_mjx.agent.intention_network import IntentionNetwork
+from track_mjx.agent.nnx_intention_network import IntentionNetwork
 from track_mjx.agent.nnx_util import MLP
+
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
 
+@dataclasses.dataclass
+class PPOImitationNetworks:
+    policy_network: IntentionNetwork
+    value_network: MLP
+    parametric_action_distribution: distribution.ParametricDistribution
 
-# @dataclasses.dataclass
-# class PPOImitationNetworks:
-#     policy_network: IntentionNetwork
-#     value_network: MLP
-#     parametric_action_distribution: distribution.ParametricDistribution
 
-class PPOImitationNetworks(nnx.Module):
-    """PPO Imitation Network class in nnx Module. Does not have a forward method,
-    but rather has the policy and value networks as attributes that can be called directly."""
+# class PPOImitationNetworks(nnx.Module):
+#     """PPO Imitation Network class in nnx Module. Does not have a forward method,
+#     but rather has the policy and value networks as attributes that can be called directly."""
 
-    def __init__(
-        self,
-        policy_network: IntentionNetwork,
-        value_network: MLP,
-        parametric_action_distribution: distribution.ParametricDistribution,
-    ):
-        self.policy_network = policy_network
-        self.value_network = value_network
-        self.parametric_action_distribution = parametric_action_distribution
+#     def __init__(
+#         self,
+#         policy_network: IntentionNetwork,
+#         value_network: MLP,
+#         parametric_action_distribution: distribution.ParametricDistribution,
+#     ):
+#         self.policy_network = policy_network
+#         self.value_network = value_network
+#         self.parametric_action_distribution = parametric_action_distribution
 
 
 def make_value_network(
@@ -75,22 +77,31 @@ def make_intention_ppo_networks(
     intention_latent_size: int = 60,
     encoder_layers: Sequence[int] = (1024,) * 2,
     decoder_layers: Sequence[int] = (1024,) * 2,
-    value_layer_sizes: Sequence[int] = (1024,) * 2,
+    value_layers: Sequence[int] = (1024,) * 2,
 ) -> PPOImitationNetworks:
     """Make Imitation PPO networks with preprocessor."""
     parametric_action_distribution = distribution.NormalTanhDistribution(event_size=action_size)
     # create policy network
-    policy_network = IntentionNetwork(
-        action_size=parametric_action_distribution.param_size,
-        latents=intention_latent_size,
-        egocentric_obs_size=observation_size - reference_obs_size,
+    policy_network = make_intention_policy(
+        param_size=parametric_action_distribution.param_size,
+        intention_latent_size=intention_latent_size,
+        observation_size=observation_size,
         reference_obs_size=reference_obs_size,
+        preprocess_observations_fn=preprocess_observations_fn,
         encoder_layers=encoder_layers,
         decoder_layers=decoder_layers,
-        rngs=nnx.Rngs(0),
     )
     # create value network
-    value_network = make_value_network(observation_size, value_layer_sizes, activation=nnx.relu)
+    value_network = networks.make_value_network(
+        observation_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=value_layers,
+    )
+    
+    # value network still created in linen, no need to support complex operation for now.    
+    # nnx.bridge.to_linen(
+    #     MLP, [observation_size] + list(value_layers) + [1], activation_fn=nnx.relu, rngs=nnx.Rngs(0)
+    # )
     return PPOImitationNetworks(
         policy_network=policy_network,
         value_network=value_network,
@@ -98,9 +109,49 @@ def make_intention_ppo_networks(
     )
 
 
+def make_intention_policy(
+    param_size: int,
+    intention_latent_size: int,
+    observation_size: int,
+    reference_obs_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    encoder_layers: Sequence[int] = (1024, 1024),
+    decoder_layers: Sequence[int] = (1024, 1024),
+) -> networks.FeedForwardNetwork:
+    """Creates an intention policy network, translate the policy network in nnx to Flax Linen module using the bridge"""
+
+    policy_module = nnx.bridge.to_linen(
+        IntentionNetwork,
+        action_size=param_size,
+        latents=intention_latent_size,
+        egocentric_obs_size=observation_size - reference_obs_size,
+        reference_obs_size=reference_obs_size,
+        encoder_layers=encoder_layers,
+        decoder_layers=decoder_layers,
+        rngs=nnx.Rngs(0),
+    )
+
+    def apply(processor_params, policy_params, obs, key):
+        obs = preprocess_observations_fn(obs, processor_params)
+        return policy_module.apply(policy_params, obs=obs, key=key)
+
+    dummy_total_obs = jnp.zeros((1, observation_size))
+    dummy_key = jax.random.PRNGKey(0)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
+        apply=apply,
+    )
+
+
 # TODO(scott): is this the right way to do this? Can we use functools.partial instead?
 def make_policy_fn(ppo_networks: PPOImitationNetworks):
-    def policy(observations: jnp.ndarray, key: PRNGKey, ppo_networks: PPOImitationNetworks = ppo_networks, deterministic: bool = False):
+    def policy(
+        observations: jnp.ndarray,
+        key: PRNGKey,
+        ppo_networks: PPOImitationNetworks = ppo_networks,
+        deterministic: bool = False,
+    ):
         """Policy function that returns the action given an observation
 
         Args:
@@ -129,6 +180,7 @@ def make_policy_fn(ppo_networks: PPOImitationNetworks):
             "raw_action": raw_actions,
             "logits": logits,
         }
+
     return policy
 
 
@@ -141,7 +193,7 @@ class PPOTrainConfig:
     action_repeat: int = 1
     num_envs: int = 1
     max_devices_per_host: int | None = None
-    encoder_layers: Sequence[int] = (256,) * 2 
+    encoder_layers: Sequence[int] = (256,) * 2
     decoder_layers: Sequence[int] = (256,) * 2
     value_layer_sizes: Sequence[int] = (512,) * 3
     num_eval_envs: int = 128

@@ -1,3 +1,7 @@
+"""
+Intention Network Policy Module in Flax NNX API
+"""
+
 from typing import Sequence
 
 from brax.training import networks
@@ -96,9 +100,9 @@ class Decoder(nnx.Module):
         # first input layer
         self.layers.append(nnx.Linear(input_size, layer_sizes[0], kernel_init=kernel_init, use_bias=use_bias, rngs=rngs))
         # intermediate layers
-        for hidden_size in layer_sizes[1:-1]:
+        for hidden_size in layer_sizes[:-1]:
             self.layers.append(
-                nnx.Linear(input_size, hidden_size, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
+                nnx.Linear(layer_sizes[0], hidden_size, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
             )
             self.layers.append(activation)
             self.layers.append(nnx.LayerNorm(hidden_size, rngs=rngs))
@@ -171,7 +175,7 @@ class IntentionNetwork(nnx.Module):
         )
         self.rngs = rngs
 
-    def __call__(self,  obs: jnp.ndarray, key):
+    def __call__(self,  obs: jnp.ndarray, key: PRNGKey):
         """Call function for the Intention Network
 
         Args:
@@ -188,46 +192,3 @@ class IntentionNetwork(nnx.Module):
         action = self.decoder(jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1))
         return action, latent_mean, latent_logvar
 
-
-def make_intention_policy(
-    action_size: int,
-    latent_size: int,
-    total_obs_size: int,
-    reference_obs_size: int,
-    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
-    encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
-    decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
-) -> networks.FeedForwardNetwork:
-    """Create an Intention Policy with Encoder and Decoder
-
-    Args:
-        action_size (int): the size of the output
-        latent_size (int): _description_
-        total_obs_size (int): _description_
-        reference_obs_size (int): _description_
-        preprocess_observations_fn (types.PreprocessObservationFn, optional): _description_. Defaults to types.identity_observation_preprocessor.
-        encoder_hidden_layer_sizes (Sequence[int], optional): _description_. Defaults to (1024, 1024).
-        decoder_hidden_layer_sizes (Sequence[int], optional): _description_. Defaults to (1024, 1024).
-
-    Returns:
-        IntentionNetwork: _description_
-    """
-
-    policy_module = IntentionNetwork(
-        encoder_layers=list(encoder_hidden_layer_sizes),
-        decoder_layers=list(decoder_hidden_layer_sizes),
-        reference_obs_size=reference_obs_size,
-        egocentric_obs_size=total_obs_size - reference_obs_size,
-        latents=latent_size,
-        action_size=action_size,
-        rngs=nnx.Rngs(0),
-    )
-
-    def apply(processor_params, obs):
-        obs = preprocess_observations_fn(obs, processor_params)
-        return policy_module(observations=obs)
-
-    return networks.FeedForwardNetwork(
-        init=lambda x: x,  # this is a dummy init function, as we are using NNX, where the init is done in the module itself
-        apply=apply,
-    )

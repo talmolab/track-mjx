@@ -104,7 +104,25 @@ def main(cfg: DictConfig):
     
     ppo_cfg = nnx_ppo_network.PPOTrainConfig()
     
+    # Generates a completely random UUID (version 4)
+    run_id = uuid.uuid4()
+    model_path = f"./{cfg.logging_config.model_path}/{run_id}"
+
+    wandb.init(
+        project=cfg.logging_config.project_name,
+        config=dict(cfg),
+        notes=f"clip_id: {cfg.logging_config.clip_id}",
+    )
+    wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+
+    def wandb_progress(num_steps, metrics):
+        metrics["num_steps"] = num_steps
+        wandb.log(metrics, commit=False)
+    
+    ppo_cfg.progress_fn = wandb_progress
+    
     nnx_ppo.train(env, ppo_cfg)
+    
     
     
 if __name__ == "__main__":

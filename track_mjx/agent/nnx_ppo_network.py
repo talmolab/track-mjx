@@ -42,21 +42,44 @@ class PPOImitationNetworks(nnx.Module):
         policy_network: IntentionNetwork,
         value_network: MLP,
         parametric_action_distribution: distribution.ParametricDistribution,
+        *,
+        rngs: nnx.Rngs,
     ):
         self.policy_network = policy_network
         self.value_network = value_network
         self.parametric_action_distribution = parametric_action_distribution
+        self.rngs = rngs
 
-    def policy(self, observations: types.Observation, key: PRNGKey) -> Tuple[types.Action, types.Extra]:
+    def policy(self, observations: types.Observation, key: PRNGKey | None = None) -> Tuple[types.Action, types.Extra]:
         """Policy function that returns actions and extra information."""
-        logits, _, _ = self.policy_network(observations)
-        action = self.parametric_action_distribution.sample(logits, key)
-        extra = dict(logits=logits)
-        return action, extra
+        if key is None:
+            # if key is unspecified, then it will use nnx.Rngs stream
+            # to generate the key, but it won't be a pure function
+            key = self.rngs.param()
+        key_sample, key_policy = jax.random.split(key)
+        logits, _, _ = self.policy_network(observations, key=key_policy)
+        # action sampling is happening here, according to distribution parameter logits
+        raw_actions = self.parametric_action_distribution.sample_no_postprocessing(logits, key_sample)
+
+        # probability of selection specific action, actions with higher reward should have higher probability
+        log_prob = self.parametric_action_distribution.log_prob(logits, raw_actions)
+
+        postprocessed_actions = self.parametric_action_distribution.postprocess(raw_actions)
+        return postprocessed_actions, {
+            # "latent_mean": latent_mean,
+            # "latent_logvar": latent_logvar,
+            "log_prob": log_prob,
+            "raw_action": raw_actions,
+            "logits": logits,
+        }
 
     def value(self, observations: types.Observation) -> jnp.ndarray:
         """Value function that returns values."""
-        return self.value_network(observations) # TODO (value network input is not just obs)
+        return self.value_network(observations)
+
+    def split_key(self) -> PRNGKey:
+        """Splits the key and returns the first part."""
+        return self.rngs.param()
 
 
 def make_intention_policy(
@@ -134,6 +157,7 @@ def make_intention_ppo_networks(
         policy_network=policy_network,
         value_network=value_network,
         parametric_action_distribution=parametric_action_distribution,
+        rngs=nnx.Rngs(44),
     )
 
 
@@ -144,7 +168,7 @@ class PPOTrainConfig:
     num_timesteps: int = 1000000
     episode_length: int = 1000
     action_repeat: int = 1
-    num_envs: int = 256
+    num_envs: int = 16
     max_devices_per_host: int | None = None
     encoder_layers: Sequence[int] = (256,) * 2
     decoder_layers: Sequence[int] = (256,) * 2

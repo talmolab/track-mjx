@@ -102,37 +102,7 @@ def main(cfg: DictConfig):
         physics_steps_per_control_step=cfg.env_config.physics_steps_per_control_step,
     )
     
-    ppo_cfg = nnx_ppo.PPOTrainConfig()
-    #     num_timesteps=cfg.train_config.num_timesteps,
-    #     episode_length=cfg.train_config.episode_length,
-    #     action_repeat=cfg.train_config.action_repeat,
-    #     num_envs=cfg.train_config.num_envs,
-    #     # max_devices_per_host=cfg.train_config.max_devices_per_host,
-    #     encoder_layers=cfg.train_config.network_config.encoder_layers_sizes,
-    #     decoder_layers=cfg.train_confignetwork_config.decoder_layers,
-    #     value_layer_sizes=cfg.train_config.value_layer_sizes,
-    #     num_eval_envs=cfg.train_config.num_eval_envs,
-    #     learning_rate=cfg.train_config.learning_rate,
-    #     entropy_cost=cfg.train_config.entropy_cost,
-    #     kl_weight=cfg.train_config.kl_weight,
-    #     discounting=cfg.train_config.discounting,
-    #     seed=cfg.train_config.seed,
-    #     unroll_length=cfg.train_config.unroll_length,
-    #     batch_size=cfg.train_config.batch_size,
-    #     num_minibatches=cfg.train_config.num_minibatches,
-    #     num_updates_per_batch=cfg.train_config.num_updates_per_batch,
-    #     num_evals=cfg.train_config.num_evals,
-    #     num_resets_per_eval=cfg.train_config.num_resets_per_eval,
-    #     normalize_observations=cfg.train_config.normalize_observations,
-    #     reward_scaling=cfg.train_config.reward_scaling,
-    #     clipping_epsilon=cfg.train_config.clipping_epsilon,
-    #     gae_lambda=cfg.train_config.gae_lambda,
-    #     deterministic_eval=cfg.train_config.deterministic_eval,
-    #     network_factory=nnx_ppo_network.make_intention_ppo_networks,
-    #     progress_fn=lambda *args: None,
-    #     normalize_advantage=True,
-    #     eval_env=None,
-    # )
+    ppo_cfg = nnx_ppo_network.PPOTrainConfig()
     
     nnx_ppo.train(env, ppo_cfg)
     

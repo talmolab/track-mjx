@@ -179,8 +179,9 @@ def train(
 
     # The number of environment steps executed for every training step.
     env_step_per_training_step = (
-        config.batch_size * config.unroll_length * config.num_minibatches * config.action_repeat
-    )
+        config.batch_size * config.unroll_length * config.action_repeat # take out the minibatch * config.num_minibatches
+    ) # Scott: This metrics for the environment performance is not true -- minibatch and permutation is bootstrapping
+    # data instead of directly 
     num_evals_after_init = max(config.num_evals - 1, 1)
 
     # The number of training_step calls per training_epoch call.

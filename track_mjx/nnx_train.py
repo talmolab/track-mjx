@@ -117,7 +117,7 @@ def main(cfg: DictConfig):
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps"] = num_steps
-        wandb.log(metrics, commit=False)
+        wandb.log(metrics)
     
     ppo_cfg.progress_fn = wandb_progress
     

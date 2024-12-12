@@ -5,7 +5,7 @@ env_config:
   env_name: rodent_multi_clip
   task_name: imitation
   walker_name: rodent
-  render_camera_name: side
+  render_camera_name: "side"
   render_fps: 50
 
   env_args:

@@ -5,7 +5,7 @@ env_config:
   env_name: fly_multi_clip
   task_name: imitation
   walker_name: fly
-  render_camera_name: track1
+  render_camera_name: "track1"
   render_fps: 50
 
   env_args:

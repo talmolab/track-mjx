@@ -1,633 +1,632 @@
 <mujoco model="rat">
-  <compiler angle="radian" />
-  <size njmax="8000" nconmax="4000"/>
-  <visual>
-    <quality shadowsize="2048"/>
-    <global offwidth="1920" offheight="1200" elevation="-20" azimuth="120"/> 
- </visual>
-  <statistic meansize="0.0030000000000000001"/>
-  <default>
-    <default class="default">
-      <joint limited="true" solreflimit="0.01 1" solimplimit="0.98999999999999999 0.99990000000000001 0" armature="5.9999999999999997e-07" damping="0.001"/>
-      <geom friction="0.69999999999999996 0.0050000000000000001 0.0001" solref="0.0050000000000000001 1"/>
-      <site group="3" rgba="0 0 1 1"/>
-      <tendon limited="false"/>
-      <general ctrllimited="true" forcelimited="false" ctrlrange="-1 1" gainprm="0.01"/>
-      <default class="bone">
-        <geom contype="0" conaffinity="0" group="0" rgba="0.5 0.5 0.5 1" density="1100"/>
-      </default>
-      <default class="collision">
-        <geom contype="1" conaffinity="1" condim="1" group="2"/>
-        <default class="collision_primitive">
-          <geom type="capsule" group="2" rgba="0 0.5 0.5 1" density="500"/>
-          <default class="collision_primitive_paw">
-            <geom condim="3" priority="1" rgba="0 0.59999999999999998 0.69999999999999996 1" friction="1.5 0.0050000000000000001 0.0001"/>
-          </default>
-          <default class="nonself_collision_primitive">
-            <geom conaffinity="0"/>
-          </default>
-        </default>
-        <default class="ghost_collision_primitive">
-          <geom type="capsule" group="2" rgba="1 1 1 0.2" density="500"/>
-          <default class="ghost_collision_primitive_paw">
-            <geom condim="3" priority="1" rgba="0.8 0.8 1.0 0.2" friction="1.5 0.0050000000000000001 0.0001"/>
-          </default>
-          <default class="ghost_nonself_collision_primitive">
-            <geom conaffinity="0"/>
-          </default>
-        </default>
-      </default>
-      <default class="lumbar">
-        <joint group="3" pos="0.0030000000000000001 0 -0.0030000000000000001" armature="1.0000000000000001e-05" damping="0.029999999999999999"/>
-        <general gainprm="0.14999999999999999"/>
-        <default class="lumbar_extend">
-          <joint stiffness="0.02" range="-0.52359877559829882 0.78539816339744828"/>
-          <tendon range="-1 1"/>
-          <general gainprm="0.40000000000000002"/>
-        </default>
-        <default class="lumbar_bend">
-          <joint stiffness="0.029999999999999999" range="-0.52359877559829882 0.52359877559829882"/>
-          <tendon range="-1 1"/>
-        </default>
-        <default class="lumbar_twist">
-          <joint stiffness="0.029999999999999999" range="-0.52359877559829882 0.52359877559829882"/>
-          <tendon range="-1 1"/>
-        </default>
-      </default>
-      <default class="cervical">
-        <joint group="3" pos="-0.02 0 -0.050000000000000003" stiffness="1" armature="0.001" damping="1"/>
-        <default class="cervical_extend">
-          <joint range="-0.40724349213201022 0.6108652381980153"/>
-          <tendon range="-1 1"/>
-          <general gainprm="2.5"/>
-        </default>
-        <default class="cervical_bend">
-          <joint range="-0.6108652381980153 0.6108652381980153"/>
-          <tendon range="-1 1"/>
-          <general gainprm="2.5"/>
-        </default>
-        <default class="cervical_twist">
-          <joint range="-0.6108652381980153 0.6108652381980153"/>
-          <tendon range="-1 1"/>
-          <general gainprm="2.5"/>
-        </default>
-      </default>
-      <default class="atlas">
-        <joint axis="0 -1 0" stiffness="0.002" range="-0.087266462599716474 0.78539816339744828" damping="0.002"/>
-        <general gainprm="0.025000000000000001"/>
-      </default>
-      <default class="mandible">
-        <joint stiffness="0.002" range="-0.29670597283903599 0.26179938779914941" springref="-0.31415926535900002" damping="0.002"/>
-        <general gainprm="0.025000000000000001"/>
-      </default>
-      <default class="caudal">
-        <joint group="3" stiffness="1.0000000000000001e-05" damping="0.002"/>
-        <general gainprm="0.0050000000000000001"/>
-        <default class="caudal_extend">
-          <joint range="-0.087266462599716474 0.087266462599716474"/>
-          <tendon range="-0.050000000000000003 0.050000000000000003"/>
-        </default>
-        <default class="caudal_bend">
-          <joint range="-0.087266462599716474 0.087266462599716474"/>
-          <tendon range="-0.20000000000000001 0.20000000000000001"/>
-        </default>
-      </default>
-      <default class="hip">
-        <joint armature="1.0000000000000001e-05" damping="0.02"/>
-        <general gainprm="0.20000000000000001"/>
-        <default class="hip_supinate">
-          <joint range="-0.69813170079773179 0.52359877559829882"/>
-        </default>
-        <default class="hip_abduct">
-          <joint range="-0.52359877559829882 1.0471975511965981"/>
-        </default>
-        <default class="hip_extend">
-          <joint range="-1.570796326794897 1.0471975511965981"/>
-          <general gainprm="0.29999999999999999"/>
-        </default>
-      </default>
-      <default class="knee">
-        <joint range="-1.2217304763960311 1.5358897417550099" damping="0.0050000000000000001"/>
-        <general gainprm="0.20000000000000001"/>
-      </default>
-      <default class="ankle">
-        <joint range="-0.13962634015954639 1.396263401595464" damping="0.0030000000000000001"/>
-        <general gainprm="0.20000000000000001"/>
-      </default>
-      <default class="toe">
-        <joint range="0 0.87266462599716477" damping="0.001"/>
-        <general gainprm="0.025000000000000001"/>
-      </default>
-      <default class="scapula">
-        <joint damping="0.0050000000000000001"/>
-        <general gainprm="0.25"/>
-        <default class="scapula_supinate">
-          <joint pos="0 0.005000000000000001 0" range="-0.017453292519943299 0.17453292519943289"/>
-        </default>
-        <default class="scapula_abduct">
-          <joint pos="0 0.005000000000000001 -0.01" range="-0.26179938779914941 0.26179938779914941"/>
-        </default>
-        <default class="scapula_extend">
-          <joint pos="0 0 0" range="-0.034906585039886591 0.034906585039886591"/>
-          <general gainprm="0.25"/>
-        </default>
-      </default>
-      <default class="shoulder">
-        <joint range="-1.308996938995747 0.87266462599716477" damping="0.0050000000000000001"/>
-        <general gainprm="0.14999999999999999"/>
-      </default>
-      <default class="shoulder_sup">
-        <joint range="-0.05235987755982989 1.134464013796314" damping="0.0050000000000000001"/>
-        <general gainprm="0.14999999999999999"/>
-      </default>
-      <default class="elbow">
-        <joint range="-1.308996938995747 0.69813170079773179" damping="0.0030000000000000001"/>
-        <general gainprm="0.14999999999999999"/>
-      </default>
-      <default class="wrist">
-        <joint range="-0.3490658503988659 2.0943951023931948" damping="0.002"/>
-        <general gainprm="0.050000000000000003"/>
-      </default>
-      <default class="finger">
-        <joint range="0 1.570796326794897" damping="0.002"/>
-        <general gainprm="0.025000000000000001"/>
-      </default>
-      <default class="sensor">
-        <site group="4"/>
-      </default>
-    </default>
-  </default>
-  <asset>
-    <texture type="skybox" builtin="gradient" rgb1="0.29999999999999999 0.5 0.69999999999999996" rgb2="0 0 0" width="32" height="512"/>
-    <texture name="body" type="cube" builtin="flat" rgb1="1 1 1" rgb2="1 1 1" mark="cross" markrgb="1 1 1" random="0.01" width="128" height="128"/>
-    <material name="body" class="default" texture="body" texuniform="true" rgba="1 1 1 0.2"/>
-    <texture name="grid" type="2d" builtin="checker" rgb1="0.10000000000000001 0.20000000000000001 0.29999999999999999" rgb2="0.20000000000000001 0.29999999999999999 0.40000000000000002" width="512" height="512"/>
-    <material name="grid" class="default" texture="grid" texrepeat="1 1" texuniform="true" reflectance="0.20000000000000001"/>
-  </asset>
-  <worldbody>
-    <geom name="floor" class="default" type="plane" condim="3" size="0 0 0.080000000000000016" material="grid"/>
-    <camera name="close_profile" mode="trackcom" pos=".5 -.5 0.5" xyaxes="1 1 0 -1 1 2"/>
-    <replicate count="2" euler="0 0 0" sep="-">
-    <body name="rodent">
-      <freejoint name="root"/>
-    <body name="torso" pos="0.024796208436626305 1.6468199501211665e-07 0.052071658104959742">
-      <light name="tracking_light" class="default" mode="trackcom" pos="0 0 2.4000000000000004"/>
-      <camera name="back" class="default" mode="trackcom" pos="-0.80000000000000004 0 0.40000000000000002" xyaxes="0 -1 0 1 0 2"/>
-      <camera name="side" class="default" mode="trackcom" pos="0 -0.80000000000000004 0.40000000000000002" xyaxes="1 0 0 0 1 2"/>
-      <camera name="side_alt" class="default" mode="trackcom" pos="0.40000000000000002 -0.44880000000000009 0.15920000000000001" xyaxes="0.76600000000000001 0.64300000000000002 0 -0.16200000000000001 0.192 0.96799999999999997"/>
-      <camera name="top" class="default" mode="trackcom" fovy="100" pos="0 0 0.80000000000000004" zaxis="0 -0.20000000000000001 1"/>
-      <geom name="collision_torso" class="nonself_collision_primitive" type="ellipsoid" size="0.040000000000000008 0.019200000000000002 0.020799999999999999" density="468.25126000900002" pos="-0.0065600000000000007 0 0" euler="0 0.17453292519943289 0"/>
-      <body name="vertebra_1" pos="-0.015343554933286825 -1.5042684742071753e-07 0.013477165525192712">
-        <geom name="vertebra_1_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
-        <body name="vertebra_2" pos="-0.004503773068254174 2.0758428709267548e-06 0.00042567381590265891">
-          <geom name="vertebra_2_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
-          <body name="vertebra_3" pos="-0.005213733338033928 -8.3285029228861271e-06 -7.5737751158563962e-05">
-            <geom name="vertebra_3_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
-            <body name="vertebra_4" pos="-0.0054221633481496279 6.9968809017303219e-06 -0.00103945181828198">
-              <geom name="vertebra_4_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
-              <body name="vertebra_5" pos="-0.005512053249842482 -4.9634669197785774e-06 -0.0019984519830259632">
-                <geom name="vertebra_5_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
-                <body name="vertebra_6" pos="-0.0049482275477452098 4.2035537031640391e-06 -0.0029128979624222675">
-                  <geom name="vertebra_6_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
-                  <joint name="vertebra_6_twist" class="lumbar_twist" axis="1 0 0"/>
-                  <body name="pelvis" pos="-0.010457127359075169 2.8105771470567275e-06 -0.0064967862638180265">
-                    <geom name="collision_pelvis_L" class="nonself_collision_primitive" size="0.0104 0.016800000000000002 0" density="1548.57736929" pos="-0.00065600000000000001 0.0052480000000000001 -0.0045920000000000006" euler="0 0.87266462599716477 0"/>
-                    <geom name="collision_pelvis_R" class="nonself_collision_primitive" size="0.0104 0.016800000000000002 0" density="1548.57736929" pos="-0.00065600000000000001 -0.0052480000000000001 -0.0045920000000000006" euler="0 0.87266462599716477 0"/>
-                    <geom name="collision_pelvis_gut" class="nonself_collision_primitive" type="ellipsoid" size="0.016 0.016 0.0144" density="1548.57736929" pos="0.016400000000000001 0 -0.013120000000000001" euler="0 -0.52359877559829882 0"/>
-                    <site name="hip_L" class="default" size="0.0017600000000000003" pos="-0.0038482339334116921 0.009193003285372375 -0.0079102586409018124"/>
-                    <site name="hip_R" class="default" size="0.0017600000000000003" pos="-0.0038482339334116921 -0.009193003285372375 -0.0079102586409018124"/>
-                    <body name="upper_leg_L" pos="-0.0038482339334116921 0.009193003285372375 -0.0079102586409018124">
-                      <joint name="hip_L_supinate" class="hip_supinate" axis="-0 -0 1"/>
-                      <joint name="hip_L_abduct" class="hip_abduct" axis="1 -0 -0"/>
-                      <joint name="hip_L_extend" class="hip_extend" axis="0 1 0"/>
-                      <site name="knee_L" class="default" type="cylinder" size="0.00048000000000000007 0.0032000000000000002" pos="0.012338116276694889 0.013983198446920864 -0.020563527127824808" zaxis="0 1 0"/>
-                      <geom name="upper_leg_L0_collision" class="collision_primitive" size="0.0069939224017847856 0.01398784480356957" density="1561.7555055600001" pos="0.006882019643356229 0.0086025245541952889 -0.010323029465034345" euler="0.6108652381980153 -0.69813170079773179 0"/>
-                      <body name="lower_leg_L" pos="0.012338116276694889 0.013983198446920864 -0.020563527127824808">
-                        <joint name="knee_L" class="knee" axis="0.5 -1 0"/>
-                        <site name="ankle_L" class="default" type="cylinder" size="0.00048000000000000007 0.0020799999999999998" pos="-0.025841232270267252 -0.0037816437468683774 -0.017647670818719097" zaxis="0 1 0"/>
-                        <body name="foot_L" pos="-0.025841232270267252 -0.0037816437468683774 -0.017647670818719097">
-                          <joint name="ankle_L" class="ankle" axis="-0.29999999999999999 1 0"/>
-                          <geom name="foot_L_collision" class="collision_primitive_paw" size="0.0025685697662671744 0.0099073405270305292" density="2041.1597822799999" pos="0.006619571226208547 0.0018053376071477849 -0.0018053376071477849" euler="1.570796326794897 -1.2217304763960311 0"/>
-                          <site name="toe_L" class="default" type="cylinder" size="0.00048000000000000007 0.004000000000000001" pos="0.016879954490938105 0.0060914618380341849 -0.0022017331944701873" zaxis="0 1 0"/>
-                          <body name="toe_L" pos="0.016879954490938105 0.0060914618380341849 -0.0022017331944701873">
-                            <joint name="toe_L" class="toe" axis="0 1 0"/>
-                            <geom name="toe_L0_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0058025944240173467" pos="0.0067973248967060354 -0.00067973248967060338 0" euler="1.570796326794897 -1.2217304763960311 0"/>
-                            <geom name="toe_L1_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0062170654543042998" pos="0.0064574586518707337 0.0020391974690118107 0" euler="1.570796326794897 -1.2217304763960311 0"/>
-                            <geom name="toe_L2_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0058025944240173467" pos="0.0054378599173648271 0.004418261182858923 0" euler="1.570796326794897 -1.2217304763960311 0"/>
-                            <site name="sole_L" class="sensor" type="box" size="0.0048000000000000004 0.0032000000000000002 0.0016000000000000001" pos="0.0065600000000000007 0.0019680000000000001 -0.001312" euler="0 0 0.3490658503988659"/>
-                          </body>
-                        </body>
-                        <geom name="lower_leg_L_collision" class="collision_primitive" size="0.0052454418013385892 0.015386629283926529" density="1302.86687267" pos="-0.0098107123754354493 9.7983394097741678e-05 -0.0085745069224315278" quat="0.58439398761405215 0.27858155227390202 0.39004539538183519 0.65478284607542836"/>
-                      </body>
-                    </body>
-                    <body name="upper_leg_R" pos="-0.0038482339334116921 -0.009193003285372375 -0.0079102586409018124">
-                      <joint name="hip_R_supinate" class="hip_supinate" axis="0 0 -1"/>
-                      <joint name="hip_R_abduct" class="hip_abduct" axis="-1 0 0"/>
-                      <joint name="hip_R_extend" class="hip_extend" axis="0 1 0"/>
-                      <site name="knee_R" class="default" type="cylinder" size="0.00048000000000000007 0.0032000000000000002" pos="0.012338116276694889 -0.013983198446920864 -0.020563527127824808" zaxis="0 1 0"/>
-                      <geom name="upper_leg_R0_collision" class="collision_primitive" size="0.0069939224017847856 0.01398784480356957" density="1561.7555055600001" pos="0.006882019643356229 -0.0086025245541952889 -0.010323029465034345" euler="-0.6108652381980153 -0.69813170079773179 0"/>
-                      <body name="lower_leg_R" pos="0.012338116276694889 -0.013983198446920864 -0.020563527127824808">
-                        <joint name="knee_R" class="knee" axis="-0.5 -1 0"/>
-                        <site name="ankle_R" class="default" type="cylinder" size="0.00048000000000000007 0.0020799999999999998" pos="-0.025841232270267252 0.0037816437468683774 -0.017647670818719097" zaxis="0 1 0"/>
-                        <body name="foot_R" pos="-0.025841232270267252 0.0037816437468683774 -0.017647670818719097">
-                          <joint name="ankle_R" class="ankle" axis="0.29999999999999999 1 0"/>
-                          <geom name="foot_R_collision" class="collision_primitive_paw" size="0.0025685697662671744 0.0099073405270305292" density="2041.1597822799999" pos="0.006619571226208547 -0.0018053376071477849 -0.0018053376071477849" euler="1.570796326794897 1.2217304763960311 0"/>
-                          <site name="toe_R" class="default" type="cylinder" size="0.00048000000000000007 0.004000000000000001" pos="0.016879954490938105 -0.0060914618380341849 -0.0022017331944701873" zaxis="0 1 0"/>
-                          <body name="toe_R" pos="0.016879954490938105 -0.0060914618380341849 -0.0022017331944701873">
-                            <joint name="toe_R" class="toe" axis="0 1 0"/>
-                            <geom name="toe_R0_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0058025944240173467" pos="0.0067973248967060354 0.00067973248967060338 0" euler="1.570796326794897 1.2217304763960311 0"/>
-                            <geom name="toe_R1_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0062170654543042998" pos="0.0064574586518707337 -0.0020391974690118107 0" euler="1.570796326794897 1.2217304763960311 0"/>
-                            <geom name="toe_R2_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0058025944240173467" pos="0.0054378599173648271 -0.004418261182858923 0" euler="1.570796326794897 1.2217304763960311 0"/>
-                            <site name="sole_R" class="sensor" type="box" size="0.0048000000000000004 0.0032000000000000002 0.0016000000000000001" pos="0.0065600000000000007 -0.0019680000000000001 -0.001312" euler="0 0 -0.3490658503988659"/>
-                          </body>
-                        </body>
-                        <geom name="lower_leg_R_collision" class="collision_primitive" size="0.0052454418013385892 0.015386629283926529" density="1302.86687267" pos="-0.0096231729066562563 -0.00012926295632311304 -0.0084593095260612813" quat="0.65643150361110036 0.39014177197659983 0.27795769268188453 0.58277491358567579"/>
-                      </body>
-                    </body>
-                    <body name="vertebra_C1" pos="-0.012631929383871738 0 -0.0095052983409469535">
-                      <body name="vertebra_C2" pos="-0.0031016430257114545 0 -0.0033811449636138124">
-                        <body name="vertebra_C3" pos="-0.0027392214500722412 0 -0.0034104619488904073">
-                          <body name="vertebra_C4" pos="-0.0026174997333265945 0 -0.0035334705217752609">
-                            <body name="vertebra_C5" pos="-0.002540779416815196 0 -0.0036554726873710922">
-                              <body name="vertebra_C6" pos="-0.0024953550803855987 0 -0.0039210842250744825">
-                                <body name="vertebra_C7" pos="-0.0025726490154827416 0 -0.0045154969055985136">
-                                  <body name="vertebra_C8" pos="-0.002756682803583797 0 -0.0044145450177480129">
-                                    <body name="vertebra_C9" pos="-0.0034281382201444403 0 -0.0040920146240522445">
-                                      <body name="vertebra_C10" pos="-0.0038892361317142549 0 -0.0036497490741299794">
-                                        <body name="vertebra_C11" pos="-0.0042998295879178496 0 -0.0034913657351953275">
-                                          <body name="vertebra_C12" pos="-0.0049075827684923563 0 -0.0030732022415328633">
-                                            <body name="vertebra_C13" pos="-0.005517941960170648 0 -0.0020739425481376065">
-                                              <body name="vertebra_C14" pos="-0.0054600301898750821 0 -0.00072711991463410817">
-                                                <body name="vertebra_C15" pos="-0.0052209688553074615 0 -0.00025226479750928472">
-                                                  <body name="vertebra_C16" pos="-0.0053551275583300076 0 -0.00011079082164452376">
-                                                    <body name="vertebra_C17" pos="-0.0051883409974800227 0 -1.3363737113733313e-05">
-                                                      <body name="vertebra_C18" pos="-0.0049659457454381247 0 1.4604585051383738e-10">
-                                                        <body name="vertebra_C19" pos="-0.0049634076782603485 0 -6.561521781901086e-10">
-                                                          <body name="vertebra_C20" pos="-0.0049827014559540653 0 2.0132163782515289e-06">
-                                                            <body name="vertebra_C21" pos="-0.0048941227339751019 0 -8.7731337465474799e-05">
-                                                            <body name="vertebra_C22" pos="-0.0052064862796271224 0 -1.0495899869192313e-05">
-                                                            <body name="vertebra_C23" pos="-0.0051126043300991717 0 1.4011211281663578e-09">
-                                                            <body name="vertebra_C24" pos="-0.004944572156201271 0 -9.9770813863364636e-10">
-                                                            <body name="vertebra_C25" pos="-0.0047745591613888114 0 1.1035938798226176e-10">
-                                                            <body name="vertebra_C26" pos="-0.0045029412641134671 0 -1.0925041591600128e-09">
-                                                            <body name="vertebra_C27" pos="-0.004154496225817427 0 1.1165543536625913e-09">
-                                                            <body name="vertebra_C28" pos="-0.0040289912835609959 0 4.0591858848478166e-07">
-                                                            <body name="vertebra_C29" pos="-0.0038191174697357827 0 -4.9644436563370256e-11">
-                                                            <body name="vertebra_C30" pos="-0.0032042812983593041 0 -3.3577465497229905e-07">
-                                                            <geom name="vertebra_C30_collision" class="collision_primitive" size="0.0010382849723100664 0.0049300205893814562 0.0027652319520711896" density="507.157357703" pos="-2.7311486405778847e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <joint name="vertebra_C29_bend" class="caudal_bend" pos="0.0029926210641860961 0 3.8900868526955952e-11" axis="1.299892892972596e-08 0 -0.99999999999999989" range="-0.26179938779914941 0.26179938779914941"/>
-                                                            <geom name="vertebra_C29_collision" class="collision_primitive" size="0.0010374659672379497 0.0047710201470181346 0.0020950142294168471" density="507.157357703" pos="1.8207657603852571e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <geom name="vertebra_C28_collision" class="collision_primitive" size="0.0010374658741056921 0.0046119361766614013 0.0023022238165140152" density="507.157357703" pos="-1.8207657603852571e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <joint name="vertebra_C27_extend" class="caudal_extend" pos="0.0030830536037682369 0 -8.2859551116459365e-10" axis="0 0.99999999999999989 0" range="-0.26179938779914941 0.26179938779914941"/>
-                                                            <geom name="vertebra_C27_collision" class="collision_primitive" size="0.0011036813259124752 0.0044529462698847059 0.002449158951640129" density="507.157357703" pos="-1.8207657603852571e-17 -4.551914400963142e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <geom name="vertebra_C26_collision" class="collision_primitive" size="0.0011036840267479417 0.004293865326326341 0.002449143119156361" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <joint name="vertebra_C25_bend" class="caudal_bend" pos="0.0028769880533218379 0 -6.6498838963914477e-11" axis="-2.311404765380703e-08 0 -0.99999999999999978" range="-0.26179938779914941 0.26179938779914941"/>
-                                                            <geom name="vertebra_C25_collision" class="collision_primitive" size="0.0011036813259124752 0.0041348714148625731 0.002783137932419777" density="507.157357703" pos="1.8207657603852571e-17 4.551914400963142e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <geom name="vertebra_C24_collision" class="collision_primitive" size="0.0011036816053092481 0.0039758181083016098 0.0027831349521875385" density="507.157357703" pos="0 4.551914400963142e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <joint name="vertebra_C23_extend" class="caudal_extend" pos="0.0028769753873347163 0 -7.8844180776474552e-10" axis="0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
-                                                            <geom name="vertebra_C23_collision" class="collision_primitive" size="0.0011036791838705538 0.0038167803548276426 0.0029926210641860961" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <geom name="vertebra_C22_collision" class="collision_primitive" size="0.00110368262976408 0.0036577424849383536 0.0029926227405667307" density="507.157357703" pos="1.8207657603852571e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <joint name="vertebra_C21_bend" class="caudal_bend" pos="0.0030905254905880756 0 5.5400313702433989e-05" axis="0.017922976189593771 0 -0.99983937056134542" range="-0.26179938779914941 0.26179938779914941"/>
-                                                            <geom name="vertebra_C21_collision" class="collision_primitive" size="0.0012244122102856641 0.0039777030237019067 0.0030830536037683488" density="507.157357703" pos="-1.8207657603852571e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                            </body>
-                                                            <geom name="vertebra_C20_collision" class="collision_primitive" size="0.0011986291036009792 0.0041412290884181857 0.0028769265860319141" density="507.157357703" pos="0 2.2759572004815706e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                          </body>
-                                                          <joint name="vertebra_C19_extend" class="caudal_extend" pos="0.0034228522330522239 0 4.5249395051249869e-10" axis="-0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
-                                                          <geom name="vertebra_C19_collision" class="collision_primitive" size="0.0013071632012724881 0.0041371025145053864 0.0028769880533218387" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                        </body>
-                                                        <geom name="vertebra_C18_collision" class="collision_primitive" size="0.0013071648776531216 0.0039302199613302944 0.0028769841417670247" density="507.157357703" pos="-3.6415315207705142e-17 2.8449465006019633e-19 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                      </body>
-                                                      <joint name="vertebra_C17_bend" class="caudal_bend" pos="0.0034235281926773987 0 8.8180655031380166e-06" axis="0.0025757159736695379 0 -0.99999668283810972" range="-0.26179938779914941 0.26179938779914941"/>
-                                                      <geom name="vertebra_C17_collision" class="collision_primitive" size="0.0013071645051240921 0.0037233683746308089 0.0028769753873348243" density="507.157357703" pos="3.6415315207705142e-17 2.8449465006019633e-19 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                    </body>
-                                                    <geom name="vertebra_C16_collision" class="collision_primitive" size="0.0015024915337562561 0.0035165122011676432 0.0030935142189264298" density="507.157357703" pos="3.6415315207705142e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
-                                                  </body>
-                                                  <joint name="vertebra_C15_extend" class="caudal_extend" pos="0.0031462658647872991 0 0.00015202008349161144" axis="-0 0.99999999999999989 0" range="-0.26179938779914941 0.26179938779914941"/>
-                                                  <geom name="vertebra_C15_collision" class="collision_primitive" size="0.001476274151355028 0.0033096540719270706 0.0030910219997167584" density="507.157357703" pos="0 -2.2759572004815706e-18 0" quat="-3.0484114965156431e-15 0.69918484550468107 3.117107305228081e-15 0.71494094288730958"/>
-                                                </body>
-                                                <geom name="vertebra_C14_collision" class="collision_primitive" size="0.0014760485850274559 0.00310280523262918 0.0030909342691302299" density="507.157357703" pos="-3.6415315207705142e-17 -3.4139358007223559e-18 0" quat="0 0.68661127709289849 0 0.72702472734347823"/>
-                                              </body>
-                                              <joint name="vertebra_C13_bend" class="caudal_bend" pos="0.0028097880252677767 0 0.0010560710821014457" axis="0.35182448335084782 0 -0.93606598747893233" range="-0.26179938779914941 0.26179938779914941"/>
-                                              <geom name="vertebra_C13_collision" class="collision_primitive" size="0.0016725650057196617 0.0031679822597652676 0.0034228522330522538" density="507.157357703" pos="-9.1038288019262794e-18 0 1.4224732503009816e-19" quat="1.8921649036461709e-16 0.62939320922622977 -2.3361814295972612e-16 0.7770869888113604"/>
-                                            </body>
-                                            <geom name="vertebra_C12_collision" class="collision_primitive" size="0.0019468382000923162 0.0033169448375701908 0.003423266485333443" density="507.157357703" pos="0 0 0" quat="1.235560731911126e-17 0.50807932657268906 -7.2884636281232995e-18 0.86131027969567553"/>
-                                          </body>
-                                          <joint name="vertebra_C11_extend" class="caudal_extend" pos="0.0021896336582741963 0 0.0017779336996540955" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
-                                          <geom name="vertebra_C11_collision" class="collision_primitive" size="0.0019997276365756995 0.0031175558455288407 0.00342353954911232" density="507.157357703" pos="-1.8207657603852571e-17 0 0" quat="8.0408085539503005e-17 0.43494441859157318 -3.8839207519475621e-17 0.90045730200606311"/>
-                                        </body>
-                                        <geom name="vertebra_C10_collision" class="collision_primitive" size="0.0027369566261768348 0.0041574215982109319 0.0031502991914749146" density="507.157357703" pos="0 0 -1.1379786002407857e-18" quat="6.6069271991940225e-17 0.40482247803803101 -2.9250288648812828e-17 0.91439529814798803"/>
-                                      </body>
-                                      <joint name="vertebra_C9_bend" class="caudal_bend" pos="0.002309165442790524 0 0.0027563470765938915" axis="0.76654874165088338 0 -0.64218613086351128" range="-0.26179938779914941 0.26179938779914941"/>
-                                      <geom name="vertebra_C9_collision" class="collision_primitive" size="0.0025044694542884823 0.0035959181841462851 0.0031499363481998438" density="507.157357703" pos="0 0 -2.2759572004815706e-18" quat="0.93393633089552841 -2.1886851297021869e-17 0.35743940721945872 5.718710691193161e-17"/>
-                                    </body>
-                                    <geom name="vertebra_C8_collision" class="collision_primitive" size="0.0024126546457409856 0.0031656229170039297 0.0031494997441768647" density="507.157357703" pos="0 0 -2.2759572004815706e-18" quat="0.95575629612546076 -1.8012083974514359e-17 0.29415965463764848 5.8523194440748775e-17"/>
-                                  </body>
-                                  <joint name="vertebra_C7_extend" class="caudal_extend" pos="0.0021521470163932402 0 0.0037774345176631954" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
-                                  <geom name="vertebra_C7_collision" class="collision_primitive" size="0.002605554834008217 0.0037111189216375352 0.0030016986653208736" density="507.157357703" pos="0 0 0" quat="-0.95871816238736907 -0.028643871421635381 -0.2629262253293439 0.10444526687519259"/>
-                                </body>
-                                <joint name="vertebra_C6_extend" class="caudal_extend" pos="0.0016826827887313209 0 0.0026440890078373762" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
-                                <joint name="vertebra_C6_bend" class="caudal_bend" pos="0.0016826827887313209 0 0.0026440890078373762" axis="0.84364982580455439 0 -0.53689381763989852" range="-0.26179938779914941 0.26179938779914941"/>
-                                <geom name="vertebra_C6_collision" class="collision_primitive" size="0.0030793048441410068 0.0035534340422600503 0.0031341072171926498" density="507.157357703" pos="0 0 -4.551914400963142e-18" quat="-0.9684724633255426 -0.020165366545190799 -0.2338356379719502 0.083518502060948033"/>
-                              </body>
-                              <joint name="vertebra_C5_extend" class="caudal_extend" pos="0.0016097985836645862 0 0.002316051017970984" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
-                              <joint name="vertebra_C5_bend" class="caudal_bend" pos="0.0016097985836645862 0 0.002316051017970984" axis="0.82113239539061988 0 -0.57073775872992871" range="-0.26179938779914941 0.26179938779914941"/>
-                              <geom name="vertebra_C5_collision" class="collision_primitive" size="0.0036362636834383014 0.0030213098041713244 0.0028205573558807377" density="507.157357703" pos="0 0 0" quat="0.95955512298200196 -1.7238177888175469e-17 0.28152080910475341 5.8755805498267679e-17"/>
-                            </body>
-                            <joint name="vertebra_C4_extend" class="caudal_extend" pos="0.0020288402363404612 0 0.0027388148610772369" axis="-0 0.99999999999999956 0" range="-0.26179938779914941 0.26179938779914941"/>
-                            <joint name="vertebra_C4_bend" class="caudal_bend" pos="0.0020288402363404612 0 0.0027388148610772369" axis="0.80354477582822592 0 -0.59524431390746202" range="-0.26179938779914941 0.26179938779914941"/>
-                            <geom name="vertebra_C4_collision" class="collision_primitive" size="0.0053222611546516422 0.0030813594348728657 0.0034084159880876544" density="507.157357703" pos="0 0 -4.551914400963142e-18" quat="0.6698964656770412 0.22635972537845331 0.22635972537845331 0.6698964656770412"/>
-                          </body>
-                          <joint name="vertebra_C3_extend" class="caudal_extend" pos="0.00225170633306726 0 0.0028034822700438891" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
-                          <joint name="vertebra_C3_bend" class="caudal_bend" pos="0.00225170633306726 0 0.0028034822700438891" axis="0.77965718635053116 0 -0.62620657276331149" range="-0.26179938779914941 0.26179938779914941"/>
-                          <geom name="vertebra_C3_collision" class="collision_primitive" size="0.0063167825341224676 0.0032779518514871597 0.0035957884043455119" density="507.157357703" pos="0 0 4.551914400963142e-18" quat="0.658413368499565 0.25786010971272011 0.25786010971272011 0.658413368499565"/>
-                        </body>
-                        <joint name="vertebra_C2_extend" class="caudal_extend" pos="0.0028468214571109682 0 0.0031033603648861498" axis="-0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
-                        <joint name="vertebra_C2_bend" class="caudal_bend" pos="0.0028468214571109682 0 0.0031033603648861498" axis="0.73690872595059942 0 -0.6759922555901543" range="-0.26179938779914941 0.26179938779914941"/>
-                        <geom name="vertebra_C2_collision" class="collision_primitive" size="0.006688293069601059 0.0028049209155142306 0.0042113225907087328" density="507.157357703" pos="0 0 0" quat="0.61659450065834553 0.34613757634484821 0.34613757634484821 0.61659450065834553"/>
-                      </body>
-                      <joint name="vertebra_C1_extend" class="caudal_extend" pos="0.0034738564304005294 0 0.002614014119389677" axis="0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
-                      <joint name="vertebra_C1_bend" class="caudal_bend" pos="0.0034738564304005294 0 0.002614014119389677" axis="0.60126846879252016 0 -0.79904707523142726" range="-0.26179938779914941 0.26179938779914941"/>
-                      <geom name="vertebra_C1_collision" class="collision_primitive" size="0.0087719947099685683 0.0018963396549224857 0.004347499087452889" density="507.157357703" pos="0 -2.2226144535952842e-21 0" quat="0.57724085518430246 0.3506607415056362 0.32402767637757213 0.66244705781984103"/>
-                    </body>
-                  </body>
-                </body>
-                <joint name="vertebra_5_bend" class="lumbar_bend" axis="0 0 1"/>
-              </body>
-              <joint name="vertebra_4_extend" class="lumbar_extend" axis="0 1 0"/>
-            </body>
-            <joint name="vertebra_3_twist" class="lumbar_twist" axis="1 0 0"/>
-          </body>
-          <joint name="vertebra_2_bend" class="lumbar_bend" axis="0 0 1"/>
-        </body>
-        <joint name="vertebra_1_extend" class="lumbar_extend" axis="0 1 0"/>
-      </body>
-      <body name="vertebra_cervical_5" pos="0.022167251982057306 9.4609150964678731e-06 -0.00080025192830763766">
-        <geom name="vertebra_cervical_5_collision" class="nonself_collision_primitive" type="sphere" size="0.0071999999999999998" density="300"/>
-        <body name="vertebra_cervical_4" pos="0.001927232480041236 -9.6119757656560394e-06 0.00064766159510856627">
-          <geom name="vertebra_cervical_4_collision" class="nonself_collision_primitive" type="sphere" size="0.0067200000000000003" density="300"/>
-          <body name="vertebra_cervical_3" pos="0.0017202236729234072 9.6652324461534154e-11 0.00075322142754070053">
-            <geom name="vertebra_cervical_3_collision" class="nonself_collision_primitive" type="sphere" size="0.006239999999999999" density="300"/>
-            <body name="vertebra_cervical_2" pos="0.0015199680471110338 1.0271837764717802e-10 0.00069980966652591955">
-              <geom name="vertebra_cervical_2_collision" class="nonself_collision_primitive" type="sphere" size="0.0057599999999999986" density="300"/>
-              <body name="vertebra_cervical_1" pos="0.0014220093068491289 3.6177021128679074e-10 0.00074805882177086946">
-                <geom name="vertebra_cervical_1_collision" class="nonself_collision_primitive" type="sphere" size="0.0052799999999999991" density="300"/>
-                <body name="vertebra_axis" pos="0.0015058533321174218 -1.40532039036232e-06 0.0013646884848396153">
-                  <geom name="vertebra_axis_collision" class="nonself_collision_primitive" type="sphere" size="0.0047999999999999987" density="300"/>
-                  <body name="vertebra_atlant" pos="0.0019617457273428686 1.4055881907882432e-06 0.0010956437822756513">
-                    <geom name="vertebra_atlant_collision" class="nonself_collision_primitive" type="sphere" size="0.0043200000000000001" density="300"/>
-                    <joint name="vertebra_atlant_extend" class="cervical_extend" pos="2.1924663359986887e-05 -3.964302267017853e-08 -0.00016922343166617858" axis="0 1 0"/>
-                    <body name="skull" pos="0.020764055294513504 3.3618834595749326e-09 0.0014164079006320377">
-                      <geom name="skull_0_collision" class="collision_primitive" type="ellipsoid" size="0.017676182406373857 0.013356521739130432 0.0080000000000000002" density="703.10773841000002" pos="-0.0072472347866132797 0 0.00065600000000000001" euler="0 0.17453292519943289 0"/>
-                      <geom name="skull_0b_collision" class="collision_primitive" type="ellipsoid" size="0.017676182406373857 0.013356521739130432 0.0080000000000000002" density="1.4062154768199999" pos="-0.0072472347866132797 0 0.002624" euler="0 0.17453292519943289 0"/>
-                      <geom name="skull_F_collision" class="collision_primitive" type="ellipsoid" size="0.0057447592820715028 0.0071234782608695663 0.016" density="703.10773841000002" pos="0.011595575658581249 0 -0.00065600000000000001" euler="0 1.919862177193763 0"/>
-                      <geom name="skull_Fb_collision" class="collision_primitive" type="ellipsoid" size="0.0057447592820715028 0.0071234782608695663 0.016" density="1.4062154768199999" pos="0.011595575658581249 0 0.001312" euler="0 1.919862177193763 0"/>
-                      <geom name="skull_L_collision" class="collision_primitive" type="ellipsoid" size="0.0057447592820715028 0.010685217391304354 0.011200000000000002" density="703.10773841000002" pos="0.0043483408719679675 0.0036507826086956529 -0.00065600000000000001" euler="0 1.919862177193763 0"/>
-                      <geom name="eye_L_collision" class="collision_primitive" type="sphere" group="1" size="0.0032000000000000002 0.0032000000000000002 0.0032000000000000002" rgba="0 0 0 1" pos="0.00088380912031869288 0.010240000000000001 0.002"/>
-                      <geom name="skull_R_collision" class="collision_primitive" type="ellipsoid" size="0.0057447592820715028 0.010685217391304354 0.011200000000000002" density="703.10773841000002" pos="0.0043483408719679675 -0.0036507826086956529 -0.00065600000000000001" euler="0 1.919862177193763 0"/>
-                      <geom name="eye_R_collision" class="collision_primitive" type="sphere" group="1" size="0.0032000000000000002 0.0032000000000000002 0.0032000000000000002" rgba="0 0 0 1" pos="0.00088380912031869288 -0.010240000000000001 0.002"/>
-                      <geom name="skull_P0_collision" class="collision_primitive" type="box" size="0.0053028547219121569 0.0049864347826086971 0.0012800000000000001" density="703.10773841000002" pos="0.0014494469573226561 0 -0.0045920000000000006"/>
-                      <geom name="skull_P1_collision" class="collision_primitive" type="box" size="0.0035352364812747694 0.0032055652173913042 0.00095999999999999992" density="703.10773841000002" pos="0.005073064350629296 0 -0.0045920000000000006"/>
-                      <geom name="skull_P2_collision" class="collision_primitive" type="box" size="0.00088380912031869288 0.0026713043478260872 0.00064000000000000005" density="703.10773841000002" pos="0.0068848730472826167 0 -0.0045920000000000006"/>
-                      <geom name="skull_T0_collision" class="collision_primitive" type="ellipsoid" size="0.0044190456015934642 0.0053426086956521743 0.0032000000000000002" density="703.10773841000002" pos="0.023915874795823827 0 -0.0052480000000000001" euler="0 0.52359877559829882 0"/>
-                      <geom name="skull_T1_collision" class="collision_primitive" type="ellipsoid" group="1" size="0.0017676182406373847 0.0013356521739130434 0.0056000000000000008" rgba="1 1 1 1" density="703.10773841000002" pos="0.022466427838501161 0.00073015652173913045 -0.0098400000000000015" euler="0 0.52359877559829882 0"/>
-                      <geom name="skull_T2_collision" class="collision_primitive" type="ellipsoid" group="1" size="0.0017676182406373847 0.0013356521739130434 0.0056000000000000008" rgba="1 1 1 1" density="703.10773841000002" pos="0.022466427838501161 -0.00073015652173913045 -0.0098400000000000015" euler="0 0.52359877559829882 0"/>
-                      <joint name="atlas" class="atlas" pos="-0.022748668392038433 0 0"/>
-                      <site name="head" class="sensor" type="box" size="0.0016000000000000001 0.0016000000000000001 0.0016000000000000001"/>
-                      <camera name="egocentric" class="default" fovy="80" pos="0.0080000000000000002 0 0.0040000000000000001" euler="0 -1.570796326794897 -1.570796326794897"/>
-                      <body name="jaw" pos="0.00036236173933066397 -1.2710382270135465e-08 -0.013120000000000001" euler="0 0.26179938779914941 0">
-                        <geom name="jaw_back_collision" class="collision_primitive" type="ellipsoid" size="0.0097219003235056167 0.010685217391304354 0.0056000000000000008" density="314.05727497700002" pos="-0.0086966817439359367 0 0.0016400000000000002" euler="0 0.95993108859688125 0"/>
-                        <geom name="jaw_F_collision" class="collision_primitive" type="ellipsoid" size="0.0026514273609560776 0.0053426086956521743 0.0096000000000000009" density="314.05727497700002" pos="0.0021741704359839833 0 -0.0039360000000000003" euler="0 1.8325957145940459 0"/>
-                        <geom name="jaw_L_collision" class="collision_primitive" type="ellipsoid" size="0.0079542820828682314 0.0031165217391304354 0.012800000000000001" density="314.05727497700002" pos="-0.0043483408719679675 0.006571408695652173 0.00065600000000000001" euler="-0.69813170079773179 2.1816615649929121 0.52359877559829882"/>
-                        <geom name="jaw_R_collision" class="collision_primitive" type="ellipsoid" size="0.0079542820828682314 0.0031165217391304354 0.012800000000000001" density="314.05727497700002" pos="-0.0043483408719679675 -0.006571408695652173 0.00065600000000000001" euler="0.69813170079773179 2.1816615649929121 -0.52359877559829882"/>
-                        <geom name="jaw_T0_collision" class="collision_primitive" type="ellipsoid" size="0.0026514273609560776 0.0026713043478260872 0.0048000000000000004" density="314.05727497700002" pos="0.010146128701258592 0 -0.0045920000000000006" euler="0 1.2217304763960311 0"/>
-                        <geom name="jaw_T1_collision" class="collision_primitive" type="ellipsoid" group="1" size="0.0017676182406373847 0.0010685217391304353 0.0056000000000000008" rgba="1 1 1 1" density="314.05727497700002" pos="0.013769746094565233 0.00073015652173913045 -0.0032800000000000004" euler="0 1.134464013796314 0"/>
-                        <geom name="jaw_T2_collision" class="collision_primitive" type="ellipsoid" group="1" size="0.0017676182406373847 0.0010685217391304353 0.0056000000000000008" rgba="1 1 1 1" density="314.05727497700002" pos="0.013769746094565233 -0.00073015652173913045 -0.0032800000000000004" euler="0 1.134464013796314 0"/>
-                        <geom name="jaw_P0_collision" class="collision_primitive" type="box" size="0.0053028547219121569 0.0049864347826086971 0.0012800000000000001" density="314.05727497700002" pos="-0.0021741704359839833 0 0.00065600000000000001" euler="0 0.95993108859688125 0"/>
-                        <geom name="jaw_P1_collision" class="collision_primitive" type="box" size="0.0035352364812747694 0.0039179130434782621 0.00080000000000000004" density="314.05727497700002" pos="0 0 -0.00078720000000000005" euler="0 0.52359877559829882 0"/>
-                        <geom name="jaw_P2_collision" class="collision_primitive" type="box" size="0.0035352364812747694 0.0032055652173913042 0.00080000000000000004" density="314.05727497700002" pos="0.0021741704359839833 0 -0.0018368" euler="0 0.43633231299858238 0"/>
-                        <geom name="jaw_P3_collision" class="collision_primitive" type="box" size="0.0026514273609560776 0.0023151304347826091 0.00048000000000000007" density="314.05727497700002" pos="0.0037685620890389043 0 -0.0022960000000000003" euler="0 0.26179938779914941 0"/>
-                        <joint name="mandible" class="mandible" pos="-0.014800000000000001 0 0.0032000000000000002" axis="0 1 0"/>
-                      </body>
-                    </body>
-                  </body>
-                  <joint name="vertebra_axis_twist" class="cervical_twist" pos="7.9551413780554604e-05 5.8658433274525738e-08 -0.00021409920719857049" axis="0.74098459448325726 -0.00069151539353932078 0.6715216694529994"/>
-                </body>
-                <joint name="vertebra_cervical_1_bend" class="cervical_bend" pos="2.1975871736851764e-05 -1.7740562593575585e-11 -0.00021101543123680587" axis="-0.46556749786463181 0 0.88501237558127699"/>
-              </body>
-              <joint name="vertebra_cervical_2_extend" class="cervical_extend" pos="1.0361248785218065e-05 -4.6362983888557505e-12 -0.00020309987781262154" axis="0 1 0"/>
-            </body>
-            <joint name="vertebra_cervical_3_twist" class="cervical_twist" pos="6.5580566961799212e-06 -3.8927214196295925e-12 -0.00020354357890169756" axis="0.91603535672916836 5.1468275847153093e-08 0.40109752582391073"/>
-          </body>
-          <joint name="vertebra_cervical_4_bend" class="cervical_bend" pos="-1.2300762162088616e-05 3.8378085704711372e-07 -0.00021823270319099128" axis="-0.31854757960001961 0 0.94789508360576713"/>
-        </body>
-        <joint name="vertebra_cervical_5_extend" class="cervical_extend" pos="-0.00015476691739322145 -3.1988641998480579e-07 -0.00018374929019663146" axis="0 1 0"/>
-      </body>
-      <body name="scapula_L" pos="0.0052480000000000001 0.001312 0.0091840000000000012">
-        <joint name="scapula_L_supinate" class="scapula_supinate" pos="0 -0.004000000000000001 0" axis="-0 -0 1"/>
-        <joint name="scapula_L_abduct" class="scapula_abduct" pos="0 -0.004000000000000001 -0.0080000000000000002" axis="1 -0 -0"/>
-        <joint name="scapula_L_extend" class="scapula_extend" pos="0 0 0" axis="0.29999999999999999 1 0"/>
-        <site name="shoulder_L" class="default" size="0.0016000000000000001" pos="0.022960000000000001 0.0078720000000000005 -0.020336000000000003"/>
-        <body name="upper_arm_L" pos="0.022960000000000001 0.0078720000000000005 -0.020336000000000003">
-          <joint name="shoulder_L" class="shoulder" axis="0 1 0"/>
-          <joint name="shoulder_sup_L" class="shoulder_sup" axis="0 0 -1"/>
-          <site name="elbow_L" class="default" type="cylinder" size="0.00048000000000000007 0.0032000000000000002" pos="-0.012744966689065745 0.0082842283478927366 -0.017842953364692042" zaxis="0 1 0.20000000000000001"/>
-          <body name="lower_arm_L" pos="-0.012744966689065745 0.0082842283478927366 -0.017842953364692042">
-            <joint name="elbow_L" class="elbow" axis="0 1 0.20000000000000001"/>
-            <site name="wrist_L" class="default" type="cylinder" size="0.00064000000000000005 0.0027200000000000002" pos="0.017282123011834464 0.010081238423570105 -0.015841946094181592" zaxis="0 1 0"/>
-            <body name="hand_L" pos="0.017282123011834464 0.010081238423570105 -0.015841946094181592">
-              <joint name="wrist_L" class="wrist" axis="0.59999999999999998 -1 0"/>
-              <geom name="hand_L_collision" class="collision_primitive_paw" type="ellipsoid" size="0.0051761532709454338 0.0029578018691116762 0.0017746811214670059" density="2531.7812283100002" pos="0.0012126987663357873 0.00060634938316789363 -0.0036380962990073609" euler="-0.69813170079773179 0.87266462599716477 0.78539816339744828"/>
-              <site name="finger_L" class="default" type="cylinder" size="0.00048000000000000007 0.004000000000000001" pos="0.0024253975326715745 0.0012126987663357873 -0.0066698432148468295" zaxis="-0.20000000000000001 1 0"/>
-              <body name="finger_L" pos="0.0024253975326715745 0.0012126987663357873 -0.0066698432148468295">
-                <joint name="finger_L" class="finger" axis="-0.5 1 0"/>
-                <geom name="finger_L0_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0025880766354727169" pos="0.0039412709905913088 -0.00060634938316789363 0" euler="1.570796326794897 -1.308996938995747 0"/>
-                <geom name="finger_L1_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0029578018691116762" pos="0.0036380962990073609 0.0015158734579197336 0" euler="1.570796326794897 -1.099557428756428 0"/>
-                <geom name="finger_L2_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0025880766354727169" pos="0.0021222228410876275 0.0030317469158394682 0" euler="1.570796326794897 -0.95993108859688125 0"/>
-                <site name="palm_L" class="sensor" type="box" size="0.0032000000000000002 0.0032000000000000002 0.0016000000000000001" pos="0.0039360000000000003 0.0019680000000000001 -0.001312" euler="0 0 0.48869219055841229"/>
-              </body>
-            </body>
-            <geom name="radius_L_collision" class="collision_primitive" size="0.002985732634158393 0.01273327152802844" pos="0.0092043637402138331 0.005480586133703811 -0.0097810599308070893" quat="0.023764932308462921 0.79177214415182184 0.42322934679317159 0.43978292344135678"/>
-            <geom name="ulna_L_collision" class="collision_primitive" size="0.0035126266284216385 0.010537879885264912" pos="0.0053998114908382069 0.0039939349221066109 -0.0075918787618494514" quat="0.012822444520418631 0.74462498727826065 0.47760656071953278 0.46611284727523911"/>
-          </body>
-          <geom name="humerus_L_collision" class="collision_primitive" size="0.0062170569214954853 0.012434113842990969" pos="-0.0061946755600514299 0.0046303831120581319 -0.0095866821897776164" quat="0.47256099918016298 0.34500828054201771 0.00070160501549135191 0.8109592444517103"/>
-        </body>
-        <geom name="scapula_L_collision" class="nonself_collision_primitive" type="ellipsoid" size="0.0040042966604232795 0.011705462336540226 0.019448835253715515" density="513.56461230299999" pos="0.014056498008507721 0.0069095333440900705 -0.012183617994141529" quat="0.18441940626963749 0.76922228553766514 0.47403228455170038 0.38675567381237091"/>
-      </body>
-      <body name="scapula_R" pos="0.0052480000000000001 -0.001312 0.0091840000000000012">
-        <joint name="scapula_R_supinate" class="scapula_supinate" pos="0 0.004000000000000001 0" axis="0 0 -1"/>
-        <joint name="scapula_R_abduct" class="scapula_abduct" pos="0 0.004000000000000001 -0.0080000000000000002" axis="-1 0 0"/>
-        <joint name="scapula_R_extend" class="scapula_extend" pos="0 0 0" axis="-0.29999999999999999 1 0"/>
-        <site name="shoulder_R" class="default" size="0.0016000000000000001" pos="0.022960000000000001 -0.0078720000000000005 -0.020336000000000003"/>
-        <body name="upper_arm_R" pos="0.022960000000000001 -0.0078720000000000005 -0.020336000000000003">
-          <joint name="shoulder_R" class="shoulder" axis="0 1 0"/>
-          <joint name="shoulder_sup_R" class="shoulder_sup" axis="-0 -0 1"/>
-          <site name="elbow_R" class="default" type="cylinder" size="0.00048000000000000007 0.0032000000000000002" pos="-0.012744966689065745 -0.0082842283478927366 -0.017842953364692042" zaxis="0 1 -0.20000000000000001"/>
-          <body name="lower_arm_R" pos="-0.012744966689065745 -0.0082842283478927366 -0.017842953364692042">
-            <joint name="elbow_R" class="elbow" axis="0 1 -0.20000000000000001"/>
-            <site name="wrist_R" class="default" type="cylinder" size="0.00064000000000000005 0.0027200000000000002" pos="0.017282123011834464 -0.010081238423570105 -0.015841946094181592" zaxis="0 1 0"/>
-            <body name="hand_R" pos="0.017282123011834464 -0.010081238423570105 -0.015841946094181592">
-              <joint name="wrist_R" class="wrist" axis="-0.59999999999999998 -1 0"/>
-              <geom name="hand_R_collision" class="collision_primitive_paw" type="ellipsoid" size="0.0051761532709454338 0.0029578018691116762 0.0017746811214670059" density="2531.7812283100002" pos="0.0012126987663357873 -0.00060634938316789363 -0.0036380962990073609" euler="0.69813170079773179 0.87266462599716477 -0.78539816339744828"/>
-              <site name="finger_R" class="default" type="cylinder" size="0.00048000000000000007 0.004000000000000001" pos="0.0024253975326715745 -0.0012126987663357873 -0.0066698432148468295" zaxis="0.20000000000000001 1 0"/>
-              <body name="finger_R" pos="0.0024253975326715745 -0.0012126987663357873 -0.0066698432148468295">
-                <joint name="finger_R" class="finger" axis="0.5 1 0"/>
-                <geom name="finger_R0_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0025880766354727169" pos="0.0039412709905913088 0.00060634938316789363 0" euler="1.570796326794897 1.308996938995747 0"/>
-                <geom name="finger_R1_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0029578018691116762" pos="0.0036380962990073609 -0.0015158734579197336 0" euler="1.570796326794897 1.099557428756428 0"/>
-                <geom name="finger_R2_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0025880766354727169" pos="0.0021222228410876275 -0.0030317469158394682 0" euler="1.570796326794897 0.95993108859688125 0"/>
-                <site name="palm_R" class="sensor" type="box" size="0.0032000000000000002 0.0032000000000000002 0.0016000000000000001" pos="0.0039360000000000003 -0.0019680000000000001 -0.001312" euler="0 0 -0.48869219055841229"/>
-              </body>
-            </body>
-            <geom name="radius_R_collision" class="collision_primitive" size="0.002985732634158393 0.01273327152802844" pos="0.0092043691166252724 -0.0054809397392476802 -0.0097810639628832172" quat="0.43978285859011762 0.42323047325609903 0.79177155870747651 0.023765576358593481"/>
-            <geom name="ulna_R_collision" class="collision_primitive" size="0.0035126266284216385 0.010537879885264912" pos="0.0053998135446029502 -0.0039942869888001647 -0.0075918788057244601" quat="0.46611278282571561 0.47760677953250608 0.74462488546938377 0.01282254930824632"/>
-          </body>
-          <geom name="humerus_R_collision" class="collision_primitive" size="0.0062170569214954853 0.012434113842990969" pos="-0.0061946735116115573 -0.0046306780484401391 -0.0095866805369920968" quat="0.81095939353104862 0.00070139480829139946 0.34500827950404478 0.47256074441571583"/>
-        </body>
-        <geom name="scapula_R_collision" class="nonself_collision_primitive" type="ellipsoid" size="0.0040042962133884424 0.011705465018749242 0.019448831677436832" density="513.56464639299998" pos="0.014056496150803625 -0.006909836213893775 -0.012183616502487954" quat="0.38675569721296882 0.47403213120406879 0.76922234964236824 0.1844194839763772"/>
-      </body>
-    </body>
-    </body>
-    </body>
-  </worldbody>
-  <contact>
-    <exclude name="pelvis:vertebra_C2" body1="pelvis" body2="vertebra_C2"/>
-    <exclude name="pelvis:vertebra_C3" body1="pelvis" body2="vertebra_C3"/>
-    <exclude name="pelvis:vertebra_C4" body1="pelvis" body2="vertebra_C4"/>
-    <exclude name="vertebra_C1:vertebra_C3" body1="vertebra_C1" body2="vertebra_C3"/>
-    <exclude name="vertebra_C1:vertebra_C4" body1="vertebra_C1" body2="vertebra_C4"/>
-    <exclude name="vertebra_C2:vertebra_C4" body1="vertebra_C2" body2="vertebra_C4"/>
-    <exclude name="vertebra_C3:vertebra_C5" body1="vertebra_C3" body2="vertebra_C5"/>
-    <exclude name="vertebra_C4:vertebra_C6" body1="vertebra_C4" body2="vertebra_C6"/>
-    <exclude name="vertebra_C5:vertebra_C7" body1="vertebra_C5" body2="vertebra_C7"/>
-    <exclude name="vertebra_axis:skull" body1="vertebra_axis" body2="skull"/>
-    <exclude name="pelvis:vertebra_C5" body1="pelvis" body2="vertebra_C5"/>
-    <exclude name="pelvis:vertebra_C6" body1="pelvis" body2="vertebra_C6"/>
-    <exclude name="vertebra_C2:vertebra_C5" body1="vertebra_C2" body2="vertebra_C5"/>
-    <exclude name="vertebra_C3:vertebra_C6" body1="vertebra_C3" body2="vertebra_C6"/>
-    <exclude name="vertebra_C4:vertebra_C7" body1="vertebra_C4" body2="vertebra_C7"/>
-    <exclude name="upper_arm_L:upper_arm_R" body1="upper_arm_L" body2="upper_arm_R"/>
-    <exclude name="upper_leg_L:vertebra_C1" body1="upper_leg_L" body2="vertebra_C1"/>
-    <exclude name="upper_leg_L:vertebra_C2" body1="upper_leg_L" body2="vertebra_C2"/>
-    <exclude name="upper_leg_R:vertebra_C1" body1="upper_leg_R" body2="vertebra_C1"/>
-    <exclude name="upper_leg_R:vertebra_C2" body1="upper_leg_R" body2="vertebra_C2"/>
-    <exclude name="vertebra_cervical_1:skull" body1="vertebra_cervical_1" body2="skull"/>
-    <exclude name="vertebra_cervical_2:skull" body1="vertebra_cervical_2" body2="skull"/>
-    <exclude name="upper_arm_L:torso" body1="upper_arm_L" body2="torso"/>
-    <exclude name="upper_arm_R:torso" body1="upper_arm_R" body2="torso"/>
-    <exclude name="lower_leg_L:pelvis" body1="lower_leg_L" body2="pelvis"/>
-    <exclude name="lower_leg_R:pelvis" body1="lower_leg_R" body2="pelvis"/>
-  </contact>
-  <tendon>
-    <fixed name="lumbar_extend" class="lumbar_extend">
-      <joint joint="vertebra_1_extend" coef="0.60498346583200002"/>
-      <joint joint="vertebra_4_extend" coef="0.39501653416799998"/>
-    </fixed>
-    <fixed name="lumbar_bend" class="lumbar_bend">
-      <joint joint="vertebra_2_bend" coef="0.65821232655299999"/>
-      <joint joint="vertebra_5_bend" coef="0.34178767344700001"/>
-    </fixed>
-    <fixed name="lumbar_twist" class="lumbar_twist">
-      <joint joint="vertebra_3_twist" coef="0.57066998362099997"/>
-      <joint joint="vertebra_6_twist" coef="0.42933001637899998"/>
-    </fixed>
-    <fixed name="cervical_extend" class="cervical_extend">
-      <joint joint="vertebra_cervical_5_extend" coef="0.34171354717399999"/>
-      <joint joint="vertebra_cervical_2_extend" coef="0.33240829293599999"/>
-      <joint joint="vertebra_atlant_extend" coef="0.32587815989000002"/>
-    </fixed>
-    <fixed name="cervical_bend" class="cervical_bend">
-      <joint joint="vertebra_cervical_4_bend" coef="0.50743949691000001"/>
-      <joint joint="vertebra_cervical_1_bend" coef="0.49256050308999999"/>
-    </fixed>
-    <fixed name="cervical_twist" class="cervical_twist">
-      <joint joint="vertebra_cervical_3_twist" coef="0.496142185731"/>
-      <joint joint="vertebra_axis_twist" coef="0.503857814269"/>
-    </fixed>
-    <fixed name="caudal_extend" class="caudal_extend">
-      <joint joint="vertebra_C1_extend" coef="0.29007246307000001"/>
-      <joint joint="vertebra_C2_extend" coef="0.20766904003100001"/>
-      <joint joint="vertebra_C3_extend" coef="0.151635169821"/>
-      <joint joint="vertebra_C4_extend" coef="0.115426643422"/>
-      <joint joint="vertebra_C5_extend" coef="0.087549782338600002"/>
-      <joint joint="vertebra_C6_extend" coef="0.0692562920379"/>
-      <joint joint="vertebra_C7_extend" coef="0.055869163346399998"/>
-      <joint joint="vertebra_C11_extend" coef="0.017530663271300002"/>
-      <joint joint="vertebra_C15_extend" coef="0.0041441737883599998"/>
-      <joint joint="vertebra_C19_extend" coef="0.00074642278889000004"/>
-      <joint joint="vertebra_C23_extend" coef="8.5912797066999995e-05"/>
-      <joint joint="vertebra_C27_extend" coef="1.4273287336800001e-05"/>
-    </fixed>
-    <fixed name="caudal_bend" class="caudal_bend">
-      <joint joint="vertebra_C1_bend" coef="0.37079288112600001"/>
-      <joint joint="vertebra_C2_bend" coef="0.233517805262"/>
-      <joint joint="vertebra_C3_bend" coef="0.15089435017799999"/>
-      <joint joint="vertebra_C4_bend" coef="0.101885012096"/>
-      <joint joint="vertebra_C5_bend" coef="0.067174353242899998"/>
-      <joint joint="vertebra_C6_bend" coef="0.043956122370899998"/>
-      <joint joint="vertebra_C9_bend" coef="0.018819911962900001"/>
-      <joint joint="vertebra_C13_bend" coef="0.0099988981986100008"/>
-      <joint joint="vertebra_C17_bend" coef="0.0025264296805199999"/>
-      <joint joint="vertebra_C21_bend" coef="0.000378783618491"/>
-      <joint joint="vertebra_C25_bend" coef="4.1065656652200003e-05"/>
-      <joint joint="vertebra_C29_bend" coef="1.43866075466e-05"/>
-    </fixed>
-  </tendon>
-  <actuator>
-    <general name="lumbar_extend" class="default" forcerange="-20 20" tendon="lumbar_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1308996938995747" biasprm="2.6179938779914949 -20"/>
-    <general name="lumbar_bend" class="default" forcerange="-20 20" tendon="lumbar_bend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.10471975511965979" biasprm="0 -20"/>
-    <general name="lumbar_twist" class="default" forcerange="-20 20" tendon="lumbar_twist" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.10471975511965979" biasprm="0 -20"/>
-    <general name="cervical_extend" class="default" forcerange="-20 20" tendon="cervical_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1018108730330026" biasprm="2.0362174606600498 -20"/>
-    <general name="cervical_bend" class="default" forcerange="-20 20" tendon="cervical_bend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1221730476396031" biasprm="0 -20"/>
-    <general name="cervical_twist" class="default" forcerange="-20 20" tendon="cervical_twist" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1221730476396031" biasprm="0 -20"/>
-    <general name="caudal_extend" class="default" forcerange="-0.10000000000000001 0.10000000000000001" tendon="caudal_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.026179938779914948" biasprm="0 -0.10000000000000001"/>
-    <general name="caudal_bend" class="default" forcerange="-0.10000000000000001 0.10000000000000001" tendon="caudal_bend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.026179938779914941" biasprm="0 -0.10000000000000001"/>
-    <general name="hip_L_supinate" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="hip_L_supinate" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.24434609527920609" biasprm="-0.034906585039886598 -0.40000000000000002"/>
-    <general name="hip_L_abduct" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="hip_L_abduct" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.31415926535897931" biasprm="0.10471975511965979 -0.40000000000000002"/>
-    <general name="hip_L_extend" class="default" forcerange="-0.29999999999999999 0.29999999999999999" joint="hip_L_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.78539816339744817" biasprm="-0.15707963267948971 -0.59999999999999998"/>
-    <general name="knee_L" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="knee_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.55152404363020813" biasprm="0.062831853071795868 -0.40000000000000002"/>
-    <general name="ankle_L" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="ankle_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.30717794835100198" biasprm="0.25132741228718353 -0.40000000000000002"/>
-    <general name="toe_L" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="toe_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.021816615649929118" biasprm="0.021816615649929118 -0.050000000000000003"/>
-    <general name="hip_R_supinate" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="hip_R_supinate" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.24434609527920609" biasprm="-0.034906585039886598 -0.40000000000000002"/>
-    <general name="hip_R_abduct" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="hip_R_abduct" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.31415926535897931" biasprm="0.10471975511965979 -0.40000000000000002"/>
-    <general name="hip_R_extend" class="default" forcerange="-0.29999999999999999 0.29999999999999999" joint="hip_R_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.78539816339744817" biasprm="-0.15707963267948971 -0.59999999999999998"/>
-    <general name="knee_R" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="knee_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.55152404363020813" biasprm="0.062831853071795868 -0.40000000000000002"/>
-    <general name="ankle_R" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="ankle_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.30717794835100198" biasprm="0.25132741228718353 -0.40000000000000002"/>
-    <general name="toe_R" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="toe_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.021816615649929118" biasprm="0.021816615649929118 -0.050000000000000003"/>
-    <general name="atlas" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="atlas" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.021816615649929118" biasprm="0.017453292519943299 -0.050000000000000003"/>
-    <general name="mandible" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="mandible" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.01396263401595464" biasprm="-0.00087266462599716599 -0.050000000000000003"/>
-    <general name="scapula_L_supinate" class="default" forcerange="-0.25 0.25" joint="scapula_L_supinate" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.04799655442984406" biasprm="0.039269908169872407 -0.5"/>
-    <general name="scapula_L_abduct" class="default" forcerange="-0.25 0.25" joint="scapula_L_abduct" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1308996938995747" biasprm="0 -0.5"/>
-    <general name="scapula_L_extend" class="default" forcerange="-0.25 0.25" joint="scapula_L_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.017453292519943299" biasprm="0 -0.5"/>
-    <general name="shoulder_L" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="shoulder_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.3272492347489368" biasprm="-0.065449846949787366 -0.29999999999999999"/>
-    <general name="shoulder_sup_L" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="shoulder_sup_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.17802358370342161" biasprm="0.1623156204354726 -0.29999999999999999"/>
-    <general name="elbow_L" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="elbow_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.30106929596902182" biasprm="-0.091629785729702304 -0.29999999999999999"/>
-    <general name="wrist_L" class="default" forcerange="-0.050000000000000003 0.050000000000000003" joint="wrist_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1221730476396031" biasprm="0.087266462599716474 -0.10000000000000001"/>
-    <general name="finger_L" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="finger_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.039269908169872407" biasprm="0.039269908169872407 -0.050000000000000003"/>
-    <general name="scapula_R_supinate" class="default" forcerange="-0.25 0.25" joint="scapula_R_supinate" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.04799655442984406" biasprm="0.039269908169872407 -0.5"/>
-    <general name="scapula_R_abduct" class="default" forcerange="-0.25 0.25" joint="scapula_R_abduct" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1308996938995747" biasprm="0 -0.5"/>
-    <general name="scapula_R_extend" class="default" forcerange="-0.25 0.25" joint="scapula_R_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.017453292519943299" biasprm="0 -0.5"/>
-    <general name="shoulder_R" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="shoulder_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.3272492347489368" biasprm="-0.065449846949787366 -0.29999999999999999"/>
-    <general name="shoulder_sup_R" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="shoulder_sup_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.17802358370342161" biasprm="0.1623156204354726 -0.29999999999999999"/>
-    <general name="elbow_R" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="elbow_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.30106929596902182" biasprm="-0.091629785729702304 -0.29999999999999999"/>
-    <general name="wrist_R" class="default" forcerange="-0.050000000000000003 0.050000000000000003" joint="wrist_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1221730476396031" biasprm="0.087266462599716474 -0.10000000000000001"/>
-    <general name="finger_R" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="finger_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.039269908169872407" biasprm="0.039269908169872407 -0.050000000000000003"/>
-  </actuator>
-  <sensor>
-    <accelerometer name="accelerometer" site="head"/>
-    <velocimeter name="velocimeter" site="head"/>
-    <gyro name="gyro" site="head"/>
-    <touch name="palm_L" site="palm_L"/>
-    <touch name="palm_R" site="palm_R"/>
-    <touch name="sole_L" site="sole_L"/>
-    <touch name="sole_R" site="sole_R"/>
-    <subtreelinvel name="torso" body="torso"/>
-  </sensor>
-</mujoco>
+	<compiler angle="radian" />
+	<size njmax="8000" nconmax="4000"/>
+	<visual>
+		<quality shadowsize="2048"/>
+		<global offwidth="1920" offheight="1200" elevation="-20" azimuth="120"/>
+	</visual>
+	<statistic meansize="0.0030000000000000001"/>
+	<default>
+		<default class="default">
+			<joint limited="true" solreflimit="0.01 1" solimplimit="0.98999999999999999 0.99990000000000001 0" armature="5.9999999999999997e-07" damping="0.001"/>
+			<geom friction="0.69999999999999996 0.0050000000000000001 0.0001" solref="0.0050000000000000001 1"/>
+			<site group="3" rgba="0 0 1 1"/>
+			<tendon limited="false"/>
+			<general ctrllimited="true" forcelimited="false" ctrlrange="-1 1" gainprm="0.01"/>
+			<default class="bone">
+				<geom contype="0" conaffinity="0" group="0" rgba="0.5 0.5 0.5 1" density="1100"/>
+			</default>
+			<default class="collision">
+				<geom contype="1" conaffinity="1" condim="1" group="2"/>
+				<default class="collision_primitive">
+					<geom type="capsule" group="2" rgba="0 0.5 0.5 1" density="500"/>
+					<default class="collision_primitive_paw">
+						<geom condim="3" priority="1" rgba="0 0.59999999999999998 0.69999999999999996 1" friction="1.5 0.0050000000000000001 0.0001"/>
+					</default>
+					<default class="nonself_collision_primitive">
+						<geom conaffinity="0"/>
+					</default>
+				</default>
+				<default class="ghost_collision_primitive">
+					<geom type="capsule" group="2" rgba="1 1 1 0.2" density="500"/>
+					<default class="ghost_collision_primitive_paw">
+						<geom condim="3" priority="1" rgba="0.8 0.8 1.0 0.2" friction="1.5 0.0050000000000000001 0.0001"/>
+					</default>
+					<default class="ghost_nonself_collision_primitive">
+						<geom conaffinity="0"/>
+					</default>
+				</default>
+			</default>
+			<default class="lumbar">
+				<joint group="3" pos="0.0030000000000000001 0 -0.0030000000000000001" armature="1.0000000000000001e-05" damping="0.029999999999999999"/>
+				<general gainprm="0.14999999999999999"/>
+				<default class="lumbar_extend">
+					<joint stiffness="0.02" range="-0.52359877559829882 0.78539816339744828"/>
+					<tendon range="-1 1"/>
+					<general gainprm="0.40000000000000002"/>
+				</default>
+				<default class="lumbar_bend">
+					<joint stiffness="0.029999999999999999" range="-0.52359877559829882 0.52359877559829882"/>
+					<tendon range="-1 1"/>
+				</default>
+				<default class="lumbar_twist">
+					<joint stiffness="0.029999999999999999" range="-0.52359877559829882 0.52359877559829882"/>
+					<tendon range="-1 1"/>
+				</default>
+			</default>
+			<default class="cervical">
+				<joint group="3" pos="-0.02 0 -0.050000000000000003" stiffness="1" armature="0.001" damping="1"/>
+				<default class="cervical_extend">
+					<joint range="-0.40724349213201022 0.6108652381980153"/>
+					<tendon range="-1 1"/>
+					<general gainprm="2.5"/>
+				</default>
+				<default class="cervical_bend">
+					<joint range="-0.6108652381980153 0.6108652381980153"/>
+					<tendon range="-1 1"/>
+					<general gainprm="2.5"/>
+				</default>
+				<default class="cervical_twist">
+					<joint range="-0.6108652381980153 0.6108652381980153"/>
+					<tendon range="-1 1"/>
+					<general gainprm="2.5"/>
+				</default>
+			</default>
+			<default class="atlas">
+				<joint axis="0 -1 0" stiffness="0.002" range="-0.087266462599716474 0.78539816339744828" damping="0.002"/>
+				<general gainprm="0.025000000000000001"/>
+			</default>
+			<default class="mandible">
+				<joint stiffness="0.002" range="-0.29670597283903599 0.26179938779914941" springref="-0.31415926535900002" damping="0.002"/>
+				<general gainprm="0.025000000000000001"/>
+			</default>
+			<default class="caudal">
+				<joint group="3" stiffness="1.0000000000000001e-05" damping="0.002"/>
+				<general gainprm="0.0050000000000000001"/>
+				<default class="caudal_extend">
+					<joint range="-0.087266462599716474 0.087266462599716474"/>
+					<tendon range="-0.050000000000000003 0.050000000000000003"/>
+				</default>
+				<default class="caudal_bend">
+					<joint range="-0.087266462599716474 0.087266462599716474"/>
+					<tendon range="-0.20000000000000001 0.20000000000000001"/>
+				</default>
+			</default>
+			<default class="hip">
+				<joint armature="1.0000000000000001e-05" damping="0.02"/>
+				<general gainprm="0.20000000000000001"/>
+				<default class="hip_supinate">
+					<joint range="-0.69813170079773179 0.52359877559829882"/>
+				</default>
+				<default class="hip_abduct">
+					<joint range="-0.52359877559829882 1.0471975511965981"/>
+				</default>
+				<default class="hip_extend">
+					<joint range="-1.570796326794897 1.0471975511965981"/>
+					<general gainprm="0.29999999999999999"/>
+				</default>
+			</default>
+			<default class="knee">
+				<joint range="-1.2217304763960311 1.5358897417550099" damping="0.0050000000000000001"/>
+				<general gainprm="0.20000000000000001"/>
+			</default>
+			<default class="ankle">
+				<joint range="-0.13962634015954639 1.396263401595464" damping="0.0030000000000000001"/>
+				<general gainprm="0.20000000000000001"/>
+			</default>
+			<default class="toe">
+				<joint range="0 0.87266462599716477" damping="0.001"/>
+				<general gainprm="0.025000000000000001"/>
+			</default>
+			<default class="scapula">
+				<joint damping="0.0050000000000000001"/>
+				<general gainprm="0.25"/>
+				<default class="scapula_supinate">
+					<joint pos="0 0.005000000000000001 0" range="-0.017453292519943299 0.17453292519943289"/>
+				</default>
+				<default class="scapula_abduct">
+					<joint pos="0 0.005000000000000001 -0.01" range="-0.26179938779914941 0.26179938779914941"/>
+				</default>
+				<default class="scapula_extend">
+					<joint pos="0 0 0" range="-0.034906585039886591 0.034906585039886591"/>
+					<general gainprm="0.25"/>
+				</default>
+			</default>
+			<default class="shoulder">
+				<joint range="-1.308996938995747 0.87266462599716477" damping="0.0050000000000000001"/>
+				<general gainprm="0.14999999999999999"/>
+			</default>
+			<default class="shoulder_sup">
+				<joint range="-0.05235987755982989 1.134464013796314" damping="0.0050000000000000001"/>
+				<general gainprm="0.14999999999999999"/>
+			</default>
+			<default class="elbow">
+				<joint range="-1.308996938995747 0.69813170079773179" damping="0.0030000000000000001"/>
+				<general gainprm="0.14999999999999999"/>
+			</default>
+			<default class="wrist">
+				<joint range="-0.3490658503988659 2.0943951023931948" damping="0.002"/>
+				<general gainprm="0.050000000000000003"/>
+			</default>
+			<default class="finger">
+				<joint range="0 1.570796326794897" damping="0.002"/>
+				<general gainprm="0.025000000000000001"/>
+			</default>
+			<default class="sensor">
+				<site group="4"/>
+			</default>
+		</default>
+	</default>
+	<asset>
+		<texture type="skybox" builtin="gradient" rgb1="0.29999999999999999 0.5 0.69999999999999996" rgb2="0 0 0" width="32" height="512"/>
+		<texture name="body" type="cube" builtin="flat" rgb1="1 1 1" rgb2="1 1 1" mark="cross" markrgb="1 1 1" random="0.01" width="128" height="128"/>
+		<material name="body" class="default" texture="body" texuniform="true" rgba="1 1 1 0.2"/>
+		<texture name="grid" type="2d" builtin="checker" rgb1="0.10000000000000001 0.20000000000000001 0.29999999999999999" rgb2="0.20000000000000001 0.29999999999999999 0.40000000000000002" width="512" height="512"/>
+		<material name="grid" class="default" texture="grid" texrepeat="1 1" texuniform="true" reflectance="0.20000000000000001"/>
+	</asset>
+	<worldbody>
+		<geom name="floor" class="default" type="plane" condim="3" size="0 0 0.080000000000000016" material="grid"/>
+		<camera name="close_profile" mode="trackcom" pos=".5 -.5 0.5" xyaxes="1 1 0 -1 1 2"/>
+		<replicate count="2" euler="0 0 0" sep="-">
+			<body name="rodent">
+				<freejoint name="root"/>
+				<body name="torso" pos="0.024796208436626305 1.6468199501211665e-07 0.052071658104959742">
+					<light name="tracking_light" class="default" mode="trackcom" pos="0 0 2.4000000000000004"/>
+					<camera name="back" class="default" mode="trackcom" pos="-0.80000000000000004 0 0.40000000000000002" xyaxes="0 -1 0 1 0 2"/>
+					<camera name="side" class="default" mode="trackcom" pos="0 -0.80000000000000004 0.40000000000000002" xyaxes="1 0 0 0 1 2"/>
+					<camera name="side_alt" class="default" mode="trackcom" pos="0.40000000000000002 -0.44880000000000009 0.15920000000000001" xyaxes="0.76600000000000001 0.64300000000000002 0 -0.16200000000000001 0.192 0.96799999999999997"/>
+					<camera name="top" class="default" mode="trackcom" fovy="100" pos="0 0 0.80000000000000004" zaxis="0 -0.20000000000000001 1"/>
+					<geom name="collision_torso" class="nonself_collision_primitive" type="ellipsoid" size="0.040000000000000008 0.019200000000000002 0.020799999999999999" density="468.25126000900002" pos="-0.0065600000000000007 0 0" euler="0 0.17453292519943289 0"/>
+					<body name="vertebra_1" pos="-0.015343554933286825 -1.5042684742071753e-07 0.013477165525192712">
+						<geom name="vertebra_1_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
+						<body name="vertebra_2" pos="-0.004503773068254174 2.0758428709267548e-06 0.00042567381590265891">
+							<geom name="vertebra_2_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
+							<body name="vertebra_3" pos="-0.005213733338033928 -8.3285029228861271e-06 -7.5737751158563962e-05">
+								<geom name="vertebra_3_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
+								<body name="vertebra_4" pos="-0.0054221633481496279 6.9968809017303219e-06 -0.00103945181828198">
+									<geom name="vertebra_4_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
+									<body name="vertebra_5" pos="-0.005512053249842482 -4.9634669197785774e-06 -0.0019984519830259632">
+										<geom name="vertebra_5_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
+										<body name="vertebra_6" pos="-0.0049482275477452098 4.2035537031640391e-06 -0.0029128979624222675">
+											<geom name="vertebra_6_collision" class="nonself_collision_primitive" type="sphere" size="0.0080000000000000002" pos="0 0 -0.001312"/>
+											<joint name="vertebra_6_twist" class="lumbar_twist" axis="1 0 0"/>
+											<body name="pelvis" pos="-0.010457127359075169 2.8105771470567275e-06 -0.0064967862638180265">
+												<geom name="collision_pelvis_L" class="nonself_collision_primitive" size="0.0104 0.016800000000000002 0" density="1548.57736929" pos="-0.00065600000000000001 0.0052480000000000001 -0.0045920000000000006" euler="0 0.87266462599716477 0"/>
+												<geom name="collision_pelvis_R" class="nonself_collision_primitive" size="0.0104 0.016800000000000002 0" density="1548.57736929" pos="-0.00065600000000000001 -0.0052480000000000001 -0.0045920000000000006" euler="0 0.87266462599716477 0"/>
+												<geom name="collision_pelvis_gut" class="nonself_collision_primitive" type="ellipsoid" size="0.016 0.016 0.0144" density="1548.57736929" pos="0.016400000000000001 0 -0.013120000000000001" euler="0 -0.52359877559829882 0"/>
+												<site name="hip_L" class="default" size="0.0017600000000000003" pos="-0.0038482339334116921 0.009193003285372375 -0.0079102586409018124"/>
+												<site name="hip_R" class="default" size="0.0017600000000000003" pos="-0.0038482339334116921 -0.009193003285372375 -0.0079102586409018124"/>
+												<body name="upper_leg_L" pos="-0.0038482339334116921 0.009193003285372375 -0.0079102586409018124">
+													<joint name="hip_L_supinate" class="hip_supinate" axis="-0 -0 1"/>
+													<joint name="hip_L_abduct" class="hip_abduct" axis="1 -0 -0"/>
+													<joint name="hip_L_extend" class="hip_extend" axis="0 1 0"/>
+													<site name="knee_L" class="default" type="cylinder" size="0.00048000000000000007 0.0032000000000000002" pos="0.012338116276694889 0.013983198446920864 -0.020563527127824808" zaxis="0 1 0"/>
+													<geom name="upper_leg_L0_collision" class="collision_primitive" size="0.0069939224017847856 0.01398784480356957" density="1561.7555055600001" pos="0.006882019643356229 0.0086025245541952889 -0.010323029465034345" euler="0.6108652381980153 -0.69813170079773179 0"/>
+													<body name="lower_leg_L" pos="0.012338116276694889 0.013983198446920864 -0.020563527127824808">
+														<joint name="knee_L" class="knee" axis="0.5 -1 0"/>
+														<site name="ankle_L" class="default" type="cylinder" size="0.00048000000000000007 0.0020799999999999998" pos="-0.025841232270267252 -0.0037816437468683774 -0.017647670818719097" zaxis="0 1 0"/>
+														<body name="foot_L" pos="-0.025841232270267252 -0.0037816437468683774 -0.017647670818719097">
+															<joint name="ankle_L" class="ankle" axis="-0.29999999999999999 1 0"/>
+															<geom name="foot_L_collision" class="collision_primitive_paw" size="0.0025685697662671744 0.0099073405270305292" density="2041.1597822799999" pos="0.006619571226208547 0.0018053376071477849 -0.0018053376071477849" euler="1.570796326794897 -1.2217304763960311 0"/>
+															<site name="toe_L" class="default" type="cylinder" size="0.00048000000000000007 0.004000000000000001" pos="0.016879954490938105 0.0060914618380341849 -0.0022017331944701873" zaxis="0 1 0"/>
+															<body name="toe_L" pos="0.016879954490938105 0.0060914618380341849 -0.0022017331944701873">
+																<joint name="toe_L" class="toe" axis="0 1 0"/>
+																<geom name="toe_L0_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0058025944240173467" pos="0.0067973248967060354 -0.00067973248967060338 0" euler="1.570796326794897 -1.2217304763960311 0"/>
+																<geom name="toe_L1_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0062170654543042998" pos="0.0064574586518707337 0.0020391974690118107 0" euler="1.570796326794897 -1.2217304763960311 0"/>
+																<geom name="toe_L2_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0058025944240173467" pos="0.0054378599173648271 0.004418261182858923 0" euler="1.570796326794897 -1.2217304763960311 0"/>
+																<site name="sole_L" class="sensor" type="box" size="0.0048000000000000004 0.0032000000000000002 0.0016000000000000001" pos="0.0065600000000000007 0.0019680000000000001 -0.001312" euler="0 0 0.3490658503988659"/>
+															</body>
+														</body>
+														<geom name="lower_leg_L_collision" class="collision_primitive" size="0.0052454418013385892 0.015386629283926529" density="1302.86687267" pos="-0.0098107123754354493 9.7983394097741678e-05 -0.0085745069224315278" quat="0.58439398761405215 0.27858155227390202 0.39004539538183519 0.65478284607542836"/>
+													</body>
+												</body>
+												<body name="upper_leg_R" pos="-0.0038482339334116921 -0.009193003285372375 -0.0079102586409018124">
+													<joint name="hip_R_supinate" class="hip_supinate" axis="0 0 -1"/>
+													<joint name="hip_R_abduct" class="hip_abduct" axis="-1 0 0"/>
+													<joint name="hip_R_extend" class="hip_extend" axis="0 1 0"/>
+													<site name="knee_R" class="default" type="cylinder" size="0.00048000000000000007 0.0032000000000000002" pos="0.012338116276694889 -0.013983198446920864 -0.020563527127824808" zaxis="0 1 0"/>
+													<geom name="upper_leg_R0_collision" class="collision_primitive" size="0.0069939224017847856 0.01398784480356957" density="1561.7555055600001" pos="0.006882019643356229 -0.0086025245541952889 -0.010323029465034345" euler="-0.6108652381980153 -0.69813170079773179 0"/>
+													<body name="lower_leg_R" pos="0.012338116276694889 -0.013983198446920864 -0.020563527127824808">
+														<joint name="knee_R" class="knee" axis="-0.5 -1 0"/>
+														<site name="ankle_R" class="default" type="cylinder" size="0.00048000000000000007 0.0020799999999999998" pos="-0.025841232270267252 0.0037816437468683774 -0.017647670818719097" zaxis="0 1 0"/>
+														<body name="foot_R" pos="-0.025841232270267252 0.0037816437468683774 -0.017647670818719097">
+															<joint name="ankle_R" class="ankle" axis="0.29999999999999999 1 0"/>
+															<geom name="foot_R_collision" class="collision_primitive_paw" size="0.0025685697662671744 0.0099073405270305292" density="2041.1597822799999" pos="0.006619571226208547 -0.0018053376071477849 -0.0018053376071477849" euler="1.570796326794897 1.2217304763960311 0"/>
+															<site name="toe_R" class="default" type="cylinder" size="0.00048000000000000007 0.004000000000000001" pos="0.016879954490938105 -0.0060914618380341849 -0.0022017331944701873" zaxis="0 1 0"/>
+															<body name="toe_R" pos="0.016879954490938105 -0.0060914618380341849 -0.0022017331944701873">
+																<joint name="toe_R" class="toe" axis="0 1 0"/>
+																<geom name="toe_R0_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0058025944240173467" pos="0.0067973248967060354 0.00067973248967060338 0" euler="1.570796326794897 1.2217304763960311 0"/>
+																<geom name="toe_R1_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0062170654543042998" pos="0.0064574586518707337 -0.0020391974690118107 0" euler="1.570796326794897 1.2217304763960311 0"/>
+																<geom name="toe_R2_collision" class="collision_primitive_paw" size="0.0019065667393199856 0.0058025944240173467" pos="0.0054378599173648271 -0.004418261182858923 0" euler="1.570796326794897 1.2217304763960311 0"/>
+																<site name="sole_R" class="sensor" type="box" size="0.0048000000000000004 0.0032000000000000002 0.0016000000000000001" pos="0.0065600000000000007 -0.0019680000000000001 -0.001312" euler="0 0 -0.3490658503988659"/>
+															</body>
+														</body>
+														<geom name="lower_leg_R_collision" class="collision_primitive" size="0.0052454418013385892 0.015386629283926529" density="1302.86687267" pos="-0.0096231729066562563 -0.00012926295632311304 -0.0084593095260612813" quat="0.65643150361110036 0.39014177197659983 0.27795769268188453 0.58277491358567579"/>
+													</body>
+												</body>
+												<body name="vertebra_C1" pos="-0.012631929383871738 0 -0.0095052983409469535">
+													<body name="vertebra_C2" pos="-0.0031016430257114545 0 -0.0033811449636138124">
+														<body name="vertebra_C3" pos="-0.0027392214500722412 0 -0.0034104619488904073">
+															<body name="vertebra_C4" pos="-0.0026174997333265945 0 -0.0035334705217752609">
+																<body name="vertebra_C5" pos="-0.002540779416815196 0 -0.0036554726873710922">
+																	<body name="vertebra_C6" pos="-0.0024953550803855987 0 -0.0039210842250744825">
+																		<body name="vertebra_C7" pos="-0.0025726490154827416 0 -0.0045154969055985136">
+																			<body name="vertebra_C8" pos="-0.002756682803583797 0 -0.0044145450177480129">
+																				<body name="vertebra_C9" pos="-0.0034281382201444403 0 -0.0040920146240522445">
+																					<body name="vertebra_C10" pos="-0.0038892361317142549 0 -0.0036497490741299794">
+																						<body name="vertebra_C11" pos="-0.0042998295879178496 0 -0.0034913657351953275">
+																							<body name="vertebra_C12" pos="-0.0049075827684923563 0 -0.0030732022415328633">
+																								<body name="vertebra_C13" pos="-0.005517941960170648 0 -0.0020739425481376065">
+																									<body name="vertebra_C14" pos="-0.0054600301898750821 0 -0.00072711991463410817">
+																										<body name="vertebra_C15" pos="-0.0052209688553074615 0 -0.00025226479750928472">
+																											<body name="vertebra_C16" pos="-0.0053551275583300076 0 -0.00011079082164452376">
+																												<body name="vertebra_C17" pos="-0.0051883409974800227 0 -1.3363737113733313e-05">
+																													<body name="vertebra_C18" pos="-0.0049659457454381247 0 1.4604585051383738e-10">
+																														<body name="vertebra_C19" pos="-0.0049634076782603485 0 -6.561521781901086e-10">
+																															<body name="vertebra_C20" pos="-0.0049827014559540653 0 2.0132163782515289e-06">
+																																<body name="vertebra_C21" pos="-0.0048941227339751019 0 -8.7731337465474799e-05">
+																																	<body name="vertebra_C22" pos="-0.0052064862796271224 0 -1.0495899869192313e-05">
+																																		<body name="vertebra_C23" pos="-0.0051126043300991717 0 1.4011211281663578e-09">
+																																			<body name="vertebra_C24" pos="-0.004944572156201271 0 -9.9770813863364636e-10">
+																																				<body name="vertebra_C25" pos="-0.0047745591613888114 0 1.1035938798226176e-10">
+																																					<body name="vertebra_C26" pos="-0.0045029412641134671 0 -1.0925041591600128e-09">
+																																						<body name="vertebra_C27" pos="-0.004154496225817427 0 1.1165543536625913e-09">
+																																							<body name="vertebra_C28" pos="-0.0040289912835609959 0 4.0591858848478166e-07">
+																																								<body name="vertebra_C29" pos="-0.0038191174697357827 0 -4.9644436563370256e-11">
+																																									<body name="vertebra_C30" pos="-0.0032042812983593041 0 -3.3577465497229905e-07">
+																																										<geom name="vertebra_C30_collision" class="collision_primitive" size="0.0010382849723100664 0.0049300205893814562 0.0027652319520711896" density="507.157357703" pos="-2.7311486405778847e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																									</body>
+																																									<joint name="vertebra_C29_bend" class="caudal_bend" pos="0.0029926210641860961 0 3.8900868526955952e-11" axis="1.299892892972596e-08 0 -0.99999999999999989" range="-0.26179938779914941 0.26179938779914941"/>
+																																									<geom name="vertebra_C29_collision" class="collision_primitive" size="0.0010374659672379497 0.0047710201470181346 0.0020950142294168471" density="507.157357703" pos="1.8207657603852571e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																								</body>
+																																								<geom name="vertebra_C28_collision" class="collision_primitive" size="0.0010374658741056921 0.0046119361766614013 0.0023022238165140152" density="507.157357703" pos="-1.8207657603852571e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																							</body>
+																																							<joint name="vertebra_C27_extend" class="caudal_extend" pos="0.0030830536037682369 0 -8.2859551116459365e-10" axis="0 0.99999999999999989 0" range="-0.26179938779914941 0.26179938779914941"/>
+																																							<geom name="vertebra_C27_collision" class="collision_primitive" size="0.0011036813259124752 0.0044529462698847059 0.002449158951640129" density="507.157357703" pos="-1.8207657603852571e-17 -4.551914400963142e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																						</body>
+																																						<geom name="vertebra_C26_collision" class="collision_primitive" size="0.0011036840267479417 0.004293865326326341 0.002449143119156361" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																					</body>
+																																					<joint name="vertebra_C25_bend" class="caudal_bend" pos="0.0028769880533218379 0 -6.6498838963914477e-11" axis="-2.311404765380703e-08 0 -0.99999999999999978" range="-0.26179938779914941 0.26179938779914941"/>
+																																					<geom name="vertebra_C25_collision" class="collision_primitive" size="0.0011036813259124752 0.0041348714148625731 0.002783137932419777" density="507.157357703" pos="1.8207657603852571e-17 4.551914400963142e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																				</body>
+																																				<geom name="vertebra_C24_collision" class="collision_primitive" size="0.0011036816053092481 0.0039758181083016098 0.0027831349521875385" density="507.157357703" pos="0 4.551914400963142e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																			</body>
+																																			<joint name="vertebra_C23_extend" class="caudal_extend" pos="0.0028769753873347163 0 -7.8844180776474552e-10" axis="0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
+																																			<geom name="vertebra_C23_collision" class="collision_primitive" size="0.0011036791838705538 0.0038167803548276426 0.0029926210641860961" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																		</body>
+																																		<geom name="vertebra_C22_collision" class="collision_primitive" size="0.00110368262976408 0.0036577424849383536 0.0029926227405667307" density="507.157357703" pos="1.8207657603852571e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																	</body>
+																																	<joint name="vertebra_C21_bend" class="caudal_bend" pos="0.0030905254905880756 0 5.5400313702433989e-05" axis="0.017922976189593771 0 -0.99983937056134542" range="-0.26179938779914941 0.26179938779914941"/>
+																																	<geom name="vertebra_C21_collision" class="collision_primitive" size="0.0012244122102856641 0.0039777030237019067 0.0030830536037683488" density="507.157357703" pos="-1.8207657603852571e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																																</body>
+																																<geom name="vertebra_C20_collision" class="collision_primitive" size="0.0011986291036009792 0.0041412290884181857 0.0028769265860319141" density="507.157357703" pos="0 2.2759572004815706e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																															</body>
+																															<joint name="vertebra_C19_extend" class="caudal_extend" pos="0.0034228522330522239 0 4.5249395051249869e-10" axis="-0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
+																															<geom name="vertebra_C19_collision" class="collision_primitive" size="0.0013071632012724881 0.0041371025145053864 0.0028769880533218387" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																														</body>
+																														<geom name="vertebra_C18_collision" class="collision_primitive" size="0.0013071648776531216 0.0039302199613302944 0.0028769841417670247" density="507.157357703" pos="-3.6415315207705142e-17 2.8449465006019633e-19 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																													</body>
+																													<joint name="vertebra_C17_bend" class="caudal_bend" pos="0.0034235281926773987 0 8.8180655031380166e-06" axis="0.0025757159736695379 0 -0.99999668283810972" range="-0.26179938779914941 0.26179938779914941"/>
+																													<geom name="vertebra_C17_collision" class="collision_primitive" size="0.0013071645051240921 0.0037233683746308089 0.0028769753873348243" density="507.157357703" pos="3.6415315207705142e-17 2.8449465006019633e-19 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																												</body>
+																												<geom name="vertebra_C16_collision" class="collision_primitive" size="0.0015024915337562561 0.0035165122011676432 0.0030935142189264298" density="507.157357703" pos="3.6415315207705142e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+																											</body>
+																											<joint name="vertebra_C15_extend" class="caudal_extend" pos="0.0031462658647872991 0 0.00015202008349161144" axis="-0 0.99999999999999989 0" range="-0.26179938779914941 0.26179938779914941"/>
+																											<geom name="vertebra_C15_collision" class="collision_primitive" size="0.001476274151355028 0.0033096540719270706 0.0030910219997167584" density="507.157357703" pos="0 -2.2759572004815706e-18 0" quat="-3.0484114965156431e-15 0.69918484550468107 3.117107305228081e-15 0.71494094288730958"/>
+																										</body>
+																										<geom name="vertebra_C14_collision" class="collision_primitive" size="0.0014760485850274559 0.00310280523262918 0.0030909342691302299" density="507.157357703" pos="-3.6415315207705142e-17 -3.4139358007223559e-18 0" quat="0 0.68661127709289849 0 0.72702472734347823"/>
+																									</body>
+																									<joint name="vertebra_C13_bend" class="caudal_bend" pos="0.0028097880252677767 0 0.0010560710821014457" axis="0.35182448335084782 0 -0.93606598747893233" range="-0.26179938779914941 0.26179938779914941"/>
+																									<geom name="vertebra_C13_collision" class="collision_primitive" size="0.0016725650057196617 0.0031679822597652676 0.0034228522330522538" density="507.157357703" pos="-9.1038288019262794e-18 0 1.4224732503009816e-19" quat="1.8921649036461709e-16 0.62939320922622977 -2.3361814295972612e-16 0.7770869888113604"/>
+																								</body>
+																								<geom name="vertebra_C12_collision" class="collision_primitive" size="0.0019468382000923162 0.0033169448375701908 0.003423266485333443" density="507.157357703" pos="0 0 0" quat="1.235560731911126e-17 0.50807932657268906 -7.2884636281232995e-18 0.86131027969567553"/>
+																							</body>
+																							<joint name="vertebra_C11_extend" class="caudal_extend" pos="0.0021896336582741963 0 0.0017779336996540955" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+																							<geom name="vertebra_C11_collision" class="collision_primitive" size="0.0019997276365756995 0.0031175558455288407 0.00342353954911232" density="507.157357703" pos="-1.8207657603852571e-17 0 0" quat="8.0408085539503005e-17 0.43494441859157318 -3.8839207519475621e-17 0.90045730200606311"/>
+																						</body>
+																						<geom name="vertebra_C10_collision" class="collision_primitive" size="0.0027369566261768348 0.0041574215982109319 0.0031502991914749146" density="507.157357703" pos="0 0 -1.1379786002407857e-18" quat="6.6069271991940225e-17 0.40482247803803101 -2.9250288648812828e-17 0.91439529814798803"/>
+																					</body>
+																					<joint name="vertebra_C9_bend" class="caudal_bend" pos="0.002309165442790524 0 0.0027563470765938915" axis="0.76654874165088338 0 -0.64218613086351128" range="-0.26179938779914941 0.26179938779914941"/>
+																					<geom name="vertebra_C9_collision" class="collision_primitive" size="0.0025044694542884823 0.0035959181841462851 0.0031499363481998438" density="507.157357703" pos="0 0 -2.2759572004815706e-18" quat="0.93393633089552841 -2.1886851297021869e-17 0.35743940721945872 5.718710691193161e-17"/>
+																				</body>
+																				<geom name="vertebra_C8_collision" class="collision_primitive" size="0.0024126546457409856 0.0031656229170039297 0.0031494997441768647" density="507.157357703" pos="0 0 -2.2759572004815706e-18" quat="0.95575629612546076 -1.8012083974514359e-17 0.29415965463764848 5.8523194440748775e-17"/>
+																			</body>
+																			<joint name="vertebra_C7_extend" class="caudal_extend" pos="0.0021521470163932402 0 0.0037774345176631954" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+																			<geom name="vertebra_C7_collision" class="collision_primitive" size="0.002605554834008217 0.0037111189216375352 0.0030016986653208736" density="507.157357703" pos="0 0 0" quat="-0.95871816238736907 -0.028643871421635381 -0.2629262253293439 0.10444526687519259"/>
+																		</body>
+																		<joint name="vertebra_C6_extend" class="caudal_extend" pos="0.0016826827887313209 0 0.0026440890078373762" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+																		<joint name="vertebra_C6_bend" class="caudal_bend" pos="0.0016826827887313209 0 0.0026440890078373762" axis="0.84364982580455439 0 -0.53689381763989852" range="-0.26179938779914941 0.26179938779914941"/>
+																		<geom name="vertebra_C6_collision" class="collision_primitive" size="0.0030793048441410068 0.0035534340422600503 0.0031341072171926498" density="507.157357703" pos="0 0 -4.551914400963142e-18" quat="-0.9684724633255426 -0.020165366545190799 -0.2338356379719502 0.083518502060948033"/>
+																	</body>
+																	<joint name="vertebra_C5_extend" class="caudal_extend" pos="0.0016097985836645862 0 0.002316051017970984" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+																	<joint name="vertebra_C5_bend" class="caudal_bend" pos="0.0016097985836645862 0 0.002316051017970984" axis="0.82113239539061988 0 -0.57073775872992871" range="-0.26179938779914941 0.26179938779914941"/>
+																	<geom name="vertebra_C5_collision" class="collision_primitive" size="0.0036362636834383014 0.0030213098041713244 0.0028205573558807377" density="507.157357703" pos="0 0 0" quat="0.95955512298200196 -1.7238177888175469e-17 0.28152080910475341 5.8755805498267679e-17"/>
+																</body>
+																<joint name="vertebra_C4_extend" class="caudal_extend" pos="0.0020288402363404612 0 0.0027388148610772369" axis="-0 0.99999999999999956 0" range="-0.26179938779914941 0.26179938779914941"/>
+																<joint name="vertebra_C4_bend" class="caudal_bend" pos="0.0020288402363404612 0 0.0027388148610772369" axis="0.80354477582822592 0 -0.59524431390746202" range="-0.26179938779914941 0.26179938779914941"/>
+																<geom name="vertebra_C4_collision" class="collision_primitive" size="0.0053222611546516422 0.0030813594348728657 0.0034084159880876544" density="507.157357703" pos="0 0 -4.551914400963142e-18" quat="0.6698964656770412 0.22635972537845331 0.22635972537845331 0.6698964656770412"/>
+															</body>
+															<joint name="vertebra_C3_extend" class="caudal_extend" pos="0.00225170633306726 0 0.0028034822700438891" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+															<joint name="vertebra_C3_bend" class="caudal_bend" pos="0.00225170633306726 0 0.0028034822700438891" axis="0.77965718635053116 0 -0.62620657276331149" range="-0.26179938779914941 0.26179938779914941"/>
+															<geom name="vertebra_C3_collision" class="collision_primitive" size="0.0063167825341224676 0.0032779518514871597 0.0035957884043455119" density="507.157357703" pos="0 0 4.551914400963142e-18" quat="0.658413368499565 0.25786010971272011 0.25786010971272011 0.658413368499565"/>
+														</body>
+														<joint name="vertebra_C2_extend" class="caudal_extend" pos="0.0028468214571109682 0 0.0031033603648861498" axis="-0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
+														<joint name="vertebra_C2_bend" class="caudal_bend" pos="0.0028468214571109682 0 0.0031033603648861498" axis="0.73690872595059942 0 -0.6759922555901543" range="-0.26179938779914941 0.26179938779914941"/>
+														<geom name="vertebra_C2_collision" class="collision_primitive" size="0.006688293069601059 0.0028049209155142306 0.0042113225907087328" density="507.157357703" pos="0 0 0" quat="0.61659450065834553 0.34613757634484821 0.34613757634484821 0.61659450065834553"/>
+													</body>
+													<joint name="vertebra_C1_extend" class="caudal_extend" pos="0.0034738564304005294 0 0.002614014119389677" axis="0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
+													<joint name="vertebra_C1_bend" class="caudal_bend" pos="0.0034738564304005294 0 0.002614014119389677" axis="0.60126846879252016 0 -0.79904707523142726" range="-0.26179938779914941 0.26179938779914941"/>
+													<geom name="vertebra_C1_collision" class="collision_primitive" size="0.0087719947099685683 0.0018963396549224857 0.004347499087452889" density="507.157357703" pos="0 -2.2226144535952842e-21 0" quat="0.57724085518430246 0.3506607415056362 0.32402767637757213 0.66244705781984103"/>
+												</body>
+											</body>
+										</body>
+										<joint name="vertebra_5_bend" class="lumbar_bend" axis="0 0 1"/>
+									</body>
+									<joint name="vertebra_4_extend" class="lumbar_extend" axis="0 1 0"/>
+								</body>
+								<joint name="vertebra_3_twist" class="lumbar_twist" axis="1 0 0"/>
+							</body>
+							<joint name="vertebra_2_bend" class="lumbar_bend" axis="0 0 1"/>
+						</body>
+						<joint name="vertebra_1_extend" class="lumbar_extend" axis="0 1 0"/>
+					</body>
+					<body name="vertebra_cervical_5" pos="0.022167251982057306 9.4609150964678731e-06 -0.00080025192830763766">
+						<geom name="vertebra_cervical_5_collision" class="nonself_collision_primitive" type="sphere" size="0.0071999999999999998" density="300"/>
+						<body name="vertebra_cervical_4" pos="0.001927232480041236 -9.6119757656560394e-06 0.00064766159510856627">
+							<geom name="vertebra_cervical_4_collision" class="nonself_collision_primitive" type="sphere" size="0.0067200000000000003" density="300"/>
+							<body name="vertebra_cervical_3" pos="0.0017202236729234072 9.6652324461534154e-11 0.00075322142754070053">
+								<geom name="vertebra_cervical_3_collision" class="nonself_collision_primitive" type="sphere" size="0.006239999999999999" density="300"/>
+								<body name="vertebra_cervical_2" pos="0.0015199680471110338 1.0271837764717802e-10 0.00069980966652591955">
+									<geom name="vertebra_cervical_2_collision" class="nonself_collision_primitive" type="sphere" size="0.0057599999999999986" density="300"/>
+									<body name="vertebra_cervical_1" pos="0.0014220093068491289 3.6177021128679074e-10 0.00074805882177086946">
+										<geom name="vertebra_cervical_1_collision" class="nonself_collision_primitive" type="sphere" size="0.0052799999999999991" density="300"/>
+										<body name="vertebra_axis" pos="0.0015058533321174218 -1.40532039036232e-06 0.0013646884848396153">
+											<geom name="vertebra_axis_collision" class="nonself_collision_primitive" type="sphere" size="0.0047999999999999987" density="300"/>
+											<body name="vertebra_atlant" pos="0.0019617457273428686 1.4055881907882432e-06 0.0010956437822756513">
+												<geom name="vertebra_atlant_collision" class="nonself_collision_primitive" type="sphere" size="0.0043200000000000001" density="300"/>
+												<joint name="vertebra_atlant_extend" class="cervical_extend" pos="2.1924663359986887e-05 -3.964302267017853e-08 -0.00016922343166617858" axis="0 1 0"/>
+												<body name="skull" pos="0.020764055294513504 3.3618834595749326e-09 0.0014164079006320377">
+													<geom name="skull_0_collision" class="collision_primitive" type="ellipsoid" size="0.017676182406373857 0.013356521739130432 0.0080000000000000002" density="703.10773841000002" pos="-0.0072472347866132797 0 0.00065600000000000001" euler="0 0.17453292519943289 0"/>
+													<geom name="skull_0b_collision" class="collision_primitive" type="ellipsoid" size="0.017676182406373857 0.013356521739130432 0.0080000000000000002" density="1.4062154768199999" pos="-0.0072472347866132797 0 0.002624" euler="0 0.17453292519943289 0"/>
+													<geom name="skull_F_collision" class="collision_primitive" type="ellipsoid" size="0.0057447592820715028 0.0071234782608695663 0.016" density="703.10773841000002" pos="0.011595575658581249 0 -0.00065600000000000001" euler="0 1.919862177193763 0"/>
+													<geom name="skull_Fb_collision" class="collision_primitive" type="ellipsoid" size="0.0057447592820715028 0.0071234782608695663 0.016" density="1.4062154768199999" pos="0.011595575658581249 0 0.001312" euler="0 1.919862177193763 0"/>
+													<geom name="skull_L_collision" class="collision_primitive" type="ellipsoid" size="0.0057447592820715028 0.010685217391304354 0.011200000000000002" density="703.10773841000002" pos="0.0043483408719679675 0.0036507826086956529 -0.00065600000000000001" euler="0 1.919862177193763 0"/>
+													<geom name="eye_L_collision" class="collision_primitive" type="sphere" group="1" size="0.0032000000000000002 0.0032000000000000002 0.0032000000000000002" rgba="0 0 0 1" pos="0.00088380912031869288 0.010240000000000001 0.002"/>
+													<geom name="skull_R_collision" class="collision_primitive" type="ellipsoid" size="0.0057447592820715028 0.010685217391304354 0.011200000000000002" density="703.10773841000002" pos="0.0043483408719679675 -0.0036507826086956529 -0.00065600000000000001" euler="0 1.919862177193763 0"/>
+													<geom name="eye_R_collision" class="collision_primitive" type="sphere" group="1" size="0.0032000000000000002 0.0032000000000000002 0.0032000000000000002" rgba="0 0 0 1" pos="0.00088380912031869288 -0.010240000000000001 0.002"/>
+													<geom name="skull_P0_collision" class="collision_primitive" type="box" size="0.0053028547219121569 0.0049864347826086971 0.0012800000000000001" density="703.10773841000002" pos="0.0014494469573226561 0 -0.0045920000000000006"/>
+													<geom name="skull_P1_collision" class="collision_primitive" type="box" size="0.0035352364812747694 0.0032055652173913042 0.00095999999999999992" density="703.10773841000002" pos="0.005073064350629296 0 -0.0045920000000000006"/>
+													<geom name="skull_P2_collision" class="collision_primitive" type="box" size="0.00088380912031869288 0.0026713043478260872 0.00064000000000000005" density="703.10773841000002" pos="0.0068848730472826167 0 -0.0045920000000000006"/>
+													<geom name="skull_T0_collision" class="collision_primitive" type="ellipsoid" size="0.0044190456015934642 0.0053426086956521743 0.0032000000000000002" density="703.10773841000002" pos="0.023915874795823827 0 -0.0052480000000000001" euler="0 0.52359877559829882 0"/>
+													<geom name="skull_T1_collision" class="collision_primitive" type="ellipsoid" group="1" size="0.0017676182406373847 0.0013356521739130434 0.0056000000000000008" rgba="1 1 1 1" density="703.10773841000002" pos="0.022466427838501161 0.00073015652173913045 -0.0098400000000000015" euler="0 0.52359877559829882 0"/>
+													<geom name="skull_T2_collision" class="collision_primitive" type="ellipsoid" group="1" size="0.0017676182406373847 0.0013356521739130434 0.0056000000000000008" rgba="1 1 1 1" density="703.10773841000002" pos="0.022466427838501161 -0.00073015652173913045 -0.0098400000000000015" euler="0 0.52359877559829882 0"/>
+													<joint name="atlas" class="atlas" pos="-0.022748668392038433 0 0"/>
+													<site name="head" class="sensor" type="box" size="0.0016000000000000001 0.0016000000000000001 0.0016000000000000001"/>
+													<camera name="egocentric" class="default" fovy="80" pos="0.0080000000000000002 0 0.0040000000000000001" euler="0 -1.570796326794897 -1.570796326794897"/>
+													<body name="jaw" pos="0.00036236173933066397 -1.2710382270135465e-08 -0.013120000000000001" euler="0 0.26179938779914941 0">
+														<geom name="jaw_back_collision" class="collision_primitive" type="ellipsoid" size="0.0097219003235056167 0.010685217391304354 0.0056000000000000008" density="314.05727497700002" pos="-0.0086966817439359367 0 0.0016400000000000002" euler="0 0.95993108859688125 0"/>
+														<geom name="jaw_F_collision" class="collision_primitive" type="ellipsoid" size="0.0026514273609560776 0.0053426086956521743 0.0096000000000000009" density="314.05727497700002" pos="0.0021741704359839833 0 -0.0039360000000000003" euler="0 1.8325957145940459 0"/>
+														<geom name="jaw_L_collision" class="collision_primitive" type="ellipsoid" size="0.0079542820828682314 0.0031165217391304354 0.012800000000000001" density="314.05727497700002" pos="-0.0043483408719679675 0.006571408695652173 0.00065600000000000001" euler="-0.69813170079773179 2.1816615649929121 0.52359877559829882"/>
+														<geom name="jaw_R_collision" class="collision_primitive" type="ellipsoid" size="0.0079542820828682314 0.0031165217391304354 0.012800000000000001" density="314.05727497700002" pos="-0.0043483408719679675 -0.006571408695652173 0.00065600000000000001" euler="0.69813170079773179 2.1816615649929121 -0.52359877559829882"/>
+														<geom name="jaw_T0_collision" class="collision_primitive" type="ellipsoid" size="0.0026514273609560776 0.0026713043478260872 0.0048000000000000004" density="314.05727497700002" pos="0.010146128701258592 0 -0.0045920000000000006" euler="0 1.2217304763960311 0"/>
+														<geom name="jaw_T1_collision" class="collision_primitive" type="ellipsoid" group="1" size="0.0017676182406373847 0.0010685217391304353 0.0056000000000000008" rgba="1 1 1 1" density="314.05727497700002" pos="0.013769746094565233 0.00073015652173913045 -0.0032800000000000004" euler="0 1.134464013796314 0"/>
+														<geom name="jaw_T2_collision" class="collision_primitive" type="ellipsoid" group="1" size="0.0017676182406373847 0.0010685217391304353 0.0056000000000000008" rgba="1 1 1 1" density="314.05727497700002" pos="0.013769746094565233 -0.00073015652173913045 -0.0032800000000000004" euler="0 1.134464013796314 0"/>
+														<geom name="jaw_P0_collision" class="collision_primitive" type="box" size="0.0053028547219121569 0.0049864347826086971 0.0012800000000000001" density="314.05727497700002" pos="-0.0021741704359839833 0 0.00065600000000000001" euler="0 0.95993108859688125 0"/>
+														<geom name="jaw_P1_collision" class="collision_primitive" type="box" size="0.0035352364812747694 0.0039179130434782621 0.00080000000000000004" density="314.05727497700002" pos="0 0 -0.00078720000000000005" euler="0 0.52359877559829882 0"/>
+														<geom name="jaw_P2_collision" class="collision_primitive" type="box" size="0.0035352364812747694 0.0032055652173913042 0.00080000000000000004" density="314.05727497700002" pos="0.0021741704359839833 0 -0.0018368" euler="0 0.43633231299858238 0"/>
+														<geom name="jaw_P3_collision" class="collision_primitive" type="box" size="0.0026514273609560776 0.0023151304347826091 0.00048000000000000007" density="314.05727497700002" pos="0.0037685620890389043 0 -0.0022960000000000003" euler="0 0.26179938779914941 0"/>
+														<joint name="mandible" class="mandible" pos="-0.014800000000000001 0 0.0032000000000000002" axis="0 1 0"/>
+													</body>
+												</body>
+											</body>
+											<joint name="vertebra_axis_twist" class="cervical_twist" pos="7.9551413780554604e-05 5.8658433274525738e-08 -0.00021409920719857049" axis="0.74098459448325726 -0.00069151539353932078 0.6715216694529994"/>
+										</body>
+										<joint name="vertebra_cervical_1_bend" class="cervical_bend" pos="2.1975871736851764e-05 -1.7740562593575585e-11 -0.00021101543123680587" axis="-0.46556749786463181 0 0.88501237558127699"/>
+									</body>
+									<joint name="vertebra_cervical_2_extend" class="cervical_extend" pos="1.0361248785218065e-05 -4.6362983888557505e-12 -0.00020309987781262154" axis="0 1 0"/>
+								</body>
+								<joint name="vertebra_cervical_3_twist" class="cervical_twist" pos="6.5580566961799212e-06 -3.8927214196295925e-12 -0.00020354357890169756" axis="0.91603535672916836 5.1468275847153093e-08 0.40109752582391073"/>
+							</body>
+							<joint name="vertebra_cervical_4_bend" class="cervical_bend" pos="-1.2300762162088616e-05 3.8378085704711372e-07 -0.00021823270319099128" axis="-0.31854757960001961 0 0.94789508360576713"/>
+						</body>
+						<joint name="vertebra_cervical_5_extend" class="cervical_extend" pos="-0.00015476691739322145 -3.1988641998480579e-07 -0.00018374929019663146" axis="0 1 0"/>
+					</body>
+					<body name="scapula_L" pos="0.0052480000000000001 0.001312 0.0091840000000000012">
+						<joint name="scapula_L_supinate" class="scapula_supinate" pos="0 -0.004000000000000001 0" axis="-0 -0 1"/>
+						<joint name="scapula_L_abduct" class="scapula_abduct" pos="0 -0.004000000000000001 -0.0080000000000000002" axis="1 -0 -0"/>
+						<joint name="scapula_L_extend" class="scapula_extend" pos="0 0 0" axis="0.29999999999999999 1 0"/>
+						<site name="shoulder_L" class="default" size="0.0016000000000000001" pos="0.022960000000000001 0.0078720000000000005 -0.020336000000000003"/>
+						<body name="upper_arm_L" pos="0.022960000000000001 0.0078720000000000005 -0.020336000000000003">
+							<joint name="shoulder_L" class="shoulder" axis="0 1 0"/>
+							<joint name="shoulder_sup_L" class="shoulder_sup" axis="0 0 -1"/>
+							<site name="elbow_L" class="default" type="cylinder" size="0.00048000000000000007 0.0032000000000000002" pos="-0.012744966689065745 0.0082842283478927366 -0.017842953364692042" zaxis="0 1 0.20000000000000001"/>
+							<body name="lower_arm_L" pos="-0.012744966689065745 0.0082842283478927366 -0.017842953364692042">
+								<joint name="elbow_L" class="elbow" axis="0 1 0.20000000000000001"/>
+								<site name="wrist_L" class="default" type="cylinder" size="0.00064000000000000005 0.0027200000000000002" pos="0.017282123011834464 0.010081238423570105 -0.015841946094181592" zaxis="0 1 0"/>
+								<body name="hand_L" pos="0.017282123011834464 0.010081238423570105 -0.015841946094181592">
+									<joint name="wrist_L" class="wrist" axis="0.59999999999999998 -1 0"/>
+									<geom name="hand_L_collision" class="collision_primitive_paw" type="ellipsoid" size="0.0051761532709454338 0.0029578018691116762 0.0017746811214670059" density="2531.7812283100002" pos="0.0012126987663357873 0.00060634938316789363 -0.0036380962990073609" euler="-0.69813170079773179 0.87266462599716477 0.78539816339744828"/>
+									<site name="finger_L" class="default" type="cylinder" size="0.00048000000000000007 0.004000000000000001" pos="0.0024253975326715745 0.0012126987663357873 -0.0066698432148468295" zaxis="-0.20000000000000001 1 0"/>
+									<body name="finger_L" pos="0.0024253975326715745 0.0012126987663357873 -0.0066698432148468295">
+										<joint name="finger_L" class="finger" axis="-0.5 1 0"/>
+										<geom name="finger_L0_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0025880766354727169" pos="0.0039412709905913088 -0.00060634938316789363 0" euler="1.570796326794897 -1.308996938995747 0"/>
+										<geom name="finger_L1_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0029578018691116762" pos="0.0036380962990073609 0.0015158734579197336 0" euler="1.570796326794897 -1.099557428756428 0"/>
+										<geom name="finger_L2_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0025880766354727169" pos="0.0021222228410876275 0.0030317469158394682 0" euler="1.570796326794897 -0.95993108859688125 0"/>
+										<site name="palm_L" class="sensor" type="box" size="0.0032000000000000002 0.0032000000000000002 0.0016000000000000001" pos="0.0039360000000000003 0.0019680000000000001 -0.001312" euler="0 0 0.48869219055841229"/>
+									</body>
+								</body>
+								<geom name="radius_L_collision" class="collision_primitive" size="0.002985732634158393 0.01273327152802844" pos="0.0092043637402138331 0.005480586133703811 -0.0097810599308070893" quat="0.023764932308462921 0.79177214415182184 0.42322934679317159 0.43978292344135678"/>
+								<geom name="ulna_L_collision" class="collision_primitive" size="0.0035126266284216385 0.010537879885264912" pos="0.0053998114908382069 0.0039939349221066109 -0.0075918787618494514" quat="0.012822444520418631 0.74462498727826065 0.47760656071953278 0.46611284727523911"/>
+							</body>
+							<geom name="humerus_L_collision" class="collision_primitive" size="0.0062170569214954853 0.012434113842990969" pos="-0.0061946755600514299 0.0046303831120581319 -0.0095866821897776164" quat="0.47256099918016298 0.34500828054201771 0.00070160501549135191 0.8109592444517103"/>
+						</body>
+						<geom name="scapula_L_collision" class="nonself_collision_primitive" type="ellipsoid" size="0.0040042966604232795 0.011705462336540226 0.019448835253715515" density="513.56461230299999" pos="0.014056498008507721 0.0069095333440900705 -0.012183617994141529" quat="0.18441940626963749 0.76922228553766514 0.47403228455170038 0.38675567381237091"/>
+					</body>
+					<body name="scapula_R" pos="0.0052480000000000001 -0.001312 0.0091840000000000012">
+						<joint name="scapula_R_supinate" class="scapula_supinate" pos="0 0.004000000000000001 0" axis="0 0 -1"/>
+						<joint name="scapula_R_abduct" class="scapula_abduct" pos="0 0.004000000000000001 -0.0080000000000000002" axis="-1 0 0"/>
+						<joint name="scapula_R_extend" class="scapula_extend" pos="0 0 0" axis="-0.29999999999999999 1 0"/>
+						<site name="shoulder_R" class="default" size="0.0016000000000000001" pos="0.022960000000000001 -0.0078720000000000005 -0.020336000000000003"/>
+						<body name="upper_arm_R" pos="0.022960000000000001 -0.0078720000000000005 -0.020336000000000003">
+							<joint name="shoulder_R" class="shoulder" axis="0 1 0"/>
+							<joint name="shoulder_sup_R" class="shoulder_sup" axis="-0 -0 1"/>
+							<site name="elbow_R" class="default" type="cylinder" size="0.00048000000000000007 0.0032000000000000002" pos="-0.012744966689065745 -0.0082842283478927366 -0.017842953364692042" zaxis="0 1 -0.20000000000000001"/>
+							<body name="lower_arm_R" pos="-0.012744966689065745 -0.0082842283478927366 -0.017842953364692042">
+								<joint name="elbow_R" class="elbow" axis="0 1 -0.20000000000000001"/>
+								<site name="wrist_R" class="default" type="cylinder" size="0.00064000000000000005 0.0027200000000000002" pos="0.017282123011834464 -0.010081238423570105 -0.015841946094181592" zaxis="0 1 0"/>
+								<body name="hand_R" pos="0.017282123011834464 -0.010081238423570105 -0.015841946094181592">
+									<joint name="wrist_R" class="wrist" axis="-0.59999999999999998 -1 0"/>
+									<geom name="hand_R_collision" class="collision_primitive_paw" type="ellipsoid" size="0.0051761532709454338 0.0029578018691116762 0.0017746811214670059" density="2531.7812283100002" pos="0.0012126987663357873 -0.00060634938316789363 -0.0036380962990073609" euler="0.69813170079773179 0.87266462599716477 -0.78539816339744828"/>
+									<site name="finger_R" class="default" type="cylinder" size="0.00048000000000000007 0.004000000000000001" pos="0.0024253975326715745 -0.0012126987663357873 -0.0066698432148468295" zaxis="0.20000000000000001 1 0"/>
+									<body name="finger_R" pos="0.0024253975326715745 -0.0012126987663357873 -0.0066698432148468295">
+										<joint name="finger_R" class="finger" axis="0.5 1 0"/>
+										<geom name="finger_R0_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0025880766354727169" pos="0.0039412709905913088 0.00060634938316789363 0" euler="1.570796326794897 1.308996938995747 0"/>
+										<geom name="finger_R1_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0029578018691116762" pos="0.0036380962990073609 -0.0015158734579197336 0" euler="1.570796326794897 1.099557428756428 0"/>
+										<geom name="finger_R2_collision" class="collision_primitive_paw" size="0.0014789009345558377 0.0025880766354727169" pos="0.0021222228410876275 -0.0030317469158394682 0" euler="1.570796326794897 0.95993108859688125 0"/>
+										<site name="palm_R" class="sensor" type="box" size="0.0032000000000000002 0.0032000000000000002 0.0016000000000000001" pos="0.0039360000000000003 -0.0019680000000000001 -0.001312" euler="0 0 -0.48869219055841229"/>
+									</body>
+								</body>
+								<geom name="radius_R_collision" class="collision_primitive" size="0.002985732634158393 0.01273327152802844" pos="0.0092043691166252724 -0.0054809397392476802 -0.0097810639628832172" quat="0.43978285859011762 0.42323047325609903 0.79177155870747651 0.023765576358593481"/>
+								<geom name="ulna_R_collision" class="collision_primitive" size="0.0035126266284216385 0.010537879885264912" pos="0.0053998135446029502 -0.0039942869888001647 -0.0075918788057244601" quat="0.46611278282571561 0.47760677953250608 0.74462488546938377 0.01282254930824632"/>
+							</body>
+							<geom name="humerus_R_collision" class="collision_primitive" size="0.0062170569214954853 0.012434113842990969" pos="-0.0061946735116115573 -0.0046306780484401391 -0.0095866805369920968" quat="0.81095939353104862 0.00070139480829139946 0.34500827950404478 0.47256074441571583"/>
+						</body>
+						<geom name="scapula_R_collision" class="nonself_collision_primitive" type="ellipsoid" size="0.0040042962133884424 0.011705465018749242 0.019448831677436832" density="513.56464639299998" pos="0.014056496150803625 -0.006909836213893775 -0.012183616502487954" quat="0.38675569721296882 0.47403213120406879 0.76922234964236824 0.1844194839763772"/>
+					</body>
+				</body>
+			</body>
+	</replicate>
+</worldbody>
+<contact>
+	<exclude name="pelvis:vertebra_C2" body1="pelvis" body2="vertebra_C2"/>
+	<exclude name="pelvis:vertebra_C3" body1="pelvis" body2="vertebra_C3"/>
+	<exclude name="pelvis:vertebra_C4" body1="pelvis" body2="vertebra_C4"/>
+	<exclude name="vertebra_C1:vertebra_C3" body1="vertebra_C1" body2="vertebra_C3"/>
+	<exclude name="vertebra_C1:vertebra_C4" body1="vertebra_C1" body2="vertebra_C4"/>
+	<exclude name="vertebra_C2:vertebra_C4" body1="vertebra_C2" body2="vertebra_C4"/>
+	<exclude name="vertebra_C3:vertebra_C5" body1="vertebra_C3" body2="vertebra_C5"/>
+	<exclude name="vertebra_C4:vertebra_C6" body1="vertebra_C4" body2="vertebra_C6"/>
+	<exclude name="vertebra_C5:vertebra_C7" body1="vertebra_C5" body2="vertebra_C7"/>
+	<exclude name="vertebra_axis:skull" body1="vertebra_axis" body2="skull"/>
+	<exclude name="pelvis:vertebra_C5" body1="pelvis" body2="vertebra_C5"/>
+	<exclude name="pelvis:vertebra_C6" body1="pelvis" body2="vertebra_C6"/>
+	<exclude name="vertebra_C2:vertebra_C5" body1="vertebra_C2" body2="vertebra_C5"/>
+	<exclude name="vertebra_C3:vertebra_C6" body1="vertebra_C3" body2="vertebra_C6"/>
+	<exclude name="vertebra_C4:vertebra_C7" body1="vertebra_C4" body2="vertebra_C7"/>
+	<exclude name="upper_arm_L:upper_arm_R" body1="upper_arm_L" body2="upper_arm_R"/>
+	<exclude name="upper_leg_L:vertebra_C1" body1="upper_leg_L" body2="vertebra_C1"/>
+	<exclude name="upper_leg_L:vertebra_C2" body1="upper_leg_L" body2="vertebra_C2"/>
+	<exclude name="upper_leg_R:vertebra_C1" body1="upper_leg_R" body2="vertebra_C1"/>
+	<exclude name="upper_leg_R:vertebra_C2" body1="upper_leg_R" body2="vertebra_C2"/>
+	<exclude name="vertebra_cervical_1:skull" body1="vertebra_cervical_1" body2="skull"/>
+	<exclude name="vertebra_cervical_2:skull" body1="vertebra_cervical_2" body2="skull"/>
+	<exclude name="upper_arm_L:torso" body1="upper_arm_L" body2="torso"/>
+	<exclude name="upper_arm_R:torso" body1="upper_arm_R" body2="torso"/>
+	<exclude name="lower_leg_L:pelvis" body1="lower_leg_L" body2="pelvis"/>
+	<exclude name="lower_leg_R:pelvis" body1="lower_leg_R" body2="pelvis"/>
+</contact>
+<tendon>
+	<fixed name="lumbar_extend" class="lumbar_extend">
+		<joint joint="vertebra_1_extend" coef="0.60498346583200002"/>
+		<joint joint="vertebra_4_extend" coef="0.39501653416799998"/>
+	</fixed>
+	<fixed name="lumbar_bend" class="lumbar_bend">
+		<joint joint="vertebra_2_bend" coef="0.65821232655299999"/>
+		<joint joint="vertebra_5_bend" coef="0.34178767344700001"/>
+	</fixed>
+	<fixed name="lumbar_twist" class="lumbar_twist">
+		<joint joint="vertebra_3_twist" coef="0.57066998362099997"/>
+		<joint joint="vertebra_6_twist" coef="0.42933001637899998"/>
+	</fixed>
+	<fixed name="cervical_extend" class="cervical_extend">
+		<joint joint="vertebra_cervical_5_extend" coef="0.34171354717399999"/>
+		<joint joint="vertebra_cervical_2_extend" coef="0.33240829293599999"/>
+		<joint joint="vertebra_atlant_extend" coef="0.32587815989000002"/>
+	</fixed>
+	<fixed name="cervical_bend" class="cervical_bend">
+		<joint joint="vertebra_cervical_4_bend" coef="0.50743949691000001"/>
+		<joint joint="vertebra_cervical_1_bend" coef="0.49256050308999999"/>
+	</fixed>
+	<fixed name="cervical_twist" class="cervical_twist">
+		<joint joint="vertebra_cervical_3_twist" coef="0.496142185731"/>
+		<joint joint="vertebra_axis_twist" coef="0.503857814269"/>
+	</fixed>
+	<fixed name="caudal_extend" class="caudal_extend">
+		<joint joint="vertebra_C1_extend" coef="0.29007246307000001"/>
+		<joint joint="vertebra_C2_extend" coef="0.20766904003100001"/>
+		<joint joint="vertebra_C3_extend" coef="0.151635169821"/>
+		<joint joint="vertebra_C4_extend" coef="0.115426643422"/>
+		<joint joint="vertebra_C5_extend" coef="0.087549782338600002"/>
+		<joint joint="vertebra_C6_extend" coef="0.0692562920379"/>
+		<joint joint="vertebra_C7_extend" coef="0.055869163346399998"/>
+		<joint joint="vertebra_C11_extend" coef="0.017530663271300002"/>
+		<joint joint="vertebra_C15_extend" coef="0.0041441737883599998"/>
+		<joint joint="vertebra_C19_extend" coef="0.00074642278889000004"/>
+		<joint joint="vertebra_C23_extend" coef="8.5912797066999995e-05"/>
+		<joint joint="vertebra_C27_extend" coef="1.4273287336800001e-05"/>
+	</fixed>
+	<fixed name="caudal_bend" class="caudal_bend">
+		<joint joint="vertebra_C1_bend" coef="0.37079288112600001"/>
+		<joint joint="vertebra_C2_bend" coef="0.233517805262"/>
+		<joint joint="vertebra_C3_bend" coef="0.15089435017799999"/>
+		<joint joint="vertebra_C4_bend" coef="0.101885012096"/>
+		<joint joint="vertebra_C5_bend" coef="0.067174353242899998"/>
+		<joint joint="vertebra_C6_bend" coef="0.043956122370899998"/>
+		<joint joint="vertebra_C9_bend" coef="0.018819911962900001"/>
+		<joint joint="vertebra_C13_bend" coef="0.0099988981986100008"/>
+		<joint joint="vertebra_C17_bend" coef="0.0025264296805199999"/>
+		<joint joint="vertebra_C21_bend" coef="0.000378783618491"/>
+		<joint joint="vertebra_C25_bend" coef="4.1065656652200003e-05"/>
+		<joint joint="vertebra_C29_bend" coef="1.43866075466e-05"/>
+	</fixed>
+</tendon>
+<actuator>
+	<general name="lumbar_extend" class="default" forcerange="-20 20" tendon="lumbar_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1308996938995747" biasprm="2.6179938779914949 -20"/>
+	<general name="lumbar_bend" class="default" forcerange="-20 20" tendon="lumbar_bend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.10471975511965979" biasprm="0 -20"/>
+	<general name="lumbar_twist" class="default" forcerange="-20 20" tendon="lumbar_twist" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.10471975511965979" biasprm="0 -20"/>
+	<general name="cervical_extend" class="default" forcerange="-20 20" tendon="cervical_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1018108730330026" biasprm="2.0362174606600498 -20"/>
+	<general name="cervical_bend" class="default" forcerange="-20 20" tendon="cervical_bend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1221730476396031" biasprm="0 -20"/>
+	<general name="cervical_twist" class="default" forcerange="-20 20" tendon="cervical_twist" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1221730476396031" biasprm="0 -20"/>
+	<general name="caudal_extend" class="default" forcerange="-0.10000000000000001 0.10000000000000001" tendon="caudal_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.026179938779914948" biasprm="0 -0.10000000000000001"/>
+	<general name="caudal_bend" class="default" forcerange="-0.10000000000000001 0.10000000000000001" tendon="caudal_bend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.026179938779914941" biasprm="0 -0.10000000000000001"/>
+	<general name="hip_L_supinate" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="hip_L_supinate" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.24434609527920609" biasprm="-0.034906585039886598 -0.40000000000000002"/>
+	<general name="hip_L_abduct" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="hip_L_abduct" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.31415926535897931" biasprm="0.10471975511965979 -0.40000000000000002"/>
+	<general name="hip_L_extend" class="default" forcerange="-0.29999999999999999 0.29999999999999999" joint="hip_L_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.78539816339744817" biasprm="-0.15707963267948971 -0.59999999999999998"/>
+	<general name="knee_L" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="knee_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.55152404363020813" biasprm="0.062831853071795868 -0.40000000000000002"/>
+	<general name="ankle_L" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="ankle_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.30717794835100198" biasprm="0.25132741228718353 -0.40000000000000002"/>
+	<general name="toe_L" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="toe_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.021816615649929118" biasprm="0.021816615649929118 -0.050000000000000003"/>
+	<general name="hip_R_supinate" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="hip_R_supinate" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.24434609527920609" biasprm="-0.034906585039886598 -0.40000000000000002"/>
+	<general name="hip_R_abduct" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="hip_R_abduct" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.31415926535897931" biasprm="0.10471975511965979 -0.40000000000000002"/>
+	<general name="hip_R_extend" class="default" forcerange="-0.29999999999999999 0.29999999999999999" joint="hip_R_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.78539816339744817" biasprm="-0.15707963267948971 -0.59999999999999998"/>
+	<general name="knee_R" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="knee_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.55152404363020813" biasprm="0.062831853071795868 -0.40000000000000002"/>
+	<general name="ankle_R" class="default" forcerange="-0.20000000000000001 0.20000000000000001" joint="ankle_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.30717794835100198" biasprm="0.25132741228718353 -0.40000000000000002"/>
+	<general name="toe_R" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="toe_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.021816615649929118" biasprm="0.021816615649929118 -0.050000000000000003"/>
+	<general name="atlas" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="atlas" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.021816615649929118" biasprm="0.017453292519943299 -0.050000000000000003"/>
+	<general name="mandible" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="mandible" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.01396263401595464" biasprm="-0.00087266462599716599 -0.050000000000000003"/>
+	<general name="scapula_L_supinate" class="default" forcerange="-0.25 0.25" joint="scapula_L_supinate" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.04799655442984406" biasprm="0.039269908169872407 -0.5"/>
+	<general name="scapula_L_abduct" class="default" forcerange="-0.25 0.25" joint="scapula_L_abduct" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1308996938995747" biasprm="0 -0.5"/>
+	<general name="scapula_L_extend" class="default" forcerange="-0.25 0.25" joint="scapula_L_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.017453292519943299" biasprm="0 -0.5"/>
+	<general name="shoulder_L" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="shoulder_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.3272492347489368" biasprm="-0.065449846949787366 -0.29999999999999999"/>
+	<general name="shoulder_sup_L" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="shoulder_sup_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.17802358370342161" biasprm="0.1623156204354726 -0.29999999999999999"/>
+	<general name="elbow_L" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="elbow_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.30106929596902182" biasprm="-0.091629785729702304 -0.29999999999999999"/>
+	<general name="wrist_L" class="default" forcerange="-0.050000000000000003 0.050000000000000003" joint="wrist_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1221730476396031" biasprm="0.087266462599716474 -0.10000000000000001"/>
+	<general name="finger_L" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="finger_L" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.039269908169872407" biasprm="0.039269908169872407 -0.050000000000000003"/>
+	<general name="scapula_R_supinate" class="default" forcerange="-0.25 0.25" joint="scapula_R_supinate" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.04799655442984406" biasprm="0.039269908169872407 -0.5"/>
+	<general name="scapula_R_abduct" class="default" forcerange="-0.25 0.25" joint="scapula_R_abduct" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1308996938995747" biasprm="0 -0.5"/>
+	<general name="scapula_R_extend" class="default" forcerange="-0.25 0.25" joint="scapula_R_extend" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.017453292519943299" biasprm="0 -0.5"/>
+	<general name="shoulder_R" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="shoulder_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.3272492347489368" biasprm="-0.065449846949787366 -0.29999999999999999"/>
+	<general name="shoulder_sup_R" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="shoulder_sup_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.17802358370342161" biasprm="0.1623156204354726 -0.29999999999999999"/>
+	<general name="elbow_R" class="default" forcerange="-0.14999999999999999 0.14999999999999999" joint="elbow_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.30106929596902182" biasprm="-0.091629785729702304 -0.29999999999999999"/>
+	<general name="wrist_R" class="default" forcerange="-0.050000000000000003 0.050000000000000003" joint="wrist_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.1221730476396031" biasprm="0.087266462599716474 -0.10000000000000001"/>
+	<general name="finger_R" class="default" forcerange="-0.025000000000000001 0.025000000000000001" joint="finger_R" dyntype="filter" biastype="affine" dynprm="0.040000000000000001" gainprm="0.039269908169872407" biasprm="0.039269908169872407 -0.050000000000000003"/>
+</actuator>
+<sensor>
+	<accelerometer name="accelerometer" site="head"/>
+	<velocimeter name="velocimeter" site="head"/>
+	<gyro name="gyro" site="head"/>
+	<touch name="palm_L" site="palm_L"/>
+	<touch name="palm_R" site="palm_R"/>
+	<touch name="sole_L" site="sole_L"/>
+	<touch name="sole_R" site="sole_R"/>
+	<subtreelinvel name="torso" body="torso"/>
+</sensor>undefined</mujoco>

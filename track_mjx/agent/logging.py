@@ -242,7 +242,7 @@ def setup_training_logging(
             # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera=env_config.render_camera_name)
+            renderer.update_scene(mj_data, camera=1) #env_config.render_camera_name
             pixels = renderer.render()
             video.append_data(pixels)
 

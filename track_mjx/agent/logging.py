@@ -191,14 +191,6 @@ def setup_training_logging(
         / pair_render_xml_path
     )
 
-    # root = mjcf_dm.from_path(_XML_PATH)
-    # rescale.rescale_subtree(
-    #     root,
-    #     0.9 / 0.8,
-    #     0.9 / 0.8,
-    # )
-    # mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
-
     spec = mujoco.MjSpec()
     spec = spec.from_file(str(_XML_PATH))
 

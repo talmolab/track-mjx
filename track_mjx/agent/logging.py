@@ -182,9 +182,14 @@ def setup_training_logging(
         env._steps_for_cur_frame,
         axis=0,
     )
-    
+
     pair_render_xml_path = env.walker._pair_rendering_xml_path
-    _XML_PATH = Path(__file__).resolve().parent.parent / "environment" / "walker" / pair_render_xml_path
+    _XML_PATH = (
+        Path(__file__).resolve().parent.parent
+        / "environment"
+        / "walker"
+        / pair_render_xml_path
+    )
 
     # root = mjcf_dm.from_path(_XML_PATH)
     # rescale.rescale_subtree(
@@ -193,10 +198,10 @@ def setup_training_logging(
     #     0.9 / 0.8,
     # )
     # mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
-    
+
     spec = mujoco.MjSpec()
     spec = spec.from_file(str(_XML_PATH))
-    
+
     # in training scaled by this amount as well
     scaling_factor = 0.9
     for geom in spec.geoms:
@@ -211,7 +216,7 @@ def setup_training_logging(
         "cg": mujoco.mjtSolver.mjSOL_CG,
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
     }["cg"]
-    
+
     mj_model.opt.iterations = 6
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
@@ -242,7 +247,7 @@ def setup_training_logging(
             # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera=1) #env_config.render_camera_name
+            renderer.update_scene(mj_data, camera=1)  # env_config.render_camera_name
             pixels = renderer.render()
             video.append_data(pixels)
 

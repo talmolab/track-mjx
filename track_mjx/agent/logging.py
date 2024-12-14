@@ -92,6 +92,7 @@ def setup_training_logging(
 
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
+    walker_config = cfg["walker_config"]
 
     # Wrap the env in the brax autoreset and episode wrappers
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
@@ -195,12 +196,11 @@ def setup_training_logging(
     spec = spec.from_file(str(_XML_PATH))
 
     # in training scaled by this amount as well
-    scaling_factor = 0.9
     for geom in spec.geoms:
         if geom.size is not None:
-            geom.size *= scaling_factor
+            geom.size *= walker_config.rescale_factor
         if geom.pos is not None:
-            geom.pos *= scaling_factor
+            geom.pos *= walker_config.rescale_factor
 
     mj_model = spec.compile()
 
@@ -221,10 +221,11 @@ def setup_training_logging(
     for id in site_id:
         mj_model.site(id).rgba = [1, 0, 0, 1]
 
+    # visual mujoco rendering
     scene_option = mujoco.MjvOption()
     scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
-    scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
-    scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
+    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
+    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
@@ -233,13 +234,17 @@ def setup_training_logging(
     # render while stepping using mujoco
     video_path = f"{model_path}/{num_steps}.mp4"
 
-    with imageio.get_writer(video_path, fps=env_config.render_fps) as video:
+    with imageio.get_writer(
+        video_path, fps=int((1.0 / env.dt))
+    ) as video:  # env_config.render_fps
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
 
             # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera=1)  # env_config.render_camera_name
+            renderer.update_scene(
+                mj_data, camera=env_config.render_camera_name, scene_option=scene_option
+            )
             pixels = renderer.render()
             video.append_data(pixels)
 

@@ -41,6 +41,8 @@ class MultiClipTracking(SingleClipTracking):
         solver: str = "cg",
         iterations: int = 6,
         ls_iterations: int = 6,
+        mj_model_timestep: float = 2e-4,
+        mocap_hz: int = 50,
         **kwargs: Any,
     ):
         """Initializes the MultiTracking environment.
@@ -56,6 +58,8 @@ class MultiClipTracking(SingleClipTracking):
             solver: Solver type for Mujoco.
             iterations: Maximum number of solver iterations.
             ls_iterations: Maximum number of line search iterations.
+            mj_model_timestep: fundamental time increment of the MuJoCo physics simulation
+            mocap_hz: cycles per second for the reference data
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         super().__init__(
@@ -68,6 +72,8 @@ class MultiClipTracking(SingleClipTracking):
             solver,
             iterations,
             ls_iterations,
+            mj_model_timestep,
+            mocap_hz,
             **kwargs,
         )
 

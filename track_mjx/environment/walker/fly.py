@@ -23,7 +23,7 @@ class Fly(BaseWalker):
         body_names: list[str],
         end_eff_names: list[str],
         torque_actuators: bool = False,
-        rescale_factor: float = 0.9,
+        rescale_factor: float = 1.0,
     ):
         """
         Initialize the fly body model with optional torque actuator settings and rescaling.
@@ -46,13 +46,13 @@ class Fly(BaseWalker):
         self._initialize_indices()
 
     def _load_mjcf_model(
-        self, torque_actuators: bool = False, rescale_factor: float = 0.9
+        self, torque_actuators: bool = False, rescale_factor: float = 1.0
     ) -> mjcf_dm.Physics:
         """Load and optionally modify the MJCF model.
 
         Args:
             torque_actuators: Whether to use torque actuators. Default is False.
-            rescale_factor: Factor to rescale the model. Default is 0.9.
+            rescale_factor: Factor to rescale the model. Default is 1.0.
 
         Returns:
             mjcf_dm.Physics: Loaded MJCF physics model.

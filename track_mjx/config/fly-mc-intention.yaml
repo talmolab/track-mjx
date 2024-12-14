@@ -5,14 +5,16 @@ env_config:
   env_name: fly_multi_clip
   task_name: imitation
   walker_name: fly
-  render_camera_name: "track1"
+  render_camera_name: track1-0
   render_fps: 50
 
   env_args:
     solver: "cg"
     iterations: 6
     ls_iterations: 6
-    physics_steps_per_control_step: 5
+    physics_steps_per_control_step: 10
+    mj_model_timestep: 2e-4
+    mocap_hz: 500
 
   reward_weights:
     too_far_dist: 0.01
@@ -36,7 +38,7 @@ env_config:
     penalty_pos_distance_scale: [1.0, 1.0, 0.2]
 
 reference_config:
-  clip_length: 250
+  clip_length: 1000
   random_init_range: 50
   traj_length: 5
 
@@ -51,11 +53,11 @@ network_config:
 train_setup:
   agent_name: fly
   run_name: imitation_debug
-  eval_every: 1_000
-  episode_length: 200
+  eval_every: 1_0000
+  episode_length: 1000
   train_config:
-    num_envs: 1024
-    num_timesteps: 1_000_000
+    num_envs: 2048
+    num_timesteps: 1_000_000_000
     batch_size: 512
     num_minibatches: 4
     num_updates_per_batch: 4
@@ -78,6 +80,7 @@ logging_config:
 
 walker_config:
   torque_actuators: False 
+  rescale_factor: 1.0
   joint_names:
     - coxa_flexion_T1_left
     - coxa_twist_T1_left

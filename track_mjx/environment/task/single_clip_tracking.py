@@ -27,8 +27,6 @@ from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.environment.task.reward import RewardConfig
 
-_MOCAP_HZ = 50
-
 
 class SingleClipTracking(PipelineEnv):
     """Single clip walker tracking using Brax PiepelineEnv backend, agonist of the walker"""
@@ -44,6 +42,8 @@ class SingleClipTracking(PipelineEnv):
         solver: str = "cg",
         iterations: int = 6,
         ls_iterations: int = 6,
+        mj_model_timestep: float = 2e-4,
+        mocap_hz: int = 50,
         **kwargs: Any,
     ):
         """Initializes the SingleTracking environment.
@@ -59,6 +59,8 @@ class SingleClipTracking(PipelineEnv):
             solver: Solver type for Mujoco.
             iterations: Maximum number of solver iterations.
             ls_iterations: Maximum number of line search iterations.
+            mj_model_timestep: fundamental time increment of the MuJoCo physics simulation
+            mocap_hz: cycles per second for the reference data
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         self.walker = walker
@@ -71,6 +73,7 @@ class SingleClipTracking(PipelineEnv):
         }[solver.lower()]
         mj_model.opt.iterations = iterations
         mj_model.opt.ls_iterations = ls_iterations
+        mj_model.opt.timestep = mj_model_timestep
 
         mj_model.opt.jacobian = 0
 
@@ -80,7 +83,7 @@ class SingleClipTracking(PipelineEnv):
         kwargs["backend"] = "mjx"
 
         max_physics_steps_per_control_step = int(
-            (1.0 / (_MOCAP_HZ * mj_model.opt.timestep))
+            (1.0 / (mocap_hz * mj_model.opt.timestep))
         )
 
         super().__init__(sys, **kwargs)

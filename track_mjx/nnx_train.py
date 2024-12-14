@@ -15,40 +15,24 @@ from absl import flags
 import hydra
 from omegaconf import DictConfig
 import uuid
-
-import functools
 import jax
-from typing import Dict
 import wandb
-import imageio
 from brax import envs
-from dm_control import mjcf as mjcf_dm
-from dm_control.locomotion.walkers import rescale
-
-import track_mjx.agent.custom_ppo as ppo
-from track_mjx.agent import custom_ppo
-from brax.io import model
-import numpy as np
 import pickle
 import warnings
-from jax import numpy as jp
 
 from track_mjx.environment.task.multi_clip_tracking import RodentMultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import RodentTracking
-from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
-from track_mjx.environment import custom_wrappers
-
-# nnx related imports
 from track_mjx.agent import nnx_ppo 
 from track_mjx.agent import nnx_ppo_network
 from track_mjx.agent.logging import policy_params_fn
-
-
 from track_mjx.environment.walker.rodent import Rodent
 
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+# jax.config.update("jax_debug_nans", True)
 
 
 @hydra.main(config_path="config", config_name="rodent-mc-intention")
@@ -68,7 +52,7 @@ def main(cfg: DictConfig):
 
     envs.register_environment("single clip", RodentTracking)
     envs.register_environment("multi clip", RodentMultiClipTracking)
-    
+
     input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
     print(f"Loading data: {input_data_path}")
     with open(input_data_path, "rb") as file:
@@ -77,7 +61,7 @@ def main(cfg: DictConfig):
 
     # TODO (Kevin): add this as a yaml config
     walker = Rodent
-    
+
     # instantiate the environment
     env = envs.get_environment(
         cfg.env_config.env_name,
@@ -102,28 +86,53 @@ def main(cfg: DictConfig):
         physics_steps_per_control_step=cfg.env_config.physics_steps_per_control_step,
     )
     
-    ppo_cfg = nnx_ppo_network.PPOTrainConfig()
-    
     # Generates a completely random UUID (version 4)
     run_id = uuid.uuid4()
-    model_path = f"./{cfg.logging_config.model_path}/{run_id}"
-
+    model_path = hydra.utils.to_absolute_path(f"./{cfg.logging_config.model_path}/{run_id}")
+    
     wandb.init(
         project=cfg.logging_config.project_name,
         config=dict(cfg),
         notes=f"clip_id: {cfg.logging_config.clip_id}",
     )
-    wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"  # type: ignore
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps"] = num_steps
         wandb.log(metrics)
-    
-    ppo_cfg.progress_fn = wandb_progress
-    
+        
+    ppo_cfg = nnx_ppo_network.PPOTrainConfig(
+        num_timesteps=1000000,
+        episode_length=250,
+        action_repeat=1,
+        num_envs=2048,
+        encoder_layers=(256,) * 2,
+        decoder_layers=(256,) * 2,
+        value_layer_sizes=(512,) * 3,
+        num_eval_envs=128,
+        learning_rate=1e-4,
+        entropy_cost=1e-4,
+        kl_weight=1e-3,
+        discounting=0.9,
+        seed=0,
+        unroll_length=10,
+        batch_size=8192,
+        num_minibatches=16, # minibatch_size=512,
+        num_updates_per_batch=2,
+        num_evals=1,
+        num_resets_per_eval=0,
+        normalize_observations=True,
+        reward_scaling=1.0,
+        clipping_epsilon=0.3,
+        gae_lambda=0.95,
+        deterministic_eval=False,
+        normalize_advantage=True,
+        progress_fn=wandb_progress,
+        eval_env=None,
+        checkpoint_logdir=model_path,
+    )
     nnx_ppo.train(env, ppo_cfg)
-    
-    
-    
+
+
 if __name__ == "__main__":
     main()

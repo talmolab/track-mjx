@@ -82,7 +82,7 @@ def train(
     # parameters validation
     assert config.batch_size % config.num_envs == 0, "Batch size must be divisible by num_envs"
     assert config.batch_size % config.num_minibatches == 0, "Batch size must be divisible by num_minibatches"
-    
+
     logging.info(
         "Batch size: %d, Minibatch size: %d, number of mimibatch: %d",
         config.batch_size,
@@ -220,7 +220,7 @@ def train(
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         # TODO: Hardcoded for now for minibatch steps
-        data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (-1, 256) + x.shape[2:]), data)
+        data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (config.num_minibatches, -1) + x.shape[2:]), data)
         # assert data.discount.shape[1:] == (config.unroll_length,)
         print("DEBUG: data shape:", data.observation.shape)
         # update normalization params
@@ -316,7 +316,7 @@ def train(
     ) -> Tuple[nnx.Module, Union[envs.State, envs_v1.State], Metrics, PRNGKey]:
         nonlocal training_walltime, mujoco_step, gradient_step, it
         t = time.time()
-        num_training_steps_per_epoch = 100  # hardcoded for now
+        num_training_steps_per_epoch = 50  # hardcoded for now
         for _ in range(num_training_steps_per_epoch):
             mujoco_step += env_step_per_training_step
             gradient_step += config.num_minibatches
@@ -360,7 +360,6 @@ def train(
         )
         logging.info(metrics)
         config.progress_fn(0, metrics)
-        
 
     ckpt_dir = ocp.test_utils.erase_and_create_empty(config.checkpoint_logdir)
 
@@ -379,7 +378,7 @@ def train(
 
             # optimization
             epoch_key, local_key = jax.random.split(local_key)
-            total_loss, new_env_state, metrics, new_key = training_epoch_with_timing(
+            total_loss, env_state, metrics, new_key = training_epoch_with_timing(
                 ppo_network, optimizer, config, env_state, training_metrics, epoch_key
             )
             current_step = it
@@ -400,7 +399,8 @@ def train(
 
             # checkpointing - previously using the policy param function, now using orbax
             checkpointer = ocp.StandardCheckpointer()
-            checkpointer.save(ckpt_dir / f"ppo_networks_{it}", nnx.split(ppo_network)[1])
+            _, key, state = nnx.split(ppo_network, nnx.RngKey, ...)
+            checkpointer.save(ckpt_dir / f"ppo_networks_{it}", state)  # currently skipping saving the keys
 
     total_steps = current_step
     assert total_steps >= config.num_timesteps

@@ -79,7 +79,6 @@ class Evaluator:
     def __init__(
         self,
         eval_env: envs.Env,
-        eval_policy_fn: Callable[[PolicyParams], Policy],
         num_eval_envs: int,
         episode_length: int,
         action_repeat: int,
@@ -100,28 +99,28 @@ class Evaluator:
 
         eval_env = envs.training.EvalWrapper(eval_env)
 
-        def generate_eval_unroll(policy_params: PolicyParams, key: PRNGKey) -> State:
+        def generate_eval_unroll(ppo_network: nnx.Module, key: PRNGKey) -> State:
             reset_keys = jax.random.split(key, num_eval_envs)
             eval_first_state = eval_env.reset(reset_keys)
             return generate_unroll(
                 eval_env,
                 eval_first_state,
-                eval_policy_fn(policy_params),
+                ppo_network.policy,
                 key,
                 unroll_length=episode_length // action_repeat,
             )[0]
 
-        self._generate_eval_unroll = jax.jit(generate_eval_unroll)
+        self._generate_eval_unroll = nnx.jit(generate_eval_unroll)
         self._steps_per_unroll = episode_length * num_eval_envs
 
     def run_evaluation(
-        self, policy_params: PolicyParams, training_metrics: Metrics, aggregate_episodes: bool = True
+        self, ppo_network: nnx.Module, training_metrics: Metrics, aggregate_episodes: bool = True
     ) -> Metrics:
         """Run one epoch of evaluation."""
         self._key, unroll_key = jax.random.split(self._key)
 
         t = time.time()
-        eval_state = self._generate_eval_unroll(policy_params, unroll_key)
+        eval_state = self._generate_eval_unroll(ppo_network, unroll_key)
         eval_metrics = eval_state.info["eval_metrics"]
         eval_metrics.active_episodes.block_until_ready()
         epoch_eval_time = time.time() - t

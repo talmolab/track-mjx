@@ -2,30 +2,26 @@
 PPO network for imitation learning with intention, in Flax NNX API
 """
 
-from typing import Any, Sequence, Tuple, Callable
+from typing import Any, Sequence, Tuple, Callable, Union, Optional
 
 from brax import base
-from brax.training import networks
 from brax.training import types
 from brax.training.acme import running_statistics
+from brax.training.acme import specs
 from brax.training import distribution
 
-# from brax.training.agents.ppo import networks as ppo_networks
-from track_mjx.agent import custom_ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
-from brax.v1 import envs as envs_v1
 from brax import envs
 from flax import nnx
 
-from brax.training.types import PRNGKey
 import jax
-from flax import nnx
 import dataclasses
 from jax import numpy as jnp
 
 from track_mjx.agent.nnx_intention_network import IntentionNetwork
 from track_mjx.agent.nnx_util import MLP
+from track_mjx.brax_nnx.acme import NormalizeObservations, Identity
 
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -36,28 +32,37 @@ class PPOImitationNetworks(nnx.Module):
     policy_network: IntentionNetwork
     value_network: MLP
     parametric_action_distribution: distribution.ParametricDistribution
+    obs_normalizer: Union[NormalizeObservations, Identity]
 
     def __init__(
         self,
         policy_network: IntentionNetwork,
         value_network: MLP,
         parametric_action_distribution: distribution.ParametricDistribution,
+        obs_normalizer: Union[NormalizeObservations, Identity],
         *,
         rngs: nnx.Rngs,
     ):
         self.policy_network = policy_network
         self.value_network = value_network
         self.parametric_action_distribution = parametric_action_distribution
+        self.obs_normalizer = obs_normalizer
         self.rngs = rngs
 
-    def policy(self, observations: types.Observation, key: PRNGKey | None = None) -> Tuple[types.Action, types.Extra]:
+    def policy(
+        self, observations: types.Observation, key: PRNGKey | None = None, deterministic: bool = False
+    ) -> Tuple[types.Action, types.Extra]:
         """Policy function that returns actions and extra information."""
         if key is None:
             # if key is unspecified, then it will use nnx.Rngs stream
             # to generate the key, but it won't be a pure function
             key = self.rngs.param()
         key_sample, key_policy = jax.random.split(key)
+        if self.obs_normalizer is not None:
+            observations = self.obs_normalizer(observations)  # type: ignore / because JAX observations is a Nested JAX array Structure
         logits, _, _ = self.policy_network(observations, key=key_policy)
+        if deterministic:
+            return self.parametric_action_distribution.mode(logits), {}
         # action sampling is happening here, according to distribution parameter logits
         raw_actions = self.parametric_action_distribution.sample_no_postprocessing(logits, key_sample)
 
@@ -87,7 +92,6 @@ def make_intention_policy(
     intention_latent_size: int,
     observation_size: int,
     reference_obs_size: int,
-    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     encoder_layers: Sequence[int] = (1024, 1024),
     decoder_layers: Sequence[int] = (1024, 1024),
 ) -> IntentionNetwork:
@@ -129,7 +133,7 @@ def make_intention_ppo_networks(
     observation_size: int,
     reference_obs_size: int,
     action_size: int,
-    preprocess_observations_fn: Callable = types.identity_observation_preprocessor,
+    normalize_obs: bool = True,
     intention_latent_size: int = 60,
     encoder_layers: Sequence[int] = (1024,) * 2,
     decoder_layers: Sequence[int] = (1024,) * 2,
@@ -143,7 +147,6 @@ def make_intention_ppo_networks(
         intention_latent_size=intention_latent_size,
         observation_size=observation_size,
         reference_obs_size=reference_obs_size,
-        preprocess_observations_fn=preprocess_observations_fn,
         encoder_layers=encoder_layers,
         decoder_layers=decoder_layers,
     )
@@ -153,10 +156,16 @@ def make_intention_ppo_networks(
         hidden_layer_sizes=value_layers,
     )
 
+    if normalize_obs:
+        obs_normalizer = NormalizeObservations(specs.Array(observation_size, jnp.dtype("float32")))  # type: ignore
+    else:
+        obs_normalizer = Identity()
+
     return PPOImitationNetworks(
         policy_network=policy_network,
         value_network=value_network,
         parametric_action_distribution=parametric_action_distribution,
+        obs_normalizer=obs_normalizer,
         rngs=nnx.Rngs(44),
     )
 
@@ -166,9 +175,9 @@ class PPOTrainConfig:
     """Configuration for PPO training."""
 
     num_timesteps: int = 1000000
-    episode_length: int = 1000
+    episode_length: int = 250
     action_repeat: int = 1
-    num_envs: int = 16
+    num_envs: int = 2048
     max_devices_per_host: int | None = None
     encoder_layers: Sequence[int] = (256,) * 2
     decoder_layers: Sequence[int] = (256,) * 2
@@ -180,12 +189,12 @@ class PPOTrainConfig:
     discounting: float = 0.9
     seed: int = 0
     unroll_length: int = 10
-    batch_size: int = 32
+    batch_size: int = 8192
     num_minibatches: int = 16
     num_updates_per_batch: int = 2
     num_evals: int = 1
     num_resets_per_eval: int = 0
-    normalize_observations: bool = False
+    normalize_observations: bool = True
     reward_scaling: float = 1.0
     clipping_epsilon: float = 0.3
     gae_lambda: float = 0.95
@@ -196,3 +205,4 @@ class PPOTrainConfig:
     eval_env: envs.Env | None = None
     policy_params_fn: Callable[..., None] = lambda *args: None
     randomization_fn: Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]] | None = None
+    checkpoint_logdir: str | None = None

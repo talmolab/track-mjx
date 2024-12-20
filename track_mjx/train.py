@@ -5,7 +5,7 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 import os
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
-os.environ["MUJOCO_GL"] = "egl"
+os.environ["MUJOCO_GL"] = "glfw"
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )
@@ -37,6 +37,7 @@ from track_mjx.environment.task.multi_clip_tracking import RodentMultiClipTracki
 from track_mjx.environment.task.single_clip_tracking import RodentTracking
 from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
+from track_mjx.io import load
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import setup_training_logging
@@ -70,16 +71,20 @@ def main(cfg: DictConfig):
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
-    wlaker_config = cfg["walker_config"]
+    walker_config = cfg["walker_config"]
 
     # TODO(Scott): move this to track_mjx.io module
-    input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
-    print(f"Loading data: {input_data_path}")
-    with open(input_data_path, "rb") as file:
-        reference_clip = pickle.load(file)
+    # input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
+    # print(f"Loading data: {input_data_path}")
+    # with open(input_data_path, "rb") as file:
+    #     reference_clip = pickle.load(file)
 
+    traj_data_path = hydra.utils.to_absolute_path(cfg.data_path)
+    reference_clip = load.make_multiclip_data(traj_data_path)
+
+    print(reference_clip.body_positions.shape)
     # TODO (Kevin): add this as a yaml config
-    walker = Rodent(**wlaker_config)
+    walker = Rodent(**walker_config)
 
     # Automatically match dict keys and func needs
     env = envs.get_environment(

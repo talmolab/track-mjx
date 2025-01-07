@@ -80,7 +80,7 @@ class PPOImitationNetworks(nnx.Module):
 
     def value(self, observations: types.Observation) -> jnp.ndarray:
         """Value function that returns values."""
-        return self.value_network(observations)
+        return jnp.squeeze(self.value_network(observations), axis=-1)
 
     def split_key(self) -> PRNGKey:
         """Splits the key and returns the first part."""
@@ -179,16 +179,16 @@ class PPOTrainConfig:
     action_repeat: int = 1
     num_envs: int = 2048
     max_devices_per_host: int | None = None
-    encoder_layers: Sequence[int] = (256,) * 2
-    decoder_layers: Sequence[int] = (256,) * 2
-    value_layer_sizes: Sequence[int] = (512,) * 3
+    encoder_layers: Sequence[int] = (512,) * 3
+    decoder_layers: Sequence[int] = (512,) * 2
+    value_layer_sizes: Sequence[int] = (512,) * 4
     num_eval_envs: int = 128
     learning_rate: float = 1e-4
     entropy_cost: float = 1e-4
     kl_weight: float = 1e-3
-    discounting: float = 0.9
+    discounting: float = 0.95
     seed: int = 0
-    unroll_length: int = 10
+    unroll_length: int = 20
     batch_size: int = 8192
     num_minibatches: int = 16
     num_updates_per_batch: int = 2

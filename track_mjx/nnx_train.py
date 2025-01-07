@@ -20,6 +20,7 @@ import wandb
 from brax import envs
 import pickle
 import warnings
+import functools
 
 from track_mjx.environment.task.multi_clip_tracking import RodentMultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import RodentTracking
@@ -85,11 +86,11 @@ def main(cfg: DictConfig):
         healthy_z_range=tuple(cfg.env_config.reward_weights.healthy_z_range),
         physics_steps_per_control_step=cfg.env_config.physics_steps_per_control_step,
     )
-    
+
     # Generates a completely random UUID (version 4)
     run_id = uuid.uuid4()
     model_path = hydra.utils.to_absolute_path(f"./{cfg.logging_config.model_path}/{run_id}")
-    
+
     wandb.init(
         project=cfg.logging_config.project_name,
         config=dict(cfg),
@@ -100,25 +101,36 @@ def main(cfg: DictConfig):
     def wandb_progress(num_steps, metrics):
         metrics["num_steps"] = num_steps
         wandb.log(metrics)
-        
+
+    train_cfg = cfg.train_config
+    network_cfg = cfg.network_config
+
+    network_factory = functools.partial(
+        nnx_ppo_network.make_intention_ppo_networks,
+        encoder_layers=network_cfg.encoder_layer_sizes,
+        decoder_layers=network_cfg.decoder_layer_sizes,
+        value_layers=network_cfg.critic_layer_sizes,
+    )
+
     ppo_cfg = nnx_ppo_network.PPOTrainConfig(
         num_timesteps=1000000,
         episode_length=250,
         action_repeat=1,
-        num_envs=2048,
-        encoder_layers=(256,) * 2,
-        decoder_layers=(256,) * 2,
-        value_layer_sizes=(512,) * 3,
+        num_envs=train_cfg.num_envs,
+        network_factory=network_factory,
+        encoder_layers=network_cfg.encoder_layer_sizes,
+        decoder_layers=network_cfg.decoder_layer_sizes,
+        value_layer_sizes=network_cfg.critic_layer_sizes,
         num_eval_envs=128,
-        learning_rate=1e-4,
-        entropy_cost=1e-4,
-        kl_weight=1e-3,
-        discounting=0.9,
+        learning_rate=train_cfg.learning_rate,
+        entropy_cost=train_cfg.entropy_cost,
+        kl_weight=network_cfg.kl_weight,
+        discounting=train_cfg.discounting,
         seed=0,
-        unroll_length=10,
-        batch_size=8192,
-        num_minibatches=16, # minibatch_size=512,
-        num_updates_per_batch=2,
+        unroll_length=train_cfg.unroll_length,
+        batch_size=train_cfg.batch_size,
+        num_minibatches=train_cfg.num_minibatches,  # minibatch_size=batch_size/num_minibatches
+        num_updates_per_batch=train_cfg.num_updates_per_batch,
         num_evals=1,
         num_resets_per_eval=0,
         normalize_observations=True,
@@ -131,6 +143,7 @@ def main(cfg: DictConfig):
         eval_env=None,
         checkpoint_logdir=model_path,
     )
+
     nnx_ppo.train(env, ppo_cfg)
 
 

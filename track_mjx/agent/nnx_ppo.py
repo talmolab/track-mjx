@@ -80,14 +80,13 @@ def train(
     # TODO (Scott) Move this multi-device support to its own util file.
 
     # parameters validation
-    assert config.batch_size % config.num_envs == 0, "Batch size must be divisible by num_envs"
-    assert config.batch_size % config.num_minibatches == 0, "Batch size must be divisible by num_minibatches"
+    assert config.batch_size * config.num_minibatches % config.num_envs == 0, "Batch size must be divisible by num_envs"
 
     logging.info(
-        "Batch size: %d, Minibatch size: %d, number of mimibatch: %d",
+        "Batch size: %d, number of mimibatch: %d, each unroll will generate %d * unroll length env steps",
         config.batch_size,
-        config.batch_size // config.num_minibatches,
         config.num_minibatches,
+        config.batch_size * config.num_minibatches,
     )
 
     xt = time.time()
@@ -112,8 +111,11 @@ def train(
 
     # The number of environment steps executed for every training step.
     env_step_per_training_step = (
-        config.batch_size * config.unroll_length * config.action_repeat # take out the minibatch * config.num_minibatches
-    ) # Scott: This metrics for the environment performance is not true -- minibatch and permutation is bootstrapping
+        config.batch_size
+        * config.num_minibatches
+        * config.unroll_length
+        * config.action_repeat  # take out the minibatch * config.num_minibatches
+    )  # Scott: This metrics for the environment performance is not true -- minibatch and permutation is bootstrapping
     # data instead of directly
     num_evals_after_init = max(config.num_evals - 1, 1)
 
@@ -161,8 +163,8 @@ def train(
         normalize_obs=config.normalize_observations,
     )
 
-    # define optimizer
-    optimizer = nnx.Optimizer(ppo_network, optax.adam(learning_rate=config.learning_rate))
+    # define optimizer, with a wrt to nnx.Param to avoid updating the keys and normalization statistics
+    optimizer = nnx.Optimizer(ppo_network, optax.adam(learning_rate=config.learning_rate), wrt=nnx.Param)
 
     # create loss function
     loss_fn = functools.partial(
@@ -215,17 +217,15 @@ def train(
             f,
             (state, key_generate_unroll),
             (),
-            length=config.batch_size // config.num_envs,
+            length=config.batch_size * config.num_minibatches // config.num_envs,
         )
-        # Have leading dimensions (batch_size * num_minibatches, unroll_length)
+        # Have leading dimensions (batch_size * num_minibatches, unroll_length, ...)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        # TODO: Hardcoded for now for minibatch steps
-        data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (config.num_minibatches, -1) + x.shape[2:]), data)
-        # assert data.discount.shape[1:] == (config.unroll_length,)
+        data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data) # merge the first two dims
+        assert data.discount.shape[1:] == (config.unroll_length,)
         print("DEBUG: data shape:", data.observation.shape)
         # update normalization params
         ppo_network.obs_normalizer.update(data.observation)
-
         return data, state, new_key
 
     @nnx.jit
@@ -243,7 +243,8 @@ def train(
         Returns:
             _type_: _description_
         """
-        grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
+        diff_state = nnx.DiffState(0, nnx.Param)  # filter head params of the first argument
+        grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=diff_state)
         (total_loss, metrics), grads = grad_fn(model, data, key)
         optimizer.update(grads)
         return total_loss, metrics
@@ -273,38 +274,53 @@ def train(
         # Update normalization params and normalize observations.
 
         # generate experience data
+        key_perm, key_experience = jax.random.split(key, 2)
         mj_time = time.time()
-        data, new_env_state, new_key = generate_experience(model, env_states, key)
+        data, env_states, new_key = generate_experience(model, env_states, key_experience)
         mj_time = time.time() - mj_time
 
-        mj_sps = config.batch_size * config.unroll_length / mj_time
+        mj_sps = config.batch_size * config.num_minibatches * config.unroll_length / mj_time
 
         # gradient updates steps
         gradient_time = time.time()
         # Initialize lists to collect total_losses and metrics
         total_losses = []
         metrics_list = []
+
+        def shuffle_and_split_minibatch(x: jnp.ndarray):
+            """
+            Shuffle and split the minibatch, this is a helper function for the jax.tree.map
+            where it shuffle the first dimension of the input x and then reshape it to
+            (config.num_minibatches, minibatch_size) + x.shape[1:]
+            """
+            x = jax.random.permutation(key_perm, x)
+            x = jnp.reshape(x, (config.num_minibatches, -1) + x.shape[1:])
+            return x
+
         # Loop over minibatches
-        for i in range(data.observation.shape[0]):
-            minibatch = jax.tree_util.tree_map(lambda x: x[i], data)
-            total_loss, metrics = gradient_update(model, optimizer, minibatch)
-            total_losses.append(total_loss)
-            metrics_list.append(metrics)
-        # Compute the mean of total_losses and metrics
+        for _ in range(config.num_updates_per_batch):
+            data = jax.tree.map(shuffle_and_split_minibatch, data)  # shuffle data to mix the experience.
+            for i in range(config.num_minibatches):
+                minibatch = jax.tree_util.tree_map(lambda x: x[i], data)
+                print("DEBUG: MINIBATCH SHAPE:", minibatch.observation.shape)
+                total_loss, metrics = gradient_update(model, optimizer, minibatch)
+                total_losses.append(total_loss)
+                metrics_list.append(metrics)
+            # Compute the mean of total_losses and metrics
         total_loss = jnp.mean(jnp.stack(total_losses))
         metrics = {key: jnp.mean(jnp.stack([m[key] for m in metrics_list])) for key in metrics_list[0]}
         gradient_time = time.time() - gradient_time
 
         metrics = {
             "training/mujoco_sps": mj_sps,
-            "training/gradient_sps": config.num_minibatches / gradient_time, # gradient steps per minibatch
+            "training/gradient_sps": config.num_minibatches * config.num_updates_per_batch / gradient_time,
             "training/walltime": training_walltime,
             "training/mujoco_step": mujoco_step,
             "training/gradient_step": gradient_step,
             **{f"training/{name}": value for name, value in metrics.items()},
         }
 
-        return total_loss, metrics, new_env_state, new_key
+        return total_loss, metrics, env_states, new_key
 
     def training_epoch_with_timing(
         model: PPOImitationNetworks,
@@ -313,13 +329,13 @@ def train(
         env_state: Union[envs.State, envs_v1.State],
         metrics: Metrics,
         key: PRNGKey,
-    ) -> Tuple[nnx.Module, Union[envs.State, envs_v1.State], Metrics, PRNGKey]:
+    ) -> Tuple[PPOImitationNetworks, Union[envs.State, envs_v1.State], Metrics, PRNGKey]:
         nonlocal training_walltime, mujoco_step, gradient_step, it
         t = time.time()
-        num_training_steps_per_epoch = 50  # hardcoded for now
+        num_training_steps_per_epoch = 40  # hardcoded for now
         for _ in range(num_training_steps_per_epoch):
             mujoco_step += env_step_per_training_step
-            gradient_step += config.num_minibatches
+            gradient_step += config.num_minibatches * config.num_updates_per_batch
             total_loss, metrics, env_state, key = training_step_with_timing(model, config, optimizer, env_state, key)
             metrics = jax.tree_util.tree_map(jnp.mean, metrics)
             print("METRICS:", metrics)
@@ -353,7 +369,7 @@ def train(
 
     # Run initial eval
     metrics = {}
-    if process_id == 0 and config.num_evals > 1:
+    if process_id == 0:
         metrics = evaluator.run_evaluation(
             ppo_network=ppo_network,
             training_metrics={},
@@ -371,22 +387,17 @@ def train(
     num_steps = int(1e5)
     for it in range(num_steps):
         logging.info("starting iteration %s %s", it, time.time() - xt)
-
         # the following two loops control the ratios between the training and evaluation steps
-
-        for _ in range(max(config.num_resets_per_eval, 1)):
-
-            # optimization
-            epoch_key, local_key = jax.random.split(local_key)
-            total_loss, env_state, metrics, new_key = training_epoch_with_timing(
-                ppo_network, optimizer, config, env_state, training_metrics, epoch_key
-            )
-            current_step = it
-            config.progress_fn(current_step, metrics)
-            key_envs = jax.vmap(lambda x, s: jax.random.split(x[0], s), in_axes=(0, None))(key_envs, key_envs.shape[1])
-            # TODO: move extra reset logic to the AutoResetWrapper.
-            env_state = reset_fn(key_envs)
-            env_state = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), env_state)
+        # optimization
+        epoch_key, local_key = jax.random.split(local_key)
+        ppo_network, env_state, metrics, local_key = training_epoch_with_timing(
+            ppo_network, optimizer, config, env_state, training_metrics, epoch_key
+        )
+        current_step = it
+        key_envs = jax.vmap(lambda x, s: jax.random.split(x[0], s), in_axes=(0, None))(key_envs, key_envs.shape[1])
+        # TODO: move extra reset logic to the AutoResetWrapper.
+        env_state = reset_fn(key_envs)
+        env_state = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), env_state)
 
         if process_id == 0:
             # only run the evaluation on the master process
@@ -395,7 +406,7 @@ def train(
                 training_metrics=training_metrics,
             )
             logging.info(metrics)
-            config.progress_fn(current_step, metrics)
+            config.progress_fn(num_training_steps_per_epoch * it, metrics)
 
             # checkpointing - previously using the policy param function, now using orbax
             checkpointer = ocp.StandardCheckpointer()

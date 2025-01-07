@@ -58,17 +58,12 @@ def compute_gae(
         train a baseline (V(x_t) - vs_t)^2.
       A float32 tensor of shape [T, B] of advantages.
     """
-    truncation = jnp.expand_dims(truncation, axis=-1)
     
     truncation_mask = 1 - truncation
     # Append bootstrapped value to get [v1, ..., v_t+1]
     values_t_plus_1 = jnp.concatenate(
         [values[1:], jnp.expand_dims(bootstrap_value, 0)], axis=0
     )
-    
-    # might because of the multi-device dimension
-    termination = jnp.expand_dims(termination, axis=-1)
-    rewards = jnp.expand_dims(rewards, axis=-1)
     
     deltas = rewards + discount * (1 - termination) * values_t_plus_1 - values
     deltas *= truncation_mask
@@ -167,7 +162,7 @@ def compute_ppo_loss(
     if normalize_advantage:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     rho_s = jnp.exp(target_action_log_probs - behaviour_action_log_probs)
-    rho_s = jnp.expand_dims(rho_s, axis=-1) # don't need this extra dim
+    
     # PPO loss
     surrogate_loss1 = rho_s * advantages
     surrogate_loss2 = (

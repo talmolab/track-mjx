@@ -99,8 +99,10 @@ class Decoder(nnx.Module):
         self.layers = []
         # first input layer
         self.layers.append(nnx.Linear(input_size, layer_sizes[0], kernel_init=kernel_init, use_bias=use_bias, rngs=rngs))
+        self.layers.append(activation)
+        self.layers.append(nnx.LayerNorm(layer_sizes[0], rngs=rngs))
         # intermediate layers
-        for hidden_size in layer_sizes[:-1]:
+        for hidden_size in layer_sizes[1:-1]:
             self.layers.append(
                 nnx.Linear(layer_sizes[0], hidden_size, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
             )

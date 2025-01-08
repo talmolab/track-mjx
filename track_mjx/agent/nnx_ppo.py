@@ -114,9 +114,8 @@ def train(
         config.batch_size
         * config.num_minibatches
         * config.unroll_length
-        * config.action_repeat  # take out the minibatch * config.num_minibatches
-    )  # Scott: This metrics for the environment performance is not true -- minibatch and permutation is bootstrapping
-    # data instead of directly
+        * config.action_repeat
+    ) 
     num_evals_after_init = max(config.num_evals - 1, 1)
 
     # The number of training_step calls per training_epoch call.
@@ -197,7 +196,6 @@ def train(
             Tuple[types.Transition, Union[envs.State, envs_v1.State], PRNGKey]: experience data, new state, new key
         """
         key_generate_unroll, new_key = jax.random.split(key, 2)
-        policy = ppo_network.policy
         def f(carry, unused_t):
             """
             generate unroll data for training using scan function
@@ -207,7 +205,7 @@ def train(
             next_state, data = acting.generate_unroll(
                 env,
                 current_state,
-                policy,
+                ppo_network,
                 current_key,
                 config.unroll_length,
                 extra_fields=("truncation",),
@@ -335,14 +333,20 @@ def train(
     ) -> Tuple[PPOImitationNetworks, Union[envs.State, envs_v1.State], Metrics, PRNGKey]:
         nonlocal training_walltime, mujoco_step, gradient_step, it
         t = time.time()
-        num_training_steps_per_epoch = 40  # hardcoded for now
-        for _ in range(num_training_steps_per_epoch):
+        num_training_steps_per_epoch = 50  # hardcoded for now
+        aggregated_metrics = {}
+        for step_idx in range(num_training_steps_per_epoch):
             mujoco_step += env_step_per_training_step
             gradient_step += config.num_minibatches * config.num_updates_per_batch
-            total_loss, metrics, env_state, key = training_step_with_timing(model, config, optimizer, env_state, key)
-            metrics = jax.tree_util.tree_map(jnp.mean, metrics)
-            print("METRICS:", metrics)
-            config.progress_fn(num_training_steps_per_epoch * it + _, metrics)
+            total_loss, step_metrics, env_state, key = training_step_with_timing(
+            model, config, optimizer, env_state, key
+            )
+            step_metrics = jax.tree_util.tree_map(jnp.mean, step_metrics)
+            for k, v in step_metrics.items():
+                aggregated_metrics[k] = aggregated_metrics.get(k, 0.0) + v
+        aggregated_metrics = {k: v / num_training_steps_per_epoch for k, v in aggregated_metrics.items()}
+        print("METRICS:", aggregated_metrics)
+        config.progress_fn(it, aggregated_metrics)
         epoch_training_time = time.time() - t
         training_walltime += epoch_training_time
         return (model, env_state, metrics, key)  # pytype: disable=bad-return-type  # py311-upgrade

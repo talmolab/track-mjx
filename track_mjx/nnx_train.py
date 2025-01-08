@@ -29,6 +29,7 @@ from track_mjx.agent import nnx_ppo
 from track_mjx.agent import nnx_ppo_network
 from track_mjx.agent.logging import policy_params_fn
 from track_mjx.environment.walker.rodent import Rodent
+from omegaconf import OmegaConf
 
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -89,11 +90,13 @@ def main(cfg: DictConfig):
 
     # Generates a completely random UUID (version 4)
     run_id = uuid.uuid4()
-    model_path = hydra.utils.to_absolute_path(f"./{cfg.logging_config.model_path}/{run_id}")
+    model_path = hydra.utils.to_absolute_path(
+        f"/root/vast/scott-yang/{cfg.logging_config.model_path}/{run_id}"
+    )  # make it step outside the package
 
     wandb.init(
         project=cfg.logging_config.project_name,
-        config=dict(cfg),
+        config=OmegaConf.to_container(cfg, resolve=True),  # type: ignore
         notes=f"clip_id: {cfg.logging_config.clip_id}",
     )
     wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"  # type: ignore
@@ -135,7 +138,7 @@ def main(cfg: DictConfig):
         num_resets_per_eval=0,
         normalize_observations=True,
         reward_scaling=1.0,
-        clipping_epsilon=0.3,
+        clipping_epsilon=train_cfg.clipping_epsilon,
         gae_lambda=0.95,
         deterministic_eval=False,
         normalize_advantage=True,

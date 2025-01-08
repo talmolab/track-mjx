@@ -31,13 +31,14 @@ State = Union[envs.State, envs_v1.State]
 Env = Union[envs.Env, envs_v1.Env, envs_v1.Wrapper]
 import jax.numpy as jnp
 from flax import nnx
+from track_mjx.agent.nnx_ppo_network import PPOImitationNetworks
 
 
 def actor_step(
-    env: Env, env_state: State, policy: Callable, key: PRNGKey, extra_fields: Sequence[str] = ()
+    env: Env, env_state: State, ppo_network: PPOImitationNetworks, key: PRNGKey, extra_fields: Sequence[str] = ()
 ) -> Tuple[State, Transition]:
     """Collect data."""
-    actions, policy_extras = policy(env_state.obs, key)
+    actions, policy_extras = ppo_network.policy(env_state.obs, key)
     nstate = env.step(env_state, actions)
     state_extras = {x: nstate.info[x] for x in extra_fields}
     return nstate, Transition(  # pytype: disable=wrong-arg-types  # jax-ndarray
@@ -50,21 +51,21 @@ def actor_step(
     )
 
 
+@nnx.jit
 def generate_unroll(
     env: Env,
     env_state: State,
-    policy: Callable,  # need to check this
+    ppo_network: PPOImitationNetworks,  # need to check this
     key: PRNGKey,
     unroll_length: int,
     extra_fields: Sequence[str] = (),
 ) -> Tuple[State, Transition]:
     """Collect trajectories of given unroll_length."""
 
-    @nnx.jit
     def f(carry, unused_t):
         state, current_key = carry
         current_key, next_key = jax.random.split(current_key)
-        nstate, transition = actor_step(env, state, policy, key, extra_fields=extra_fields)
+        nstate, transition = actor_step(env, state, ppo_network, key, extra_fields=extra_fields)
         return (nstate, next_key), transition
 
     (final_state, _), data = jax.lax.scan(f, (env_state, key), (), length=unroll_length)
@@ -99,13 +100,13 @@ class Evaluator:
 
         eval_env = envs.training.EvalWrapper(eval_env)
 
-        def generate_eval_unroll(ppo_network: nnx.Module, key: PRNGKey) -> State:
+        def generate_eval_unroll(ppo_network: PPOImitationNetworks, key: PRNGKey) -> State:
             reset_keys = jax.random.split(key, num_eval_envs)
             eval_first_state = eval_env.reset(reset_keys)
             return generate_unroll(
                 eval_env,
                 eval_first_state,
-                ppo_network.policy,
+                ppo_network,
                 key,
                 unroll_length=episode_length // action_repeat,
             )[0]
@@ -114,7 +115,7 @@ class Evaluator:
         self._steps_per_unroll = episode_length * num_eval_envs
 
     def run_evaluation(
-        self, ppo_network: nnx.Module, training_metrics: Metrics, aggregate_episodes: bool = True
+        self, ppo_network: PPOImitationNetworks, training_metrics: Metrics, aggregate_episodes: bool = True
     ) -> Metrics:
         """Run one epoch of evaluation."""
         self._key, unroll_key = jax.random.split(self._key)

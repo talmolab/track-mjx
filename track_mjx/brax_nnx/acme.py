@@ -6,19 +6,19 @@ from flax import nnx
 class NormalizeObservations(nnx.Module):
     """Module for normalizing observations."""
 
-    _state: nnx.Variable[running_statistics.RunningStatisticsState]
+    _state: nnx.BatchStat[running_statistics.RunningStatisticsState]
 
     def __init__(self, specs: types.NestedArray):
         """Initializes the module."""
-        self._state = nnx.Variable(running_statistics.init_state(specs))
+        self._state = nnx.BatchStat(running_statistics.init_state(specs))
 
     def __call__(self, x: types.NestedArray) -> types.Nest:
         """Normalize the input."""
-        return running_statistics.normalize(x, self._state)
+        return running_statistics.normalize(x, self._state.value)
 
     def update(self, x: types.Nest):
         """Update the running statistics."""
-        self._state = nnx.Variable(running_statistics.update(self._state, x))
+        self._state.value = running_statistics.update(self._state.value, x)
 
 
 class Identity(nnx.Module):

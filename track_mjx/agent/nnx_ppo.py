@@ -287,7 +287,7 @@ def train(
         total_losses = []
         metrics_list = []
 
-        def shuffle_and_split_minibatch(x: jnp.ndarray):
+        def shuffle_and_split_minibatch(x: jnp.ndarray, key_perm: PRNGKey) -> jnp.ndarray:
             """
             Shuffle and split the minibatch, this is a helper function for the jax.tree.map
             where it shuffle the first dimension of the input x and then reshape it to
@@ -299,10 +299,13 @@ def train(
 
         # Loop over minibatches
         for _ in range(config.num_updates_per_batch):
-            data = jax.tree.map(shuffle_and_split_minibatch, data)  # shuffle data to mix the experience.
+            key_perm, sub_key = jax.random.split(key_perm)
+            shuffled_data = jax.tree.map(
+                functools.partial(shuffle_and_split_minibatch, key_perm=sub_key), data
+            )  # shuffle data to mix the experience.
             for i in range(config.num_minibatches):
-                minibatch = jax.tree_util.tree_map(lambda x: x[i], data)
-                print("DEBUG: MINIBATCH SHAPE:", minibatch.observation.shape)
+                minibatch = jax.tree_util.tree_map(lambda x: x[i], shuffled_data)
+                assert minibatch.observation.shape[1:] == data.observation.shape[1:]
                 total_loss, metrics = gradient_update(model, optimizer, minibatch)
                 total_losses.append(total_loss)
                 metrics_list.append(metrics)

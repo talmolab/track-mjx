@@ -51,7 +51,6 @@ def actor_step(
     )
 
 
-@nnx.jit
 def generate_unroll(
     env: Env,
     env_state: State,
@@ -62,13 +61,14 @@ def generate_unroll(
 ) -> Tuple[State, Transition]:
     """Collect trajectories of given unroll_length."""
 
+    @nnx.jit
     def f(carry, unused_t):
-        state, current_key = carry
+        state, ppo_network, current_key = carry
         current_key, next_key = jax.random.split(current_key)
         nstate, transition = actor_step(env, state, ppo_network, key, extra_fields=extra_fields)
-        return (nstate, next_key), transition
+        return (nstate, ppo_network, next_key), transition
 
-    (final_state, _), data = jax.lax.scan(f, (env_state, key), (), length=unroll_length)
+    (final_state, ppo_network, _), data = jax.lax.scan(f, (env_state, ppo_network, key), (), length=unroll_length)
     return final_state, data
 
 

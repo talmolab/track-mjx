@@ -200,8 +200,9 @@ def train(
             """
             generate unroll data for training using scan function
             """
-            current_state, current_key = carry
+            current_state, graph_def, network_state, current_key = carry
             current_key, next_key = jax.random.split(current_key)
+            ppo_network = nnx.merge(graph_def, network_state)
             next_state, data = acting.generate_unroll(
                 env,
                 current_state,
@@ -210,10 +211,11 @@ def train(
                 config.unroll_length,
                 extra_fields=("truncation",),
             )
-            return (next_state, next_key), data
-        (state, _), data = jax.lax.scan(
+            return (next_state, graph_def, network_state, next_key), data
+        graph_def, network_state = nnx.split(ppo_network)
+        (state, _, _, _), data = jax.lax.scan(
             f,
-            (state, key_generate_unroll),
+            (state, graph_def, network_state, key_generate_unroll),
             (),
             length=config.batch_size * config.num_minibatches // config.num_envs,
         )
@@ -227,7 +229,6 @@ def train(
         return data, state, new_key
 
     @nnx.jit
-    # @nnx.vmap(in_axes=(None, None, 0))
     def gradient_update(
         model: PPOImitationNetworks, optimizer: nnx.Optimizer, data: types.Transition
     ) -> Tuple[Metrics, Metrics]:
@@ -375,6 +376,7 @@ def train(
     )
 
     # Run initial eval
+    logging.info("Running initial evaluation")
     metrics = {}
     if process_id == 0:
         metrics = evaluator.run_evaluation(

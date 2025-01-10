@@ -35,7 +35,6 @@ class MultiClipTracking(SingleClipTracking):
         reference_clip: ReferenceClip,
         walker: BaseWalker,
         reward_config: RewardConfig,
-        ref_len: int,
         physics_steps_per_control_step: int,
         reset_noise_scale: float,
         solver: str,
@@ -55,7 +54,6 @@ class MultiClipTracking(SingleClipTracking):
             walker: The base walker model.
             torque_actuators: Whether to use torque actuators.
             reward_config: Reward configuration.
-            ref_len: Length of the reference trajectory.
             physics_steps_per_control_step: Number of physics steps per control step.
             reset_noise_scale: Scale of noise for reset.
             solver: Solver type for Mujoco.
@@ -72,7 +70,6 @@ class MultiClipTracking(SingleClipTracking):
             None,
             walker,
             reward_config,
-            ref_len,
             physics_steps_per_control_step,
             reset_noise_scale,
             solver,
@@ -80,6 +77,9 @@ class MultiClipTracking(SingleClipTracking):
             ls_iterations,
             mj_model_timestep,
             mocap_hz,
+            clip_length,
+            random_init_range,
+            traj_length,
             **kwargs,
         )
 

@@ -52,7 +52,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(config_path="config", config_name=None)
+@hydra.main(version_base=None, config_path="config", config_name="fly-mc-intention")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -71,7 +71,7 @@ def main(cfg: DictConfig):
     envs.register_environment("fly_multi_clip", MultiClipTracking)
 
     # config files
-    env_cfg = hydra.compose(config_name=None)
+    env_cfg = hydra.compose(config_name="fly-mc-intention")
     env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]

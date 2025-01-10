@@ -36,7 +36,6 @@ class SingleClipTracking(PipelineEnv):
         reference_clip: ReferenceClip,
         walker: BaseWalker,
         reward_config: RewardConfig,
-        ref_len: int,
         physics_steps_per_control_step: int,
         reset_noise_scale: float,
         solver: str,
@@ -55,7 +54,6 @@ class SingleClipTracking(PipelineEnv):
             reference_clip: The reference trajectory data.
             walker: The base walker model.
             torque_actuators: Whether to use torque actuators.
-            ref_len: Length of the reference trajectory.
             reward_config: Reward configuration.
             physics_steps_per_control_step: Number of physics steps per control step.
             reset_noise_scale: Scale of noise for reset.
@@ -105,7 +103,7 @@ class SingleClipTracking(PipelineEnv):
 
         self._reward_config = reward_config
         self._reference_clip = reference_clip
-        self._ref_len = ref_len
+        self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
 
     def reset(self, rng: jp.ndarray) -> State:

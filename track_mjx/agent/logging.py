@@ -235,7 +235,7 @@ def setup_training_logging(
     video_path = f"{model_path}/{num_steps}.mp4"
 
     with imageio.get_writer(
-        video_path, fps=env_config.render_fps)
+        video_path, fps=env_config.render_fps
     ) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
 

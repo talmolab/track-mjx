@@ -44,6 +44,9 @@ class SingleClipTracking(PipelineEnv):
         ls_iterations: int,
         mj_model_timestep: float,
         mocap_hz: int,
+        clip_length: int,
+        random_init_range: int,
+        traj_length: int,
         **kwargs: Any,
     ):
         """Initializes the SingleTracking environment.
@@ -61,6 +64,9 @@ class SingleClipTracking(PipelineEnv):
             ls_iterations: Maximum number of line search iterations.
             mj_model_timestep: fundamental time increment of the MuJoCo physics simulation
             mocap_hz: cycles per second for the reference data
+            clip_length: clip length of the tracking clips
+            random_init_range: the initiated range
+            traj_length: one trajectory length
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         self.walker = walker
@@ -113,7 +119,12 @@ class SingleClipTracking(PipelineEnv):
         """
         _, start_rng, rng = jax.random.split(rng, 3)
 
-        start_frame = jax.random.randint(start_rng, (), 0, 44)
+        episode_length = (
+            clip_length - random_init_range - traj_length
+        ) * self._steps_for_cur_frame
+
+        frame_range = clip_length - episode_length - traj_length
+        start_frame = jax.random.randint(start_rng, (), 0, frame_range)
 
         info = {
             "cur_frame": start_frame,

@@ -126,6 +126,7 @@ def main(cfg: DictConfig):
         walker=walker,
         reward_config=reward_config,
         **env_args,
+        **traj_config,
     )
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.

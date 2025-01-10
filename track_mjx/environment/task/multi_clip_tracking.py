@@ -43,6 +43,9 @@ class MultiClipTracking(SingleClipTracking):
         ls_iterations: int,
         mj_model_timestep: float,
         mocap_hz: int,
+        clip_length: int,
+        random_init_range: int,
+        traj_length: int,
         **kwargs: Any,
     ):
         """Initializes the MultiTracking environment.
@@ -60,6 +63,9 @@ class MultiClipTracking(SingleClipTracking):
             ls_iterations: Maximum number of line search iterations.
             mj_model_timestep: fundamental time increment of the MuJoCo physics simulation
             mocap_hz: cycles per second for the reference data
+            clip_length: clip length of the tracking clips
+            random_init_range: the initiated range
+            traj_length: one trajectory length
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         super().__init__(

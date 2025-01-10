@@ -148,17 +148,29 @@ class SingleClipTracking(PipelineEnv):
 
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
 
-        # Add pos
-        qpos_with_pos = jp.array(self.sys.qpos0).at[:3].set(reference_frame.position)
+        # # Add pos
+        # qpos_with_pos = jp.array(self.sys.qpos0).at[:3].set(reference_frame.position)
 
-        # Add quat
-        new_qpos = qpos_with_pos.at[3:7].set(reference_frame.quaternion)
+        # # Add quat
+        # new_qpos = qpos_with_pos.at[3:7].set(reference_frame.quaternion)
 
-        # Add noise
-        qpos = new_qpos + jp.where(
-            noise,
-            jax.random.uniform(rng1, (self.sys.nq,), minval=low, maxval=hi),
-            jp.zeros((self.sys.nq,)),
+        # # Add noise
+        # qpos = new_qpos + jp.where(
+        #     noise,
+        #     jax.random.uniform(rng1, (self.sys.nq,), minval=low, maxval=hi),
+        #     jp.zeros((self.sys.nq,)),
+        # )
+
+        new_qpos = jp.concatenate(
+            (
+                reference_frame.position,
+                reference_frame.quaternion,
+                reference_frame.joints,
+            ),
+            axis=0,
+        )
+        qpos = new_qpos + jax.random.uniform(
+            rng1, (self.sys.nq,), minval=low, maxval=hi
         )
 
         qvel = jp.where(

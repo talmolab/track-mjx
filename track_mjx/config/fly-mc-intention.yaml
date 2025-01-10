@@ -6,13 +6,14 @@ env_config:
   task_name: imitation
   walker_name: fly
   render_camera_name: track1-0
-  render_fps: 50
+  render_fps: 30
 
   env_args:
     solver: "cg"
     iterations: 6
     ls_iterations: 6
     physics_steps_per_control_step: 10
+    reset_noise_scale: 1e-3
     mj_model_timestep: 2e-4
     mocap_hz: 500
 

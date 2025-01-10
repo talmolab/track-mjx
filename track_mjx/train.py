@@ -83,6 +83,7 @@ def main(cfg: DictConfig):
     import sys
 
     sys.modules["preprocessing"] = preprocessing
+    # TODO(Scott): move this to track_mjx.io module
     input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
     print(f"Loading data: {input_data_path}")
     with open(input_data_path, "rb") as file:

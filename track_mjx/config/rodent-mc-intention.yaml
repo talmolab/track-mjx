@@ -1,6 +1,5 @@
 data_path:
 walker_type: rodent
-
 env_config:
   env_name: rodent_multi_clip
   task_name: imitation

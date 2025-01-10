@@ -159,7 +159,7 @@ def main(cfg: DictConfig):
 
     wandb.init(
         project=cfg.logging_config.project_name,
-        config=dict(cfg),
+        config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
         notes=f"clip_id: {cfg.logging_config.clip_id}",
     )
     wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"

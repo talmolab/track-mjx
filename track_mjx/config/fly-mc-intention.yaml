@@ -6,7 +6,7 @@ env_config:
   task_name: imitation
   walker_name: fly
   render_camera_name: track1-0
-  render_fps: 30
+  render_fps: 5
 
   env_args:
     solver: "cg"

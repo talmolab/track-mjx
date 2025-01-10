@@ -6,7 +6,7 @@ env_config:
   task_name: imitation
   walker_name: rodent
   render_camera_name: side-0
-  render_fps: 50
+  render_fps: 5
 
   env_args:
     solver: "cg"

@@ -235,8 +235,8 @@ def setup_training_logging(
     video_path = f"{model_path}/{num_steps}.mp4"
 
     with imageio.get_writer(
-        video_path, fps=int((1.0 / env.dt))
-    ) as video:  # env_config.render_fps
+        video_path, fps=env_config.render_fps)
+    ) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
 
             # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)

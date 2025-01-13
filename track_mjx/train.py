@@ -6,7 +6,6 @@ import os
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 os.environ["MUJOCO_GL"] = "egl"
-os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )
@@ -39,7 +38,6 @@ from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
-from track_mjx.agent import nnx_to_linen_ppo_network
 from track_mjx.agent.logging import policy_params_fn
 
 from track_mjx.environment.walker.rodent import Rodent
@@ -148,10 +146,10 @@ def main(cfg: DictConfig):
         batch_size=cfg.train_config.batch_size,
         seed=cfg.run_config.seed,
         network_factory=functools.partial(
-            nnx_to_linen_ppo_network.make_intention_ppo_networks,
-            encoder_layers=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_layers=tuple(cfg.network_config.decoder_layer_sizes),
-            value_layers=tuple(cfg.network_config.critic_layer_sizes),
+            custom_ppo_networks.make_intention_ppo_networks,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         ),
     )
 

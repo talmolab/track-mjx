@@ -5,6 +5,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import uuid
 from typing import Callable, Any
+from types import ModuleType
 
 import functools
 import jax
@@ -20,12 +21,10 @@ from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent import custom_losses
 from brax.io import model
 import numpy as np
-import pickle
-import warnings
 from jax import numpy as jp
 
 from track_mjx.environment import custom_wrappers
-from brax.envs.base import PipelineEnv
+from brax.envs.base import Env
 
 
 def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
@@ -73,8 +72,8 @@ def setup_training_logging(
     params: custom_losses.PPONetworkParams,
     rollout_key: jax.random.PRNGKey,
     cfg: DictConfig,
-    env: PipelineEnv,
-    wandb: Callable[[int, dict[str, jp.ndarray]], None],
+    env: Env,
+    wandb: ModuleType,
     model_path: str,
 ) -> None:
     """Logs metrics and videos for a reinforcement learning training rollout.
@@ -100,10 +99,12 @@ def setup_training_logging(
     jit_step = jax.jit(rollout_env.step)
 
     os.makedirs(model_path, exist_ok=True)
+    # TODO: migrate to Orbax
     model.save_params(f"{model_path}/{num_steps}", params)
     jit_inference_fn = jax.jit(make_policy(params, deterministic=True))
     rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
+    # do a rollout on the saved model
     state = jit_reset(reset_rng)
 
     rollout = [state]

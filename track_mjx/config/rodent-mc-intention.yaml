@@ -1,16 +1,21 @@
 data_path:
+walker_type: rodent
+
 env_config:
-  env_name: multi clip
+  env_name: rodent_multi_clip
   task_name: imitation
   walker_name: rodent
-  walker_xml_path: assets/rodent.xml
-  ghost_xml_path: environment/walker/assets/rodent_ghostpair_scale080.xml
+  render_camera_name: side-0
+  render_fps: 5
 
   env_args:
     solver: "cg"
     iterations: 4
     ls_iterations: 4
     physics_steps_per_control_step: 5
+    reset_noise_scale: 1e-3
+    mj_model_timestep: 2e-4
+    mocap_hz: 50
 
   reward_weights:
     too_far_dist: 0.01
@@ -25,9 +30,18 @@ env_config:
     bodypos_reward_weight: 0.0
     endeff_reward_weight: 1.0
     healthy_z_range: [0.0325, 0.5]
+    pos_reward_exp_scale: 400.0
+    quat_reward_exp_scale: 4.0
+    joint_reward_exp_scale: 0.25
+    angvel_reward_exp_scale: 0.5
+    bodypos_reward_exp_scale: 8.0
+    endeff_reward_exp_scale: 500.0
+    penalty_pos_distance_scale: [1.0, 1.0, 0.2]
 
 reference_config:
   clip_length: 250
+  random_init_range: 50
+  traj_length: 5
 
 network_config:
   arch_name: intention
@@ -40,11 +54,11 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: imitation_debug
-  eval_every: 1_000
-  episode_length: 200   
+  eval_every: 1_0000
+  episode_length: 200
   train_config:
     num_envs: 1024
-    num_timesteps: 1_000_000
+    num_timesteps: 1_000_000_000
     batch_size: 512
     num_minibatches: 4
     num_updates_per_batch: 4
@@ -67,7 +81,7 @@ logging_config:
 
 walker_config:
   torque_actuators: False 
-  xml_path: assets/rodent.xml
+  rescale_factor: 0.8
   joint_names:
     - vertebra_1_extend
     - hip_L_supinate

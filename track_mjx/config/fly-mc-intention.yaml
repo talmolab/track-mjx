@@ -1,0 +1,177 @@
+data_path:
+walker_type: fly
+
+env_config:
+  env_name: fly_multi_clip
+  task_name: imitation
+  walker_name: fly
+  render_camera_name: track1-0
+  render_fps: 5
+
+  env_args:
+    solver: "cg"
+    iterations: 6
+    ls_iterations: 6
+    physics_steps_per_control_step: 10
+    reset_noise_scale: 1e-3
+    mj_model_timestep: 2e-4
+    mocap_hz: 500
+
+  reward_weights:
+    too_far_dist: 0.01
+    bad_pose_dist: 5.0
+    bad_quat_dist: 0.075 
+    ctrl_cost_weight: 0.02
+    ctrl_diff_cost_weight: 0.02
+    pos_reward_weight: 1.0
+    quat_reward_weight: 1.0
+    joint_reward_weight: 1.0
+    angvel_reward_weight: 0.0
+    bodypos_reward_weight: 0.0
+    endeff_reward_weight: 1.0
+    pos_reward_exp_scale: 400.0
+    quat_reward_exp_scale: 4.0
+    joint_reward_exp_scale: 0.25
+    angvel_reward_exp_scale: 0.5
+    bodypos_reward_exp_scale: 8.0
+    endeff_reward_exp_scale: 100.0
+    healthy_z_range: [-0.03, 0.1]
+    penalty_pos_distance_scale: [1.0, 1.0, 0.2]
+
+reference_config:
+  clip_length: 1000
+  random_init_range: 50
+  traj_length: 5
+
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [256, 256]
+  decoder_layer_sizes: [256, 256]
+  critic_layer_sizes: [256, 256]
+  intention_size: 60
+  kl_weight: 1e-4
+
+train_setup:
+  agent_name: fly
+  run_name: imitation_debug
+  eval_every: 1_000_000
+  episode_length: 1000
+  train_config:
+    num_envs: 2048
+    num_timesteps: 1_000_000_000
+    batch_size: 512
+    num_minibatches: 4
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2     
+    discounting: 0.95        
+    action_repeat: 1
+    entropy_cost: 1e-2
+    num_resets_per_eval: 1
+    reward_scaling: 1
+    normalize_observations: True
+    unroll_length: 20
+    seed: 0
+
+logging_config:
+  project_name: vnl_fly_debug
+  clip_id: -1
+  model_path: model_checkpoints
+  algo_name: ppo
+
+walker_config:
+  torque_actuators: False 
+  rescale_factor: 1.0
+  joint_names:
+    - coxa_flexion_T1_left
+    - coxa_twist_T1_left
+    - femur_twist_T1_left
+    - femur_T1_left
+    - tibia_T1_left
+    - tarsus_T1_left
+    - coxa_flexion_T1_right
+    - coxa_twist_T1_right
+    - femur_twist_T1_right
+    - femur_T1_right
+    - tibia_T1_right
+    - tarsus_T1_right
+    - coxa_flexion_T2_left
+    - coxa_twist_T2_left
+    - femur_twist_T2_left
+    - femur_T2_left
+    - tibia_T2_left
+    - tarsus_T2_left
+    - coxa_flexion_T2_right
+    - coxa_twist_T2_right
+    - femur_twist_T2_right
+    - femur_T2_right
+    - tibia_T2_right
+    - tarsus_T2_right
+    - coxa_flexion_T3_left
+    - coxa_twist_T3_left
+    - femur_twist_T3_left
+    - femur_T3_left
+    - tibia_T3_left
+    - tarsus_T3_left
+    - coxa_flexion_T3_right
+    - coxa_twist_T3_right
+    - femur_twist_T3_right
+    - femur_T3_right
+    - tibia_T3_right
+    - tarsus_T3_right
+  body_names:
+    - coxa_T1_left
+    - femur_T1_left
+    - tibia_T1_left
+    - tarsus_T1_left
+    - tarsus2_T1_left
+    - tarsus3_T1_left
+    - tarsus4_T1_left
+    - claw_T1_left
+    - coxa_T1_right
+    - femur_T1_right
+    - tibia_T1_right
+    - tarsus_T1_right
+    - tarsus2_T1_right
+    - tarsus3_T1_right
+    - tarsus4_T1_right
+    - claw_T1_right
+    - coxa_T2_left
+    - femur_T2_left
+    - tibia_T2_left
+    - tarsus_T2_left
+    - tarsus2_T2_left
+    - tarsus3_T2_left
+    - tarsus4_T2_left
+    - claw_T2_left
+    - coxa_T2_right
+    - femur_T2_right
+    - tibia_T2_right
+    - tarsus_T2_right
+    - tarsus2_T2_right
+    - tarsus3_T2_right
+    - tarsus4_T2_right
+    - claw_T2_right
+    - coxa_T3_left
+    - femur_T3_left
+    - tibia_T3_left
+    - tarsus_T3_left
+    - tarsus2_T3_left
+    - tarsus3_T3_left
+    - tarsus4_T3_left
+    - claw_T3_left
+    - coxa_T3_right
+    - femur_T3_right
+    - tibia_T3_right
+    - tarsus_T3_right
+    - tarsus2_T3_right
+    - tarsus3_T3_right
+    - tarsus4_T3_right
+    - claw_T3_right
+  end_eff_names:
+    - claw_T1_left
+    - claw_T1_right
+    - claw_T2_left
+    - claw_T2_right
+    - claw_T3_left
+    - claw_T3_right

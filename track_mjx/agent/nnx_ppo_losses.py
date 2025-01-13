@@ -58,13 +58,13 @@ def compute_gae(
         train a baseline (V(x_t) - vs_t)^2.
       A float32 tensor of shape [T, B] of advantages.
     """
-    
+
     truncation_mask = 1 - truncation
     # Append bootstrapped value to get [v1, ..., v_t+1]
     values_t_plus_1 = jnp.concatenate(
         [values[1:], jnp.expand_dims(bootstrap_value, 0)], axis=0
     )
-    
+
     deltas = rewards + discount * (1 - termination) * values_t_plus_1 - values
     deltas *= truncation_mask
 
@@ -96,7 +96,7 @@ def compute_gae(
 
 def compute_ppo_loss(
     ppo_network: PPOImitationNetworks,
-    data: types.Transition, # this will change each step
+    data: types.Transition,  # this will change each step
     rng: PRNGKey,
     entropy_cost: float = 1e-4,
     kl_weight: float = 1e-3,
@@ -132,12 +132,12 @@ def compute_ppo_loss(
     value = ppo_network.value
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    
+
     # Compute the policy and value.
     policy_logits, latent_mean, latent_logvar = policy(data.observation, policy_key)
     baseline = value(data.observation)
     bootstrap_value = value(data.next_observation[-1])
-    
+
     # Preprocess the reward
     rewards = data.reward * reward_scaling
     truncation = data.extras["state_extras"]["truncation"]
@@ -162,7 +162,7 @@ def compute_ppo_loss(
     if normalize_advantage:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     rho_s = jnp.exp(target_action_log_probs - behaviour_action_log_probs)
-    
+
     # PPO loss
     surrogate_loss1 = rho_s * advantages
     surrogate_loss2 = (

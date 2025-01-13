@@ -25,7 +25,7 @@ import functools
 from track_mjx.environment.task.multi_clip_tracking import RodentMultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import RodentTracking
 from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
-from track_mjx.agent import nnx_ppo 
+from track_mjx.agent import nnx_ppo
 from track_mjx.agent import nnx_ppo_network
 from track_mjx.agent.logging import policy_params_fn
 from track_mjx.environment.walker.rodent import Rodent

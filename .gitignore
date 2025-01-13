@@ -1,6 +1,7 @@
 # track-mjx specific gitignore:
 data/
 model_checkpoints/
+eval_renderings/
 wandb/
 outputs/
 

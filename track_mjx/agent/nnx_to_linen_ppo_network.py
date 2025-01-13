@@ -65,7 +65,11 @@ def make_value_network(
     return:
         MLP: value network
     """
-    value_module = MLP([obs_size] + list(hidden_layer_sizes) + [1], activation_fn=activation, rngs=nnx.Rngs(0))
+    value_module = MLP(
+        [obs_size] + list(hidden_layer_sizes) + [1],
+        activation_fn=activation,
+        rngs=nnx.Rngs(0),
+    )
     return value_module
 
 
@@ -80,7 +84,9 @@ def make_intention_ppo_networks(
     value_layers: Sequence[int] = (1024,) * 2,
 ) -> PPOImitationNetworks:
     """Make Imitation PPO networks with preprocessor."""
-    parametric_action_distribution = distribution.NormalTanhDistribution(event_size=action_size)
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
     # create policy network
     policy_network = make_intention_policy(
         param_size=parametric_action_distribution.param_size,
@@ -97,8 +103,8 @@ def make_intention_ppo_networks(
         preprocess_observations_fn=preprocess_observations_fn,
         hidden_layer_sizes=value_layers,
     )
-    
-    # value network still created in linen, no need to support complex operation for now.    
+
+    # value network still created in linen, no need to support complex operation for now.
     # nnx.bridge.to_linen(
     #     MLP, [observation_size] + list(value_layers) + [1], activation_fn=nnx.relu, rngs=nnx.Rngs(0)
     # )
@@ -168,12 +174,20 @@ def make_policy_fn(ppo_networks: PPOImitationNetworks):
         if deterministic:
             return ppo_networks.parametric_action_distribution.mode(logits), {}
         # action sampling is happening here, according to distribution parameter logits
-        raw_actions = ppo_networks.parametric_action_distribution.sample_no_postprocessing(logits, key_sample)
+        raw_actions = (
+            ppo_networks.parametric_action_distribution.sample_no_postprocessing(
+                logits, key_sample
+            )
+        )
 
         # probability of selection specific action, actions with higher reward should have higher probability
-        log_prob = ppo_networks.parametric_action_distribution.log_prob(logits, raw_actions)
+        log_prob = ppo_networks.parametric_action_distribution.log_prob(
+            logits, raw_actions
+        )
 
-        postprocessed_actions = ppo_networks.parametric_action_distribution.postprocess(raw_actions)
+        postprocessed_actions = ppo_networks.parametric_action_distribution.postprocess(
+            raw_actions
+        )
         print(f"Action: {postprocessed_actions}")
         return postprocessed_actions, {
             "log_prob": log_prob,
@@ -218,4 +232,6 @@ class PPOTrainConfig:
     normalize_advantage: bool = True
     eval_env: envs.Env | None = None
     policy_params_fn: Callable[..., None] = lambda *args: None
-    randomization_fn: Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]] | None = None
+    randomization_fn: (
+        Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]] | None
+    ) = None

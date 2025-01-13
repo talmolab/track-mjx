@@ -3,6 +3,7 @@ Only inference for track-mjx. Load the config file, create environments, initial
 """
 
 import os
+
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
@@ -19,11 +20,16 @@ import jax.numpy as jnp
 import numpy as np
 import pickle
 import sys
+import imageio
+import mujoco
+from pathlib import Path
 
 import orbax.checkpoint as orbax_cp
 
 from brax import envs
 from brax.io import model
+from brax.envs.base import PipelineEnv, State
+
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment.walker.rodent import Rodent
@@ -35,13 +41,14 @@ from track_mjx.agent import custom_ppo_networks
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+
 @hydra.main(version_base=None, config_path="config", config_name="fly-mc-intention")
 def main(cfg: DictConfig):
     """
     Pure inference script. Loads a trained model checkpoint via Orbax,
     creates an environment, and runs a rollout for evaluation or visualization.
     """
-    
+
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
@@ -55,7 +62,7 @@ def main(cfg: DictConfig):
     sys.modules["preprocessing"] = preprocessing
     with open(hydra.utils.to_absolute_path(cfg.data_path), "rb") as file:
         reference_clip = pickle.load(file)
-        
+
     # config files
     env_cfg = hydra.compose(config_name="fly-mc-intention")
     env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
@@ -120,8 +127,8 @@ def main(cfg: DictConfig):
     # restored_state = ckpt_manager.restore(step=step_to_restore)
     # inference_params = restored_state["params"]
     # print(f"Loaded parameters from step {step_to_restore} for inference.")
-    
-    # currently just loading it with brax.model first
+
+    # Currently just loading it with brax.model first
     final_save_path = hydra.utils.to_absolute_path(cfg.inference_params_path)
     print(f"Loading trained parameters from: {final_save_path}")
     inference_params = model.load_params(final_save_path)
@@ -130,8 +137,7 @@ def main(cfg: DictConfig):
     # Run rollout in environment
     rng = jax.random.PRNGKey(0)
     state = env.reset(rng=rng)
-    total_reward = 0.0
-    
+
     # Build inference function
     policy_networks = custom_ppo_networks.make_intention_ppo_networks(
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
@@ -142,8 +148,10 @@ def main(cfg: DictConfig):
         reference_obs_size=int(state.info["reference_obs_size"]),
     )
     make_policy_fn = custom_ppo_networks.make_inference_fn(policy_networks)
-    policy = make_policy_fn(inference_params, deterministic=cfg.eval_config.deterministic)
-    print('Policy created successfuly!')
+    policy = make_policy_fn(
+        inference_params, deterministic=cfg.eval_config.deterministic
+    )
+    print("Policy created successfuly!")
 
     def select_action_fn(policy, obs, key):
         """
@@ -177,6 +185,7 @@ def main(cfg: DictConfig):
         all_actions = []
         all_rewards = []
         all_dones = []
+        all_state = []
         all_extra = []
 
         rng = jax.random.PRNGKey(2)
@@ -194,29 +203,132 @@ def main(cfg: DictConfig):
             state = env.step(state, action)
             all_rewards.append(float(state.reward))
             all_dones.append(bool(state.done))
+            all_state.append(state.pipeline_state)
 
             if state.done:
-                print(f"Episode ended at step {step_i + 1} with reward {float(state.reward)}")
+                print(
+                    f"Episode ended at step {step_i + 1} with reward {float(state.reward)}"
+                )
                 break
 
         rollout_data = {
-            "observations": np.stack(all_obs, axis=0),      # Shape: [T, obs_dim]
-            "actions":      np.stack(all_actions, axis=0),   # Shape: [T, act_dim]
-            "rewards":      np.array(all_rewards),           # Shape: [T]
-            "dones":        np.array(all_dones),             # Shape: [T]
-            "extra":        all_extra,                        # List of dicts
+            "observations": np.stack(all_obs, axis=0),  # Shape: [T, obs_dim]
+            "actions": np.stack(all_actions, axis=0),  # Shape: [T, act_dim]
+            "rewards": np.array(all_rewards),  # Shape: [T]
+            "dones": np.array(all_dones),  # Shape: [T]
+            "extra": all_extra,
+            "states": all_state,
         }
         return rollout_data
 
+    def render_rollout(
+        rollout: dict,
+        cfg: DictConfig,
+        env: PipelineEnv,
+        model_path: str,
+        num_steps: int,
+    ):
+        """
+        Render the rollout using MuJoCo and log the video to wandb.
+
+        Args:
+            rollout: The rollout data containing observations, actions, etc.
+            cfg: Configuration dictionary.
+            env: The Brax environment.
+            model_path: Path to save the video.
+            num_steps: Current step number for naming the video.
+        """
+        env_config = cfg.env_config
+        walker_config = cfg.walker_config
+
+        pair_render_xml_path = env.walker._pair_rendering_xml_path
+        _XML_PATH = (
+            Path(__file__).resolve().parent
+            / "environment"
+            / "walker"
+            / pair_render_xml_path
+        )
+
+        spec = mujoco.MjSpec()
+        spec = spec.from_file(str(_XML_PATH))
+
+        # Scale geoms and positions
+        for geom in spec.geoms:
+            if geom.size is not None:
+                geom.size *= walker_config.rescale_factor
+            if geom.pos is not None:
+                geom.pos *= walker_config.rescale_factor
+
+        mj_model = spec.compile()
+
+        mj_model.opt.solver = {
+            "cg": mujoco.mjtSolver.mjSOL_CG,
+            "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+        }["cg"]
+
+        mj_model.opt.iterations = 6
+        mj_model.opt.ls_iterations = 6
+        mj_data = mujoco.MjData(mj_model)
+
+        site_id = [
+            mj_model.site(i).id
+            for i in range(mj_model.nsite)
+            if "-0" in mj_model.site(i).name
+        ]
+        for id in site_id:
+            mj_model.site(id).rgba = [1, 0, 0, 1]
+
+        scene_option = mujoco.MjvOption()
+        scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+        renderer = mujoco.Renderer(mj_model, height=512, width=512)
+        video_path = f"{model_path}/{num_steps}_inference_rollout.mp4"
+
+        with imageio.get_writer(video_path, fps=env_config.render_fps) as video:
+
+            qposes_rollout = np.array([state.qpos for state in rollout["states"]])
+            ref_traj = env._get_reference_clip(rollout['states'][0].info)
+            print(f"clip_id:{rollout['states'][0].info}")
+
+            qposes_ref = np.repeat(
+                np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+                env._steps_for_cur_frame,
+                axis=0,
+            )
+
+            for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
+                # Ensure qpos dimensions match
+                total_qpos_size = len(qpos1) + len(qpos2)
+                if total_qpos_size != mj_model.nq:
+                    raise ValueError(
+                        f"Combined qpos sizes do not match MuJoCo model's nq: {total_qpos_size} vs {mj_model.nq}"
+                    )
+                mj_data.qpos = np.append(qpos1, qpos2)
+                mujoco.mj_forward(mj_model, mj_data)
+                renderer.update_scene(
+                    mj_data, camera=env_config.render_camera_name, option=scene_option
+                )
+                pixels = renderer.render()
+                video.append_data(pixels)
+
     print("Starting inference rollout...")
-    trajectory = run_inference_and_record(env, policy, max_steps=cfg.eval_setup.num_eval_steps)
+    trajectory = run_inference_and_record(
+        env, policy, max_steps=cfg.eval_config.num_eval_steps
+    )
     print("Inference rollout completed.")
 
     print("Collected observations shape:", trajectory["observations"].shape)
     print("Collected actions shape:", trajectory["actions"].shape)
     print("Collected rewards shape:", trajectory["rewards"].shape)
     print("Collected dones shape:", trajectory["dones"].shape)
-    print(f"Finished inference rollout. Total reward: {total_reward}")
+
+    print("Rendering rollout...")
+    model_save_path = hydra.utils.to_absolute_path(cfg.eval_config.save_eval_path)
+    os.makedirs(model_save_path, exist_ok=True)
+    render_rollout(
+        trajectory, cfg, env, model_save_path, num_steps=trajectory.get("step", 0)
+    )
+
+    print(f"Finished inference rollout.")
 
 if __name__ == "__main__":
     main()

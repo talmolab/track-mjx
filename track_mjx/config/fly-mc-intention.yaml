@@ -4,6 +4,7 @@ walker_type: fly
 eval_config:
   num_eval_steps: 1
   deterministic: True
+  save_eval_path: eval_renderings
 
 env_config:
   env_name: fly_multi_clip

@@ -45,13 +45,31 @@ class Encoder(nnx.Module):
             if i != 0:
                 input_size = hidden_size
             self.layers.append(
-                nnx.Linear(input_size, hidden_size, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
+                nnx.Linear(
+                    input_size,
+                    hidden_size,
+                    kernel_init=kernel_init,
+                    use_bias=use_bias,
+                    rngs=rngs,
+                )
             )
             self.layers.append(activation)
             self.layers.append(nnx.LayerNorm(hidden_size, rngs=rngs))
         # output layer
-        self.out_mean = nnx.Linear(layer_sizes[-1], latents, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
-        self.out_logvar = nnx.Linear(layer_sizes[-1], latents, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
+        self.out_mean = nnx.Linear(
+            layer_sizes[-1],
+            latents,
+            kernel_init=kernel_init,
+            use_bias=use_bias,
+            rngs=rngs,
+        )
+        self.out_logvar = nnx.Linear(
+            layer_sizes[-1],
+            latents,
+            kernel_init=kernel_init,
+            use_bias=use_bias,
+            rngs=rngs,
+        )
 
     def __call__(self, x: jnp.ndarray):
         """Call function for the Encoder module
@@ -78,7 +96,7 @@ class Decoder(nnx.Module):
         output_size: int,
         layer_sizes: Sequence[int],
         activation: networks.ActivationFn = nnx.relu,
-        kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform(), # TODO: What is the preferred way to initialize the weights?
+        kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform(),  # TODO: What is the preferred way to initialize the weights?
         activate_final: bool = False,
         use_bias: bool = True,
         *,
@@ -98,18 +116,40 @@ class Decoder(nnx.Module):
         """
         self.layers = []
         # first input layer
-        self.layers.append(nnx.Linear(input_size, layer_sizes[0], kernel_init=kernel_init, use_bias=use_bias, rngs=rngs))
+        self.layers.append(
+            nnx.Linear(
+                input_size,
+                layer_sizes[0],
+                kernel_init=kernel_init,
+                use_bias=use_bias,
+                rngs=rngs,
+            )
+        )
         self.layers.append(activation)
         self.layers.append(nnx.LayerNorm(layer_sizes[0], rngs=rngs))
         # intermediate layers
         for hidden_size in layer_sizes[1:-1]:
             self.layers.append(
-                nnx.Linear(layer_sizes[0], hidden_size, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs)
+                nnx.Linear(
+                    layer_sizes[0],
+                    hidden_size,
+                    kernel_init=kernel_init,
+                    use_bias=use_bias,
+                    rngs=rngs,
+                )
             )
             self.layers.append(activation)
             self.layers.append(nnx.LayerNorm(hidden_size, rngs=rngs))
         # final layer
-        self.layers.append(nnx.Linear(layer_sizes[-1], output_size, kernel_init=kernel_init, use_bias=use_bias, rngs=rngs))
+        self.layers.append(
+            nnx.Linear(
+                layer_sizes[-1],
+                output_size,
+                kernel_init=kernel_init,
+                use_bias=use_bias,
+                rngs=rngs,
+            )
+        )
         if activate_final:
             self.layers.append(activation)
             self.layers.append(nnx.LayerNorm(output_size, rngs=rngs))
@@ -171,13 +211,21 @@ class IntentionNetwork(nnx.Module):
         """
         self.reference_obs_size = reference_obs_size
 
-        self.encoder = Encoder(input_size=reference_obs_size, layer_sizes=encoder_layers, latents=latents, rngs=rngs)
+        self.encoder = Encoder(
+            input_size=reference_obs_size,
+            layer_sizes=encoder_layers,
+            latents=latents,
+            rngs=rngs,
+        )
         self.decoder = Decoder(
-            input_size=latents + egocentric_obs_size, output_size=action_size, layer_sizes=decoder_layers, rngs=rngs
+            input_size=latents + egocentric_obs_size,
+            output_size=action_size,
+            layer_sizes=decoder_layers,
+            rngs=rngs,
         )
         self.rngs = rngs
 
-    def __call__(self,  obs: jnp.ndarray, key: PRNGKey):
+    def __call__(self, obs: jnp.ndarray, key: PRNGKey):
         """Call function for the Intention Network
 
         Args:
@@ -185,12 +233,13 @@ class IntentionNetwork(nnx.Module):
 
         Returns:
             Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]: action, mean and logvar of the latent space
-            
+
         TODO(Scott): the usage of key might not be necessary once shift to nnx.
         """
         reference_obs = obs[..., : self.reference_obs_size]
         latent_mean, latent_logvar = self.encoder(reference_obs)
         z = reparameterize(key, latent_mean, latent_logvar)
-        action = self.decoder(jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1))
+        action = self.decoder(
+            jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+        )
         return action, latent_mean, latent_logvar
-

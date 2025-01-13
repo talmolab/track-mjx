@@ -35,7 +35,11 @@ from track_mjx.agent.nnx_ppo_network import PPOImitationNetworks
 
 
 def actor_step(
-    env: Env, env_state: State, ppo_network: PPOImitationNetworks, key: PRNGKey, extra_fields: Sequence[str] = ()
+    env: Env,
+    env_state: State,
+    ppo_network: PPOImitationNetworks,
+    key: PRNGKey,
+    extra_fields: Sequence[str] = (),
 ) -> Tuple[State, Transition]:
     """Collect data."""
     actions, policy_extras = ppo_network.policy(env_state.obs, key)
@@ -66,11 +70,15 @@ def generate_unroll(
         env_state, graph_def, state, current_key = carry
         ppo_network = nnx.merge(graph_def, state)
         current_key, next_key = jax.random.split(current_key)
-        nstate, transition = actor_step(env, env_state, ppo_network, key, extra_fields=extra_fields)
+        nstate, transition = actor_step(
+            env, env_state, ppo_network, key, extra_fields=extra_fields
+        )
         return (nstate, graph_def, state, next_key), transition
 
     graph_def, state = nnx.split(ppo_network)
-    (final_state,_, _, _), data = jax.lax.scan(f, (env_state, graph_def, state, key), (), length=unroll_length)
+    (final_state, _, _, _), data = jax.lax.scan(
+        f, (env_state, graph_def, state, key), (), length=unroll_length
+    )
     return final_state, data
 
 
@@ -102,7 +110,9 @@ class Evaluator:
 
         eval_env = envs.training.EvalWrapper(eval_env)
 
-        def generate_eval_unroll(ppo_network: PPOImitationNetworks, key: PRNGKey) -> State:
+        def generate_eval_unroll(
+            ppo_network: PPOImitationNetworks, key: PRNGKey
+        ) -> State:
             reset_keys = jax.random.split(key, num_eval_envs)
             eval_first_state = eval_env.reset(reset_keys)
             return generate_unroll(
@@ -117,7 +127,10 @@ class Evaluator:
         self._steps_per_unroll = episode_length * num_eval_envs
 
     def run_evaluation(
-        self, ppo_network: PPOImitationNetworks, training_metrics: Metrics, aggregate_episodes: bool = True
+        self,
+        ppo_network: PPOImitationNetworks,
+        training_metrics: Metrics,
+        aggregate_episodes: bool = True,
     ) -> Metrics:
         """Run one epoch of evaluation."""
         self._key, unroll_key = jax.random.split(self._key)
@@ -132,7 +145,9 @@ class Evaluator:
             suffix = "_std" if fn == np.std else ""
             metrics.update(
                 {
-                    f"eval/episode_{name}{suffix}": (fn(value) if aggregate_episodes else value)
+                    f"eval/episode_{name}{suffix}": (
+                        fn(value) if aggregate_episodes else value
+                    )
                     for name, value in eval_metrics.episode_metrics.items()
                 }
             )

@@ -62,8 +62,10 @@ from orbax import checkpoint as ocp
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
+
 def _unpmap(v):
     return jax.tree_util.tree_map(lambda x: x[0], v)
+
 
 def train(
     environment: envs.Env,
@@ -80,7 +82,9 @@ def train(
     # TODO (Scott) Move this multi-device support to its own util file.
 
     # parameters validation
-    assert config.batch_size * config.num_minibatches % config.num_envs == 0, "Batch size must be divisible by num_envs"
+    assert (
+        config.batch_size * config.num_minibatches % config.num_envs == 0
+    ), "Batch size must be divisible by num_envs"
 
     logging.info(
         "Batch size: %d, number of mimibatch: %d, each unroll will generate %d * unroll length env steps",
@@ -99,7 +103,8 @@ def train(
     if config.max_devices_per_host:
         local_devices_to_use = min(local_devices_to_use, config.max_devices_per_host)
     logging.info(
-        "Device count: %d, process count: %d (id %d), local device count: %d, " "devices to be used count: %d",
+        "Device count: %d, process count: %d (id %d), local device count: %d, "
+        "devices to be used count: %d",
         jax.device_count(),
         process_count,
         process_id,
@@ -115,14 +120,19 @@ def train(
         * config.num_minibatches
         * config.unroll_length
         * config.action_repeat
-    ) 
+    )
     num_evals_after_init = max(config.num_evals - 1, 1)
 
     # The number of training_step calls per training_epoch call.
     # equals to ceil(num_timesteps / (num_evals * env_step_per_training_step *
     #                                 num_resets_per_eval))
     num_training_steps_per_epoch = np.ceil(
-        config.num_timesteps / (num_evals_after_init * env_step_per_training_step * max(config.num_resets_per_eval, 1))
+        config.num_timesteps
+        / (
+            num_evals_after_init
+            * env_step_per_training_step
+            * max(config.num_resets_per_eval, 1)
+        )
     ).astype(int)
 
     # initialize random keys for the MJX environment
@@ -163,7 +173,9 @@ def train(
     )
 
     # define optimizer, with a wrt to nnx.Param to avoid updating the keys and normalization statistics
-    optimizer = nnx.Optimizer(ppo_network, optax.adam(learning_rate=config.learning_rate), wrt=nnx.Param)
+    optimizer = nnx.Optimizer(
+        ppo_network, optax.adam(learning_rate=config.learning_rate), wrt=nnx.Param
+    )
 
     # create loss function
     loss_fn = functools.partial(
@@ -196,6 +208,7 @@ def train(
             Tuple[types.Transition, Union[envs.State, envs_v1.State], PRNGKey]: experience data, new state, new key
         """
         key_generate_unroll, new_key = jax.random.split(key, 2)
+
         def f(carry, unused_t):
             """
             generate unroll data for training using scan function
@@ -212,6 +225,7 @@ def train(
                 extra_fields=("truncation",),
             )
             return (next_state, graph_def, network_state, next_key), data
+
         graph_def, network_state = nnx.split(ppo_network)
         (state, _, _, _), data = jax.lax.scan(
             f,
@@ -221,7 +235,9 @@ def train(
         )
         # Have leading dimensions (batch_size * num_minibatches, unroll_length, ...)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data) # merge the first two dims
+        data = jax.tree_util.tree_map(
+            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
+        )  # merge the first two dims
         assert data.discount.shape[1:] == (config.unroll_length,)
         print("DEBUG: data shape:", data.observation.shape)
         # update normalization params
@@ -242,7 +258,9 @@ def train(
         Returns:
             _type_: _description_
         """
-        diff_state = nnx.DiffState(0, nnx.Param)  # filter head params of the first argument
+        diff_state = nnx.DiffState(
+            0, nnx.Param
+        )  # filter head params of the first argument
         grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=diff_state)
         (total_loss, metrics), grads = grad_fn(model, data, key)
         optimizer.update(grads)
@@ -275,10 +293,14 @@ def train(
         # generate experience data
         key_perm, key_experience = jax.random.split(key, 2)
         mj_time = time.time()
-        data, env_states, new_key = generate_experience(model, env_states, key_experience)
+        data, env_states, new_key = generate_experience(
+            model, env_states, key_experience
+        )
         mj_time = time.time() - mj_time
 
-        mj_sps = config.batch_size * config.num_minibatches * config.unroll_length / mj_time
+        mj_sps = (
+            config.batch_size * config.num_minibatches * config.unroll_length / mj_time
+        )
 
         # gradient updates steps
         gradient_time = time.time()
@@ -286,7 +308,9 @@ def train(
         total_losses = []
         metrics_list = []
 
-        def shuffle_and_split_minibatch(x: jnp.ndarray, key_perm: PRNGKey) -> jnp.ndarray:
+        def shuffle_and_split_minibatch(
+            x: jnp.ndarray, key_perm: PRNGKey
+        ) -> jnp.ndarray:
             """
             Shuffle and split the minibatch, this is a helper function for the jax.tree.map
             where it shuffle the first dimension of the input x and then reshape it to
@@ -310,12 +334,17 @@ def train(
                 metrics_list.append(metrics)
             # Compute the mean of total_losses and metrics
         total_loss = jnp.mean(jnp.stack(total_losses))
-        metrics = {key: jnp.mean(jnp.stack([m[key] for m in metrics_list])) for key in metrics_list[0]}
+        metrics = {
+            key: jnp.mean(jnp.stack([m[key] for m in metrics_list]))
+            for key in metrics_list[0]
+        }
         gradient_time = time.time() - gradient_time
 
         metrics = {
             "training/mujoco_sps": mj_sps,
-            "training/gradient_sps": config.num_minibatches * config.num_updates_per_batch / gradient_time,
+            "training/gradient_sps": config.num_minibatches
+            * config.num_updates_per_batch
+            / gradient_time,
             "training/walltime": training_walltime,
             "training/mujoco_step": mujoco_step,
             "training/gradient_step": gradient_step,
@@ -331,7 +360,9 @@ def train(
         env_state: Union[envs.State, envs_v1.State],
         metrics: Metrics,
         key: PRNGKey,
-    ) -> Tuple[PPOImitationNetworks, Union[envs.State, envs_v1.State], Metrics, PRNGKey]:
+    ) -> Tuple[
+        PPOImitationNetworks, Union[envs.State, envs_v1.State], Metrics, PRNGKey
+    ]:
         nonlocal training_walltime, mujoco_step, gradient_step, it
         t = time.time()
         num_training_steps_per_epoch = 50  # hardcoded for now
@@ -340,17 +371,24 @@ def train(
             mujoco_step += env_step_per_training_step
             gradient_step += config.num_minibatches * config.num_updates_per_batch
             total_loss, step_metrics, env_state, key = training_step_with_timing(
-            model, config, optimizer, env_state, key
+                model, config, optimizer, env_state, key
             )
             step_metrics = jax.tree_util.tree_map(jnp.mean, step_metrics)
             for k, v in step_metrics.items():
                 aggregated_metrics[k] = aggregated_metrics.get(k, 0.0) + v
-        aggregated_metrics = {k: v / num_training_steps_per_epoch for k, v in aggregated_metrics.items()}
+        aggregated_metrics = {
+            k: v / num_training_steps_per_epoch for k, v in aggregated_metrics.items()
+        }
         print("METRICS:", aggregated_metrics)
         config.progress_fn(it, aggregated_metrics)
         epoch_training_time = time.time() - t
         training_walltime += epoch_training_time
-        return (model, env_state, metrics, key)  # pytype: disable=bad-return-type  # py311-upgrade
+        return (
+            model,
+            env_state,
+            metrics,
+            key,
+        )  # pytype: disable=bad-return-type  # py311-upgrade
 
     if not config.eval_env:
         eval_env = environment
@@ -358,7 +396,8 @@ def train(
         eval_env = config.eval_env
     if config.randomization_fn is not None:
         v_randomization_fn = functools.partial(
-            config.randomization_fn, rng=jax.random.split(eval_key, config.num_eval_envs)
+            config.randomization_fn,
+            rng=jax.random.split(eval_key, config.num_eval_envs),
         )
     eval_env = wrap_for_training(
         eval_env,
@@ -403,7 +442,9 @@ def train(
             ppo_network, optimizer, config, env_state, training_metrics, epoch_key
         )
         current_step = it
-        key_envs = jax.vmap(lambda x, s: jax.random.split(x[0], s), in_axes=(0, None))(key_envs, key_envs.shape[1])
+        key_envs = jax.vmap(lambda x, s: jax.random.split(x[0], s), in_axes=(0, None))(
+            key_envs, key_envs.shape[1]
+        )
         # TODO: move extra reset logic to the AutoResetWrapper.
         env_state = reset_fn(key_envs)
         env_state = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), env_state)
@@ -420,7 +461,9 @@ def train(
             # checkpointing - previously using the policy param function, now using orbax
             checkpointer = ocp.StandardCheckpointer()
             _, key, state = nnx.split(ppo_network, nnx.RngKey, ...)
-            checkpointer.save(ckpt_dir / f"ppo_networks_{it}", state)  # currently skipping saving the keys
+            checkpointer.save(
+                ckpt_dir / f"ppo_networks_{it}", state
+            )  # currently skipping saving the keys
 
     total_steps = current_step
     assert total_steps >= config.num_timesteps

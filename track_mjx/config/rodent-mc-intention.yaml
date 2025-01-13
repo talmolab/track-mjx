@@ -4,6 +4,7 @@ walker_type: rodent
 eval_config:
   num_eval_steps: 1
   deterministic: True
+  save_eval_path: eval_renderings
 
 env_config:
   env_name: rodent_multi_clip

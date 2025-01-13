@@ -87,6 +87,12 @@ python -m track_mjx.train data_path="data/FlyReferenceClip.p" hydra.job.config_n
 
 The `data_path` will need to point to a Pickle file with the outputs of [`stac-mjx`](https://github.com/talmolab/stac-mjx) (see [#23](https://github.com/talmolab/track-mjx/issues/23)).
 
+### Inference
+To run a pure inference pass with a trained parameter, you can run:
+
+```bash
+python -m track_mjx.inference data_path="data/FlyReferenceClip.p" +inference_params_path="model_checkpoints/test_fly_checkpoints"
+```
 
 ### `screen` based terminal
 

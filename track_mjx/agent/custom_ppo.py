@@ -30,6 +30,7 @@ from brax.training import pmap
 from brax.training import types
 from brax.training.acme import running_statistics
 from brax.training.acme import specs
+import flax.training
 
 # from brax.training.agents.ppo import losses as ppo_losses
 from track_mjx.agent import custom_losses as ppo_losses
@@ -40,10 +41,13 @@ from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
 import flax
+import flax.struct
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import orbax.checkpoint as ocp
+from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
 
@@ -52,12 +56,9 @@ InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
 _PMAP_AXIS_NAME = "i"
-
-
 @flax.struct.dataclass
 class TrainingState:
     """Contains training state for the learner."""
-
     optimizer_state: optax.OptState
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
@@ -112,6 +113,7 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
+    ckpt_mgr: ocp.CheckpointManager | None = None,
 ):
     """PPO training.
 
@@ -450,19 +452,30 @@ def train(
     # Run initial eval
     metrics = {}
     if process_id == 0 and num_evals > 1:
+        policy_param = _unpmap((training_state.normalizer_params, training_state.params.policy))
         metrics = evaluator.run_evaluation(
-            _unpmap((training_state.normalizer_params, training_state.params.policy)),
+            policy_param,
             training_metrics={},
         )
         logging.info(metrics)
         progress_fn(0, metrics)
+         # Save checkpoints
+        logging.info("Saving initial checkpoint")
+        if ckpt_mgr is not None:
+            items_to_save = {
+                "policy/policy_params": policy_param,
+                "training/train_params": training_state,
+            }
+            save_args = orbax_utils.save_args_from_target(items_to_save)
+            ckpt_mgr.save(step=0, items=items_to_save, save_kwargs={'save_args': save_args})
+        else:
+            logging.info("Skipping checkpoint save as ckpt_mgr is None")
 
     training_metrics = {}
     training_walltime = 0
     current_step = 0
     for it in range(num_evals_after_init):
         logging.info("starting iteration %s %s", it, time.time() - xt)
-
         for _ in range(max(num_resets_per_eval, 1)):
             # optimization
             epoch_key, local_key = jax.random.split(local_key)
@@ -479,7 +492,7 @@ def train(
             env_state = reset_fn(key_envs) if num_resets_per_eval > 0 else env_state
 
         if process_id == 0:
-            # Run evals.
+            # Run evaluation rollout, logging and checkpointing.
             metrics = evaluator.run_evaluation(
                 _unpmap(
                     (training_state.normalizer_params, training_state.params.policy)
@@ -491,6 +504,7 @@ def train(
             params = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
+            # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=current_step,
@@ -498,7 +512,18 @@ def train(
                 params=params,
                 policy_params_fn_key=policy_params_fn_key,
             )
-
+            
+            # Save checkpoints
+            if ckpt_mgr is not None:
+                items_to_save = {
+                    "policy/policy_params": params,
+                    "training/train_params": training_state,
+                }
+                save_args = orbax_utils.save_args_from_target(items_to_save)
+                ckpt_mgr.save(step=current_step, items=items_to_save, save_kwargs={'save_args': save_args})
+            else:
+                logging.info("Skipping checkpoint save as ckpt_mgr is None")
+                
     total_steps = current_step
     assert total_steps >= num_timesteps
 

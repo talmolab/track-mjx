@@ -20,10 +20,9 @@ import functools
 import jax
 from typing import Dict
 import wandb
-import imageio
 from brax import envs
-from dm_control import mjcf as mjcf_dm
-from dm_control.locomotion.walkers import rescale
+import orbax
+import orbax.checkpoint as ocp
 
 import track_mjx.agent.custom_ppo as ppo
 from track_mjx.agent import custom_ppo
@@ -40,8 +39,8 @@ from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import setup_training_logging
-
 from track_mjx.environment.walker.rodent import Rodent
+import logging
 
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -66,7 +65,6 @@ def main(cfg: DictConfig):
 
     # config files
     env_cfg = hydra.compose(config_name="rodent-mc-intention")
-    env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
@@ -94,6 +92,21 @@ def main(cfg: DictConfig):
     # Will work on not hardcoding these values later
     episode_length = (250 - 50 - 5) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
+    
+    # Generates a completely random UUID (version 4)
+    run_id = uuid.uuid4()
+    model_path = f"./{cfg.logging_config.model_path}/{run_id}"
+    model_path = hydra.utils.to_absolute_path(model_path)
+    logging.info(f"Model Checkpoint Path: {model_path}")
+
+    # initialize orbax checkpoint manager
+    # TODO (Scott): add the checkpoint parameter to config file.
+    mgr_options = ocp.CheckpointManagerOptions(
+        create=True, max_to_keep=3, keep_period=2, step_prefix="ppo_networks"
+    )
+    ckpt_mgr = ocp.CheckpointManager(
+        model_path, ocp.Checkpointer(ocp.PyTreeCheckpointHandler()), mgr_options
+    )
 
     train_fn = functools.partial(
         custom_ppo.train,
@@ -109,15 +122,12 @@ def main(cfg: DictConfig):
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         ),
+        ckpt_mgr=ckpt_mgr
     )
-
-    # Generates a completely random UUID (version 4)
-    run_id = uuid.uuid4()
-    model_path = f"./{cfg.logging_config.model_path}/{run_id}"
 
     wandb.init(
         project=cfg.logging_config.project_name,
-        config=dict(cfg),
+        config=OmegaConf.to_container(env_cfg, resolve=True),  # type: ignore
         notes=f"clip_id: {cfg.logging_config.clip_id}",
     )
     wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
@@ -136,7 +146,6 @@ def main(cfg: DictConfig):
             cfg=cfg,
             env=env,
             wandb=wandb,
-            model_path=model_path,
         )
 
     make_inference_fn, params, _ = train_fn(
@@ -144,10 +153,6 @@ def main(cfg: DictConfig):
         progress_fn=wandb_progress,
         policy_params_fn=policy_params_fn,
     )
-
-    final_save_path = f"{model_path}/brax_ppo_rodent_run_finished"
-    model.save_params(final_save_path, params)
-    print(f"Run finished. Model saved to {final_save_path}")
 
 
 if __name__ == "__main__":

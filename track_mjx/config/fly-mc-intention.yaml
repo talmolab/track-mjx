@@ -1,6 +1,10 @@
 data_path:
 walker_type: fly
 
+eval_config:
+  num_eval_steps: 1
+  deterministic: True
+
 env_config:
   env_name: fly_multi_clip
   task_name: imitation

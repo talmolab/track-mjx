@@ -1,6 +1,10 @@
 data_path:
 walker_type: rodent
 
+eval_config:
+  num_eval_steps: 1
+  deterministic: True
+
 env_config:
   env_name: rodent_multi_clip
   task_name: imitation

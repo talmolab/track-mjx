@@ -105,6 +105,9 @@ class SingleClipTracking(PipelineEnv):
         self._reference_clip = reference_clip
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
+        self._clip_length = clip_length
+        self._random_init_range = random_init_range
+        self._traj_length = traj_length
 
     def reset(self, rng: jp.ndarray) -> State:
         """Resets the environment to an initial state.
@@ -118,10 +121,10 @@ class SingleClipTracking(PipelineEnv):
         _, start_rng, rng = jax.random.split(rng, 3)
 
         episode_length = (
-            clip_length - random_init_range - traj_length
+            self._clip_length - self._random_init_range - self._traj_length
         ) * self._steps_for_cur_frame
 
-        frame_range = clip_length - episode_length - traj_length
+        frame_range = self._clip_length - episode_length - self._traj_length
         start_frame = jax.random.randint(start_rng, (), 0, frame_range)
 
         info = {
@@ -157,18 +160,9 @@ class SingleClipTracking(PipelineEnv):
 
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
 
-        # # Add pos
+        # Add pos + quat
         # qpos_with_pos = jp.array(self.sys.qpos0).at[:3].set(reference_frame.position)
-
-        # # Add quat
         # new_qpos = qpos_with_pos.at[3:7].set(reference_frame.quaternion)
-
-        # # Add noise
-        # qpos = new_qpos + jp.where(
-        #     noise,
-        #     jax.random.uniform(rng1, (self.sys.nq,), minval=low, maxval=hi),
-        #     jp.zeros((self.sys.nq,)),
-        # )
 
         new_qpos = jp.concatenate(
             (
@@ -178,8 +172,16 @@ class SingleClipTracking(PipelineEnv):
             ),
             axis=0,
         )
-        qpos = new_qpos + jax.random.uniform(
-            rng1, (self.sys.nq,), minval=low, maxval=hi
+        
+        # qpos = new_qpos + jax.random.uniform(
+        #     rng1, (self.sys.nq,), minval=low, maxval=hi
+        # )
+        
+        # Add noise
+        qpos = new_qpos + jp.where(
+            noise,
+            jax.random.uniform(rng1, (self.sys.nq,), minval=low, maxval=hi),
+            jp.zeros((self.sys.nq,)),
         )
 
         qvel = jp.where(

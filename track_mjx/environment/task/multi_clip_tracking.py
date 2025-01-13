@@ -85,6 +85,9 @@ class MultiClipTracking(SingleClipTracking):
 
         self._reference_clips = reference_clip
         self._n_clips = reference_clip.position.shape[0]
+        self._clip_length = clip_length
+        self._random_init_range = random_init_range
+        self._traj_length = traj_length
 
     def reset(self, rng: jp.ndarray) -> State:
         """
@@ -98,9 +101,13 @@ class MultiClipTracking(SingleClipTracking):
         """
         _, start_rng, clip_rng, rng = jax.random.split(rng, 4)
 
-        start_frame = jax.random.randint(start_rng, (), 0, 44)
+        episode_length = (
+            self._clip_length - self._random_init_range - self._traj_length
+        ) * self._steps_for_cur_frame
+
+        frame_range = self._clip_length - episode_length - self._traj_length
+        start_frame = jax.random.randint(start_rng, (), 0, frame_range)
         clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)
-        # clip_idx = 492
         info = {
             "clip_idx": clip_idx,
             "cur_frame": start_frame,

@@ -15,8 +15,8 @@ env_config:
 
   env_args:
     solver: "cg"
-    iterations: 4
-    ls_iterations: 4
+    iterations: 6
+    ls_iterations: 6
     physics_steps_per_control_step: 5
     reset_noise_scale: 1e-3
     mj_model_timestep: 2e-4
@@ -24,8 +24,8 @@ env_config:
 
   reward_weights:
     too_far_dist: 0.01
-    bad_pose_dist: 20
-    bad_quat_dist: 1
+    bad_pose_dist: 5.0
+    bad_quat_dist: 0.075
     ctrl_cost_weight: 0.02
     ctrl_diff_cost_weight: 0.02
     pos_reward_weight: 1.0
@@ -50,19 +50,19 @@ reference_config:
 
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [512,512,512]
-  decoder_layer_sizes: [512,512,512]
-  critic_layer_sizes: [512,512,512,512]
+  encoder_layer_sizes: [512, 512]
+  decoder_layer_sizes: [512, 512]
+  critic_layer_sizes: [512, 512]
   intention_size: 60
   kl_weight: 1e-4
 
 train_setup:
   agent_name: rodent
   run_name: imitation_debug
-  eval_every: 1_0000
+  eval_every: 1_000_000
   episode_length: 200
   train_config:
-    num_envs: 1024
+    num_envs: 2048
     num_timesteps: 1_000_000_000
     batch_size: 512
     num_minibatches: 4
@@ -79,7 +79,7 @@ train_setup:
     seed: 0
 
 logging_config:
-  project_name: vnl_debug
+  project_name: vnl_rodent_debug
   clip_id: -1
   model_path: model_checkpoints
   algo_name: ppo

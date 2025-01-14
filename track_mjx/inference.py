@@ -41,6 +41,9 @@ from track_mjx.environment.task.reward import RewardConfig
 from track_mjx.io import preprocess as preprocessing
 from track_mjx.agent import custom_ppo_networks
 
+import matplotlib.pyplot as plt
+from PIL import Image
+
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -227,6 +230,26 @@ def main(cfg: DictConfig):
             "states": all_state,
         }
         return rollout_data
+    
+    def plot_rewards(rewards, save_path):
+        """
+        Plot the rewards over time and save the figure.
+
+        Args:
+            rewards (list of float): List of rewards collected during the rollout.
+            save_path (str): Path to save the reward plot image.
+        """
+        plt.figure(figsize=(10, 6))
+        plt.plot(rewards, label='Reward per Step')
+        plt.xlabel('Step')
+        plt.ylabel('Reward')
+        plt.title('Reward over Time')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Reward plot saved at {save_path}")
 
     def render_rollout(
         rollout: dict,
@@ -301,8 +324,11 @@ def main(cfg: DictConfig):
                 env._steps_for_cur_frame,
                 axis=0,
             )
+            
+            rewards = rollout["rewards"]
+            # cumulative_rewards = np.cumsum(rewards)
 
-            for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
+            for step_idx, (qpos1, qpos2) in enumerate(zip(qposes_rollout, qposes_ref)):
                 # Ensure qpos dimensions match
                 total_qpos_size = len(qpos1) + len(qpos2)
                 if total_qpos_size != mj_model.nq:
@@ -315,7 +341,42 @@ def main(cfg: DictConfig):
                     mj_data, camera=env_config.render_camera_name, scene_option=scene_option
                 )
                 pixels = renderer.render()
-                video.append_data(pixels)
+                
+                # Create a plot of cumulative rewards up to the current step
+                plt.figure(figsize=(5, 5))
+                plt.plot(rewards[:step_idx + 1], color='blue')
+                plt.title('Cumulative Reward')
+                plt.xlabel('Step')
+                plt.ylabel('Cumulative Reward')
+                plt.grid(True)
+                plt.tight_layout()
+
+                # Save the plot to a temporary in-memory buffer
+                plot_path = f"{model_path}/temp_plot.png"
+                plt.savefig(plot_path)
+                plt.close()
+
+                plot_image = Image.open(plot_path)
+                plot_image = plot_image.resize((512, 512))
+
+                # Convert simulation frame to PIL Image
+                sim_image = Image.fromarray(pixels)
+                sim_image = sim_image.resize((512, 512))  # Ensure same height as plot
+
+                # Combine simulation image and plot image side by side
+                combined_width = sim_image.width + plot_image.width
+                combined_image = Image.new('RGB', (combined_width, sim_image.height))
+                combined_image.paste(sim_image, (0, 0))
+                combined_image.paste(plot_image, (sim_image.width, 0))
+
+                combined_frame = np.array(combined_image)
+                video.append_data(combined_frame)
+
+                os.remove(plot_path)
+                
+            final_reward_plot_path = f"{model_path}/{num_steps}_final_reward_plot.png"
+            plot_rewards(rewards, final_reward_plot_path)
+                
 
     print("Starting inference rollout...")
     trajectory = run_inference_and_record(

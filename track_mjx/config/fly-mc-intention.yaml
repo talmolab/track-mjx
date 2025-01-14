@@ -2,7 +2,7 @@ data_path:
 walker_type: fly
 
 eval_config:
-  num_eval_steps: 200
+  num_eval_steps: 10
   deterministic: True
   save_eval_path: eval_renderings
 

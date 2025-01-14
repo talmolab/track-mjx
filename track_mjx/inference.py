@@ -196,6 +196,9 @@ def main(cfg: DictConfig):
         all_dones = []
         all_state = []
         all_extra = []
+        all_summed_pos_distance = []
+        all_quat_distance = []
+        all_joint_distance = []
 
         rng = jax.random.PRNGKey(2)
         state = env.reset(rng=rng)
@@ -214,6 +217,11 @@ def main(cfg: DictConfig):
             all_rewards.append(float(state.reward))
             all_dones.append(bool(state.done))
             all_state.append(state)
+            
+            info = state.info
+            all_summed_pos_distance.append(info.get('summed_pos_distance', 0.0))
+            all_quat_distance.append(info.get('quat_distance', 0.0))
+            all_joint_distance.append(info.get('joint_distance', 0.0))
 
             if state.done:
                 print(
@@ -228,28 +236,57 @@ def main(cfg: DictConfig):
             "dones": np.array(all_dones),  # Shape: [T]
             "extra": all_extra,
             "states": all_state,
+            "summed_pos_distance": np.array(all_summed_pos_distance), # Shape: [T]
+            "quat_distance": np.array(all_quat_distance), # Shape: [T]
+            "joint_distance": np.array(all_joint_distance), # Shape: [T]
         }
         return rollout_data
     
-    def plot_rewards(rewards, save_path):
+    def plot_metrics(rewards, summed_pos_distance, quat_distance, joint_distance, save_path):
         """
-        Plot the rewards over time and save the figure.
+        Plot multiple metrics over time and save the figure.
 
         Args:
-            rewards (list of float): List of rewards collected during the rollout.
-            save_path (str): Path to save the reward plot image.
+            rewards (np.ndarray): Array of rewards collected during the rollout.
+            summed_pos_distance (np.ndarray): Array of summed positional distances.
+            quat_distance (np.ndarray): Array of quaternion distances.
+            joint_distance (np.ndarray): Array of joint distances.
+            save_path (str): Path to save the metrics plot image.
         """
-        plt.figure(figsize=(10, 6))
-        plt.plot(rewards, label='Reward per Step')
+        plt.figure(figsize=(15, 10))
+
+        # Plot Reward per Step
+        plt.subplot(3, 1, 1)
+        plt.plot(rewards, label='Reward per Step', color='blue')
         plt.xlabel('Step')
         plt.ylabel('Reward')
         plt.title('Reward over Time')
         plt.legend()
         plt.grid(True)
+
+        # Plot Summed Positional Distance
+        plt.subplot(3, 1, 2)
+        plt.plot(summed_pos_distance, label='Summed Positional Distance', color='green')
+        plt.xlabel('Step')
+        plt.ylabel('Summed Positional Distance')
+        plt.title('Summed Positional Distance over Time')
+        plt.legend()
+        plt.grid(True)
+
+        # Plot Quaternion and Joint Distances
+        plt.subplot(3, 1, 3)
+        plt.plot(quat_distance, label='Quaternion Distance', color='red')
+        plt.plot(joint_distance, label='Joint Distance', color='purple')
+        plt.xlabel('Step')
+        plt.ylabel('Distance')
+        plt.title('Quaternion and Joint Distances over Time')
+        plt.legend()
+        plt.grid(True)
+
         plt.tight_layout()
         plt.savefig(save_path)
         plt.close()
-        print(f"Reward plot saved at {save_path}")
+        print(f"Metrics plot saved at {save_path}")
 
     def render_rollout(
         rollout: dict,
@@ -304,7 +341,9 @@ def main(cfg: DictConfig):
             mj_model.site(i).id
             for i in range(mj_model.nsite)
             if "-0" in mj_model.site(i).name
-        ]
+        ] 
+        site_id = [site_id[0]]
+        
         for id in site_id:
             mj_model.site(id).rgba = [1, 0, 0, 1]
 
@@ -326,7 +365,9 @@ def main(cfg: DictConfig):
             )
             
             rewards = rollout["rewards"]
-            # cumulative_rewards = np.cumsum(rewards)
+            summed_pos_distance = rollout["summed_pos_distance"]
+            quat_distance = rollout["quat_distance"]
+            joint_distance = rollout["joint_distance"]
 
             for step_idx, (qpos1, qpos2) in enumerate(zip(qposes_rollout, qposes_ref)):
                 # Ensure qpos dimensions match
@@ -343,19 +384,39 @@ def main(cfg: DictConfig):
                 pixels = renderer.render()
                 
                 # Create a plot of cumulative rewards up to the current step
-                plt.figure(figsize=(5, 5))
-                plt.plot(rewards[:step_idx + 1], color='blue')
-                plt.title('Cumulative Reward')
-                plt.xlabel('Step')
-                plt.ylabel('Cumulative Reward')
-                plt.grid(True)
-                plt.tight_layout()
+                fig, axs = plt.subplots(3, 1, figsize=(6, 9))
 
+                # Reward per Step
+                axs[0].plot(rewards[:step_idx + 1], label='Reward per Step', color='blue')
+                axs[0].set_xlabel('Step')
+                axs[0].set_ylabel('Reward')
+                axs[0].set_title('Reward over Time')
+                axs[0].legend()
+                axs[0].grid(True)
+
+                # Summed Positional Distance
+                axs[1].plot(summed_pos_distance[:step_idx + 1], label='Summed Positional Distance', color='green')
+                axs[1].set_xlabel('Step')
+                axs[1].set_ylabel('Summed Positional Distance')
+                axs[1].set_title('Summed Positional Distance over Time')
+                axs[1].legend()
+                axs[1].grid(True)
+
+                # Quaternion and Joint Distances
+                axs[2].plot(quat_distance[:step_idx + 1], label='Quaternion Distance', color='red')
+                axs[2].plot(joint_distance[:step_idx + 1], label='Joint Distance', color='purple')
+                axs[2].set_xlabel('Step')
+                axs[2].set_ylabel('Distance')
+                axs[2].set_title('Quaternion and Joint Distances over Time')
+                axs[2].legend()
+                axs[2].grid(True)
+
+                plt.tight_layout()
                 # Save the plot to a temporary in-memory buffer
-                plot_path = f"{model_path}/temp_plot.png"
+                plot_path = f"{model_path}/temp_plot_{num_steps}.png"
                 plt.savefig(plot_path)
                 plt.close()
-
+              
                 plot_image = Image.open(plot_path)
                 plot_image = plot_image.resize((512, 512))
 
@@ -374,9 +435,14 @@ def main(cfg: DictConfig):
 
                 os.remove(plot_path)
                 
-            final_reward_plot_path = f"{model_path}/{num_steps}_final_reward_plot.png"
-            plot_rewards(rewards, final_reward_plot_path)
-                
+            final_metrics_plot_path = f"{model_path}/{num_steps}_final_metrics_plot.png"
+            plot_metrics(
+                rewards=rollout["rewards"],
+                summed_pos_distance=rollout["summed_pos_distance"],
+                quat_distance=rollout["quat_distance"],
+                joint_distance=rollout["joint_distance"],
+                save_path=final_metrics_plot_path
+            )
 
     print("Starting inference rollout...")
     trajectory = run_inference_and_record(

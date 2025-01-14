@@ -2,7 +2,7 @@ data_path:
 walker_type: fly
 
 eval_config:
-  num_eval_steps: 1
+  num_eval_steps: 50
   deterministic: True
   save_eval_path: eval_renderings
 
@@ -11,7 +11,7 @@ env_config:
   task_name: imitation
   walker_name: fly
   render_camera_name: track1-0
-  render_fps: 5
+  render_fps: 50
 
   env_args:
     solver: "cg"

@@ -1,7 +1,7 @@
 """
 Only inference for track-mjx. Load the config file, create environments, initialize network, and start inference.
 
-Ensure jax==0.4.35 mujoco==3.2.4 jaxlib==0.4.34
+Ensure jax==0.4.35 mujoco==3.2.4 jaxlib==0.4.35
 """
 
 import os
@@ -30,6 +30,8 @@ import orbax.checkpoint as orbax_cp
 
 from brax import envs
 from brax.io import model
+from brax.envs.base import PipelineEnv
+from brax.training.acme import running_statistics
 
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
@@ -139,7 +141,8 @@ def main(cfg: DictConfig):
     # Run rollout in environment
     rng_key = jax.random.PRNGKey(0)
     state = eval_env.reset(rng_key)
-
+    
+    normalize = running_statistics.normalize
     # Build inference function
     policy_networks = custom_ppo_networks.make_intention_ppo_networks(
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
@@ -148,6 +151,7 @@ def main(cfg: DictConfig):
         action_size=eval_env.action_size,
         observation_size=state.obs.shape[-1],
         reference_obs_size=int(state.info["reference_obs_size"]),
+        preprocess_observations_fn=normalize,
     )
     make_policy_fn = custom_ppo_networks.make_inference_fn(policy_networks)
     policy = make_policy_fn(
@@ -171,7 +175,7 @@ def main(cfg: DictConfig):
         action, extra = policy(obs, key)
         return action, extra
 
-    def run_inference_and_record(env, policy, max_steps=cfg.eval_config.num_eval_steps):
+    def run_inference_and_record(env, policy, normalizer_params, max_steps=cfg.eval_config.num_eval_steps):
         """
         Run one rollout with the given env and policy, storing all data.
 
@@ -194,6 +198,7 @@ def main(cfg: DictConfig):
         state = env.reset(rng=rng)
 
         for step_i in range(max_steps):
+            print(f'Currently in step {step_i}')
             obs = state.obs
             all_obs.append(np.array(obs))
 
@@ -307,14 +312,14 @@ def main(cfg: DictConfig):
                 mj_data.qpos = np.append(qpos1, qpos2)
                 mujoco.mj_forward(mj_model, mj_data)
                 renderer.update_scene(
-                    mj_data, camera=env_config.render_camera_name, option=scene_option
+                    mj_data, camera=env_config.render_camera_name, scene_option=scene_option
                 )
                 pixels = renderer.render()
                 video.append_data(pixels)
 
     print("Starting inference rollout...")
     trajectory = run_inference_and_record(
-        eval_env, policy, max_steps=cfg.eval_config.num_eval_steps
+        eval_env, policy, inference_params, max_steps=cfg.eval_config.num_eval_steps
     )
     print("Inference rollout completed.")
 

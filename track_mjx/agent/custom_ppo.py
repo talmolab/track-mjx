@@ -83,6 +83,8 @@ def train(
     environment: Union[envs_v1.Env, envs.Env],
     num_timesteps: int,
     episode_length: int,
+    ckpt_mgr: ocp.CheckpointManager,
+    checkpoint_to_restore: str | None = None,
     action_repeat: int = 1,
     num_envs: int = 1,
     max_devices_per_host: Optional[int] = None,
@@ -96,7 +98,7 @@ def train(
     batch_size: int = 32,
     num_minibatches: int = 16,
     num_updates_per_batch: int = 2,
-    num_evals: int = 1,
+    num_evals: int = 20,
     num_resets_per_eval: int = 0,
     normalize_observations: bool = False,
     reward_scaling: float = 1.0,
@@ -113,7 +115,6 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
-    ckpt_mgr: ocp.CheckpointManager | None = None,
 ):
     """PPO training.
 
@@ -162,6 +163,8 @@ def train(
         saving policy checkpoints
       randomization_fn: a user-defined callback function that generates randomized
         environments
+      ckpt_mgr: an optional checkpoint manager for saving policy checkpoints
+      checkpoint_to_restore: an optional checkpoint to load before training, path
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -423,6 +426,13 @@ def train(
         ),
         env_steps=0,
     )
+    
+    # Load the checkpoint if it exists
+    if checkpoint_to_restore is not None:
+        latest_step = ckpt_mgr.latest_step()
+        training_state = ckpt_mgr.restore(latest_step, args=ocp.args.StandardRestore(training_state))
+        logging.info(f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}")
+    
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
     )
@@ -449,6 +459,7 @@ def train(
         key=eval_key,
     )
 
+
     # Run initial eval
     metrics = {}
     if process_id == 0 and num_evals > 1:
@@ -459,15 +470,17 @@ def train(
         )
         logging.info(metrics)
         progress_fn(0, metrics)
-         # Save checkpoints
+        # Save checkpoints
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:
-            items_to_save = {
-                "policy/policy_params": policy_param,
-                "training/train_params": training_state,
-            }
-            save_args = orbax_utils.save_args_from_target(items_to_save)
-            ckpt_mgr.save(step=0, items=items_to_save, save_kwargs={'save_args': save_args})
+            # new orbax API
+            ckpt_mgr.save(
+                step=0,
+                args=ocp.args.Composite(
+                    policy=ocp.args.StandardSave(policy_param),
+                    train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                ),
+            )
         else:
             logging.info("Skipping checkpoint save as ckpt_mgr is None")
 
@@ -501,7 +514,7 @@ def train(
             )
             logging.info(metrics)
             progress_fn(current_step, metrics)
-            params = _unpmap(
+            policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
             # Do policy evaluation and logging.
@@ -509,21 +522,22 @@ def train(
             policy_params_fn(
                 current_step=current_step,
                 make_policy=make_policy,
-                params=params,
+                params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )
-            
+
             # Save checkpoints
             if ckpt_mgr is not None:
-                items_to_save = {
-                    "policy/policy_params": params,
-                    "training/train_params": training_state,
-                }
-                save_args = orbax_utils.save_args_from_target(items_to_save)
-                ckpt_mgr.save(step=current_step, items=items_to_save, save_kwargs={'save_args': save_args})
+                ckpt_mgr.save(
+                    step=current_step,
+                    args=ocp.args.Composite(
+                        policy=ocp.args.StandardSave(policy_param),
+                        train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                    ),
+                )
             else:
                 logging.info("Skipping checkpoint save as ckpt_mgr is None")
-                
+
     total_steps = current_step
     assert total_steps >= num_timesteps
 

@@ -18,15 +18,11 @@ import uuid
 
 import functools
 import jax
-from typing import Dict
 import wandb
 from brax import envs
-import orbax
 import orbax.checkpoint as ocp
-
 import track_mjx.agent.custom_ppo as ppo
 from track_mjx.agent import custom_ppo
-from brax.io import model
 import numpy as np
 import pickle
 import warnings
@@ -51,10 +47,10 @@ def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
         n_devices = jax.device_count(backend="gpu")
-        print(f"Using {n_devices} GPUs")
+        logging.info(f"Using {n_devices} GPUs")
     except:
         n_devices = 1
-        print("Not using GPUs")
+        logging.info("Not using GPUs")
 
     flags.DEFINE_enum("solver", "cg", ["cg", "newton"], "constraint solver")
     flags.DEFINE_integer("iterations", 4, "number of solver iterations")
@@ -63,8 +59,6 @@ def main(cfg: DictConfig):
     envs.register_environment("single clip", RodentTracking)
     envs.register_environment("multi clip", RodentMultiClipTracking)
 
-    # config files
-    env_cfg = hydra.compose(config_name="rodent-mc-intention")
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
@@ -72,7 +66,7 @@ def main(cfg: DictConfig):
 
     # TODO(Scott): move this to track_mjx.io module
     input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
-    print(f"Loading data: {input_data_path}")
+    logging.info(f"Loading data: {input_data_path}")
     with open(input_data_path, "rb") as file:
         reference_clip = pickle.load(file)
 
@@ -91,22 +85,18 @@ def main(cfg: DictConfig):
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     # Will work on not hardcoding these values later
     episode_length = (250 - 50 - 5) * env._steps_for_cur_frame
-    print(f"episode_length {episode_length}")
-    
-    # Generates a completely random UUID (version 4)
-    run_id = uuid.uuid4()
-    model_path = f"./{cfg.logging_config.model_path}/{run_id}"
+    logging.info(f"episode_length {episode_length}")
+
+    # Generates a completely random UUID (version 4), take the first 8 characters
+    run_id = uuid.uuid4().hex[:6]
+    model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
     model_path = hydra.utils.to_absolute_path(model_path)
     logging.info(f"Model Checkpoint Path: {model_path}")
 
     # initialize orbax checkpoint manager
     # TODO (Scott): add the checkpoint parameter to config file.
-    mgr_options = ocp.CheckpointManagerOptions(
-        create=True, max_to_keep=3, keep_period=2, step_prefix="ppo_networks"
-    )
-    ckpt_mgr = ocp.CheckpointManager(
-        model_path, ocp.Checkpointer(ocp.PyTreeCheckpointHandler()), mgr_options
-    )
+    mgr_options = ocp.CheckpointManagerOptions(create=True, max_to_keep=3, keep_period=2, step_prefix="PPONetwork")
+    ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
 
     train_fn = functools.partial(
         custom_ppo.train,
@@ -122,12 +112,13 @@ def main(cfg: DictConfig):
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         ),
-        ckpt_mgr=ckpt_mgr
+        ckpt_mgr=ckpt_mgr,
+        checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
     )
 
     wandb.init(
         project=cfg.logging_config.project_name,
-        config=OmegaConf.to_container(env_cfg, resolve=True),  # type: ignore
+        config=OmegaConf.to_container(cfg, resolve=True),  # type: ignore
         notes=f"clip_id: {cfg.logging_config.clip_id}",
     )
     wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
@@ -146,6 +137,7 @@ def main(cfg: DictConfig):
             cfg=cfg,
             env=env,
             wandb=wandb,
+            model_path=model_path,
         )
 
     make_inference_fn, params, _ = train_fn(

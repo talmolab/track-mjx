@@ -429,8 +429,10 @@ def train(
     
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        latest_step = ckpt_mgr.latest_step()
-        training_state = ckpt_mgr.restore(latest_step, args=ocp.args.StandardRestore(training_state))
+        options = ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork") # need to specify it in the config
+        prev_ckpt_mgr = ocp.CheckpointManager(checkpoint_to_restore, options=options)
+        latest_step = prev_ckpt_mgr.latest_step()
+        training_state = prev_ckpt_mgr.restore(latest_step, args=ocp.args.Composite(train_state=ocp.args.StandardRestore(training_state)))["train_state"]
         logging.info(f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}")
     
     training_state = jax.device_put_replicated(
@@ -525,7 +527,6 @@ def train(
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )
-
             # Save checkpoints
             if ckpt_mgr is not None:
                 ckpt_mgr.save(
@@ -535,8 +536,6 @@ def train(
                         train_state=ocp.args.StandardSave(_unpmap(training_state)),
                     ),
                 )
-            else:
-                logging.info("Skipping checkpoint save as ckpt_mgr is None")
 
     total_steps = current_step
     assert total_steps >= num_timesteps

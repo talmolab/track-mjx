@@ -4,7 +4,7 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 
 import os
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.6"
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
@@ -42,7 +42,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(config_path="config", config_name="rodent-mc-intention")
+@hydra.main(config_path="config", config_name="rodent-two-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -63,6 +63,8 @@ def main(cfg: DictConfig):
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
     wlaker_config = cfg["walker_config"]
+    
+    logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
 
     # TODO(Scott): move this to track_mjx.io module
     input_data_path = hydra.utils.to_absolute_path(cfg.data_path)

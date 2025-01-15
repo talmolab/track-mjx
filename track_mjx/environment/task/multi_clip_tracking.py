@@ -18,66 +18,84 @@ import os
 import collections
 
 import typing
-from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
+from typing import Any
 
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
-from track_mjx.environment.task.single_clip_tracking import RodentTracking
+from track_mjx.environment.walker.base import BaseWalker
+from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+
+from track_mjx.environment.task.reward import RewardConfig
 
 
-class RodentMultiClipTracking(RodentTracking):
+class MultiClipTracking(SingleClipTracking):
+    """Multi clip walker tracking using SingleTracking env, agonist of the walker"""
+
     def __init__(
         self,
-        reference_clip,
-        walker,
-        ref_len: int = 5,
-        too_far_dist=0.1,
-        bad_pose_dist=jp.inf,
-        bad_quat_dist=jp.inf,
-        ctrl_cost_weight=0.01,
-        ctrl_diff_cost_weight=0.01,
-        pos_reward_weight=1,
-        quat_reward_weight=1,
-        joint_reward_weight=1,
-        angvel_reward_weight=1,
-        bodypos_reward_weight=1,
-        endeff_reward_weight=1,
-        healthy_z_range=(0.03, 0.5),
-        physics_steps_per_control_step=10,
-        reset_noise_scale=0.001,
-        solver="cg",
-        iterations: int = 6,
-        ls_iterations: int = 6,
-        **kwargs,
+        reference_clip: ReferenceClip,
+        walker: BaseWalker,
+        reward_config: RewardConfig,
+        physics_steps_per_control_step: int,
+        reset_noise_scale: float,
+        solver: str,
+        iterations: int,
+        ls_iterations: int,
+        mj_model_timestep: float,
+        mocap_hz: int,
+        clip_length: int,
+        random_init_range: int,
+        traj_length: int,
+        **kwargs: Any,
     ):
+        """Initializes the MultiTracking environment.
+
+        Args:
+            reference_clip: The reference trajectory data.
+            walker: The base walker model.
+            torque_actuators: Whether to use torque actuators.
+            reward_config: Reward configuration.
+            physics_steps_per_control_step: Number of physics steps per control step.
+            reset_noise_scale: Scale of noise for reset.
+            solver: Solver type for Mujoco.
+            iterations: Maximum number of solver iterations.
+            ls_iterations: Maximum number of line search iterations.
+            mj_model_timestep: fundamental time increment of the MuJoCo physics simulation
+            mocap_hz: cycles per second for the reference data
+            clip_length: clip length of the tracking clips
+            random_init_range: the initiated range
+            traj_length: one trajectory length
+            **kwargs: Additional arguments for the PipelineEnv initialization.
+        """
         super().__init__(
             None,
             walker,
-            ref_len,
-            too_far_dist,
-            bad_pose_dist,
-            bad_quat_dist,
-            ctrl_cost_weight,
-            ctrl_diff_cost_weight,
-            pos_reward_weight,
-            quat_reward_weight,
-            joint_reward_weight,
-            angvel_reward_weight,
-            bodypos_reward_weight,
-            endeff_reward_weight,
-            healthy_z_range,
+            reward_config,
             physics_steps_per_control_step,
             reset_noise_scale,
             solver,
             iterations,
             ls_iterations,
+            mj_model_timestep,
+            mocap_hz,
+            clip_length,
+            random_init_range,
+            traj_length,
             **kwargs,
         )
 
         self._reference_clips = reference_clip
         self._n_clips = reference_clip.position.shape[0]
 
-    def reset(self, rng) -> State:
-        """Resets the environment to an initial state."""
+    def reset(self, rng: jp.ndarray) -> State:
+        """
+        Resets the environment to an initial state.
+
+        Args:
+            rng (jp.ndarray): Random key for reproducibility.
+
+        Returns:
+            State: The initial state of the environment.
+        """
         _, start_rng, clip_rng, rng = jax.random.split(rng, 4)
 
         start_frame = jax.random.randint(start_rng, (), 0, 44)
@@ -95,7 +113,15 @@ class RodentMultiClipTracking(RodentTracking):
 
         return self.reset_from_clip(rng, info, noise=True)
 
-    def _get_reference_clip(self, info) -> ReferenceClip:
-        """Gets clip based on info["clip_idx"]"""
+    def _get_reference_clip(self, info: dict[str, jp.ndarray]) -> ReferenceClip:
+        """
+        Retrieves the reference clip corresponding to the current clip index.
+
+        Args:
+            info: Dictionary containing clip information.
+
+        Returns:
+            ReferenceClip: The reference clip for the given index.
+        """
 
         return jax.tree_map(lambda x: x[info["clip_idx"]], self._reference_clips)

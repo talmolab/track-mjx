@@ -46,7 +46,6 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-
 @hydra.main(version_base=None, config_path="config", config_name="fly-mc-intention")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""

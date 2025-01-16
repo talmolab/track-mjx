@@ -24,7 +24,7 @@ env_config:
 
   reward_weights:
     too_far_dist: 0.01
-    bad_pose_dist: 10.0
+    bad_pose_dist: 5.0
     bad_quat_dist: 0.075
     ctrl_cost_weight: 0.02
     ctrl_diff_cost_weight: 0.02

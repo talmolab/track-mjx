@@ -222,13 +222,12 @@ def setup_training_logging(
     for id in site_id:
         mj_model.site(id).rgba = [1, 0, 0, 1]
     
-    if walker_type == "rodent":
-        for id in site_id:
-             for i in range(mj_model.ngeom):
-                if id != 0:
-                    mj_model.geom(i).rgba = [1, 1, 1, 0.5]  # White color, 50% transparent
-                else:
-                    mj_model.geom(i).rgba = [0, 0, 1, 1]  # Blue color, fully opaque
+    for i in range(mj_model.ngeom):
+        geom_name = mj_model.geom(i).name
+        if "-0" in geom_name:  # first rodent
+            mj_model.geom(i).rgba = [1, 1, 1, 0.5]  # White color, 50% transparent
+        elif "-1" in geom_name:  # second rodent
+            mj_model.geom(i).rgba = [0, 0, 1, 1]  # Blue color, fully opaque
 
     # visual mujoco rendering
     scene_option = mujoco.MjvOption()

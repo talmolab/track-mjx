@@ -227,7 +227,7 @@ def setup_training_logging(
         if "-0" in geom_name:  # first rodent
             mj_model.geom(i).rgba = [1, 1, 1, 0.5]  # White color, 50% transparent
         elif "-1" in geom_name:  # second rodent
-            mj_model.geom(i).rgba = [0, 0, 1, 1]  # Blue color, fully opaque
+            mj_model.geom(i).rgba = [0.3, 0.6, 1.0, 1.0]  # Light blue color, fully opaque
 
     # visual mujoco rendering
     scene_option = mujoco.MjvOption()

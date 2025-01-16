@@ -59,7 +59,7 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: imitation_debug
-  eval_every: 1_000_000
+  eval_every: 10_000_000
   episode_length: 200
   train_config:
     num_envs: 2048

@@ -54,7 +54,9 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: imitation_debug
-  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/rodent_data/ReferenceClip.p_f9692c
+  checkpoint_to_restore:
+  checkpoint_max_to_keep: 
+  checkpoint_keep_period: 
   eval_every: 10_000_000
   episode_length: 200
   train_config:

@@ -4,32 +4,29 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 
 import os
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.6"
-os.environ["MUJOCO_GL"] = "egl"
+# set default env variable if not set
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6")
+os.environ["MUJOCO_GL"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "egl")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )
-os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 from absl import flags
 import hydra
 from omegaconf import DictConfig, OmegaConf
-import uuid
-
-from pathlib import Path
-
 import functools
 import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-import track_mjx.agent.custom_ppo as ppo
 from track_mjx.agent import custom_ppo
 import numpy as np
 import pickle
 import warnings
 from jax import numpy as jp
 
+from datetime import datetime  
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
@@ -46,7 +43,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -124,19 +121,20 @@ def main(cfg: DictConfig):
     )
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
-    # Will work on not hardcoding these values later
-    episode_length = (250 - 50 - 5) * env._steps_for_cur_frame
+    episode_length = (
+        traj_config.clip_length - traj_config.random_init_range - traj_config.traj_length
+    ) * env._steps_for_cur_frame
+    print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
     # Generates a completely random UUID (version 4), take the first 8 characters
-    run_id = uuid.uuid4().hex[:6]
+    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
     model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
     model_path = hydra.utils.to_absolute_path(model_path)
     logging.info(f"Model Checkpoint Path: {model_path}")
 
     # initialize orbax checkpoint manager
-    # TODO (Scott): add the checkpoint parameter to config file.
-    mgr_options = ocp.CheckpointManagerOptions(create=True, max_to_keep=3, keep_period=2, step_prefix="PPONetwork")
+    mgr_options = ocp.CheckpointManagerOptions(create=True, max_to_keep=cfg.train_setup["checkpoint_max_to_keep"], keep_period=cfg.train_setup["checkpoint_keep_period"], step_prefix="PPONetwork")
     ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
 
 
@@ -178,7 +176,6 @@ def main(cfg: DictConfig):
             policy_params_fn_key,
             cfg=cfg,
             env=env,
-            wandb=wandb,
             model_path=model_path,
         )
 

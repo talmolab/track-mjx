@@ -5,7 +5,7 @@ env_config:
   env_name: rodent_multi_clip
   task_name: imitation
   walker_name: rodent
-  render_camera_name: side-0
+  render_camera_name: close_profile
   render_fps: 5
 
   env_args:
@@ -14,7 +14,7 @@ env_config:
     ls_iterations: 4
     physics_steps_per_control_step: 5
     reset_noise_scale: 1e-3
-    mj_model_timestep: 2e-4
+    mj_model_timestep: 0.002
     mocap_hz: 50
 
   reward_weights:
@@ -45,16 +45,16 @@ reference_config:
 
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [256,256,256]
-  decoder_layer_sizes: [256,256,256]
-  critic_layer_sizes: [256,256,256]
+  encoder_layer_sizes: [512,512,512]
+  decoder_layer_sizes: [512,512,512]
+  critic_layer_sizes: [512,512,512]
   intention_size: 60
   kl_weight: 1e-4
 
 train_setup:
   agent_name: rodent
   run_name: imitation_debug
-  checkpoint_to_restore:
+  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/rodent_data/ReferenceClip.p_f9692c
   eval_every: 10_000_000
   episode_length: 200
   train_config:

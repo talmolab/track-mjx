@@ -11,7 +11,7 @@ env_config:
   task_name: imitation
   walker_name: rodent
   render_camera_name: side-0
-  render_fps: 5
+  render_fps: 50
 
   env_args:
     solver: "cg"
@@ -19,12 +19,12 @@ env_config:
     ls_iterations: 6
     physics_steps_per_control_step: 5
     reset_noise_scale: 1e-3
-    mj_model_timestep: 2e-4
+    mj_model_timestep: 1e-3
     mocap_hz: 50
 
   reward_weights:
     too_far_dist: 0.01
-    bad_pose_dist: 5.0
+    bad_pose_dist: 10.0
     bad_quat_dist: 0.075
     ctrl_cost_weight: 0.02
     ctrl_diff_cost_weight: 0.02

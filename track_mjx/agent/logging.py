@@ -93,6 +93,7 @@ def setup_training_logging(
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
     walker_config = cfg["walker_config"]
+    walker_type = cfg['walker_type']
 
     # Wrap the env in the brax autoreset and episode wrappers
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
@@ -220,6 +221,13 @@ def setup_training_logging(
     ]
     for id in site_id:
         mj_model.site(id).rgba = [1, 0, 0, 1]
+    
+    if walker_type == "rodent":
+        for id in site_id:
+            if id != 0:
+                mj_model.site(id).rgba =  [1, 1, 1, 0.5] # White color, 50% transparent
+            else:
+                mj_model.site(id).rgba =  [0, 0, 1, 1] # Blue color, fully opaque
 
     # visual mujoco rendering
     scene_option = mujoco.MjvOption()

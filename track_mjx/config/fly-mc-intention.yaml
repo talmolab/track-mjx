@@ -62,6 +62,9 @@ train_setup:
   run_name: imitation_debug
   eval_every: 1_000_000
   episode_length: 1000
+  checkpoint_to_restore:
+  checkpoint_max_to_keep: 
+  checkpoint_keep_period: 
   train_config:
     num_envs: 2048
     num_timesteps: 1_000_000_000

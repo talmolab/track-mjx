@@ -3,6 +3,7 @@ import numpy as np
 import jax
 from jax import numpy as jp
 from flax import struct
+import yaml
 
 
 @struct.dataclass
@@ -65,7 +66,13 @@ def make_multiclip_data(traj_data_path):
         )
 
     with h5py.File(traj_data_path, "r") as data:
-        clip_len = data["stac"]["n_frames_per_clip"][()]
+        # Read the config string as yaml in to dict
+        yaml_str = data["config"][()]
+        yaml_str = yaml_str.decode("utf-8")
+        config = yaml.safe_load(yaml_str)
+        clip_len = config["stac"]["n_frames_per_clip"]
+
+        # Reshape the data to (clips, frames, dims)
         batch_qpos = reshape_frames(data["qpos"], clip_len)
         batch_xpos = reshape_frames(data["xpos"], clip_len)
         batch_qvel = reshape_frames(data["qvel"], clip_len)

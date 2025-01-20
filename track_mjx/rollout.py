@@ -127,7 +127,6 @@ def main(cfg: DictConfig):
     )
 
     seed = 42
-
     key = jax.random.PRNGKey(seed)
     global_key, local_key = jax.random.split(key)
     local_key, key_env, eval_key = jax.random.split(local_key, 3)
@@ -177,10 +176,7 @@ def main(cfg: DictConfig):
         reference_obs_size=int(state.info["reference_obs_size"][0]),
         preprocess_observations_fn=normalize,
     )
-    # make_policy_fn = custom_ppo_networks.make_inference_fn(policy_networks)
-    # policy = make_policy_fn(
-    #     inference_params, deterministic=cfg.eval_config.deterministic
-    # )
+    
     optimizer = optax.adam(learning_rate=1e-4)
 
     init_params = ppo_losses.PPONetworkParams(
@@ -207,30 +203,17 @@ def main(cfg: DictConfig):
         options=options,
     ) as mngr:
         print(f"latest checkpoint step: {mngr.latest_step()}")
-        policy = mngr.restore(
+        restored_policy_data = mngr.restore(
             mngr.latest_step(),
             args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy)),
-        )["policy"]
+        )['policy']
+    
+    make_policy_fn = custom_ppo_networks.make_inference_fn(policy_networks)
+    policy = make_policy_fn(restored_policy_data, deterministic=cfg.eval_config.deterministic)
 
-    print("Policy created successfuly!")
+    print(f"Policy created successfuly!")
 
-    def select_action_fn(policy, obs, key):
-        """
-        Select an action using the policy function.
-
-        Args:
-            policy: The policy function created by make_policy.
-            obs: Current observation from the environment.
-            key: JAX PRNGKey.
-
-        Returns:
-            action: The action to take in the environment.
-            extra: Additional info from the policy (e.g., log_prob).
-        """
-        action, extra = policy(obs, key)
-        return action, extra
-
-    def run_inference_and_record(env, policy, max_steps=cfg.eval_config.num_eval_steps):
+    def run_inference_and_record(env, policy, key_env, max_steps=cfg.eval_config.num_eval_steps):
         """
         Run one rollout with the given env and policy, storing all data.
 
@@ -252,17 +235,16 @@ def main(cfg: DictConfig):
         all_joint_distance = []
 
         rollout_data_array, state_data_array = [], []
-
-        rng = jax.random.PRNGKey(2)
-        state = env.reset(rng=rng)
+        key_envs = jax.random.split(key_env, 1)
+        state = env.reset(key_envs)
 
         for step_i in range(max_steps):
             print(f"Currently in step {step_i}")
             obs = state.obs
             all_obs.append(np.array(obs))
-
-            rng, key = jax.random.split(rng)
-            action, _ = select_action_fn(policy, obs, key)
+            
+            rng, key = jax.random.split(key_env)
+            action, _ = policy(obs, key)
             all_actions.append(np.array(action))
 
             state = env.step(state, action)
@@ -492,7 +474,7 @@ def main(cfg: DictConfig):
     if not use_only_mjdata:
         print("Starting inference rollout...")
         trajectory, rollout_data_array, state_data_array = run_inference_and_record(
-            eval_env, policy, max_steps=cfg.eval_config.num_eval_steps
+            eval_env, policy, key_env, max_steps=cfg.eval_config.num_eval_steps
         )
         print("Inference rollout completed.")
         print("Collected observations shape:", trajectory["observations"].shape)
@@ -535,7 +517,6 @@ def main(cfg: DictConfig):
         render_rollout(
             rollout, cfg, eval_env, video_save_path, num_steps=len(state_data_array)
         )
-
 
 if __name__ == "__main__":
     main()

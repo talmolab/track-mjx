@@ -86,6 +86,7 @@ def train(
     environment: Union[envs_v1.Env, envs.Env],
     num_timesteps: int,
     episode_length: int,
+    metadata: dict[str, any],
     ckpt_mgr: ocp.CheckpointManager,
     checkpoint_to_restore: str | None = None,
     action_repeat: int = 1,
@@ -494,6 +495,7 @@ def train(
                 args=ocp.args.Composite(
                     policy=ocp.args.StandardSave(policy_param),
                     train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                    custom_metadata=ocp.args.JsonSave(metadata),
                 ),
             )
         else:

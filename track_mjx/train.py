@@ -147,6 +147,8 @@ def main(cfg: DictConfig):
         step_prefix="PPONetwork",
     )
     ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
+    
+    metadata = OmegaConf.to_container(cfg, resolve=True)
 
     train_fn = functools.partial(
         custom_ppo.train,
@@ -162,6 +164,7 @@ def main(cfg: DictConfig):
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         ),
+        metadata=metadata,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
     )

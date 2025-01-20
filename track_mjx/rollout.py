@@ -63,6 +63,27 @@ def main(cfg: DictConfig):
     Pure inference script. Loads a trained model checkpoint via Orbax,
     creates an environment, and runs a rollout for evaluation or visualization.
     """
+    
+    # restore metadata with orbax
+    checkpoint_dir = hydra.utils.to_absolute_path(cfg.inference_params_path)
+    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
+    
+    with ocp.CheckpointManager(
+        checkpoint_dir,
+        options=options,
+    ) as mngr:
+        print(f"latest checkpoint step: {mngr.latest_step()}")
+        try:
+            latest_step = mngr.latest_step()
+            restored_data = mngr.restore(latest_step)
+            restored_metadata = restored_data.custom_metadata
+            
+            print(f"Successfully restored metadata")
+            
+            cfg = OmegaConf.create(restored_metadata)
+            
+        except Exception as e:
+            print(f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs")
 
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
@@ -196,8 +217,6 @@ def main(cfg: DictConfig):
     abstract_policy = (training_state.normalizer_params, training_state.params.policy)
 
     # orbax: restore the whole model (both policy module, and training state)
-    checkpoint_dir = hydra.utils.to_absolute_path(cfg.inference_params_path)
-    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
     with ocp.CheckpointManager(
         checkpoint_dir,
         options=options,
@@ -248,7 +267,7 @@ def main(cfg: DictConfig):
             all_actions.append(np.array(action))
 
             state = env.step(state, action)
-            all_rewards.append(float(state.reward))
+            all_rewards.append(state.reward)
             all_dones.append(bool(state.done))
             all_state.append(state)
 

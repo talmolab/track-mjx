@@ -5,6 +5,7 @@ eval_config:
   num_eval_steps: 10
   deterministic: True
   save_eval_path: eval_renderings
+  use_only_mjdata: False
 
 env_config:
   env_name: fly_multi_clip
@@ -15,8 +16,8 @@ env_config:
 
   env_args:
     solver: "cg"
-    iterations: 6
-    ls_iterations: 6
+    iterations: 4
+    ls_iterations: 4
     physics_steps_per_control_step: 10
     reset_noise_scale: 1e-3
     mj_model_timestep: 2e-4

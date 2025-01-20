@@ -1,6 +1,8 @@
 """
 Only inference for track-mjx. Load the config file, create environments, initialize network, and start inference.
 
+Saving out full state for now
+
 Ensure jax==0.4.35 mujoco==3.2.4 jaxlib==0.4.35
 """
 
@@ -47,7 +49,7 @@ from PIL import Image
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-@hydra.main(version_base=None, config_path="config", config_name="fly-mc-intention")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-mc-intention")
 def main(cfg: DictConfig):
     """
     Pure inference script. Loads a trained model checkpoint via Orbax,
@@ -71,7 +73,7 @@ def main(cfg: DictConfig):
         print(f"Loading data: {cfg.data_path}")
 
     # config files
-    env_cfg = hydra.compose(config_name="fly-mc-intention")
+    env_cfg = hydra.compose(config_name="rodent-mc-intention")
     env_cfg = OmegaConf.to_container(env_cfg, resolve=True)
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
@@ -84,6 +86,7 @@ def main(cfg: DictConfig):
     }
     walker_class = walker_map[env_cfg["walker_type"]]
     walker = walker_class(**walker_config)
+    use_only_mjdata = cfg.eval_config.use_only_mjdata
 
     reward_config = RewardConfig(
         too_far_dist=env_rewards.too_far_dist,
@@ -178,7 +181,7 @@ def main(cfg: DictConfig):
         action, extra = policy(obs, key)
         return action, extra
 
-    def run_inference_and_record(env, policy, normalizer_params, max_steps=cfg.eval_config.num_eval_steps):
+    def run_inference_and_record(env, policy, max_steps=cfg.eval_config.num_eval_steps):
         """
         Run one rollout with the given env and policy, storing all data.
 
@@ -195,11 +198,12 @@ def main(cfg: DictConfig):
         all_rewards = []
         all_dones = []
         all_state = []
-        all_extra = []
         all_summed_pos_distance = []
         all_quat_distance = []
         all_joint_distance = []
-
+        
+        rollout_data_array, state_data_array = [], []
+        
         rng = jax.random.PRNGKey(2)
         state = env.reset(rng=rng)
 
@@ -209,9 +213,8 @@ def main(cfg: DictConfig):
             all_obs.append(np.array(obs))
 
             rng, key = jax.random.split(rng)
-            action, extra = select_action_fn(policy, obs, key)
+            action, _ = select_action_fn(policy, obs, key)
             all_actions.append(np.array(action))
-            all_extra.append(extra)
 
             state = env.step(state, action)
             all_rewards.append(float(state.reward))
@@ -222,6 +225,9 @@ def main(cfg: DictConfig):
             all_summed_pos_distance.append(info.get('summed_pos_distance', 0.0))
             all_quat_distance.append(info.get('quat_distance', 0.0))
             all_joint_distance.append(info.get('joint_distance', 0.0))
+            
+            rollout_data_array.append((obs, action))
+            state_data_array.append(state)
 
             if state.done:
                 print(
@@ -229,70 +235,24 @@ def main(cfg: DictConfig):
                 )
                 break
 
-        rollout_data = {
+        inference_data = {
             "observations": np.stack(all_obs, axis=0),  # Shape: [T, obs_dim]
             "actions": np.stack(all_actions, axis=0),  # Shape: [T, act_dim]
-            "rewards": np.array(all_rewards),  # Shape: [T]
-            "dones": np.array(all_dones),  # Shape: [T]
-            "extra": all_extra,
+            "rewards": np.array(all_rewards), 
+            "dones": np.array(all_dones), 
             "states": all_state,
-            "summed_pos_distance": np.array(all_summed_pos_distance), # Shape: [T]
-            "quat_distance": np.array(all_quat_distance), # Shape: [T]
-            "joint_distance": np.array(all_joint_distance), # Shape: [T]
+            "summed_pos_distance": np.array(all_summed_pos_distance),
+            "quat_distance": np.array(all_quat_distance),
+            "joint_distance": np.array(all_joint_distance),
         }
-        return rollout_data
+        
+        return inference_data, rollout_data_array, state_data_array
     
-    def plot_metrics(rewards, summed_pos_distance, quat_distance, joint_distance, save_path):
-        """
-        Plot multiple metrics over time and save the figure.
-
-        Args:
-            rewards (np.ndarray): Array of rewards collected during the rollout.
-            summed_pos_distance (np.ndarray): Array of summed positional distances.
-            quat_distance (np.ndarray): Array of quaternion distances.
-            joint_distance (np.ndarray): Array of joint distances.
-            save_path (str): Path to save the metrics plot image.
-        """
-        plt.figure(figsize=(15, 10))
-
-        # Plot Reward per Step
-        plt.subplot(3, 1, 1)
-        plt.plot(rewards, label='Reward per Step', color='blue')
-        plt.xlabel('Step')
-        plt.ylabel('Reward')
-        plt.title('Reward over Time')
-        plt.legend()
-        plt.grid(True)
-
-        # Plot Summed Positional Distance
-        plt.subplot(3, 1, 2)
-        plt.plot(summed_pos_distance, label='Summed Positional Distance', color='green')
-        plt.xlabel('Step')
-        plt.ylabel('Summed Positional Distance')
-        plt.title('Summed Positional Distance over Time')
-        plt.legend()
-        plt.grid(True)
-
-        # Plot Quaternion and Joint Distances
-        plt.subplot(3, 1, 3)
-        plt.plot(quat_distance, label='Quaternion Distance', color='red')
-        plt.plot(joint_distance, label='Joint Distance', color='purple')
-        plt.xlabel('Step')
-        plt.ylabel('Distance')
-        plt.title('Quaternion and Joint Distances over Time')
-        plt.legend()
-        plt.grid(True)
-
-        plt.tight_layout()
-        plt.savefig(save_path)
-        plt.close()
-        print(f"Metrics plot saved at {save_path}")
-
     def render_rollout(
         rollout: dict,
         cfg: DictConfig,
         env: PipelineEnv,
-        model_path: str,
+        video_save_path: str,
         num_steps: int,
     ):
         """
@@ -302,11 +262,12 @@ def main(cfg: DictConfig):
             rollout: The rollout data containing observations, actions, etc.
             cfg: Configuration dictionary.
             env: The Brax environment.
-            model_path: Path to save the video.
+            video_save_path: Path to save the video.
             num_steps: Current step number for naming the video.
         """
         env_config = cfg.env_config
         walker_config = cfg.walker_config
+        walker_type = cfg.walker_type
 
         pair_render_xml_path = env.walker._pair_rendering_xml_path
         _XML_PATH = (
@@ -335,7 +296,7 @@ def main(cfg: DictConfig):
 
         mj_model.opt.iterations = 6
         mj_model.opt.ls_iterations = 6
-        mj_data = mujoco.MjData(mj_model)
+        state_data = mujoco.MjData(mj_model)
 
         site_id = [
             mj_model.site(i).id
@@ -346,11 +307,19 @@ def main(cfg: DictConfig):
         
         for id in site_id:
             mj_model.site(id).rgba = [1, 0, 0, 1]
+        
+        if walker_type == "rodent":
+            for i in range(mj_model.ngeom):
+                geom_name = mj_model.geom(i).name
+                if "-1" in geom_name:  # ghost
+                    mj_model.geom(i).rgba = [1, 1, 1, 0.5]  # White color, 50% transparent
+                elif "-0" in geom_name:  # agent
+                    mj_model.geom(i).rgba = [0.3, 0.6, 1.0, 1.0]  # Light blue color, fully opaque
 
         scene_option = mujoco.MjvOption()
         scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
         renderer = mujoco.Renderer(mj_model, height=512, width=512)
-        video_path = f"{model_path}/{num_steps}_inference_rollout.mp4"
+        video_path = f"{video_save_path}/{num_steps}_inference_rollout.mp4"
 
         with imageio.get_writer(video_path, fps=env_config.render_fps) as video:
 
@@ -364,11 +333,6 @@ def main(cfg: DictConfig):
                 axis=0,
             )
             
-            rewards = rollout["rewards"]
-            summed_pos_distance = rollout["summed_pos_distance"]
-            quat_distance = rollout["quat_distance"]
-            joint_distance = rollout["joint_distance"]
-
             for step_idx, (qpos1, qpos2) in enumerate(zip(qposes_rollout, qposes_ref)):
                 # Ensure qpos dimensions match
                 total_qpos_size = len(qpos1) + len(qpos2)
@@ -376,93 +340,116 @@ def main(cfg: DictConfig):
                     raise ValueError(
                         f"Combined qpos sizes do not match MuJoCo model's nq: {total_qpos_size} vs {mj_model.nq}"
                     )
-                mj_data.qpos = np.append(qpos1, qpos2)
-                mujoco.mj_forward(mj_model, mj_data)
+                state_data.qpos = np.append(qpos1, qpos2)
+                mujoco.mj_forward(mj_model, state_data)
                 renderer.update_scene(
-                    mj_data, camera=env_config.render_camera_name, scene_option=scene_option
+                    state_data, camera=env_config.render_camera_name, scene_option=scene_option
                 )
                 pixels = renderer.render()
                 
-                # Create a plot of cumulative rewards up to the current step
-                fig, axs = plt.subplots(3, 1, figsize=(6, 9))
+                if not use_only_mjdata:
+                    rewards = rollout["rewards"]
+                    summed_pos_distance = rollout["summed_pos_distance"]
+                    quat_distance = rollout["quat_distance"]
+                    joint_distance = rollout["joint_distance"]
 
-                # Reward per Step
-                axs[0].plot(rewards[:step_idx + 1], label='Reward per Step', color='blue')
-                axs[0].set_xlabel('Step')
-                axs[0].set_ylabel('Reward')
-                axs[0].set_title('Reward over Time')
-                axs[0].legend()
-                axs[0].grid(True)
+                    # Create a plot of cumulative rewards up to the current step
+                    fig, axs = plt.subplots(3, 1, figsize=(6, 9))
 
-                # Summed Positional Distance
-                axs[1].plot(summed_pos_distance[:step_idx + 1], label='Summed Positional Distance', color='green')
-                axs[1].set_xlabel('Step')
-                axs[1].set_ylabel('Summed Positional Distance')
-                axs[1].set_title('Summed Positional Distance over Time')
-                axs[1].legend()
-                axs[1].grid(True)
+                    # Reward per Step
+                    axs[0].plot(rewards[:step_idx + 1], label='Reward per Step', color='blue')
+                    axs[0].set_xlabel('Step')
+                    axs[0].set_ylabel('Reward')
+                    axs[0].set_title('Reward over Time')
+                    axs[0].legend()
+                    axs[0].grid(True)
 
-                # Quaternion and Joint Distances
-                axs[2].plot(quat_distance[:step_idx + 1], label='Quaternion Distance', color='red')
-                axs[2].plot(joint_distance[:step_idx + 1], label='Joint Distance', color='purple')
-                axs[2].set_xlabel('Step')
-                axs[2].set_ylabel('Distance')
-                axs[2].set_title('Quaternion and Joint Distances over Time')
-                axs[2].legend()
-                axs[2].grid(True)
+                    # Summed Positional Distance
+                    axs[1].plot(summed_pos_distance[:step_idx + 1], label='Summed Positional Distance', color='green')
+                    axs[1].set_xlabel('Step')
+                    axs[1].set_ylabel('Summed Positional Distance')
+                    axs[1].set_title('Summed Positional Distance over Time')
+                    axs[1].legend()
+                    axs[1].grid(True)
 
-                plt.tight_layout()
-                # Save the plot to a temporary in-memory buffer
-                plot_path = f"{model_path}/temp_plot_{num_steps}.png"
-                plt.savefig(plot_path)
-                plt.close()
-              
-                plot_image = Image.open(plot_path)
-                plot_image = plot_image.resize((512, 512))
+                    # Quaternion and Joint Distances
+                    axs[2].plot(quat_distance[:step_idx + 1], label='Quaternion Distance', color='red')
+                    axs[2].plot(joint_distance[:step_idx + 1], label='Joint Distance', color='purple')
+                    axs[2].set_xlabel('Step')
+                    axs[2].set_ylabel('Distance')
+                    axs[2].set_title('Quaternion and Joint Distances over Time')
+                    axs[2].legend()
+                    axs[2].grid(True)
 
-                # Convert simulation frame to PIL Image
-                sim_image = Image.fromarray(pixels)
-                sim_image = sim_image.resize((512, 512))  # Ensure same height as plot
-
-                # Combine simulation image and plot image side by side
-                combined_width = sim_image.width + plot_image.width
-                combined_image = Image.new('RGB', (combined_width, sim_image.height))
-                combined_image.paste(sim_image, (0, 0))
-                combined_image.paste(plot_image, (sim_image.width, 0))
-
-                combined_frame = np.array(combined_image)
-                video.append_data(combined_frame)
-
-                os.remove(plot_path)
+                    plt.tight_layout()
+                    # Save the plot to a temporary in-memory buffer
+                    plot_path = f"{video_save_path}/temp_plot_{num_steps}.png"
+                    plt.savefig(plot_path)
+                    plt.close()
                 
-            final_metrics_plot_path = f"{model_path}/{num_steps}_final_metrics_plot.png"
-            plot_metrics(
-                rewards=rollout["rewards"],
-                summed_pos_distance=rollout["summed_pos_distance"],
-                quat_distance=rollout["quat_distance"],
-                joint_distance=rollout["joint_distance"],
-                save_path=final_metrics_plot_path
-            )
+                    plot_image = Image.open(plot_path)
+                    plot_image = plot_image.resize((512, 512))
 
-    print("Starting inference rollout...")
-    trajectory = run_inference_and_record(
-        eval_env, policy, inference_params, max_steps=cfg.eval_config.num_eval_steps
-    )
-    print("Inference rollout completed.")
+                    # Convert simulation frame to PIL Image
+                    sim_image = Image.fromarray(pixels)
+                    sim_image = sim_image.resize((512, 512))  # Ensure same height as plot
 
-    print("Collected observations shape:", trajectory["observations"].shape)
-    print("Collected actions shape:", trajectory["actions"].shape)
-    print("Collected rewards shape:", trajectory["rewards"].shape)
-    print("Collected dones shape:", trajectory["dones"].shape)
+                    # Combine simulation image and plot image side by side
+                    combined_width = sim_image.width + plot_image.width
+                    combined_image = Image.new('RGB', (combined_width, sim_image.height))
+                    combined_image.paste(sim_image, (0, 0))
+                    combined_image.paste(plot_image, (sim_image.width, 0))
 
-    print("Rendering rollout...")
-    model_save_path = hydra.utils.to_absolute_path(cfg.eval_config.save_eval_path)
-    os.makedirs(model_save_path, exist_ok=True)
-    render_rollout(
-        trajectory, cfg, eval_env, model_save_path, num_steps=trajectory.get("step", 0)
-    )
+                    combined_frame = np.array(combined_image)
+                    video.append_data(combined_frame)
 
-    print(f"Finished inference rollout.")
+                    os.remove(plot_path)
+                    
+                else:
+                    video.append_data(pixels)
 
+    if not use_only_mjdata:
+        print("Starting inference rollout...")
+        trajectory, rollout_data_array, state_data_array= run_inference_and_record(
+            eval_env, policy, max_steps=cfg.eval_config.num_eval_steps
+        )
+        print("Inference rollout completed.")
+        print("Collected observations shape:", trajectory["observations"].shape)
+        print("Collected actions shape:", trajectory["actions"].shape)
+        print("Collected rewards shape:", trajectory["rewards"].shape)
+        print("Collected dones shape:", trajectory["dones"].shape)
+
+        save_path = Path(hydra.utils.to_absolute_path(cfg.eval_config.save_eval_path))
+        save_path.mkdir(parents=True, exist_ok=True)
+
+        np.save(save_path / "state_data.npy", np.array(state_data_array))
+        np.savez(
+            save_path / "rollout_data.npz",
+            observations=np.array([data[0] for data in rollout_data_array]),
+            actions=np.array([data[1] for data in rollout_data_array]),
+        )
+        print(f"Data saved at {save_path}.")
+        
+        print("Rendering rollout...")
+        video_save_path = hydra.utils.to_absolute_path(cfg.eval_config.save_eval_path)
+        os.makedirs(video_save_path, exist_ok=True)
+        render_rollout(
+            trajectory, cfg, eval_env, video_save_path, num_steps=trajectory.get("step", 0)
+        )
+    else:
+        print('Loading data for simulatuon')
+        save_path = Path(hydra.utils.to_absolute_path(cfg.eval_config.save_eval_path))
+        video_save_path = hydra.utils.to_absolute_path(cfg.eval_config.save_eval_path)
+        os.makedirs(video_save_path, exist_ok=True)
+
+        state_data_array = np.load(save_path / "state_data.npy", allow_pickle=True)
+        # rollout_data = np.load(save_path / "rollout_data.npz")
+        
+        rollout = {'states': state_data_array}
+        
+        render_rollout(
+            rollout, cfg, eval_env, video_save_path, num_steps=len(state_data_array)
+        )
+        
 if __name__ == "__main__":
     main()

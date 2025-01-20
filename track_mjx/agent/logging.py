@@ -91,7 +91,7 @@ def setup_training_logging(
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
     walker_config = cfg["walker_config"]
-    walker_type = cfg['walker_type']
+    walker_type = cfg["walker_type"]
 
     # Wrap the env in the brax autoreset and episode wrappers
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
@@ -238,14 +238,19 @@ def setup_training_logging(
     ]
     for id in site_id:
         mj_model.site(id).rgba = [1, 0, 0, 1]
-    
+
     if walker_type == "rodent":
         for i in range(mj_model.ngeom):
             geom_name = mj_model.geom(i).name
             if "-1" in geom_name:  # ghost
                 mj_model.geom(i).rgba = [1, 1, 1, 0.5]  # White color, 50% transparent
             elif "-0" in geom_name:  # agent
-                mj_model.geom(i).rgba = [0.3, 0.6, 1.0, 1.0]  # Light blue color, fully opaque
+                mj_model.geom(i).rgba = [
+                    0.3,
+                    0.6,
+                    1.0,
+                    1.0,
+                ]  # Light blue color, fully opaque
 
     # visual mujoco rendering
     scene_option = mujoco.MjvOption()
@@ -273,7 +278,6 @@ def setup_training_logging(
             video.append_data(pixels)
 
     wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")})
-
 
 
 def render_rollout(
@@ -342,7 +346,12 @@ def render_rollout(
     )
 
     pair_render_xml_path = env.walker._pair_rendering_xml_path
-    _XML_PATH = Path(__file__).resolve().parent.parent / "environment" / "walker" / pair_render_xml_path
+    _XML_PATH = (
+        Path(__file__).resolve().parent.parent
+        / "environment"
+        / "walker"
+        / pair_render_xml_path
+    )
 
     if cfg.env_config.walker_name == "rodent":
         # TODO: Make this ghost rendering walker agonist
@@ -385,7 +394,11 @@ def render_rollout(
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
 
-    site_id = [mj_model.site(i).id for i in range(mj_model.nsite) if "-0" in mj_model.site(i).name]
+    site_id = [
+        mj_model.site(i).id
+        for i in range(mj_model.nsite)
+        if "-0" in mj_model.site(i).name
+    ]
     for id in site_id:
         mj_model.site(id).rgba = [1, 0, 0, 1]
 
@@ -408,7 +421,9 @@ def render_rollout(
             # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
             mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera=env_config.render_camera_name, scene_option=scene_option)
+            renderer.update_scene(
+                mj_data, camera=env_config.render_camera_name, scene_option=scene_option
+            )
             pixels = renderer.render()
             frames.append(pixels)
             video.append_data(pixels)

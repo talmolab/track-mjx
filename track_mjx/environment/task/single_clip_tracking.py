@@ -172,11 +172,11 @@ class SingleClipTracking(PipelineEnv):
             ),
             axis=0,
         )
-        
+
         # qpos = new_qpos + jax.random.uniform(
         #     rng1, (self.sys.nq,), minval=low, maxval=hi
         # )
-        
+
         # Add noise
         qpos = new_qpos + jp.where(
             noise,

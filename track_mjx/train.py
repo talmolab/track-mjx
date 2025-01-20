@@ -5,7 +5,9 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 import os
 
 # set default env variable if not set
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6")
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
+    "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6"
+)
 os.environ["MUJOCO_GL"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 os.environ["XLA_FLAGS"] = (
@@ -26,7 +28,7 @@ import pickle
 import warnings
 from jax import numpy as jp
 
-from datetime import datetime  
+from datetime import datetime
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
@@ -43,7 +45,9 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-2clips-intention")
+@hydra.main(
+    version_base=None, config_path="config", config_name="rodent-2clips-intention"
+)
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -122,7 +126,9 @@ def main(cfg: DictConfig):
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     episode_length = (
-        traj_config.clip_length - traj_config.random_init_range - traj_config.traj_length
+        traj_config.clip_length
+        - traj_config.random_init_range
+        - traj_config.traj_length
     ) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
@@ -134,9 +140,13 @@ def main(cfg: DictConfig):
     logging.info(f"Model Checkpoint Path: {model_path}")
 
     # initialize orbax checkpoint manager
-    mgr_options = ocp.CheckpointManagerOptions(create=True, max_to_keep=cfg.train_setup["checkpoint_max_to_keep"], keep_period=cfg.train_setup["checkpoint_keep_period"], step_prefix="PPONetwork")
+    mgr_options = ocp.CheckpointManagerOptions(
+        create=True,
+        max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],
+        keep_period=cfg.train_setup["checkpoint_keep_period"],
+        step_prefix="PPONetwork",
+    )
     ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
-
 
     train_fn = functools.partial(
         custom_ppo.train,

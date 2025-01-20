@@ -1,6 +1,12 @@
 data_path: data/ReferenceClip.p
 walker_type: rodent
 
+eval_config:
+  num_eval_steps: 10
+  deterministic: True
+  save_eval_path: eval_renderings
+  use_only_mjdata: False
+
 env_config:
   env_name: rodent_multi_clip
   task_name: imitation

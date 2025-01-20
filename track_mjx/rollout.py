@@ -56,7 +56,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 @hydra.main(
-    version_base=None, config_path="config", config_name="rodent-full-intention"
+    version_base=None, config_path="config", config_name="scott-rodent-full-intention"
 )
 def main(cfg: DictConfig):
     """
@@ -174,7 +174,7 @@ def main(cfg: DictConfig):
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         action_size=eval_env.action_size,
         observation_size=state.obs.shape[-1],
-        reference_obs_size=int(state.info["reference_obs_size"]),
+        reference_obs_size=int(state.info["reference_obs_size"][0]),
         preprocess_observations_fn=normalize,
     )
     # make_policy_fn = custom_ppo_networks.make_inference_fn(policy_networks)
@@ -200,7 +200,7 @@ def main(cfg: DictConfig):
     abstract_policy = (training_state.normalizer_params, training_state.params.policy)
 
     # orbax: restore the whole model (both policy module, and training state)
-    checkpoint_dir = hydra.utils.to_absolute_path(cfg.checkpoint_dir)
+    checkpoint_dir = hydra.utils.to_absolute_path(cfg.inference_params_path)
     options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
     with ocp.CheckpointManager(
         checkpoint_dir,

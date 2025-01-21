@@ -1,0 +1,146 @@
+data_path: data/ReferenceClip.p
+walker_type: rodent
+
+env_config:
+  env_name: rodent_multi_clip
+  task_name: imitation
+  walker_name: rodent
+  render_camera_name: close_profile
+  render_fps: 5
+
+  env_args:
+    solver: "cg"
+    iterations: 4
+    ls_iterations: 4
+    physics_steps_per_control_step: 5
+    reset_noise_scale: 1e-3
+    mj_model_timestep: 0.002
+    mocap_hz: 50
+
+  reward_weights:
+    too_far_dist: 0.01
+    bad_pose_dist: 20
+    bad_quat_dist: 1
+    ctrl_cost_weight: 0.02
+    ctrl_diff_cost_weight: 0.02
+    pos_reward_weight: 1.0
+    quat_reward_weight: 1.0
+    joint_reward_weight: 1.0
+    angvel_reward_weight: 0.0
+    bodypos_reward_weight: 0.0
+    endeff_reward_weight: 1.0
+    healthy_z_range: [0.0325, 0.5]
+    pos_reward_exp_scale: 400.0
+    quat_reward_exp_scale: 4.0
+    joint_reward_exp_scale: 0.25
+    angvel_reward_exp_scale: 0.5
+    bodypos_reward_exp_scale: 8.0
+    endeff_reward_exp_scale: 500.0
+    penalty_pos_distance_scale: [1.0, 1.0, 0.2]
+
+reference_config:
+  clip_length: 250
+  random_init_range: 50
+  traj_length: 5
+
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [512,512,512]
+  decoder_layer_sizes: [512,512,512]
+  critic_layer_sizes: [512,512,512]
+  intention_size: 60
+  kl_weight: 1e-4
+
+train_setup:
+  agent_name: rodent
+  run_name: imitation_debug
+  checkpoint_to_restore:
+  checkpoint_max_to_keep: 
+  checkpoint_keep_period: 
+  eval_every: 20_000_000
+  episode_length: 200
+  train_config:
+    num_envs: 1024
+    num_timesteps: 10_000_000_000
+    batch_size: 512
+    num_minibatches: 4
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2     
+    discounting: 0.95        
+    action_repeat: 1
+    entropy_cost: 1e-2
+    num_resets_per_eval: 1
+    reward_scaling: 1
+    normalize_observations: True
+    unroll_length: 20
+    seed: 0
+
+logging_config:
+  project_name: vnl_debug
+  clip_id: -1
+  model_path: model_checkpoints
+  algo_name: ppo
+
+walker_config:
+  torque_actuators: False 
+  rescale_factor: 0.8
+  joint_names:
+    - vertebra_1_extend
+    - hip_L_supinate
+    - hip_L_abduct
+    - hip_L_extend
+    - knee_L
+    - ankle_L
+    - toe_L
+    - hip_R_supinate
+    - hip_R_abduct
+    - hip_R_extend
+    - knee_R
+    - ankle_R
+    - toe_R
+    - vertebra_C11_extend
+    - vertebra_cervical_1_bend
+    - vertebra_axis_twist
+    - atlas
+    - mandible
+    - scapula_L_supinate
+    - scapula_L_abduct
+    - scapula_L_extend
+    - shoulder_L
+    - shoulder_sup_L
+    - elbow_L
+    - wrist_L
+    - scapula_R_supinate
+    - scapula_R_abduct
+    - scapula_R_extend
+    - shoulder_R
+    - shoulder_sup_R
+    - elbow_R
+    - wrist_R
+    - finger_R
+  body_names:
+    - torso
+    - pelvis
+    - upper_leg_L
+    - lower_leg_L
+    - foot_L
+    - upper_leg_R
+    - lower_leg_R
+    - foot_R
+    - skull
+    - jaw
+    - scapula_L
+    - upper_arm_L
+    - lower_arm_L
+    - finger_L
+    - scapula_R
+    - upper_arm_R
+    - lower_arm_R
+    - finger_R
+  end_eff_names:
+    - foot_L
+    - foot_R
+    - hand_L
+    - hand_R
+    - skull

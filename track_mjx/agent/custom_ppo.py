@@ -30,6 +30,7 @@ from brax.training import pmap
 from brax.training import types
 from brax.training.acme import running_statistics
 from brax.training.acme import specs
+import flax.training
 
 # from brax.training.agents.ppo import losses as ppo_losses
 from track_mjx.agent import custom_losses as ppo_losses
@@ -40,10 +41,13 @@ from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
 import flax
+import flax.struct
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import orbax.checkpoint as ocp
+from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
 
@@ -52,12 +56,9 @@ InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
 _PMAP_AXIS_NAME = "i"
-
-
 @flax.struct.dataclass
 class TrainingState:
     """Contains training state for the learner."""
-
     optimizer_state: optax.OptState
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
@@ -82,6 +83,8 @@ def train(
     environment: Union[envs_v1.Env, envs.Env],
     num_timesteps: int,
     episode_length: int,
+    ckpt_mgr: ocp.CheckpointManager,
+    checkpoint_to_restore: str | None = None,
     action_repeat: int = 1,
     num_envs: int = 1,
     max_devices_per_host: Optional[int] = None,
@@ -95,7 +98,7 @@ def train(
     batch_size: int = 32,
     num_minibatches: int = 16,
     num_updates_per_batch: int = 2,
-    num_evals: int = 1,
+    num_evals: int = 20,
     num_resets_per_eval: int = 0,
     normalize_observations: bool = False,
     reward_scaling: float = 1.0,
@@ -160,6 +163,8 @@ def train(
         saving policy checkpoints
       randomization_fn: a user-defined callback function that generates randomized
         environments
+      ckpt_mgr: an optional checkpoint manager for saving policy checkpoints
+      checkpoint_to_restore: an optional checkpoint to load before training, path
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -421,6 +426,15 @@ def train(
         ),
         env_steps=0,
     )
+    
+    # Load the checkpoint if it exists
+    if checkpoint_to_restore is not None:
+        options = ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork") # need to specify it in the config
+        prev_ckpt_mgr = ocp.CheckpointManager(checkpoint_to_restore, options=options)
+        latest_step = prev_ckpt_mgr.latest_step()
+        training_state = prev_ckpt_mgr.restore(latest_step, args=ocp.args.Composite(train_state=ocp.args.StandardRestore(training_state)))["train_state"]
+        logging.info(f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}")
+    
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
     )
@@ -447,22 +461,36 @@ def train(
         key=eval_key,
     )
 
+
     # Run initial eval
     metrics = {}
     if process_id == 0 and num_evals > 1:
+        policy_param = _unpmap((training_state.normalizer_params, training_state.params.policy))
         metrics = evaluator.run_evaluation(
-            _unpmap((training_state.normalizer_params, training_state.params.policy)),
+            policy_param,
             training_metrics={},
         )
         logging.info(metrics)
         progress_fn(0, metrics)
+        # Save checkpoints
+        logging.info("Saving initial checkpoint")
+        if ckpt_mgr is not None:
+            # new orbax API
+            ckpt_mgr.save(
+                step=0,
+                args=ocp.args.Composite(
+                    policy=ocp.args.StandardSave(policy_param),
+                    train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                ),
+            )
+        else:
+            logging.info("Skipping checkpoint save as ckpt_mgr is None")
 
     training_metrics = {}
     training_walltime = 0
     current_step = 0
     for it in range(num_evals_after_init):
         logging.info("starting iteration %s %s", it, time.time() - xt)
-
         for _ in range(max(num_resets_per_eval, 1)):
             # optimization
             epoch_key, local_key = jax.random.split(local_key)
@@ -479,7 +507,7 @@ def train(
             env_state = reset_fn(key_envs) if num_resets_per_eval > 0 else env_state
 
         if process_id == 0:
-            # Run evals.
+            # Run evaluation rollout, logging and checkpointing.
             metrics = evaluator.run_evaluation(
                 _unpmap(
                     (training_state.normalizer_params, training_state.params.policy)
@@ -488,16 +516,26 @@ def train(
             )
             logging.info(metrics)
             progress_fn(current_step, metrics)
-            params = _unpmap(
+            policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
+            # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=current_step,
                 make_policy=make_policy,
-                params=params,
+                params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )
+            # Save checkpoints
+            if ckpt_mgr is not None:
+                ckpt_mgr.save(
+                    step=current_step,
+                    args=ocp.args.Composite(
+                        policy=ocp.args.StandardSave(policy_param),
+                        train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                    ),
+                )
 
     total_steps = current_step
     assert total_steps >= num_timesteps

@@ -25,61 +25,46 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
+from track_mjx.environment.task.reward import RewardConfig
 
-_MOCAP_HZ = 50
 
-
-class RodentTracking(PipelineEnv):
+class SingleClipTracking(PipelineEnv):
     """Single clip walker tracking using Brax PiepelineEnv backend, agonist of the walker"""
 
     def __init__(
         self,
         reference_clip: ReferenceClip,
         walker: BaseWalker,
-        ref_len: int = 5,
-        too_far_dist: float = 0.1,
-        bad_pose_dist: float = jp.inf,
-        bad_quat_dist: float = jp.inf,
-        ctrl_cost_weight: float = 0.01,
-        ctrl_diff_cost_weight: float = 0.01,
-        pos_reward_weight: float = 1.0,
-        quat_reward_weight: float = 1.0,
-        joint_reward_weight: float = 1.0,
-        angvel_reward_weight: float = 1.0,
-        bodypos_reward_weight: float = 1.0,
-        endeff_reward_weight: float = 1.0,
-        healthy_z_range: tuple[float, float] = (0.03, 0.5),
-        physics_steps_per_control_step: int = 10,
-        reset_noise_scale: float = 1e-3,
-        solver: str = "cg",
-        iterations: int = 6,
-        ls_iterations: int = 6,
+        reward_config: RewardConfig,
+        physics_steps_per_control_step: int,
+        reset_noise_scale: float,
+        solver: str,
+        iterations: int,
+        ls_iterations: int,
+        mj_model_timestep: float,
+        mocap_hz: int,
+        clip_length: int,
+        random_init_range: int,
+        traj_length: int,
         **kwargs: Any,
     ):
-        """Initializes the RodentTracking environment.
+        """Initializes the SingleTracking environment.
 
         Args:
             reference_clip: The reference trajectory data.
             walker: The base walker model.
-            torque_actuators: Whether to use torque actuators. Defaults to False.
-            ref_len: Length of the reference trajectory. Defaults to 5.
-            too_far_dist: Threshold for "too far" penalty. Defaults to 0.1.
-            bad_pose_dist: Threshold for "bad pose" penalty. Defaults to infinity.
-            bad_quat_dist: Threshold for "bad quaternion" penalty. Defaults to infinity.
-            ctrl_cost_weight: Weight for control cost. Defaults to 0.01.
-            ctrl_diff_cost_weight: Weight for control difference cost. Defaults to 0.01.
-            pos_reward_weight: Weight for position reward. Defaults to 1.0.
-            quat_reward_weight: Weight for quaternion reward. Defaults to 1.0.
-            joint_reward_weight: Weight for joint reward. Defaults to 1.0.
-            angvel_reward_weight: Weight for angular velocity reward. Defaults to 1.0.
-            bodypos_reward_weight: Weight for body position reward. Defaults to 1.0.
-            endeff_reward_weight: Weight for end-effector reward. Defaults to 1.0.
-            healthy_z_range: Range for a healthy z-position. Defaults to (0.03, 0.5).
-            physics_steps_per_control_step: Number of physics steps per control step. Defaults to 10.
-            reset_noise_scale: Scale of noise for reset. Defaults to 1e-3.
-            solver: Solver type for Mujoco. Defaults to "cg".
-            iterations: Maximum number of solver iterations. Defaults to 6.
-            ls_iterations: Maximum number of line search iterations. Defaults to 6.
+            torque_actuators: Whether to use torque actuators.
+            reward_config: Reward configuration.
+            physics_steps_per_control_step: Number of physics steps per control step.
+            reset_noise_scale: Scale of noise for reset.
+            solver: Solver type for Mujoco.
+            iterations: Maximum number of solver iterations.
+            ls_iterations: Maximum number of line search iterations.
+            mj_model_timestep: fundamental time increment of the MuJoCo physics simulation
+            mocap_hz: cycles per second for the reference data
+            clip_length: clip length of the tracking clips
+            random_init_range: the initiated range
+            traj_length: one trajectory length
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         self.walker = walker
@@ -92,6 +77,7 @@ class RodentTracking(PipelineEnv):
         }[solver.lower()]
         mj_model.opt.iterations = iterations
         mj_model.opt.ls_iterations = ls_iterations
+        mj_model.opt.timestep = mj_model_timestep
 
         mj_model.opt.jacobian = 0
 
@@ -101,7 +87,7 @@ class RodentTracking(PipelineEnv):
         kwargs["backend"] = "mjx"
 
         max_physics_steps_per_control_step = int(
-            (1.0 / (_MOCAP_HZ * mj_model.opt.timestep))
+            (1.0 / (mocap_hz * mj_model.opt.timestep))
         )
 
         super().__init__(sys, **kwargs)
@@ -115,20 +101,9 @@ class RodentTracking(PipelineEnv):
         )
         print(f"self._steps_for_cur_frame: {self._steps_for_cur_frame}")
 
+        self._reward_config = reward_config
         self._reference_clip = reference_clip
-        self._bad_pose_dist = bad_pose_dist
-        self._too_far_dist = too_far_dist
-        self._bad_quat_dist = bad_quat_dist
-        self._ref_len = ref_len
-        self._pos_reward_weight = pos_reward_weight
-        self._quat_reward_weight = quat_reward_weight
-        self._joint_reward_weight = joint_reward_weight
-        self._angvel_reward_weight = angvel_reward_weight
-        self._bodypos_reward_weight = bodypos_reward_weight
-        self._endeff_reward_weight = endeff_reward_weight
-        self._ctrl_cost_weight = ctrl_cost_weight
-        self._ctrl_diff_cost_weight = ctrl_diff_cost_weight
-        self._healthy_z_range = healthy_z_range
+        self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
 
     def reset(self, rng: jp.ndarray) -> State:
@@ -142,7 +117,12 @@ class RodentTracking(PipelineEnv):
         """
         _, start_rng, rng = jax.random.split(rng, 3)
 
-        start_frame = jax.random.randint(start_rng, (), 0, 44)
+        episode_length = (
+            clip_length - random_init_range - traj_length
+        ) * self._steps_for_cur_frame
+
+        frame_range = clip_length - episode_length - traj_length
+        start_frame = jax.random.randint(start_rng, (), 0, frame_range)
 
         info = {
             "cur_frame": start_frame,
@@ -177,17 +157,29 @@ class RodentTracking(PipelineEnv):
 
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
 
-        # Add pos
-        qpos_with_pos = jp.array(self.sys.qpos0).at[:3].set(reference_frame.position)
+        # # Add pos
+        # qpos_with_pos = jp.array(self.sys.qpos0).at[:3].set(reference_frame.position)
 
-        # Add quat
-        new_qpos = qpos_with_pos.at[3:7].set(reference_frame.quaternion)
+        # # Add quat
+        # new_qpos = qpos_with_pos.at[3:7].set(reference_frame.quaternion)
 
-        # Add noise
-        qpos = new_qpos + jp.where(
-            noise,
-            jax.random.uniform(rng1, (self.sys.nq,), minval=low, maxval=hi),
-            jp.zeros((self.sys.nq,)),
+        # # Add noise
+        # qpos = new_qpos + jp.where(
+        #     noise,
+        #     jax.random.uniform(rng1, (self.sys.nq,), minval=low, maxval=hi),
+        #     jp.zeros((self.sys.nq,)),
+        # )
+
+        new_qpos = jp.concatenate(
+            (
+                reference_frame.position,
+                reference_frame.quaternion,
+                reference_frame.joints,
+            ),
+            axis=0,
+        )
+        qpos = new_qpos + jax.random.uniform(
+            rng1, (self.sys.nq,), minval=low, maxval=hi
         )
 
         qvel = jp.where(
@@ -274,18 +266,7 @@ class RodentTracking(PipelineEnv):
             walker=self.walker,
             action=action,
             info=info,
-            healthy_z_range=self._healthy_z_range,
-            too_far_dist=self._too_far_dist,
-            bad_pose_dist=self._bad_pose_dist,
-            bad_quat_dist=self._bad_quat_dist,
-            pos_reward_weight=self._pos_reward_weight,
-            quat_reward_weight=self._quat_reward_weight,
-            joint_reward_weight=self._joint_reward_weight,
-            angvel_reward_weight=self._angvel_reward_weight,
-            bodypos_reward_weight=self._bodypos_reward_weight,
-            endeff_reward_weight=self._endeff_reward_weight,
-            ctrl_cost_weight=self._ctrl_cost_weight,
-            ctrl_diff_cost_weight=self._ctrl_diff_cost_weight,
+            reward_config=self._reward_config,
         )
 
         info["prev_ctrl"] = action
@@ -370,10 +351,6 @@ class RodentTracking(PipelineEnv):
         """
 
         ref_traj = self._get_reference_trajectory(info)
-
-        # pos_array = data.qpos[:3]
-        # quat_array = data.qpos[3:7]
-        # joint_array = data.qpos[7:]
 
         # walker methods to compute the necessary distances and differences
         track_pos_local = self.walker.compute_local_track_positions(

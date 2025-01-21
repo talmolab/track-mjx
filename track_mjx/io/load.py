@@ -36,7 +36,7 @@ def make_singleclip_data(traj_data_path):
     Returns:
         _type_: _description_
     """
-    with h5py.File(traj_data_path, "r") as data:
+    with h5py.File(traj_data_path, "r+") as data:
         qpos = jp.array(data["qpos"][()])
         qvel = jp.array(data["qvel"][()])
         xpos = jp.array(data["xpos"][()])

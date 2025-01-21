@@ -5,11 +5,11 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 import os
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
-os.environ["MUJOCO_GL"] = "glfw"
+os.environ["MUJOCO_GL"] = "egl"
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )
-os.environ["PYOPENGL_PLATFORM"] = "egl"
+# os.environ["PYOPENGL_PLATFORM"] = "osmesa"
 
 from absl import flags
 import hydra
@@ -79,8 +79,8 @@ def main(cfg: DictConfig):
     # with open(input_data_path, "rb") as file:
     #     reference_clip = pickle.load(file)
 
-    traj_data_path = hydra.utils.to_absolute_path(cfg.data_path)
-    reference_clip = load.make_multiclip_data(traj_data_path)
+    data_path = hydra.utils.to_absolute_path(cfg.data_path) 
+    reference_clip = load.make_multiclip_data(data_path)
 
     print(reference_clip.body_positions.shape)
     # TODO (Kevin): add this as a yaml config

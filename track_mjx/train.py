@@ -186,7 +186,7 @@ def main(cfg: DictConfig):
             policy_params_fn_key,
             cfg=cfg,
             env=env,
-            wandb=wandb
+            wandb=wandb,
             model_path=model_path,
         )
 

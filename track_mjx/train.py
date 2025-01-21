@@ -32,7 +32,6 @@ from datetime import datetime
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
-from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
 from track_mjx.io import load
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
@@ -74,8 +73,6 @@ def main(cfg: DictConfig):
 
     # TODO: Fix this dependency issue
     import sys
-
-    sys.modules["preprocessing"] = preprocessing
 
     logging.info(f"Loading data: {cfg.data_path}")
     data_path = hydra.utils.to_absolute_path(cfg.data_path)

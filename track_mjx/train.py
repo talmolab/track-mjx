@@ -4,15 +4,12 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 
 import os
 
-# set default env variable if not set
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
-    "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6"
-)
-os.environ["MUJOCO_GL"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "egl")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+os.environ["MUJOCO_GL"] = "egl"
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )
+os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 from absl import flags
 import hydra
@@ -46,7 +43,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 @hydra.main(
-    version_base=None, config_path="config", config_name="rodent-2clips-intention"
+    version_base=None, config_path="config", config_name="fly-full-intention"
 )
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
@@ -189,6 +186,7 @@ def main(cfg: DictConfig):
             policy_params_fn_key,
             cfg=cfg,
             env=env,
+            wandb=wandb
             model_path=model_path,
         )
 

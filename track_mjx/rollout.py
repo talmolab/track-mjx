@@ -496,11 +496,6 @@ def main(cfg: DictConfig):
             eval_env, policy, key_env, max_steps=cfg.eval_config.num_eval_steps
         )
         print("Inference rollout completed.")
-        print("Collected observations shape:", trajectory["observations"].shape)
-        print("Collected actions shape:", trajectory["actions"].shape)
-        print("Collected rewards shape:", trajectory["rewards"].shape)
-        print("Collected dones shape:", trajectory["dones"].shape)
-
         save_path = Path(hydra.utils.to_absolute_path(cfg.eval_config.save_eval_path))
         save_path.mkdir(parents=True, exist_ok=True)
 

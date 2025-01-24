@@ -211,6 +211,7 @@ class SingleClipTracking(PipelineEnv):
             "bad_pose": zero,
             "bad_quat": zero,
             "fall": zero,
+            "nan": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -244,7 +245,7 @@ class SingleClipTracking(PipelineEnv):
 
         # Gets reference clip and indexes to current frame
         reference_clip = jax.tree_map(
-            lambda x: x[self._get_cur_frame(data)], self._get_reference_clip(info)
+            lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
 
         # reward calculation
@@ -312,7 +313,8 @@ class SingleClipTracking(PipelineEnv):
             bad_pose=bad_pose,
             bad_quat=bad_quat,
             fall=fall,
-        )
+            nan=nan,
+            )
 
         return state.replace(
             pipeline_state=data, obs=obs, reward=reward, done=done, info=info
@@ -322,7 +324,7 @@ class SingleClipTracking(PipelineEnv):
         """Returns reference clip; to be overridden in child classes"""
         return self._reference_clip
 
-    def _get_reference_trajectory(self, info) -> ReferenceClip:
+    def _get_reference_trajectory(self, info, data) -> ReferenceClip:
         """Slices ReferenceClip into the observation trajectory"""
 
         # Get the relevant slice of the reference clip
@@ -330,7 +332,7 @@ class SingleClipTracking(PipelineEnv):
             if len(x.shape) != 1:
                 return jax.lax.dynamic_slice_in_dim(
                     x,
-                    info["cur_frame"] + 1,
+                    info[self._get_cur_frame(info, data)] + 1,
                     self._ref_len,
                 )
             return jp.array([])
@@ -352,7 +354,7 @@ class SingleClipTracking(PipelineEnv):
                 - `proprioceptive_obs`: Observations of the agent's internal state (position and velocity).
         """
 
-        ref_traj = self._get_reference_trajectory(info)
+        ref_traj = self._get_reference_trajectory(info, data)
 
         # walker methods to compute the necessary distances and differences
         track_pos_local = self.walker.compute_local_track_positions(

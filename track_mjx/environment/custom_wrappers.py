@@ -85,8 +85,8 @@ class RenderRolloutWrapperTracking(Wrapper):
         clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)
         info = {
             "clip_idx": clip_idx,
-            "cur_frame": 0,
-            "steps_taken_cur_frame": 0,
+            "start_frame": 0,
+            # "steps_taken_cur_frame": 0,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,
@@ -104,8 +104,8 @@ class AutoResetWrapperTracking(Wrapper):
         state = self.env.reset(rng)
         state.info["first_pipeline_state"] = state.pipeline_state
         state.info["first_obs"] = state.obs
-        state.info["first_cur_frame"] = state.info["cur_frame"]
-        state.info["first_steps_taken_cur_frame"] = state.info["steps_taken_cur_frame"]
+        # state.info["first_cur_frame"] = state.info["cur_frame"]
+        # state.info["first_steps_taken_cur_frame"] = state.info["steps_taken_cur_frame"]
         state.info["first_prev_ctrl"] = state.info["prev_ctrl"]
         return state
 
@@ -127,14 +127,14 @@ class AutoResetWrapperTracking(Wrapper):
             where_done, state.info["first_pipeline_state"], state.pipeline_state
         )
         obs = where_done(state.info["first_obs"], state.obs)
-        state.info["cur_frame"] = where_done(
-            state.info["first_cur_frame"],
-            state.info["cur_frame"],
-        )
-        state.info["steps_taken_cur_frame"] = where_done(
-            state.info["first_steps_taken_cur_frame"],
-            state.info["steps_taken_cur_frame"],
-        )
+        # state.info["cur_frame"] = where_done(
+        #     state.info["first_cur_frame"],
+        #     state.info["cur_frame"],
+        # )
+        # state.info["steps_taken_cur_frame"] = where_done(
+        #     state.info["first_steps_taken_cur_frame"],
+        #     state.info["steps_taken_cur_frame"],
+        # )
         state.info["prev_ctrl"] = where_done(
             state.info["first_prev_ctrl"],
             state.info["prev_ctrl"],
@@ -150,8 +150,8 @@ class EvalClipWrapperTracking(Wrapper):
 
         info = {
             "clip_idx": clip_idx,
-            "cur_frame": 0,
-            "steps_taken_cur_frame": 0,
+            "start_frame": 0,
+            # "steps_taken_cur_frame": 0,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,

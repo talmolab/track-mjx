@@ -125,8 +125,8 @@ class SingleClipTracking(PipelineEnv):
         start_frame = jax.random.randint(start_rng, (), 0, frame_range)
 
         info = {
-            "cur_frame": start_frame,
-            "steps_taken_cur_frame": 0,
+            "start_frame": start_frame,
+            # "steps_taken_cur_frame": 0,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,
@@ -152,7 +152,7 @@ class SingleClipTracking(PipelineEnv):
 
         # Get reference clip and select the start frame
         reference_frame = jax.tree_map(
-            lambda x: x[info["cur_frame"]], self._get_reference_clip(info)
+            lambda x: x[info["start_frame"]], self._get_reference_clip(info)
         )
 
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
@@ -192,7 +192,7 @@ class SingleClipTracking(PipelineEnv):
 
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
 
-        # Used to intialize our intention network
+        # Used to initialize our intention network
         info["reference_obs_size"] = reference_obs.shape[-1]
 
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
@@ -232,17 +232,19 @@ class SingleClipTracking(PipelineEnv):
         # Logic for moving to next frame to track to maintain timesteps alignment
         # TODO: Update this to just refer to model.timestep
         info = state.info.copy()
-        info["steps_taken_cur_frame"] += 1
-        info["cur_frame"] += jp.where(
-            info["steps_taken_cur_frame"] == self._steps_for_cur_frame, 1, 0
-        )
-        info["steps_taken_cur_frame"] *= jp.where(
-            info["steps_taken_cur_frame"] == self._steps_for_cur_frame, 0, 1
-        )
+        # info["steps_taken_cur_frame"] += 1
+        # info["cur_frame"] += jp.where(
+        #     info["steps_taken_cur_frame"] == self._steps_for_cur_frame, 1, 0
+        # )
+        # info["steps_taken_cur_frame"] *= jp.where(
+        #     info["steps_taken_cur_frame"] == self._steps_for_cur_frame, 0, 1
+        # )
+
+        # floor of data.time * mocap_hz
 
         # Gets reference clip and indexes to current frame
         reference_clip = jax.tree_map(
-            lambda x: x[info["cur_frame"]], self._get_reference_clip(info)
+            lambda x: x[self._get_cur_frame(data)], self._get_reference_clip(info)
         )
 
         # reward calculation
@@ -385,3 +387,7 @@ class SingleClipTracking(PipelineEnv):
             ]
         )
         return reference_obs, prorioceptive_obs
+
+    def _get_cur_frame(self, info, data: mjx.Data) -> int:
+        """Returns the current frame index based on the simulation time"""
+        return jp.floor(data.time * self._mocap_hz + info["start_frame"])

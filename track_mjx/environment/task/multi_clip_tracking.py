@@ -103,8 +103,8 @@ class MultiClipTracking(SingleClipTracking):
         # clip_idx = 492
         info = {
             "clip_idx": clip_idx,
-            "cur_frame": start_frame,
-            "steps_taken_cur_frame": 0,
+            "start_frame": start_frame,
+            # "steps_taken_cur_frame": 0,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,

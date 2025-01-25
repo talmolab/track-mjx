@@ -1,4 +1,4 @@
-data_path:
+data_path: 
 walker_type: fly
 
 eval_config:
@@ -12,7 +12,7 @@ env_config:
   task_name: imitation
   walker_name: fly
   render_camera_name: track1-0
-  render_fps: 20
+  render_fps: 60
 
   env_args:
     solver: "cg"
@@ -60,7 +60,7 @@ network_config:
 train_setup:
   agent_name: fly
   run_name: imitation_debug
-  eval_every: 1_000_000
+  eval_every: 10_000_000
   episode_length: 1000
   checkpoint_to_restore:
   checkpoint_max_to_keep: 

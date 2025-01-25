@@ -549,6 +549,7 @@ def train(
                     args=ocp.args.Composite(
                         policy=ocp.args.StandardSave(policy_param),
                         train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                        custom_metadata=ocp.args.JsonSave(metadata),
                     ),
                 )
 

@@ -132,7 +132,7 @@ def main(cfg: DictConfig):
 
     # Generates a completely random UUID (version 4), take the first 8 characters
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
+    model_path = f"./{cfg.logging_config.model_path}"#/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
     model_path = hydra.utils.to_absolute_path(model_path)
     logging.info(f"Model Checkpoint Path: {model_path}")
 
@@ -144,8 +144,27 @@ def main(cfg: DictConfig):
         step_prefix="PPONetwork",
     )
     ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
-    
+    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
     metadata = OmegaConf.to_container(cfg, resolve=True)
+    
+    with ocp.CheckpointManager(
+        model_path,
+        options=options,
+    ) as mngr:
+        print(f"latest checkpoint step: {mngr.latest_step()}")
+        try:
+            latest_step = mngr.latest_step()
+            abstract_metadata = OmegaConf.to_container(cfg, resolve=True)
+            restored_metadata = mngr.restore(latest_step, args=ocp.args.Composite(custom_metadata=ocp.args.JsonRestore(abstract_metadata)),
+            )['custom_metadata']
+            
+            print(f"Successfully restored metadata")
+            
+            cfg = OmegaConf.create(restored_metadata)
+            metadata = OmegaConf.to_container(cfg, resolve=True)
+                
+        except Exception as e:
+            print(f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs")
 
     train_fn = functools.partial(
         custom_ppo.train,

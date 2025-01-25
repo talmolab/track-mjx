@@ -56,7 +56,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 @hydra.main(
-    version_base=None, config_path="config", config_name="scott-rodent-full-intention"
+    version_base=None, config_path="config", config_name="fly-full-intention"
 )
 def main(cfg: DictConfig):
     """
@@ -75,13 +75,14 @@ def main(cfg: DictConfig):
         print(f"latest checkpoint step: {mngr.latest_step()}")
         try:
             latest_step = mngr.latest_step()
-            restored_data = mngr.restore(latest_step)
-            restored_metadata = restored_data.custom_metadata
+            abstract_metadata = OmegaConf.to_container(cfg, resolve=True)
+            restored_metadata = mngr.restore(latest_step, args=ocp.args.Composite(custom_metadata=ocp.args.JsonRestore(abstract_metadata)),
+            )['custom_metadata']
             
             print(f"Successfully restored metadata")
             
             cfg = OmegaConf.create(restored_metadata)
-            
+                
         except Exception as e:
             print(f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs")
 
@@ -375,6 +376,17 @@ def main(cfg: DictConfig):
                         1.0,
                         1.0,
                     ]  # Light blue color, fully opaque
+        
+        if walker_type == "fly":
+            for i in range(mj_model.ngeom):
+                geom_name = mj_model.geom(i).name
+                if "-1" in geom_name:  # ghost
+                    mj_model.geom(i).rgba = [
+                        1,
+                        1,
+                        1,
+                        0.5,
+                    ]  # White color, 50% transparent
 
         scene_option = mujoco.MjvOption()
         scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]

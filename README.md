@@ -91,7 +91,7 @@ The `data_path` will need to point to a Pickle file with the outputs of [`stac-m
 To run a pure inference pass with a trained parameter, you can run:
 
 ```bash
-python -m track_mjx.rollout data_path="data/RodentReferenceClip.p" +inference_params_path="model_checkpoints/test_rodent_checkpoints"
+python -m track_mjx.rollout data_path="data/RodentReferenceClip.p" +inference_params_path="model_checkpoints"
 ```
 
 ### `screen` based terminal

@@ -6,9 +6,9 @@ import os
 
 # set default env variable if not set
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
-    "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6"
+    "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
 )
-os.environ["MUJOCO_GL"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "egl")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
@@ -127,7 +127,7 @@ def main(cfg: DictConfig):
         traj_config.clip_length
         - traj_config.random_init_range
         - traj_config.traj_length
-    ) * env._steps_for_cur_frame
+    ) * int(1.0 / (env_args.mocap_hz * env_args.mj_model_timestep))
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 

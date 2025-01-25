@@ -332,7 +332,7 @@ class SingleClipTracking(PipelineEnv):
             if len(x.shape) != 1:
                 return jax.lax.dynamic_slice_in_dim(
                     x,
-                    info[self._get_cur_frame(info, data)] + 1,
+                    self._get_cur_frame(info, data) + 1,
                     self._ref_len,
                 )
             return jp.array([])
@@ -392,4 +392,4 @@ class SingleClipTracking(PipelineEnv):
 
     def _get_cur_frame(self, info, data: mjx.Data) -> int:
         """Returns the current frame index based on the simulation time"""
-        return jp.floor(data.time * self._mocap_hz + info["start_frame"])
+        return jp.array(jp.floor(data.time * self._mocap_hz + info["start_frame"]), int)

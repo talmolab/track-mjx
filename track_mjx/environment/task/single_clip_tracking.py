@@ -86,20 +86,13 @@ class SingleClipTracking(PipelineEnv):
         kwargs["n_frames"] = kwargs.get("n_frames", physics_steps_per_control_step)
         kwargs["backend"] = "mjx"
 
-        # max_physics_steps_per_control_step = int(
-        #     (1.0 / (mocap_hz * mj_model.opt.timestep))
-        # )
-
         super().__init__(sys, **kwargs)
-        # if max_physics_steps_per_control_step % physics_steps_per_control_step != 0:
-        #     raise ValueError(
-        #         f"physics_steps_per_control_step ({physics_steps_per_control_step}) must be a factor of ({max_physics_steps_per_control_step})"
-        #     )
 
-        # self._steps_for_cur_frame = (
-        #     max_physics_steps_per_control_step / physics_steps_per_control_step
-        # )
-        # print(f"self._steps_for_cur_frame: {self._steps_for_cur_frame}")
+        self._steps_for_cur_frame = (
+            1.0 / (mocap_hz * mj_model.opt.timestep)
+        ) / physics_steps_per_control_step
+        print(f"env._steps_for_cur_frame: {self._steps_for_cur_frame}")
+
         self._mocap_hz = mocap_hz
         self._reward_config = reward_config
         self._reference_clip = reference_clip

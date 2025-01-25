@@ -127,7 +127,7 @@ def main(cfg: DictConfig):
         traj_config.clip_length
         - traj_config.random_init_range
         - traj_config.traj_length
-    ) * int(1.0 / (env_args.mocap_hz * env_args.mj_model_timestep))
+    ) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 

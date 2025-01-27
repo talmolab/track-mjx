@@ -84,6 +84,7 @@ def train(
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
+    dict_config: dict,
     checkpoint_to_restore: str | None = None,
     action_repeat: int = 1,
     num_envs: int = 1,
@@ -165,6 +166,9 @@ def train(
         environments
       ckpt_mgr: an optional checkpoint manager for saving policy checkpoints
       checkpoint_to_restore: an optional checkpoint to load before training, path
+        to the checkpoint
+      dict_config: a dictionary that contains the configuration for the training, 
+        will be saved to the orbax checkpoint alongside with the policy and training state
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -481,6 +485,7 @@ def train(
                 args=ocp.args.Composite(
                     policy=ocp.args.StandardSave(policy_param),
                     train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                    config=ocp.args.JsonSave(dict_config),
                 ),
             )
         else:
@@ -515,14 +520,14 @@ def train(
                 training_metrics,
             )
             logging.info(metrics)
-            progress_fn(current_step, metrics)
+            progress_fn(it, metrics)
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
-                current_step=current_step,
+                current_step=it,
                 make_policy=make_policy,
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
@@ -530,10 +535,11 @@ def train(
             # Save checkpoints
             if ckpt_mgr is not None:
                 ckpt_mgr.save(
-                    step=current_step,
+                    step=it,
                     args=ocp.args.Composite(
                         policy=ocp.args.StandardSave(policy_param),
                         train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                        config=ocp.args.JsonSave(dict_config),
                     ),
                 )
 

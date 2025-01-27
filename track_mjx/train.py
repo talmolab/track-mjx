@@ -6,7 +6,7 @@ import os
 
 # set default env variable if not set
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6")
-os.environ["MUJOCO_GL"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "egl")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
@@ -43,7 +43,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips-high-regularized")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -62,7 +62,42 @@ def main(cfg: DictConfig):
     envs.register_environment("fly_multi_clip", MultiClipTracking)
 
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
-    env_cfg = OmegaConf.to_container(cfg, resolve=True)
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+
+    # Generates a completely random UUID (version 4), take the first 8 characters
+    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+    model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
+    model_path = hydra.utils.to_absolute_path(model_path)
+    logging.info(f"Model Checkpoint Path: {model_path}")
+
+    # initialize orbax checkpoint manager
+    mgr_options = ocp.CheckpointManagerOptions(
+        create=True,
+        max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],
+        keep_period=cfg.train_setup["checkpoint_keep_period"],
+        step_prefix="PPONetwork",
+    )
+    ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
+
+    # try to restore configs if previously trained
+    if cfg.train_setup["checkpoint_to_restore"] is not None:
+        with ocp.CheckpointManager(
+            cfg.train_setup["checkpoint_to_restore"],
+            options=mgr_options,
+        ) as mngr:
+            print(f"latest checkpoint step: {mngr.latest_step()}")
+            try:
+                latest_step = mngr.latest_step()
+                abstract_config = OmegaConf.to_container(cfg, resolve=True)
+                restored_config = mngr.restore(
+                    latest_step,
+                    args=ocp.args.Composite(config=ocp.args.JsonRestore(abstract_config)),
+                )["config"]
+                print(f"Successfully restored config")
+                cfg = OmegaConf.create(restored_config)
+            except Exception as e: # TODO: too broad exception, fix later
+                print(f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs")
+
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
@@ -84,7 +119,7 @@ def main(cfg: DictConfig):
         "fly": Fly,
     }
 
-    walker_class = walker_map[env_cfg["walker_type"]]
+    walker_class = walker_map[cfg_dict["walker_type"]]
     walker = walker_class(**walker_config)
 
     # didn't use args** since penalty_pos_distance_scale need conversion
@@ -127,17 +162,6 @@ def main(cfg: DictConfig):
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
-    # Generates a completely random UUID (version 4), take the first 8 characters
-    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
-    model_path = hydra.utils.to_absolute_path(model_path)
-    logging.info(f"Model Checkpoint Path: {model_path}")
-
-    # initialize orbax checkpoint manager
-    mgr_options = ocp.CheckpointManagerOptions(create=True, max_to_keep=cfg.train_setup["checkpoint_max_to_keep"], keep_period=cfg.train_setup["checkpoint_keep_period"], step_prefix="PPONetwork")
-    ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
-
-
     train_fn = functools.partial(
         custom_ppo.train,
         **train_config,
@@ -154,6 +178,7 @@ def main(cfg: DictConfig):
         ),
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
+        dict_config=cfg_dict,
     )
 
     wandb.init(

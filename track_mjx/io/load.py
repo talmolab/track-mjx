@@ -1,9 +1,14 @@
+from typing import Union
 import h5py
 import numpy as np
 import jax
 from jax import numpy as jp
 from flax import struct
 import yaml
+from omegaconf import DictConfig, OmegaConf
+from pathlib import Path
+from typing import Dict
+import hydra
 
 
 @struct.dataclass
@@ -25,6 +30,26 @@ class ReferenceClip:
 
     # xquat
     body_quaternions: jp.ndarray = None
+
+
+def load_configs(config_dir: Union[Path, str], config_name: str) -> DictConfig:
+    """Initializes configs with hydra.
+
+    Args:
+        config_dir ([Path, str]): Absolute path to config directory.
+
+    Returns:
+        DictConfig: stac.yaml config to use in run_stac()
+    """
+    # Initialize Hydra and set the config path
+    with hydra.initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        # Compose the configuration by specifying the config name
+        cfg = hydra.compose(config_name=config_name)
+        # TODO: Convert to structured config
+        # structured_config = OmegaConf.structured(io.Config)
+        # OmegaConf.merge(structured_config, cfg)
+        # print("Config loaded and validated.")
+        return cfg
 
 
 def make_singleclip_data(traj_data_path):

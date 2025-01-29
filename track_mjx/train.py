@@ -57,6 +57,45 @@ def main(cfg: DictConfig):
     flags.DEFINE_enum("solver", "cg", ["cg", "newton"], "constraint solver")
     flags.DEFINE_integer("iterations", 4, "number of solver iterations")
     flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
+    
+    # Generates a completely random UUID (version 4), take the first 8 characters
+    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+    model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
+    model_path = hydra.utils.to_absolute_path(model_path)
+    logging.info(f"Model Checkpoint Path: {model_path}")
+    
+    # initialize orbax checkpoint manager
+    mgr_options = ocp.CheckpointManagerOptions(
+        create=True,
+        max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],
+        keep_period=cfg.train_setup["checkpoint_keep_period"],
+        step_prefix="PPONetwork",
+    )
+    ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
+    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
+    metadata = OmegaConf.to_container(cfg, resolve=True)
+    
+    if cfg.train_setup.checkpoint_to_restore is not None:
+        with ocp.CheckpointManager(
+            model_path,
+            options=options,
+        ) as mngr:
+            print(f"latest checkpoint step: {mngr.latest_step()}")
+            try:
+                latest_step = mngr.latest_step()
+                abstract_metadata = OmegaConf.to_container(cfg, resolve=True)
+                restored_metadata = mngr.restore(latest_step, args=ocp.args.Composite(custom_metadata=ocp.args.JsonRestore(abstract_metadata)),
+                )['custom_metadata']
+                
+                print(f"Successfully restored metadata")
+                
+                cfg = OmegaConf.create(restored_metadata)
+                metadata = OmegaConf.to_container(cfg, resolve=True)
+                    
+            except Exception as e:
+                print(f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs")
+    else:
+        print('No restore needed for metadata as no restored policy')
 
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
@@ -129,42 +168,6 @@ def main(cfg: DictConfig):
     ) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
-
-    # Generates a completely random UUID (version 4), take the first 8 characters
-    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    model_path = f"./{cfg.logging_config.model_path}"#/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
-    model_path = hydra.utils.to_absolute_path(model_path)
-    logging.info(f"Model Checkpoint Path: {model_path}")
-
-    # initialize orbax checkpoint manager
-    mgr_options = ocp.CheckpointManagerOptions(
-        create=True,
-        max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],
-        keep_period=cfg.train_setup["checkpoint_keep_period"],
-        step_prefix="PPONetwork",
-    )
-    ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
-    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
-    metadata = OmegaConf.to_container(cfg, resolve=True)
-    
-    with ocp.CheckpointManager(
-        model_path,
-        options=options,
-    ) as mngr:
-        print(f"latest checkpoint step: {mngr.latest_step()}")
-        try:
-            latest_step = mngr.latest_step()
-            abstract_metadata = OmegaConf.to_container(cfg, resolve=True)
-            restored_metadata = mngr.restore(latest_step, args=ocp.args.Composite(custom_metadata=ocp.args.JsonRestore(abstract_metadata)),
-            )['custom_metadata']
-            
-            print(f"Successfully restored metadata")
-            
-            cfg = OmegaConf.create(restored_metadata)
-            metadata = OmegaConf.to_container(cfg, resolve=True)
-                
-        except Exception as e:
-            print(f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs")
 
     train_fn = functools.partial(
         custom_ppo.train,

@@ -184,88 +184,101 @@ def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callab
     return jit_inference_fn
 
 
-def generate_rollout(environment: Env, cfg_dict: Dict | DictConfig, inference_fn: Callable, clip_idx: int | None = None) -> Dict:
+def create_rollout_generator(
+    environment: Env, inference_fn: Callable
+) -> Callable[[Dict | DictConfig, int | None], Dict]:
     """
-    Generate a rollout for a given clip id, with the loaded checkpoint
+    Creates a rollout generator with JIT-compiled functions.
 
     Args:
-        environment (Env): The environment to generate the rollout for
-        clip_id (int): The clip id to generate the rollout for, if None, will generate a random clip
+        environment (Env): The environment to generate rollouts for.
+        inference_fn (Callable): The inference function to compute controls.
 
-    returns:
-        ctrls (List): The controls for the rollout
-        extrases (List): The extra outputs from the policy for the rollout
-        rewards (Dict): The rewards for the rollout
+    Returns:
+        Callable: A generate_rollout function that can be called with configuration.
     """
-    ref_trak_config = cfg_dict["reference_config"]
-    # Wrap the env in the brax autoreset and episode wrappers
+    # Wrap the environment
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(environment)
-    
-    jit_inference_fn = jax.jit(inference_fn)
 
-    # define the jit reset/step functions
+    # JIT-compile the necessary functions
+    jit_inference_fn = jax.jit(inference_fn)
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
 
-    rollout_key = jax.random.PRNGKey(42)
-    rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
-    # do a rollout on the saved model
-    state = jit_reset(reset_rng, clip_idx=clip_idx)
+    def generate_rollout(cfg_dict: Dict, clip_idx: int | None = None) -> Dict:
+        """
+        Generates a rollout using pre-compiled JIT functions.
 
-    rollout_states = [state]
-    ctrls, activations, rewards = [], [], {}
-    for i in range(
-        int(ref_trak_config.clip_length * environment._steps_for_cur_frame) - 1
-    ):  # why is this? what's the observation for the last few step?
-        _, act_rng = jax.random.split(act_rng)
-        obs = state.obs
-        ctrl, extras = jit_inference_fn(obs, act_rng)
-        state = jit_step(state, ctrl)
-        rollout_states.append(state)
-        ctrls.append(ctrl)
-        activations.append(extras["activations"])
+        Args:
+            cfg_dict (Dict): Configuration dictionary.
+            clip_idx (Optional[int]): Specific clip ID to generate the rollout for.
 
-    # might include those reward term in the visual rendering
-    pos_rewards = [state.metrics["pos_reward"] for state in rollout_states]
-    endeff_rewards = [state.metrics["endeff_reward"] for state in rollout_states]
-    quat_rewards = [state.metrics["quat_reward"] for state in rollout_states]
-    angvel_rewards = [state.metrics["angvel_reward"] for state in rollout_states]
-    bodypos_rewards = [state.metrics["bodypos_reward"] for state in rollout_states]
-    joint_rewards = [state.metrics["joint_reward"] for state in rollout_states]
-    summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout_states]
-    joint_distances = [state.info["joint_distance"] for state in rollout_states]
-    torso_heights = [state.pipeline_state.xpos[environment.walker._torso_idx][2] for state in rollout_states]
-    rewards = {
-        "pos_rewards": pos_rewards,
-        "endeff_rewards": endeff_rewards,
-        "quat_rewards": quat_rewards,
-        "angvel_rewards": angvel_rewards,
-        "bodypos_rewards": bodypos_rewards,
-        "joint_rewards": joint_rewards,
-        "summed_pos_distances": summed_pos_distances,
-        "joint_distances": joint_distances,
-        "torso_heights": torso_heights,
-    }
-    # get qposes for both rollout and reference
-    ref_traj = rollout_env._get_reference_clip(rollout_states[0].info)
-    qposes_ref = np.repeat(
-        np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-        environment._steps_for_cur_frame,
-        axis=0,
-    )
-    qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout_states])
-    # processed_states = [process_state_to_save(state) for state in rollout_states]
-    observations = [state.obs for state in rollout_states]
-    output = {
-        "rewards": rewards,
-        "observations": observations,
-        # "states": processed_states,
-        "ctrl": ctrls,
-        "activations": activations,
-        "qposes_ref": qposes_ref,
-        "qposes_rollout": qposes_rollout,
-        "info": [state.info for state in rollout_states],
-    }
+        Returns:
+            Dict: A dictionary containing rollout data.
+        """
+        ref_trak_config = cfg_dict["reference_config"]
 
-    output = jax.tree.map(lambda x: np.array(x), output)
-    return output
+        # Initialize PRNG keys
+        rollout_key = jax.random.PRNGKey(42)
+        rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
+
+        # Reset the environment
+        state = jit_reset(reset_rng, clip_idx=clip_idx)
+
+        rollout_states = [state]
+        ctrls, activations = [], []
+
+        num_steps = int(ref_trak_config.clip_length * environment._steps_for_cur_frame) - 1
+
+        for _ in range(num_steps):
+            rollout_key, act_rng = jax.random.split(act_rng)
+            obs = state.obs
+            ctrl, extras = jit_inference_fn(obs, act_rng)
+            state = jit_step(state, ctrl)
+
+            rollout_states.append(state)
+            ctrls.append(ctrl)
+            activations.append(extras["activations"])
+
+        # Collect rewards and other metrics
+        rewards = {
+            "pos_rewards": [s.metrics["pos_reward"] for s in rollout_states],
+            "endeff_rewards": [s.metrics["endeff_reward"] for s in rollout_states],
+            "quat_rewards": [s.metrics["quat_reward"] for s in rollout_states],
+            "angvel_rewards": [s.metrics["angvel_reward"] for s in rollout_states],
+            "bodypos_rewards": [s.metrics["bodypos_reward"] for s in rollout_states],
+            "joint_rewards": [s.metrics["joint_reward"] for s in rollout_states],
+            "summed_pos_distances": [s.info["summed_pos_distance"] for s in rollout_states],
+            "joint_distances": [s.info["joint_distance"] for s in rollout_states],
+            "torso_heights": [s.pipeline_state.xpos[environment.walker._torso_idx][2] for s in rollout_states],
+        }
+
+        # Reference and rollout qposes
+        ref_traj = rollout_env._get_reference_clip(rollout_states[0].info)
+        qposes_ref = np.repeat(
+            np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+            environment._steps_for_cur_frame,
+            axis=0,
+        )
+        qposes_rollout = np.array([s.pipeline_state.qpos for s in rollout_states])
+
+        # Observations and additional info
+        observations = [s.obs for s in rollout_states]
+        info = [s.info for s in rollout_states]
+
+        # Prepare the output dictionary
+        output = {
+            "rewards": rewards,
+            "observations": observations,
+            "ctrl": ctrls,
+            "activations": activations,
+            "qposes_ref": qposes_ref,
+            "qposes_rollout": qposes_rollout,
+            "info": info,
+        }
+
+        # Convert all lists to NumPy arrays
+        output = jax.tree_map(lambda x: np.array(x), output)
+        return output
+
+    return generate_rollout

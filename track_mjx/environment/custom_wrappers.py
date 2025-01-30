@@ -77,12 +77,22 @@ def wrap(
 
 
 class RenderRolloutWrapperTracking(Wrapper):
-    """Always resets to 0"""
+    """Always resets to the first frame of the clips for complete rollouts."""
 
-    def reset(self, rng: jax.Array) -> State:
+    def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
+        """
+        Resets the environment to an initial state.
+
+        Args:
+            rng (jax.Array): Random key for reproducibility.
+            clip_idx (int | None, optional): clip index to reset to. if None, randomly choose the clip . Defaults to None.
+
+        Returns:
+            State: The initial state of the environment.
+        """
         _, clip_rng, rng = jax.random.split(rng, 3)
-
-        clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)
+        if clip_idx is None:
+            clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
         info = {
             "clip_idx": clip_idx,
             "cur_frame": 0,

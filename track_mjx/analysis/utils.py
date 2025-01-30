@@ -1,6 +1,7 @@
 """Utility functions for saving and loading data in HDF5 format."""
 
 import h5py
+import numpy as np
 
 
 def save_to_h5py(file, data, group_path="/"):
@@ -51,6 +52,6 @@ def load_from_h5py(file, group_path="/"):
         raise TypeError(f"Unsupported group type: {type(group)}")
 
 
-# Example usage
-with h5py.File("clip1_rollout.h5", "r") as h5file:
-    loaded_data = load_from_h5py(h5file)
+# # Example usage
+# with h5py.File("clip1_rollout.h5", "r") as h5file:
+#     loaded_data = load_from_h5py(h5file)

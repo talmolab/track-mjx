@@ -265,7 +265,7 @@ def create_rollout_generator(
         )
 
         def prepend(element, arr):
-            # Handle scalar (0-dim) elements by reshaping to 1-dim
+            # Scalar elements shouldn't be modified
             if arr.ndim == 0:
                 return arr
 
@@ -314,10 +314,6 @@ def create_rollout_generator(
         # Collect qposes from states
         qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
 
-        # Observations and additional info
-        # observations = [s.obs for s in rollout_states]
-        # info = [s.info for s in rollout_states]
-
         return {
             "rewards": rewards,
             "observations": jax.vmap(lambda s: s.obs)(rollout_states),
@@ -328,4 +324,4 @@ def create_rollout_generator(
             "info": jax.vmap(lambda s: s.info)(rollout_states),
         }
 
-    return jax.jit(generate_rollout)
+    return generate_rollout

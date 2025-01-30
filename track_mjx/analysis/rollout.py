@@ -27,6 +27,7 @@ from track_mjx.agent import custom_losses as ppo_losses
 
 from omegaconf import DictConfig, OmegaConf
 
+
 def restore_config(checkpoint_path: str) -> DictConfig:
     """
     Restore the config from the checkpoint
@@ -44,9 +45,11 @@ def restore_config(checkpoint_path: str) -> DictConfig:
     ) as mngr:
         print(f"latest checkpoint step: {mngr.latest_step()}")
         config = mngr.restore(
-            mngr.latest_step(), args=ocp.args.Composite(config=ocp.args.JsonRestore(None))
+            mngr.latest_step(),
+            args=ocp.args.Composite(config=ocp.args.JsonRestore(None)),
         )["config"]
     return config
+
 
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     envs.register_environment("rodent_single_clip", SingleClipTracking)
@@ -108,7 +111,9 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     return env
 
 
-def create_abstract_policy(environment: Env, cfg_dict: Dict | DictConfig) -> Tuple[Tuple, Callable]:
+def create_abstract_policy(
+    environment: Env, cfg_dict: Dict | DictConfig
+) -> Tuple[Tuple, Callable]:
     """
     Create the policy function for the environment
 
@@ -122,9 +127,15 @@ def create_abstract_policy(environment: Env, cfg_dict: Dict | DictConfig) -> Tup
     """
     network_factory = functools.partial(
         custom_ppo_networks.make_intention_ppo_networks,
-        encoder_hidden_layer_sizes=tuple(cfg_dict["network_config"]["encoder_layer_sizes"]),
-        decoder_hidden_layer_sizes=tuple(cfg_dict["network_config"]["decoder_layer_sizes"]),
-        value_hidden_layer_sizes=tuple(cfg_dict["network_config"]["critic_layer_sizes"]),
+        encoder_hidden_layer_sizes=tuple(
+            cfg_dict["network_config"]["encoder_layer_sizes"]
+        ),
+        decoder_hidden_layer_sizes=tuple(
+            cfg_dict["network_config"]["decoder_layer_sizes"]
+        ),
+        value_hidden_layer_sizes=tuple(
+            cfg_dict["network_config"]["critic_layer_sizes"]
+        ),
     )
 
     reset_fn = environment.reset
@@ -146,7 +157,9 @@ def create_abstract_policy(environment: Env, cfg_dict: Dict | DictConfig) -> Tup
     )
 
     abstract_policy = (
-        running_statistics.init_state(specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))),
+        running_statistics.init_state(
+            specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
+        ),
         init_params.policy,
     )
 
@@ -171,21 +184,27 @@ def restore_policy(checkpoint_path: str, abstract_policy: Tuple) -> Tuple:
     ) as mngr:
         print(f"latest checkpoint step: {mngr.latest_step()}")
         policy = mngr.restore(
-            mngr.latest_step(), args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy))
+            mngr.latest_step(),
+            args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy)),
         )["policy"]
     return policy
+
 
 def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callable:
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(environment)
     abstract_policy, make_policy = create_abstract_policy(rollout_env, cfg_dict)
     # load the checkpoint
-    policy = restore_policy(cfg_dict["train_setup"]["checkpoint_to_restore"], abstract_policy)
-    jit_inference_fn = jax.jit(make_policy(policy, deterministic=True, get_activation=True))
+    policy = restore_policy(
+        cfg_dict["train_setup"]["checkpoint_to_restore"], abstract_policy
+    )
+    jit_inference_fn = jax.jit(
+        make_policy(policy, deterministic=True, get_activation=True)
+    )
     return jit_inference_fn
 
 
 def create_rollout_generator(
-    environment: Env, inference_fn: Callable
+    ref_traj_config: Dict | DictConfig, environment: Env, inference_fn: Callable
 ) -> Callable[[Dict | DictConfig, int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
@@ -205,7 +224,7 @@ def create_rollout_generator(
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
 
-    def generate_rollout(cfg_dict: Dict, clip_idx: int | None = None) -> Dict:
+    def generate_rollout(clip_idx: int | None = None) -> Dict:
         """
         Generates a rollout using pre-compiled JIT functions.
 
@@ -216,69 +235,97 @@ def create_rollout_generator(
         Returns:
             Dict: A dictionary containing rollout data.
         """
-        ref_trak_config = cfg_dict["reference_config"]
+        # ref_traj_config = cfg_dict["reference_config"]
 
         # Initialize PRNG keys
         rollout_key = jax.random.PRNGKey(42)
         rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
         # Reset the environment
-        state = jit_reset(reset_rng, clip_idx=clip_idx)
+        init_state = jit_reset(reset_rng, clip_idx=clip_idx)
 
-        rollout_states = [state]
-        ctrls, activations = [], []
+        # rollout_states = [init_state]
+        # ctrls, activations = [], []
 
-        num_steps = int(ref_trak_config.clip_length * environment._steps_for_cur_frame) - 1
+        num_steps = (
+            int(ref_traj_config.clip_length * environment._steps_for_cur_frame) - 1
+        )
 
-        for _ in range(num_steps):
-            rollout_key, act_rng = jax.random.split(act_rng)
-            obs = state.obs
-            ctrl, extras = jit_inference_fn(obs, act_rng)
-            state = jit_step(state, ctrl)
+        def _step_fn(carry, _):
+            state, act_rng = carry
+            act_rng, new_rng = jax.random.split(act_rng)
+            ctrl, extras = jit_inference_fn(state.obs, act_rng)
+            next_state = jit_step(state, ctrl)
+            return (next_state, new_rng), (next_state, ctrl, extras["activations"])
 
-            rollout_states.append(state)
-            ctrls.append(ctrl)
-            activations.append(extras["activations"])
+        # Run rollout
+        init_carry = (init_state, jax.random.PRNGKey(0))
+        (final_state, _), (states, ctrls, activations) = jax.lax.scan(
+            _step_fn, init_carry, None, length=num_steps
+        )
 
-        # Collect rewards and other metrics
+        def prepend(element, arr):
+            # Handle scalar (0-dim) elements by reshaping to 1-dim
+            if arr.ndim == 0:
+                return arr
+
+            return jnp.concatenate([element[None], arr])
+
+        rollout_states = jax.tree.map(prepend, init_state, states)
+
+        # Compute rewards and metrics
         rewards = {
-            "pos_rewards": [s.metrics["pos_reward"] for s in rollout_states],
-            "endeff_rewards": [s.metrics["endeff_reward"] for s in rollout_states],
-            "quat_rewards": [s.metrics["quat_reward"] for s in rollout_states],
-            "angvel_rewards": [s.metrics["angvel_reward"] for s in rollout_states],
-            "bodypos_rewards": [s.metrics["bodypos_reward"] for s in rollout_states],
-            "joint_rewards": [s.metrics["joint_reward"] for s in rollout_states],
-            "summed_pos_distances": [s.info["summed_pos_distance"] for s in rollout_states],
-            "joint_distances": [s.info["joint_distance"] for s in rollout_states],
-            "torso_heights": [s.pipeline_state.xpos[environment.walker._torso_idx][2] for s in rollout_states],
+            "pos_rewards": jax.vmap(lambda s: s.metrics["pos_reward"])(rollout_states),
+            "endeff_rewards": jax.vmap(lambda s: s.metrics["endeff_reward"])(
+                rollout_states
+            ),
+            "quat_rewards": jax.vmap(lambda s: s.metrics["quat_reward"])(
+                rollout_states
+            ),
+            "angvel_rewards": jax.vmap(lambda s: s.metrics["angvel_reward"])(
+                rollout_states
+            ),
+            "bodypos_rewards": jax.vmap(lambda s: s.metrics["bodypos_reward"])(
+                rollout_states
+            ),
+            "joint_rewards": jax.vmap(lambda s: s.metrics["joint_reward"])(
+                rollout_states
+            ),
+            "summed_pos_distances": jax.vmap(lambda s: s.info["summed_pos_distance"])(
+                rollout_states
+            ),
+            "joint_distances": jax.vmap(lambda s: s.info["joint_distance"])(
+                rollout_states
+            ),
+            "torso_heights": jax.vmap(
+                lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
+            )(rollout_states),
         }
 
         # Reference and rollout qposes
-        ref_traj = rollout_env._get_reference_clip(rollout_states[0].info)
-        qposes_ref = np.repeat(
-            np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-            environment._steps_for_cur_frame,
-            axis=0,
+        ref_traj = rollout_env._get_reference_clip(init_state.info)
+        qposes_ref = jnp.tile(
+            jnp.concatenate(
+                [ref_traj.position, ref_traj.quaternion, ref_traj.joints], axis=-1
+            ),
+            (int(environment._steps_for_cur_frame), 1),
         )
-        qposes_rollout = np.array([s.pipeline_state.qpos for s in rollout_states])
+
+        # Collect qposes from states
+        qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
 
         # Observations and additional info
-        observations = [s.obs for s in rollout_states]
-        info = [s.info for s in rollout_states]
+        # observations = [s.obs for s in rollout_states]
+        # info = [s.info for s in rollout_states]
 
-        # Prepare the output dictionary
-        output = {
+        return {
             "rewards": rewards,
-            "observations": observations,
+            "observations": jax.vmap(lambda s: s.obs)(rollout_states),
             "ctrl": ctrls,
             "activations": activations,
             "qposes_ref": qposes_ref,
             "qposes_rollout": qposes_rollout,
-            "info": info,
+            "info": jax.vmap(lambda s: s.info)(rollout_states),
         }
 
-        # Convert all lists to NumPy arrays
-        output = jax.tree_map(lambda x: np.array(x), output)
-        return output
-
-    return generate_rollout
+    return jax.jit(generate_rollout)

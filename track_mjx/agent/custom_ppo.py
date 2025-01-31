@@ -56,9 +56,12 @@ InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
 _PMAP_AXIS_NAME = "i"
+
+
 @flax.struct.dataclass
 class TrainingState:
     """Contains training state for the learner."""
+
     optimizer_state: optax.OptState
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
@@ -426,15 +429,24 @@ def train(
         ),
         env_steps=0,
     )
-    
+
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        options = ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork") # need to specify it in the config
+        options = ocp.CheckpointManagerOptions(
+            create=False, step_prefix="PPONetwork"
+        )  # need to specify it in the config
         prev_ckpt_mgr = ocp.CheckpointManager(checkpoint_to_restore, options=options)
         latest_step = prev_ckpt_mgr.latest_step()
-        training_state = prev_ckpt_mgr.restore(latest_step, args=ocp.args.Composite(train_state=ocp.args.StandardRestore(training_state)))["train_state"]
-        logging.info(f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}")
-    
+        training_state = prev_ckpt_mgr.restore(
+            latest_step,
+            args=ocp.args.Composite(
+                train_state=ocp.args.StandardRestore(training_state)
+            ),
+        )["train_state"]
+        logging.info(
+            f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}"
+        )
+
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
     )
@@ -461,11 +473,12 @@ def train(
         key=eval_key,
     )
 
-
     # Run initial eval
     metrics = {}
     if process_id == 0 and num_evals > 1:
-        policy_param = _unpmap((training_state.normalizer_params, training_state.params.policy))
+        policy_param = _unpmap(
+            (training_state.normalizer_params, training_state.params.policy)
+        )
         metrics = evaluator.run_evaluation(
             policy_param,
             training_metrics={},
@@ -489,7 +502,7 @@ def train(
     training_metrics = {}
     training_walltime = 0
     current_step = 0
-    for it in range(num_evals_after_init):
+    for it in range(1, num_evals_after_init + 1):
         logging.info("starting iteration %s %s", it, time.time() - xt)
         for _ in range(max(num_resets_per_eval, 1)):
             # optimization

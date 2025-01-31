@@ -58,6 +58,7 @@ train_setup:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
   eval_every: 10_000_000
+  reset_every: 2_000_000
   episode_length: 200
   train_config:
     num_envs: 1024
@@ -70,7 +71,6 @@ train_setup:
     discounting: 0.95        
     action_repeat: 1
     entropy_cost: 1e-2
-    num_resets_per_eval: 1
     reward_scaling: 1
     normalize_observations: True
     unroll_length: 20

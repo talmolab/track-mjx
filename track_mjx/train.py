@@ -152,6 +152,7 @@ def main(cfg: DictConfig):
         num_evals=int(
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
         ),
+        num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
         network_factory=functools.partial(

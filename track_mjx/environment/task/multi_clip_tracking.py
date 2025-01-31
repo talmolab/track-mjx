@@ -100,11 +100,9 @@ class MultiClipTracking(SingleClipTracking):
 
         start_frame = jax.random.randint(start_rng, (), 0, 44)
         clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)
-        # clip_idx = 492
         info = {
             "clip_idx": clip_idx,
             "start_frame": start_frame,
-            # "steps_taken_cur_frame": 0,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,

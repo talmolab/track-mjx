@@ -119,7 +119,6 @@ class SingleClipTracking(PipelineEnv):
 
         info = {
             "start_frame": start_frame,
-            # "steps_taken_cur_frame": 0,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,
@@ -222,19 +221,7 @@ class SingleClipTracking(PipelineEnv):
 
         data0 = state.pipeline_state
         data = self.pipeline_step(data0, action)
-
-        # Logic for moving to next frame to track to maintain timesteps alignment
-        # TODO: Update this to just refer to model.timestep
         info = state.info.copy()
-        # info["steps_taken_cur_frame"] += 1
-        # info["cur_frame"] += jp.where(
-        #     info["steps_taken_cur_frame"] == self._steps_for_cur_frame, 1, 0
-        # )
-        # info["steps_taken_cur_frame"] *= jp.where(
-        #     info["steps_taken_cur_frame"] == self._steps_for_cur_frame, 0, 1
-        # )
-
-        # floor of data.time * mocap_hz
 
         # Gets reference clip and indexes to current frame
         reference_clip = jax.tree_map(

@@ -41,41 +41,6 @@ def wrap(
     return env
 
 
-# class AutoResetWrapperTracking(Wrapper):
-#     """Automatically resets RodentMultiClipTracking envs that are done.
-
-#     Each reset selects a new random clip_idx to ensure varied initial conditions.
-#     """
-
-#     def reset(self, rng: jax.Array) -> State:
-#         """Resets the environment and initializes the 'first_' info."""
-#         state = self.env.reset(rng)
-#         # Save rng
-#         state.info["reset_rng"] = rng
-#         return state
-
-#     def step(self, state: State, action: jax.Array) -> State:
-#         if "steps" in state.info:
-#             steps = state.info["steps"]
-#             steps = jp.where(state.done, jp.zeros_like(steps), steps)
-#             state.info.update(steps=steps)
-#         state = state.replace(done=jp.zeros_like(state.done))
-#         state = self.env.step(state, action)
-
-
-#         def where_done(x, y):
-#             done = state.done
-#             if done.shape:
-#                 done = jp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # type: ignore
-#             return jp.where(done, x, y)
-
-#         info = state.info
-#         def f():
-#             new_state = self.env.reset(state.info["reset_rng"])
-
-#         return where_done(, state)
-
-
 class RenderRolloutWrapperTracking(Wrapper):
     """Always resets to 0"""
 
@@ -140,7 +105,6 @@ class EvalClipWrapperTracking(Wrapper):
         info = {
             "clip_idx": clip_idx,
             "start_frame": 0,
-            # "steps_taken_cur_frame": 0,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,
@@ -148,19 +112,3 @@ class EvalClipWrapperTracking(Wrapper):
         }
 
         return self.reset_from_clip(rng, info, noise=False)
-
-
-# Single clip
-# class RenderRolloutWrapperTracking(Wrapper):
-#     """Always resets to 0"""
-
-#     def reset(self, rng: jax.Array) -> State:
-#         info = {
-#             "cur_frame": 0,
-#             "steps_taken_cur_frame": 0,
-#             "summed_pos_distance": 0.0,
-#             "quat_distance": 0.0,
-#             "joint_distance": 0.0,
-#         }
-
-#         return self.reset_from_clip(rng, info)

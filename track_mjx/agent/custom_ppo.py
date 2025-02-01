@@ -367,7 +367,9 @@ def train(
             optimizer_state=optimizer_state,
             params=params,
             normalizer_params=normalizer_params,
-            env_steps=training_state.env_steps + env_step_per_training_step,
+            env_steps=jnp.int32(
+                training_state.env_steps + env_step_per_training_step / 1e6
+            ),  # env step in mil
         )
         return (new_training_state, state, new_key), metrics
 
@@ -430,7 +432,7 @@ def train(
         ),
         env_steps=0,
     )
-    
+
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
         options = ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork") # need to specify it in the config
@@ -438,7 +440,7 @@ def train(
         latest_step = prev_ckpt_mgr.latest_step()
         training_state = prev_ckpt_mgr.restore(latest_step, args=ocp.args.Composite(train_state=ocp.args.StandardRestore(training_state)))["train_state"]
         logging.info(f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}")
-    
+
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
     )
@@ -464,7 +466,6 @@ def train(
         action_repeat=action_repeat,
         key=eval_key,
     )
-
 
     # Run initial eval
     metrics = {}
@@ -520,7 +521,7 @@ def train(
                 training_metrics,
             )
             logging.info(metrics)
-            progress_fn(it, metrics)
+            progress_fn(current_step, metrics)
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )

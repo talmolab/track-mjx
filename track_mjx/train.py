@@ -43,7 +43,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips-high-regularized")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -189,7 +189,7 @@ def main(cfg: DictConfig):
     wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
 
     def wandb_progress(num_steps, metrics):
-        metrics["num_steps"] = num_steps
+        metrics["num_steps_mil"] = num_steps
         wandb.log(metrics, commit=False)
 
     def policy_params_fn(current_step, make_policy, params, policy_params_fn_key):

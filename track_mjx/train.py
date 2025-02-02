@@ -5,8 +5,10 @@ Entries point for track-mjx. Load the config file, create environments, initiali
 import os
 
 # set default env variable if not set
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6")
-os.environ["MUJOCO_GL"] = os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "egl")
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
+    "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
+)
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
@@ -26,11 +28,11 @@ import pickle
 import warnings
 from jax import numpy as jp
 
-from datetime import datetime  
+from datetime import datetime
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
-from track_mjx.io import preprocess as preprocessing  # the pickle file needs it
+from track_mjx.io import load
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import setup_training_logging
@@ -72,12 +74,12 @@ def main(cfg: DictConfig):
     # TODO: Fix this dependency issue
     import sys
 
-    sys.modules["preprocessing"] = preprocessing
-    # TODO(Scott): move this to track_mjx.io module
-    input_data_path = hydra.utils.to_absolute_path(cfg.data_path)
-    logging.info(f"Loading data: {input_data_path}")
-    with open(input_data_path, "rb") as file:
-        reference_clip = pickle.load(file)
+    logging.info(f"Loading data: {cfg.data_path}")
+    data_path = hydra.utils.to_absolute_path(cfg.data_path)
+    reference_clip = load.make_multiclip_data(data_path)
+
+    # TODO (Kevin): add this as a yaml config
+    walker = Rodent(**walker_config)
 
     walker_map = {
         "rodent": Rodent,
@@ -122,7 +124,9 @@ def main(cfg: DictConfig):
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     episode_length = (
-        traj_config.clip_length - traj_config.random_init_range - traj_config.traj_length
+        traj_config.clip_length
+        - traj_config.random_init_range
+        - traj_config.traj_length
     ) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
@@ -134,9 +138,13 @@ def main(cfg: DictConfig):
     logging.info(f"Model Checkpoint Path: {model_path}")
 
     # initialize orbax checkpoint manager
-    mgr_options = ocp.CheckpointManagerOptions(create=True, max_to_keep=cfg.train_setup["checkpoint_max_to_keep"], keep_period=cfg.train_setup["checkpoint_keep_period"], step_prefix="PPONetwork")
+    mgr_options = ocp.CheckpointManagerOptions(
+        create=True,
+        max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],
+        keep_period=cfg.train_setup["checkpoint_keep_period"],
+        step_prefix="PPONetwork",
+    )
     ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
-
 
     train_fn = functools.partial(
         custom_ppo.train,
@@ -144,6 +152,7 @@ def main(cfg: DictConfig):
         num_evals=int(
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
         ),
+        num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
         network_factory=functools.partial(

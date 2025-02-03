@@ -495,7 +495,7 @@ def train(
     training_metrics = {}
     training_walltime = 0
     current_step = 0
-    for it in range(num_evals_after_init):
+    for it in range(1, num_evals_after_init + 1):
         logging.info("starting iteration %s %s", it, time.time() - xt)
         for _ in range(max(num_resets_per_eval, 1)):
             # optimization

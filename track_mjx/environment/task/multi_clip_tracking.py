@@ -106,8 +106,7 @@ class MultiClipTracking(SingleClipTracking):
             clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
         info = {
             "clip_idx": clip_idx,
-            "cur_frame": start_frame,
-            "steps_taken_cur_frame": 0,
+            "start_frame": start_frame,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,

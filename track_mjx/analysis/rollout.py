@@ -205,7 +205,7 @@ def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callab
 
 def create_rollout_generator(
     ref_traj_config: Dict | DictConfig, environment: Env, inference_fn: Callable
-) -> Callable[[Dict | DictConfig, int | None], Dict]:
+) -> Callable[[int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
 
@@ -324,4 +324,4 @@ def create_rollout_generator(
             "info": jax.vmap(lambda s: s.info)(rollout_states),
         }
 
-    return generate_rollout
+    return jax.jit(generate_rollout)

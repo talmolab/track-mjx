@@ -189,7 +189,7 @@ def main(cfg: DictConfig):
     wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
 
     def wandb_progress(num_steps, metrics):
-        metrics["num_steps_mil"] = num_steps
+        metrics["num_steps_1e3"] = num_steps
         wandb.log(metrics, commit=False)
 
     def policy_params_fn(current_step, make_policy, params, policy_params_fn_key):

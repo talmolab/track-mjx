@@ -175,13 +175,6 @@ def main(cfg: DictConfig):
         metrics["num_steps"] = num_steps
         wandb.log(metrics, commit=False)
 
-    # def make_policy_params_fn(current_step, make_policy, params, policy_params_fn_key):
-    #     """Generates env step, reset, and inference functions for rollout logging.
-    #     Returns the policy_params_fn to be used in training loop.
-    #     """
-    #     # Wrap the env in the brax autoreset and episode wrappers
-
-    # Create policy_params_fn
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
 
     # define the jit reset/step functions

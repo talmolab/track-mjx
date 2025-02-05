@@ -136,13 +136,7 @@ def rollout_logging_fn(
     mj_data,
     scene_option,
     current_step: int,  # all args above this one are passed in by functools.partial
-    make_logging_policy: Callable[
-        [custom_losses.PPONetworkParams, bool],
-        Callable[
-            [jax.numpy.ndarray, jax.random.PRNGKey],
-            tuple[jax.numpy.ndarray, dict[str, Any]],
-        ],
-    ],
+    jit_logging_inference_fn,
     params: custom_losses.PPONetworkParams,
     rollout_key: jax.random.PRNGKey,
 ) -> None:
@@ -162,7 +156,6 @@ def rollout_logging_fn(
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
 
-    jit_inference_fn = jax.jit(make_logging_policy(deterministic=True))
     rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
     state = jit_reset(reset_rng)
@@ -171,7 +164,7 @@ def rollout_logging_fn(
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        ctrl, extras = jit_inference_fn(params, obs, act_rng)
+        ctrl, extras = jit_logging_inference_fn(params, obs, act_rng)
         state = jit_step(state, ctrl)
         rollout.append(state)
 

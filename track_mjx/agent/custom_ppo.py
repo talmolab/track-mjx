@@ -257,7 +257,10 @@ def train(
         preprocess_observations_fn=normalize,
     )
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
+
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+
     optimizer = optax.adam(learning_rate=learning_rate)
 
     loss_fn = functools.partial(
@@ -536,7 +539,7 @@ def train(
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=current_step,
-                make_logging_policy=make_logging_policy,
+                jit_logging_inference_fn=jit_logging_inference_fn,
                 params=policy_param,
                 rollout_key=policy_params_fn_key,
             )

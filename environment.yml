@@ -12,6 +12,7 @@ dependencies:
   - ffmpeg
   - ipykernel
   - jupyterlab
+  - mesalib
   - pip
   - pip:
     - "--editable=.[with-cuda]"

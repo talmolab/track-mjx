@@ -536,9 +536,9 @@ def train(
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=current_step,
-                make_policy=make_logging_policy,
+                make_logging_policy=make_logging_policy,
                 params=policy_param,
-                policy_params_fn_key=policy_params_fn_key,
+                rollout_key=policy_params_fn_key,
             )
             # Save checkpoints
             if ckpt_mgr is not None:

@@ -136,7 +136,7 @@ def rollout_logging_fn(
     mj_data,
     scene_option,
     current_step: int,  # all args above this one are passed in by functools.partial
-    make_policy: Callable[
+    make_logging_policy: Callable[
         [custom_losses.PPONetworkParams, bool],
         Callable[
             [jax.numpy.ndarray, jax.random.PRNGKey],

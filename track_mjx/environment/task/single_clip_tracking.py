@@ -86,21 +86,14 @@ class SingleClipTracking(PipelineEnv):
         kwargs["n_frames"] = kwargs.get("n_frames", physics_steps_per_control_step)
         kwargs["backend"] = "mjx"
 
-        max_physics_steps_per_control_step = int(
-            (1.0 / (mocap_hz * mj_model.opt.timestep))
-        )
-
         super().__init__(sys, **kwargs)
-        if max_physics_steps_per_control_step % physics_steps_per_control_step != 0:
-            raise ValueError(
-                f"physics_steps_per_control_step ({physics_steps_per_control_step}) must be a factor of ({max_physics_steps_per_control_step})"
-            )
 
         self._steps_for_cur_frame = (
-            max_physics_steps_per_control_step / physics_steps_per_control_step
-        )
-        print(f"self._steps_for_cur_frame: {self._steps_for_cur_frame}")
+            1.0 / (mocap_hz * mj_model.opt.timestep)
+        ) / physics_steps_per_control_step
+        print(f"env._steps_for_cur_frame: {self._steps_for_cur_frame}")
 
+        self._mocap_hz = mocap_hz
         self._reward_config = reward_config
         self._reference_clip = reference_clip
         self._ref_len = traj_length
@@ -125,8 +118,7 @@ class SingleClipTracking(PipelineEnv):
         start_frame = jax.random.randint(start_rng, (), 0, frame_range)
 
         info = {
-            "cur_frame": start_frame,
-            "steps_taken_cur_frame": 0,
+            "start_frame": start_frame,
             "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,
@@ -152,7 +144,7 @@ class SingleClipTracking(PipelineEnv):
 
         # Get reference clip and select the start frame
         reference_frame = jax.tree_map(
-            lambda x: x[info["cur_frame"]], self._get_reference_clip(info)
+            lambda x: x[info["start_frame"]], self._get_reference_clip(info)
         )
 
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
@@ -192,7 +184,7 @@ class SingleClipTracking(PipelineEnv):
 
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
 
-        # Used to intialize our intention network
+        # Used to initialize our intention network
         info["reference_obs_size"] = reference_obs.shape[-1]
 
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
@@ -211,6 +203,7 @@ class SingleClipTracking(PipelineEnv):
             "bad_pose": zero,
             "bad_quat": zero,
             "fall": zero,
+            "nan": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -228,21 +221,11 @@ class SingleClipTracking(PipelineEnv):
 
         data0 = state.pipeline_state
         data = self.pipeline_step(data0, action)
-
-        # Logic for moving to next frame to track to maintain timesteps alignment
-        # TODO: Update this to just refer to model.timestep
         info = state.info.copy()
-        info["steps_taken_cur_frame"] += 1
-        info["cur_frame"] += jp.where(
-            info["steps_taken_cur_frame"] == self._steps_for_cur_frame, 1, 0
-        )
-        info["steps_taken_cur_frame"] *= jp.where(
-            info["steps_taken_cur_frame"] == self._steps_for_cur_frame, 0, 1
-        )
 
         # Gets reference clip and indexes to current frame
         reference_clip = jax.tree_map(
-            lambda x: x[info["cur_frame"]], self._get_reference_clip(info)
+            lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
 
         # reward calculation
@@ -310,6 +293,7 @@ class SingleClipTracking(PipelineEnv):
             bad_pose=bad_pose,
             bad_quat=bad_quat,
             fall=fall,
+            nan=nan,
         )
 
         return state.replace(
@@ -320,7 +304,7 @@ class SingleClipTracking(PipelineEnv):
         """Returns reference clip; to be overridden in child classes"""
         return self._reference_clip
 
-    def _get_reference_trajectory(self, info) -> ReferenceClip:
+    def _get_reference_trajectory(self, info, data) -> ReferenceClip:
         """Slices ReferenceClip into the observation trajectory"""
 
         # Get the relevant slice of the reference clip
@@ -328,7 +312,7 @@ class SingleClipTracking(PipelineEnv):
             if len(x.shape) != 1:
                 return jax.lax.dynamic_slice_in_dim(
                     x,
-                    info["cur_frame"] + 1,
+                    self._get_cur_frame(info, data) + 1,
                     self._ref_len,
                 )
             return jp.array([])
@@ -350,7 +334,7 @@ class SingleClipTracking(PipelineEnv):
                 - `proprioceptive_obs`: Observations of the agent's internal state (position and velocity).
         """
 
-        ref_traj = self._get_reference_trajectory(info)
+        ref_traj = self._get_reference_trajectory(info, data)
 
         # walker methods to compute the necessary distances and differences
         track_pos_local = self.walker.compute_local_track_positions(
@@ -385,3 +369,7 @@ class SingleClipTracking(PipelineEnv):
             ]
         )
         return reference_obs, prorioceptive_obs
+
+    def _get_cur_frame(self, info, data: mjx.Data) -> int:
+        """Returns the current frame index based on the simulation time"""
+        return jp.array(jp.floor(data.time * self._mocap_hz + info["start_frame"]), int)

@@ -55,6 +55,7 @@ train_setup:
   agent_name: fly
   run_name: imitation_debug
   eval_every: 1_000_000
+  reset_every: 500_000
   episode_length: 1000
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
@@ -70,7 +71,6 @@ train_setup:
     discounting: 0.95        
     action_repeat: 1
     entropy_cost: 1e-2
-    num_resets_per_eval: 1
     reward_scaling: 1
     normalize_observations: True
     unroll_length: 20

@@ -162,17 +162,16 @@ def rollout_logging_fn(
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
 
-    jit_inference_fn = jax.jit(make_policy(params, deterministic=True))
+    jit_inference_fn = jax.jit(make_logging_policy(deterministic=True))
     rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
-    # do a rollout on the saved model
     state = jit_reset(reset_rng)
 
     rollout = [state]
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        ctrl, extras = jit_inference_fn(obs, act_rng)
+        ctrl, extras = jit_inference_fn(params, obs, act_rng)
         state = jit_step(state, ctrl)
         rollout.append(state)
 

@@ -60,7 +60,7 @@ def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
     )
 
 
-def make_renderer(env, cfg):
+def make_rollout_renderer(env, cfg):
     walker_config = cfg["walker_config"]
     pair_render_xml_path = env.walker._pair_rendering_xml_path
     _XML_PATH = (

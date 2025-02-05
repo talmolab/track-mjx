@@ -135,7 +135,7 @@ def rollout_logging_fn(
     mj_model,
     mj_data,
     scene_option,
-    num_steps: int,  # all args above this one are passed in by functools.partial
+    current_step: int,  # all args above this one are passed in by functools.partial
     make_policy: Callable[
         [custom_losses.PPONetworkParams, bool],
         Callable[
@@ -245,7 +245,7 @@ def rollout_logging_fn(
     )
 
     # render while stepping using mujoco
-    video_path = f"{model_path}/{num_steps}.mp4"
+    video_path = f"{model_path}/{current_step}.mp4"
 
     with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):

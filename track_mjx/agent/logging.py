@@ -138,7 +138,7 @@ def rollout_logging_fn(
     current_step: int,  # all args above this one are passed in by functools.partial
     jit_logging_inference_fn,
     params: custom_losses.PPONetworkParams,
-    rollout_key: jax.random.PRNGKey,
+    policy_params_fn_key: jax.random.PRNGKey,
 ) -> None:
     """Logs metrics and videos for a reinforcement learning training rollout.
 
@@ -156,7 +156,7 @@ def rollout_logging_fn(
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
 
-    rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
+    _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
 
     state = jit_reset(reset_rng)
 

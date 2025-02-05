@@ -541,7 +541,7 @@ def train(
                 current_step=current_step,
                 jit_logging_inference_fn=jit_logging_inference_fn,
                 params=policy_param,
-                rollout_key=policy_params_fn_key,
+                policy_params_fn_key=policy_params_fn_key,
             )
             # Save checkpoints
             if ckpt_mgr is not None:

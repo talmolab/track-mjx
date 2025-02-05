@@ -143,14 +143,19 @@ def rollout_logging_fn(
     """Logs metrics and videos for a reinforcement learning training rollout.
 
     Args:
-        num_steps: The number of training steps completed.
-        make_policy: A function to create the policy with parameters and deterministic mode (reference to custom_ppo_networks).
-        params: Parameters for the policy model (reference to custom_losses).
-        rollout_key: A PRNG key for generating rollout randomness.
-        cfg: Configuration dictionary for the environment and agent.
         env: An instance of the base PipelineEnv envrionment.
-        wandb: The Weights and Biases logging function (reference to train).
+        jit_reset: Jitted env reset function.
+        jit_step: Jitted env step function.
+        cfg: Configuration dictionary for the environment and agent.
         model_path: The path to save the model parameters and videos.
+        renderer: A mujoco.Renderer object.
+        mj_model: A mujoco.Model object for rendering.
+        mj_data: A mujoco.Data object for rendering.
+        scene_option: A mujoco.MjvOption object for rendering.
+        current_step: The number of training steps completed.
+        jit_logging_inference_fn: Jitted policy inference function.
+        params: Parameters for the policy model.
+        policy_params_fn_key: PRNG key.
     """
 
     ref_trak_config = cfg["reference_config"]

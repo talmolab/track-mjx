@@ -31,11 +31,10 @@ from jax import numpy as jp
 from datetime import datetime
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
-from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import load
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
-from track_mjx.agent.logging import setup_training_logging
+from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
 from track_mjx.environment.walker.rodent import Rodent
 import logging
 from track_mjx.environment.walker.fly import Fly
@@ -176,17 +175,31 @@ def main(cfg: DictConfig):
         metrics["num_steps"] = num_steps
         wandb.log(metrics, commit=False)
 
-    def policy_params_fn(current_step, make_policy, params, policy_params_fn_key):
-        """wrapper function that pass in some args that this file has"""
-        return setup_training_logging(
-            current_step,
-            make_policy,
-            params,
-            policy_params_fn_key,
-            cfg=cfg,
-            env=env,
-            model_path=model_path,
-        )
+    # def make_policy_params_fn(current_step, make_policy, params, policy_params_fn_key):
+    #     """Generates env step, reset, and inference functions for rollout logging.
+    #     Returns the policy_params_fn to be used in training loop.
+    #     """
+    #     # Wrap the env in the brax autoreset and episode wrappers
+
+    # Create policy_params_fn
+    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
+
+    # define the jit reset/step functions
+    jit_reset = jax.jit(rollout_env.reset)
+    jit_step = jax.jit(rollout_env.step)
+    renderer, mj_model, mj_data, scene_option = make_rollout_renderer(rollout_env, cfg)
+    policy_params_fn = functools.partial(
+        rollout_logging_fn,
+        rollout_env,
+        jit_reset,
+        jit_step,
+        cfg,
+        model_path,
+        renderer,
+        mj_model,
+        mj_data,
+        scene_option,
+    )
 
     make_inference_fn, params, _ = train_fn(
         environment=env,

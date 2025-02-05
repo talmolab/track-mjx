@@ -60,8 +60,82 @@ def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
     )
 
 
-def setup_training_logging(
-    num_steps: int,
+def make_renderer(env, cfg):
+    walker_config = cfg["walker_config"]
+    pair_render_xml_path = env.walker._pair_rendering_xml_path
+    _XML_PATH = (
+        Path(__file__).resolve().parent.parent
+        / "environment"
+        / "walker"
+        / pair_render_xml_path
+    )
+
+    if cfg.env_config.walker_name == "rodent":
+        # TODO: Make this ghost rendering walker agonist
+        root = mjcf_dm.from_path(_XML_PATH)
+        rescale.rescale_subtree(
+            root,
+            0.9 / 0.8,
+            0.9 / 0.8,
+        )
+
+        mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+    elif cfg.env_config.walker_name == "flybody":
+        spec = mujoco.MjSpec()
+        spec = spec.from_file(str(_XML_PATH))
+
+        # in training scaled by this amount as well
+        for geom in spec.geoms:
+            if geom.size is not None:
+                geom.size *= walker_config.rescale_factor
+            if geom.pos is not None:
+                geom.pos *= walker_config.rescale_factor
+
+        mj_model = spec.compile()
+    else:
+        raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
+
+    mj_model.opt.solver = {
+        "cg": mujoco.mjtSolver.mjSOL_CG,
+        "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+    }["cg"]
+
+    mj_model.opt.iterations = 6
+    mj_model.opt.ls_iterations = 6
+    mj_data = mujoco.MjData(mj_model)
+
+    site_id = [
+        mj_model.site(i).id
+        for i in range(mj_model.nsite)
+        if "-0" in mj_model.site(i).name
+    ]
+    for id in site_id:
+        mj_model.site(id).rgba = [1, 0, 0, 1]
+
+    # visual mujoco rendering
+    scene_option = mujoco.MjvOption()
+    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
+    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
+
+    # save rendering and log to wandb
+    mujoco.mj_kinematics(mj_model, mj_data)
+    renderer = mujoco.Renderer(mj_model, height=512, width=512)
+
+    return renderer, mj_model, mj_data, scene_option
+
+
+def rollout_logging_fn(
+    env,
+    jit_reset,
+    jit_step,
+    cfg: DictConfig,
+    model_path: str,
+    renderer,
+    mj_model,
+    mj_data,
+    scene_option,
+    num_steps: int,  # all args above this one are passed in by functools.partial
     make_policy: Callable[
         [custom_losses.PPONetworkParams, bool],
         Callable[
@@ -71,9 +145,6 @@ def setup_training_logging(
     ],
     params: custom_losses.PPONetworkParams,
     rollout_key: jax.random.PRNGKey,
-    cfg: DictConfig,
-    env: Env,
-    model_path: str,
 ) -> None:
     """Logs metrics and videos for a reinforcement learning training rollout.
 
@@ -90,14 +161,6 @@ def setup_training_logging(
 
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
-    walker_config = cfg["walker_config"]
-
-    # Wrap the env in the brax autoreset and episode wrappers
-    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
-
-    # define the jit reset/step functions
-    jit_reset = jax.jit(rollout_env.reset)
-    jit_step = jax.jit(rollout_env.step)
 
     jit_inference_fn = jax.jit(make_policy(params, deterministic=True))
     rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
@@ -170,6 +233,87 @@ def setup_training_logging(
         list(enumerate(torso_heights)),
         title="torso_heights for each rollout frame",
     )
+
+    # Render the walker with the reference expert demonstration trajectory
+    qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
+    ref_traj = env._get_reference_clip(rollout[0].info)
+    print(f"clip_id:{rollout[0].info}")
+    qposes_ref = np.repeat(
+        np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+        env._steps_for_cur_frame,
+        axis=0,
+    )
+
+    # render while stepping using mujoco
+    video_path = f"{model_path}/{num_steps}.mp4"
+
+    with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
+        for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
+            mj_data.qpos = np.append(qpos1, qpos2)
+            mujoco.mj_forward(mj_model, mj_data)
+            renderer.update_scene(
+                mj_data, camera=env_config.render_camera_name, scene_option=scene_option
+            )
+            pixels = renderer.render()
+            video.append_data(pixels)
+
+    wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")})
+
+
+def render_rollout(
+    num_steps: int,
+    make_policy: Callable[
+        [custom_losses.PPONetworkParams, bool],
+        Callable[
+            [jax.numpy.ndarray, jax.random.PRNGKey],
+            tuple[jax.numpy.ndarray, dict[str, Any]],
+        ],
+    ],
+    params: custom_losses.PPONetworkParams,
+    rollout_key: jax.random.PRNGKey,
+    cfg: DictConfig,
+    env: Env,
+    model_path: str,
+):
+    """
+    Rendering rollout to visualize the walker with the reference expert demonstration trajectory, without wandb logging.
+    This will save the rendered video to the <model_path>_<num_steps>.mp4, it will also return all the frames for notebook inline rendering.
+    """
+    ref_trak_config = cfg["reference_config"]
+    env_config = cfg["env_config"]
+    walker_config = cfg["walker_config"]
+
+    # Wrap the env in the brax autoreset and episode wrappers
+    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
+
+    # define the jit reset/step functions
+    jit_reset = jax.jit(rollout_env.reset)
+    jit_step = jax.jit(rollout_env.step)
+
+    jit_inference_fn = jax.jit(make_policy(params, deterministic=True))
+    rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
+
+    # do a rollout on the saved model
+    state = jit_reset(reset_rng)
+
+    rollout = [state]
+    for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
+        _, act_rng = jax.random.split(act_rng)
+        obs = state.obs
+        ctrl, extras = jit_inference_fn(obs, act_rng)
+        state = jit_step(state, ctrl)
+        rollout.append(state)
+
+    # might include those reward term in the visual rendering
+    # pos_rewards = [state.metrics["pos_reward"] for state in rollout]
+    # endeff_rewards = [state.metrics["endeff_reward"] for state in rollout]
+    # quat_rewards = [state.metrics["quat_reward"] for state in rollout]
+    # angvel_rewards = [state.metrics["angvel_reward"] for state in rollout]
+    # bodypos_rewards = [state.metrics["bodypos_reward"] for state in rollout]
+    # joint_rewards = [state.metrics["joint_reward"] for state in rollout]
+    # summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
+    # joint_distances = [state.info["joint_distance"] for state in rollout]
+    # torso_heights = [state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout]
 
     # Render the walker with the reference expert demonstration trajectory
     qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
@@ -250,7 +394,7 @@ def setup_training_logging(
 
     # render while stepping using mujoco
     video_path = f"{model_path}/{num_steps}.mp4"
-
+    frames = []
     with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
 
@@ -260,146 +404,6 @@ def setup_training_logging(
             renderer.update_scene(
                 mj_data, camera=env_config.render_camera_name, scene_option=scene_option
             )
-            pixels = renderer.render()
-            video.append_data(pixels)
-
-    wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")})
-
-
-
-def render_rollout(
-    num_steps: int,
-    make_policy: Callable[
-        [custom_losses.PPONetworkParams, bool],
-        Callable[
-            [jax.numpy.ndarray, jax.random.PRNGKey],
-            tuple[jax.numpy.ndarray, dict[str, Any]],
-        ],
-    ],
-    params: custom_losses.PPONetworkParams,
-    rollout_key: jax.random.PRNGKey,
-    cfg: DictConfig,
-    env: Env,
-    model_path: str,
-):
-    """
-    Rendering rollout to visualize the walker with the reference expert demonstration trajectory, without wandb logging.
-    This will save the rendered video to the <model_path>_<num_steps>.mp4, it will also return all the frames for notebook inline rendering.
-    """
-    ref_trak_config = cfg["reference_config"]
-    env_config = cfg["env_config"]
-    walker_config = cfg["walker_config"]
-
-    # Wrap the env in the brax autoreset and episode wrappers
-    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
-
-    # define the jit reset/step functions
-    jit_reset = jax.jit(rollout_env.reset)
-    jit_step = jax.jit(rollout_env.step)
-
-    jit_inference_fn = jax.jit(make_policy(params, deterministic=True))
-    rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
-
-    # do a rollout on the saved model
-    state = jit_reset(reset_rng)
-
-    rollout = [state]
-    for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
-        _, act_rng = jax.random.split(act_rng)
-        obs = state.obs
-        ctrl, extras = jit_inference_fn(obs, act_rng)
-        state = jit_step(state, ctrl)
-        rollout.append(state)
-
-    # might include those reward term in the visual rendering
-    # pos_rewards = [state.metrics["pos_reward"] for state in rollout]
-    # endeff_rewards = [state.metrics["endeff_reward"] for state in rollout]
-    # quat_rewards = [state.metrics["quat_reward"] for state in rollout]
-    # angvel_rewards = [state.metrics["angvel_reward"] for state in rollout]
-    # bodypos_rewards = [state.metrics["bodypos_reward"] for state in rollout]
-    # joint_rewards = [state.metrics["joint_reward"] for state in rollout]
-    # summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
-    # joint_distances = [state.info["joint_distance"] for state in rollout]
-    # torso_heights = [state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout]
-
-    # Render the walker with the reference expert demonstration trajectory
-    qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
-    ref_traj = rollout_env._get_reference_clip(rollout[0].info)
-    print(f"clip_id:{rollout[0].info}")
-    qposes_ref = np.repeat(
-        np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-        env._steps_for_cur_frame,
-        axis=0,
-    )
-
-    pair_render_xml_path = env.walker._pair_rendering_xml_path
-    _XML_PATH = Path(__file__).resolve().parent.parent / "environment" / "walker" / pair_render_xml_path
-
-    if cfg.env_config.walker_name == "rodent":
-        # TODO: Make this ghost rendering walker agonist
-        root = mjcf_dm.from_path(_XML_PATH)
-        rescale.rescale_subtree(
-            root,
-            0.9 / 0.8,
-            0.9 / 0.8,
-        )
-
-        mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
-        mj_model.opt.solver = {
-            "cg": mujoco.mjtSolver.mjSOL_CG,
-            "newton": mujoco.mjtSolver.mjSOL_NEWTON,
-        }["cg"]
-        mj_model.opt.iterations = 6
-        mj_model.opt.ls_iterations = 6
-        mj_data = mujoco.MjData(mj_model)
-    elif cfg.env_config.walker_name == "flybody":
-        spec = mujoco.MjSpec()
-        spec = spec.from_file(str(_XML_PATH))
-
-        # in training scaled by this amount as well
-        for geom in spec.geoms:
-            if geom.size is not None:
-                geom.size *= walker_config.rescale_factor
-            if geom.pos is not None:
-                geom.pos *= walker_config.rescale_factor
-
-        mj_model = spec.compile()
-    else:
-        raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
-
-    mj_model.opt.solver = {
-        "cg": mujoco.mjtSolver.mjSOL_CG,
-        "newton": mujoco.mjtSolver.mjSOL_NEWTON,
-    }["cg"]
-
-    mj_model.opt.iterations = 6
-    mj_model.opt.ls_iterations = 6
-    mj_data = mujoco.MjData(mj_model)
-
-    site_id = [mj_model.site(i).id for i in range(mj_model.nsite) if "-0" in mj_model.site(i).name]
-    for id in site_id:
-        mj_model.site(id).rgba = [1, 0, 0, 1]
-
-    # visual mujoco rendering
-    scene_option = mujoco.MjvOption()
-    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
-    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
-    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
-
-    # save rendering and log to wandb
-    mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=512, width=512)
-
-    # render while stepping using mujoco
-    video_path = f"{model_path}/{num_steps}.mp4"
-    frames = []
-    with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
-        for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-
-            # TODO: ValueError: could not broadcast input array from shape (148,) into shape (74,)
-            mj_data.qpos = np.append(qpos1, qpos2)
-            mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera=env_config.render_camera_name, scene_option=scene_option)
             pixels = renderer.render()
             frames.append(pixels)
             video.append_data(pixels)

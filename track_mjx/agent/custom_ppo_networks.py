@@ -79,7 +79,9 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
 
 
 def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
-    """Creates params and inference function for the PPO agent."""
+    """Creates params and inference function for the PPO agent.
+    The policy takes the params as an input, so different sets of params can be used.
+    """
 
     def make_logging_policy(deterministic: bool = False) -> types.Policy:
         policy_network = ppo_networks.policy_network

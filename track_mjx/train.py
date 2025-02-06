@@ -194,7 +194,6 @@ def main(cfg: DictConfig):
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
-        metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
     def policy_params_fn(current_step, make_policy, params, policy_params_fn_key):

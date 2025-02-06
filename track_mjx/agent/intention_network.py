@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Any, Callable, Sequence, Tuple
+from typing import Any, Callable, Sequence, Tuple, Union
 import warnings
 
 from brax.training import networks
@@ -27,7 +27,10 @@ class Encoder(nn.Module):
     bias: bool = True
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray):
+    def __call__(
+        self, x: jnp.ndarray, get_activation: bool = False
+    ) -> Union[Tuple[jnp.ndarray, jnp.ndarray], Tuple[Tuple[jnp.ndarray, jnp.ndarray], dict]]:
+        activations = {}
         # For each layer in the sequence
         for i, hidden_size in enumerate(self.layer_sizes):
             x = nn.Dense(
@@ -38,9 +41,16 @@ class Encoder(nn.Module):
             )(x)
             x = self.activation(x)
             x = nn.LayerNorm()(x)
+            if get_activation:
+                activations[f"layer_{i}"] = x
 
         mean_x = nn.Dense(self.latents, name="fc2_mean")(x)
         logvar_x = nn.Dense(self.latents, name="fc2_logvar")(x)
+
+        if get_activation:
+            activations["mean"] = mean_x
+            activations["logvar"] = logvar_x
+            return (mean_x, logvar_x), activations
         return mean_x, logvar_x
 
 
@@ -54,7 +64,8 @@ class Decoder(nn.Module):
     bias: bool = True
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray):
+    def __call__(self, x: jnp.ndarray, get_activation: bool = False) -> Union[jnp.ndarray, Tuple[jnp.ndarray, dict]]:
+        activations = {}
         for i, hidden_size in enumerate(self.layer_sizes):
             x = nn.Dense(
                 hidden_size,
@@ -65,6 +76,10 @@ class Decoder(nn.Module):
             if i != len(self.layer_sizes) - 1 or self.activate_final:
                 x = self.activation(x)
                 x = nn.LayerNorm()(x)
+                if get_activation:
+                    activations[f"layer_{i}"] = x
+        if get_activation:
+            return x, activations
         return x
 
 
@@ -86,16 +101,23 @@ class IntentionNetwork(nn.Module):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
 
-    def __call__(self, obs, key):
+    def __call__(self, obs, key, get_activation: bool = False):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
-        latent_mean, latent_logvar = self.encoder(traj)
-        z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-        action = self.decoder(
-            jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
-        )
-
-        return action, latent_mean, latent_logvar
+        
+        if get_activation:
+            (latent_mean, latent_logvar), encoder_activations = self.encoder(traj, get_activation=True)
+            z = reparameterize(encoder_rng, latent_mean, latent_logvar)
+            concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+            action, decoder_activations = self.decoder(concatenated, get_activation=True)
+            return action, latent_mean, latent_logvar, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
+        else:
+            latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
+            z = reparameterize(encoder_rng, latent_mean, latent_logvar)
+            action = self.decoder(
+                jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+            )
+            return action, latent_mean, latent_logvar
 
 
 def make_intention_policy(
@@ -106,7 +128,7 @@ def make_intention_policy(
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
-) -> IntentionNetwork:
+) -> networks.FeedForwardNetwork:
     """Creates an intention policy network."""
 
     policy_module = IntentionNetwork(
@@ -116,9 +138,10 @@ def make_intention_policy(
         latents=latent_size,
     )
 
-    def apply(processor_params, policy_params, obs, key):
+    def apply(processor_params, policy_params, obs, key, get_activation: bool = False):
+        """Applies the policy network with observation normalizer."""
         obs = preprocess_observations_fn(obs, processor_params)
-        return policy_module.apply(policy_params, obs=obs, key=key)
+        return policy_module.apply(policy_params, obs=obs, key=key, get_activation=get_activation)
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)

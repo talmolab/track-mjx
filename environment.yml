@@ -12,6 +12,8 @@ dependencies:
   - ffmpeg
   - ipykernel
   - jupyterlab
+  - seaborn
+  - scikit-learn
   - mesalib
   - pip
   - pip:

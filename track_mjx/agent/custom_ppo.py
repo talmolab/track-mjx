@@ -56,12 +56,9 @@ InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
 _PMAP_AXIS_NAME = "i"
-
-
 @flax.struct.dataclass
 class TrainingState:
     """Contains training state for the learner."""
-
     optimizer_state: optax.OptState
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
@@ -87,6 +84,7 @@ def train(
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
+    config_dict: dict,
     checkpoint_to_restore: str | None = None,
     action_repeat: int = 1,
     num_envs: int = 1,
@@ -168,6 +166,9 @@ def train(
         environments
       ckpt_mgr: an optional checkpoint manager for saving policy checkpoints
       checkpoint_to_restore: an optional checkpoint to load before training, path
+        to the checkpoint
+      config_dict: a dictionary that contains the configuration for the training, 
+        will be saved to the orbax checkpoint alongside with the policy and training state
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -366,7 +367,9 @@ def train(
             optimizer_state=optimizer_state,
             params=params,
             normalizer_params=normalizer_params,
-            env_steps=training_state.env_steps + env_step_per_training_step,
+            env_steps=jnp.int32(
+                training_state.env_steps + env_step_per_training_step / 1e3
+            ),  # env step in thousands
         )
         return (new_training_state, state, new_key), metrics
 
@@ -432,20 +435,11 @@ def train(
 
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        options = ocp.CheckpointManagerOptions(
-            create=False, step_prefix="PPONetwork"
-        )  # need to specify it in the config
+        options = ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork")  # TODO: need to specify it in the config
         prev_ckpt_mgr = ocp.CheckpointManager(checkpoint_to_restore, options=options)
         latest_step = prev_ckpt_mgr.latest_step()
-        training_state = prev_ckpt_mgr.restore(
-            latest_step,
-            args=ocp.args.Composite(
-                train_state=ocp.args.StandardRestore(training_state)
-            ),
-        )["train_state"]
-        logging.info(
-            f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}"
-        )
+        training_state = prev_ckpt_mgr.restore(latest_step, args=ocp.args.Composite(train_state=ocp.args.StandardRestore(training_state)))["train_state"]
+        logging.info(f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}")
 
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
@@ -476,9 +470,7 @@ def train(
     # Run initial eval
     metrics = {}
     if process_id == 0 and num_evals > 1:
-        policy_param = _unpmap(
-            (training_state.normalizer_params, training_state.params.policy)
-        )
+        policy_param = _unpmap((training_state.normalizer_params, training_state.params.policy))
         metrics = evaluator.run_evaluation(
             policy_param,
             training_metrics={},
@@ -494,6 +486,7 @@ def train(
                 args=ocp.args.Composite(
                     policy=ocp.args.StandardSave(policy_param),
                     train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                    config=ocp.args.JsonSave(config_dict),
                 ),
             )
         else:
@@ -535,7 +528,7 @@ def train(
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
-                current_step=current_step,
+                current_step=it,
                 make_policy=make_policy,
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
@@ -543,10 +536,11 @@ def train(
             # Save checkpoints
             if ckpt_mgr is not None:
                 ckpt_mgr.save(
-                    step=current_step,
+                    step=it,
                     args=ocp.args.Composite(
                         policy=ocp.args.StandardSave(policy_param),
                         train_state=ocp.args.StandardSave(_unpmap(training_state)),
+                        config=ocp.args.JsonSave(config_dict),
                     ),
                 )
 

@@ -181,7 +181,7 @@ def main(cfg: DictConfig):
         ),
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
-        dict_config=cfg_dict,
+        config_dict=cfg_dict,
     )
 
     wandb.init(

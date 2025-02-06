@@ -33,7 +33,7 @@ class SingleClipTracking(PipelineEnv):
 
     def __init__(
         self,
-        reference_clip: ReferenceClip,
+        reference_clip: ReferenceClip | None,
         walker: BaseWalker,
         reward_config: RewardConfig,
         physics_steps_per_control_step: int,
@@ -83,6 +83,7 @@ class SingleClipTracking(PipelineEnv):
 
         sys = mjcf_brax.load_model(mj_model)
 
+        # TODO why use kwargs when we can just use the variables directly?
         kwargs["n_frames"] = kwargs.get("n_frames", physics_steps_per_control_step)
         kwargs["backend"] = "mjx"
 
@@ -143,7 +144,7 @@ class SingleClipTracking(PipelineEnv):
         _, rng1, rng2 = jax.random.split(rng, 3)
 
         # Get reference clip and select the start frame
-        reference_frame = jax.tree_map(
+        reference_frame = jax.tree.map(
             lambda x: x[info["start_frame"]], self._get_reference_clip(info)
         )
 
@@ -224,7 +225,7 @@ class SingleClipTracking(PipelineEnv):
         info = state.info.copy()
 
         # Gets reference clip and indexes to current frame
-        reference_clip = jax.tree_map(
+        reference_clip = jax.tree.map(
             lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
 

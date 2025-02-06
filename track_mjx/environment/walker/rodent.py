@@ -18,7 +18,7 @@ import os
 from track_mjx.environment.walker.base import BaseWalker
 
 _XML_PATH = "assets/rodent/rodent.xml"
-_PAIR_XML_PATH = "assets/rodent/rodent_ghostpair_spec.xml"
+_PAIR_XML_PATH = "assets/rodent/rodent_ghostpair_scale080.xml"
 
 
 class Rodent(BaseWalker):

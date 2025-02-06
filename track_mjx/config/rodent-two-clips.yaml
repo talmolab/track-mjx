@@ -1,4 +1,4 @@
-data_path: data/twoClips.p
+data_path: data/transform_snips.h5
 walker_type: rodent
 
 env_config:
@@ -57,9 +57,9 @@ train_setup:
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 10_000_000
-  reset_every: 2_000_000
+  eval_every: 20_000_000
   episode_length: 200
+  reset_every: 20_000_000
   train_config:
     num_envs: 1024
     num_timesteps: 10_000_000_000

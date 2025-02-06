@@ -1,4 +1,4 @@
-data_path: data/ReferenceClip.p
+data_path: data/transform_snips.h5
 walker_type: rodent
 
 env_config:

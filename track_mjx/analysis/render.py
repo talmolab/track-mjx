@@ -18,6 +18,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.animation as animation
 
 from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
 from PIL import Image
 from IPython.display import HTML
 
@@ -34,6 +35,8 @@ import numpy as np
 
 import multiprocessing as mp
 import functools
+
+from scipy.ndimage import gaussian_filter1d
 
 
 def agg_backend_context(func):
@@ -56,6 +59,7 @@ def agg_backend_context(func):
 
 def render_from_saved_rollout(
     rollout: dict,
+    walker_name: str,
 ) -> list:
     """
     Render a rollout from saved qposes.
@@ -67,8 +71,9 @@ def render_from_saved_rollout(
         list: list of frames of the rendering
     """
     qposes_ref, qposes_rollout = rollout["qposes_ref"], rollout["qposes_rollout"]
-    # need to change to the new xml file
-    pair_render_xml_path = str(
+    
+    if walker_name == "rodent":
+        pair_render_xml_path = str(
         (
             Path(__file__).parent
             / ".."
@@ -78,24 +83,74 @@ def render_from_saved_rollout(
             / "rodent"
             / "rodent_ghostpair_scale080.xml"
         ).resolve()
-    )
-    # TODO: Make this ghost rendering walker agonist
-    root = mjcf_dm.from_path(pair_render_xml_path)
-    rescale.rescale_subtree(
-        root,
-        0.9 / 0.8,
-        0.9 / 0.8,
-    )
+        )
+        camera_name = "close_profile"
+        
+        spec = mujoco.MjSpec()
+        spec = spec.from_file(str(pair_render_xml_path))
+        
+        # in training scaled by this amount as well
+        for geom in spec.geoms:
+            if geom.size is not None:
+                geom.size *= 0.95
+            if geom.pos is not None:
+                geom.pos *= 0.95
+    else:
+        pair_render_xml_path = str(
+        (
+            Path(__file__).parent
+            / ".."
+            / "environment"
+            / "walker"
+            / "assets"
+            / "fruitfly"
+            / "fruitfly_force_pair.xml"
+        ).resolve()
+        )
+        camera_name = "track1-0"
+        
+        spec = mujoco.MjSpec()
+        spec = spec.from_file(str(pair_render_xml_path))
+        
+        # in training scaled by this amount as well
+        for geom in spec.geoms:
+            if geom.size is not None:
+                geom.size *= 1
+            if geom.pos is not None:
+                geom.pos *= 1
 
-    mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+    mj_model = spec.compile()
+
     mj_model.opt.solver = {
         "cg": mujoco.mjtSolver.mjSOL_CG,
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
     }["cg"]
+
     mj_model.opt.iterations = 6
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
 
+    site_id = [
+        mj_model.site(i).id
+        for i in range(mj_model.nsite)
+        if "-0" in mj_model.site(i).name
+    ]
+    for id in site_id:
+        mj_model.site(id).rgba = [1, 0, 0, 1]
+    
+    for i in range(mj_model.ngeom):
+        geom_name = mj_model.geom(i).name
+        if "-1" in geom_name:  # ghost
+            mj_model.geom(i).rgba = [
+                1,
+                1,
+                1,
+                0.5,
+            ]  # White color, 50% transparent
+
+    # visual mujoco rendering
+    scene_option = mujoco.MjvOption()
+    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
     renderer = mujoco.Renderer(mj_model, height=480, width=640)
@@ -106,10 +161,11 @@ def render_from_saved_rollout(
         mujoco.mj_forward(mj_model, mj_data)
         renderer.update_scene(
             mj_data,
-            camera="close_profile",
+            camera=camera_name
         )
         pixels = renderer.render()
         frames.append(pixels)
+        
     return frames
 
 
@@ -210,7 +266,7 @@ def render_with_pca_progression(
         plot_pca_intention,
         episode_start=0,
         clip_idx=clip_idx,
-        pca_projections=pca_embedded,
+        pca_projections=pca_projections,
         n_components=n_components,
         feature_name=feature_name,
     )
@@ -259,3 +315,248 @@ def display_video(frames, framerate=30):
     interval = 1000 / framerate
     anim = animation.FuncAnimation(fig=fig, func=update, frames=frames, interval=interval, blit=True, repeat=False)
     return HTML(anim.to_html5_video())
+
+def global_local_pca_worker(
+    frame_idx: int,
+    pca_global: np.ndarray,
+    cluster_global: np.ndarray,
+    global_subset_indices: np.ndarray,
+    pca_local: np.ndarray,
+    cluster_local: np.ndarray,
+    T: int,
+    clip_idx: int,
+    var_lcoal: np.ndarray,
+    var_global: np.ndarray,
+) -> np.ndarray:
+    """
+    The picklable worker function called by Pool.
+    """
+    is_terminated = (frame_idx == T - 1)
+    return plot_global_and_local_pca_intention_with_clusters(
+        pca_global=pca_global,
+        cluster_global=cluster_global,
+        global_subset_indices=global_subset_indices,
+        pca_local=pca_local,
+        cluster_local=cluster_local,
+        frame_idx_local=frame_idx,
+        clip_idx=clip_idx,
+        var_lcoal=var_lcoal,
+        var_global=var_global,
+        terminated=is_terminated,
+    )
+
+def plot_global_and_local_pca_intention_with_clusters(
+    pca_global: np.ndarray,
+    cluster_global: np.ndarray, 
+    global_subset_indices: np.ndarray, 
+    pca_local: np.ndarray, 
+    cluster_local: np.ndarray,
+    frame_idx_local: int,
+    clip_idx: int,
+    var_lcoal: np.ndarray,
+    var_global: np.ndarray,
+    terminated: bool = False
+):
+    """
+    Plot side-by-side:
+    1) Global PCA (left subplot): entire dataset in gray, this clip in color, highlight current frame.
+    2) Local PCA (right subplot): just this clip, highlight current frame.
+    
+    Returns an RGB image (H x W x 3) as a numpy array.
+    """
+
+    # assume the local embedding is T points and we have T frames. frame_idx_local in [0..T).
+    T = len(pca_local)
+    if frame_idx_local >= T:
+        raise ValueError(f"frame_idx_local={frame_idx_local} exceeds local clip length={T}.")
+
+    fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(12.8, 4.8), dpi=100)
+    
+    all_x_g = pca_global[:, 0]
+    all_y_g = pca_global[:, 1]
+    
+    # light grey plot
+    ax1.scatter(all_x_g, all_y_g, color="lightgray", alpha=0.5, s=10, label="All data (global)")
+
+    # highlight just the points belonging to this clip
+    # pca_global_clip shape is (T, 2) if global_subset_indices has length T
+    pca_global_clip = pca_global[global_subset_indices]
+    cluster_global_clip = cluster_global[global_subset_indices]
+
+    x_clip_g = pca_global_clip[:, 0]
+    y_clip_g = pca_global_clip[:, 1]
+
+    sc = ax1.scatter(
+        x_clip_g,
+        y_clip_g,
+        c=cluster_global_clip,
+        cmap="tab10",
+        alpha=0.7,
+        s=30,
+        label=f"Clip {clip_idx}"
+    )
+
+    # frame_idx_local corresponds to subset_indices[frame_idx_local] in the global space
+    current_global_idx = global_subset_indices[frame_idx_local]
+    cur_x_g = pca_global[current_global_idx, 0]
+    cur_y_g = pca_global[current_global_idx, 1]
+    cur_clust_g = cluster_global[current_global_idx]
+
+    ax1.scatter(
+        cur_x_g, 
+        cur_y_g, 
+        c=[cur_clust_g], 
+        cmap="tab10",
+        edgecolor="black",
+        s=100,
+        alpha=1.0
+    )
+    ax1.set_title(f"Global PCA (Clip {clip_idx})")
+    ax1.set_xlabel(f"PC1 (global) ({var_global[0]*100:.2f}%)")
+    ax1.set_ylabel(f"PC2 (global) ({var_global[1]*100:.2f}%)")
+    
+
+    x_l = pca_local[:, 0]
+    y_l = pca_local[:, 1]
+    sc2 = ax2.scatter(
+        x_l, 
+        y_l, 
+        c=cluster_local, 
+        cmap="tab10",
+        alpha=0.7,
+        s=30,
+        label=f"Clip {clip_idx} local"
+    )
+
+    ax2.scatter(
+        x_l[frame_idx_local],
+        y_l[frame_idx_local],
+        c=[cluster_local[frame_idx_local]],
+        cmap="tab10",
+        edgecolor="black",
+        s=100,
+        alpha=1.0
+    )
+    local_title_str = f"Local PCA: Clip {clip_idx}, Frame {frame_idx_local}"
+    if terminated:
+        local_title_str += " (terminated)"
+    ax2.set_title(local_title_str)
+    ax2.set_xlabel(f"PC1 (local) ({var_lcoal[0]*100:.2f}%)")
+    ax2.set_ylabel(f"PC2 (local) ({var_lcoal[1]*100:.2f}%)")
+
+    plt.tight_layout()
+
+    fig.canvas.draw()
+    width, height = fig.canvas.get_width_height()
+    img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(height, width, 3)
+    plt.close(fig)
+    return img
+
+
+def render_with_global_and_local_pca_progression(
+    rollout: dict,
+    walker_name: str,
+    pca_global: np.ndarray,
+    cluster_global: np.ndarray,
+    global_subset_indices: np.ndarray,
+    pca_local: np.ndarray,
+    cluster_local: np.ndarray,
+    var_lcoal: np.ndarray,
+    var_global: np.ndarray,
+):
+    """
+    Render the MuJoCo frames side-by-side with a figure showing
+    BOTH global PCA + local PCA for each frame.
+    """
+    
+    frames_mujoco = render_from_saved_rollout(rollout, walker_name)[1:]
+    T = len(frames_mujoco)
+    
+    if T != len(pca_local):
+        raise ValueError(f"Mismatch: {T} MuJoCo frames vs {len(pca_local)} local PCA steps.")
+    if T != len(global_subset_indices):
+        raise ValueError(f"Mismatch: {T} frames vs {len(global_subset_indices)} global_subset_indices.")
+
+    clip_idx = int(rollout["info"][0]["clip_idx"])
+    orig_backend = matplotlib.get_backend()
+    matplotlib.use("Agg")
+
+    worker_args = []
+    for frame_idx in range(T):
+        worker_args.append((
+            frame_idx,
+            pca_global,
+            cluster_global,
+            global_subset_indices,
+            pca_local,
+            cluster_local,
+            T,
+            clip_idx,
+            var_lcoal,
+            var_global,
+        ))
+    
+    print("Rendering PCA (global+local) progression...")
+    with mp.Pool(processes=mp.cpu_count()) as pool:
+        frames_pca = pool.starmap(global_local_pca_worker, worker_args)
+        
+    concat_frames = []
+    for idx in range(T):
+        concat_img = np.hstack([frames_mujoco[idx], frames_pca[idx]])
+        concat_frames.append(concat_img)
+
+    matplotlib.use(orig_backend)
+    return concat_frames
+
+def compute_forward_velocity(qposes, dt, smooth_sigma=2):
+    """Computes and smooths forward velocity using central differencing."""
+    
+    com_positions = qposes[:, 0]
+    raw_velocities = (com_positions[2:] - com_positions[:-2]) / (2 * dt)  # Central difference
+    raw_velocities = np.insert(raw_velocities, 0, raw_velocities[0]) 
+    raw_velocities = np.append(raw_velocities, raw_velocities[-1])
+    return gaussian_filter1d(raw_velocities, sigma=smooth_sigma)
+
+def compute_leg_phases(qposes, leg_indices, threshold=0.05):
+    """Determines swing (1) or stance (0) phases for each leg tip."""
+    
+    leg_heights = qposes[:, leg_indices]
+    raw_leg_phases = (leg_heights > threshold).astype(int) # > is swing, <= is stance
+    return (raw_leg_phases > 0.5).astype(int)  # Re-binarize
+
+def plot_gait_analysis_horizontal(qposes, leg_indices, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix):
+    """Plots multiple clips side-by-side in a horizontal layout but keeps each as a distinct figure."""
+    
+    fig, axes = plt.subplots(2, num_clips, figsize=(5 * num_clips, 6), gridspec_kw={'height_ratios': [1, 3]})
+
+    for i in range(num_clips):
+        clip_id = clip_start + i
+        start_idx = clip_id * timesteps_per_clip
+        end_idx = start_idx + timesteps_per_clip
+        qposes_clip = qposes[start_idx:end_idx, :]
+
+        forward_velocity = compute_forward_velocity(qposes_clip, dt)
+        leg_phases = compute_leg_phases(qposes_clip, leg_indices)
+        
+        time_axis = np.linspace(0, timesteps_per_clip * dt, timesteps_per_clip)
+
+        axes[0, i].plot(time_axis, forward_velocity, color=color, linewidth=1)
+        axes[0, i].set_ylabel("Velocity (mm/s)")
+        axes[0, i].set_xticks([])
+        axes[0, i].set_xlim(0, time_axis[-1])
+        axes[0, i].set_title(f"{title_prefix} - Clip {clip_id}")
+
+        im = axes[1, i].imshow(leg_phases.T, cmap="gray_r", aspect="auto", interpolation="nearest")
+        axes[1, i].set_yticks(np.arange(len(leg_labels)))
+        axes[1, i].set_yticklabels(leg_labels)
+        axes[1, i].set_xlabel("Time (s)")
+        axes[1, i].set_xticks(np.linspace(0, timesteps_per_clip - 1, 6))
+        axes[1, i].set_xticklabels(np.round(np.linspace(0, timesteps_per_clip * dt, 6), 2))
+        
+        if i == num_clips - 1:
+            legend_patches = [plt.Line2D([0], [0], color="black", lw=4, label="Swing"),
+                              plt.Line2D([0], [0], color="white", lw=4, label="Stance")]
+            axes[1, i].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
+
+    plt.tight_layout()
+    plt.show()

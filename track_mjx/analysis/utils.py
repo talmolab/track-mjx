@@ -2,6 +2,9 @@
 
 import h5py
 import numpy as np
+import os
+import re
+import jax.numpy as jnp
 
 
 def save_to_h5py(file, data, group_path="/"):
@@ -25,6 +28,8 @@ def save_to_h5py(file, data, group_path="/"):
         file.create_dataset(group_path, data=data)
     elif hasattr(data, "numpy"):  # For NumPy arrays or PyTorch tensors
         file.create_dataset(group_path, data=data.numpy())
+    elif isinstance(data, jnp.ndarray):  # Convert JAX array to NumPy
+        file.create_dataset(group_path, data=np.array(data))
     else:
         raise TypeError(f"Unsupported data type: {type(data)}")
 
@@ -52,6 +57,32 @@ def load_from_h5py(file, group_path="/"):
         raise TypeError(f"Unsupported group type: {type(group)}")
 
 
-# # Example usage
-# with h5py.File("clip1_rollout.h5", "r") as h5file:
-#     loaded_data = load_from_h5py(h5file)
+def get_aggregate_data(group_path, keys: list[str], clip_idx: int, path: str):
+    """
+    Get the aggregate data from the hdf5 file
+    """
+    with h5py.File(path + f'/clip_{clip_idx}.h5', "r") as h5file:
+        data = load_from_h5py(h5file, group_path=group_path)
+        for key in keys:
+            if type(data) == list and type(data[0]) == dict:
+                data = [d[key] for d in data]
+            elif type(data) == dict:
+                data = data[key]
+            else:
+                raise ValueError("Data structure not supported")
+    return data
+
+def extract_clip_info(snippet_path: str):
+    """
+    Extracts the behavior label and clip number from a snippet filename.
+    """
+    filename = os.path.basename(snippet_path) 
+    name, _ = os.path.splitext(filename) 
+
+    match = re.match(r"([a-zA-Z]+)_(\d+)", name) 
+    if match:
+        behavior = match.group(1) 
+        clip_number = int(match.group(2)) 
+        return behavior, clip_number
+    else:
+        return None, None

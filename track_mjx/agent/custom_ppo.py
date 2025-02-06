@@ -84,7 +84,7 @@ def train(
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
-    dict_config: dict,
+    config_dict: dict,
     checkpoint_to_restore: str | None = None,
     action_repeat: int = 1,
     num_envs: int = 1,
@@ -167,7 +167,7 @@ def train(
       ckpt_mgr: an optional checkpoint manager for saving policy checkpoints
       checkpoint_to_restore: an optional checkpoint to load before training, path
         to the checkpoint
-      dict_config: a dictionary that contains the configuration for the training, 
+      config_dict: a dictionary that contains the configuration for the training, 
         will be saved to the orbax checkpoint alongside with the policy and training state
 
     Returns:
@@ -435,7 +435,7 @@ def train(
 
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        options = ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork") # need to specify it in the config
+        options = ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork")  # TODO: need to specify it in the config
         prev_ckpt_mgr = ocp.CheckpointManager(checkpoint_to_restore, options=options)
         latest_step = prev_ckpt_mgr.latest_step()
         training_state = prev_ckpt_mgr.restore(latest_step, args=ocp.args.Composite(train_state=ocp.args.StandardRestore(training_state)))["train_state"]
@@ -486,7 +486,7 @@ def train(
                 args=ocp.args.Composite(
                     policy=ocp.args.StandardSave(policy_param),
                     train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                    config=ocp.args.JsonSave(dict_config),
+                    config=ocp.args.JsonSave(config_dict),
                 ),
             )
         else:
@@ -540,7 +540,7 @@ def train(
                     args=ocp.args.Composite(
                         policy=ocp.args.StandardSave(policy_param),
                         train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                        config=ocp.args.JsonSave(dict_config),
+                        config=ocp.args.JsonSave(config_dict),
                     ),
                 )
 

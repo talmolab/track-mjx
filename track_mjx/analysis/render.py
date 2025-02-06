@@ -1,8 +1,8 @@
 # imports
 import os
 
-os.environ["MUJOCO_GL"] = "egl"
-os.environ["PYOPENGL_PLATFORM"] = "egl"
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
 from typing import List
 import numpy as np
@@ -68,8 +68,16 @@ def render_from_saved_rollout(
     """
     qposes_ref, qposes_rollout = rollout["qposes_ref"], rollout["qposes_rollout"]
     # need to change to the new xml file
-    pair_render_xml_path = (
-        "/root/vast/scott-yang/track-mjx/track_mjx/environment/walker/assets/rodent/rodent_ghostpair_scale080.xml"
+    pair_render_xml_path = str(
+        (
+            Path(__file__).parent
+            / ".."
+            / "environment"
+            / "walker"
+            / "assets"
+            / "rodent"
+            / "rodent_ghostpair_scale080.xml"
+        ).resolve()
     )
     # TODO: Make this ghost rendering walker agonist
     root = mjcf_dm.from_path(pair_render_xml_path)
@@ -108,29 +116,33 @@ def render_from_saved_rollout(
 def plot_pca_intention(
     idx,
     episode_start,
+    pca: PCA,
     pca_projections: np.ndarray,
     clip_idx: int,
     feature_name: str,
     n_components: int = 4,
-    terminated=False,
-):
+    terminated: bool = False,
+    window_size: int = 530,
+) -> np.ndarray:
     """
     plot pca intention progression of the episode
     Args:
         idx: the current timestep
         episode_start: the start timestep of the episode
+        pca: the pca object fitted on the dataset
         pca_projections: the pca projection of the episode, shape (timestep, n_components)
         clip_idx: the clip index
         feature_name: the feature name
         n_components: the number of pca components to plot
         ylim: the y-axis limit
         terminated: whether the episode is terminated
-
+        window_size: the window size of the plot
+    Returns:
+        np.ndarray: the image array of the plot
     """
     max_y = np.max(list(pca_projections[:, :n_components]))
     min_y = np.min(list(pca_projections[:, :n_components]))
     y_lim = (min_y - 0.2, max_y + 0.2)
-    window_size = 530
     idx_in_this_episode = idx - episode_start  # the current timestep in this episode
     plt.figure(figsize=(9.6, 4.8))
     for pc_ind in range(n_components):
@@ -172,10 +184,22 @@ def plot_pca_intention(
 
 
 def render_with_pca_progression(
-    rollout: dict, pca_projections: np.ndarray, n_components: int = 4, feature_name: str = "ctrl"
-):
+    rollout: dict,
+    pca_projections: np.ndarray,
+    n_components: int = 4,
+    feature_name: str = "ctrl",
+) -> list:
     """
-    render with the rewards progression graph concat alongside with the rendering
+    render with the rewards progression graph concat alongside with the rendering.
+
+    Args:
+        rollout (dict): the rollout dictionary
+        pca_projections (np.ndarray): the pca projections of the rollout
+        n_components (int): the number of pca components to plot
+        feature_name (str): the feature name
+
+    Returns:
+        list: list of frames of the rendering
     """
     frames_mujoco = render_from_saved_rollout(rollout)[1:]
     # skip the first frame, since we don't have intention for the first frame

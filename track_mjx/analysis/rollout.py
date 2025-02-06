@@ -62,10 +62,6 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     walker_config = cfg_dict["walker_config"]
     traj_config = cfg_dict["reference_config"]
 
-    # TODO: Fix this dependency issue
-    import sys
-
-    sys.modules["preprocessing"] = preprocessing
     # TODO(Scott): move this to track_mjx.io module
     input_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
     logging.info(f"Loading data: {input_data_path}")
@@ -224,7 +220,7 @@ def create_rollout_generator(
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
 
-    def generate_rollout(clip_idx: int | None = None) -> Dict:
+    def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> Dict:
         """
         Generates a rollout using pre-compiled JIT functions.
 
@@ -235,17 +231,13 @@ def create_rollout_generator(
         Returns:
             Dict: A dictionary containing rollout data.
         """
-        # ref_traj_config = cfg_dict["reference_config"]
 
         # Initialize PRNG keys
-        rollout_key = jax.random.PRNGKey(42)
+        rollout_key = jax.random.PRNGKey(seed)
         rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
         # Reset the environment
         init_state = jit_reset(reset_rng, clip_idx=clip_idx)
-
-        # rollout_states = [init_state]
-        # ctrls, activations = [], []
 
         num_steps = (
             int(ref_traj_config.clip_length * environment._steps_for_cur_frame) - 1

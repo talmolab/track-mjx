@@ -56,6 +56,7 @@ def agg_backend_context(func):
 
 def render_from_saved_rollout(
     rollout: dict,
+    walker_type: str = "rodent",
 ) -> list:
     """
     Render a rollout from saved qposes.
@@ -67,18 +68,32 @@ def render_from_saved_rollout(
         list: list of frames of the rendering
     """
     qposes_ref, qposes_rollout = rollout["qposes_ref"], rollout["qposes_rollout"]
-    # need to change to the new xml file
-    pair_render_xml_path = str(
-        (
-            Path(__file__).parent
-            / ".."
-            / "environment"
-            / "walker"
-            / "assets"
-            / "rodent"
-            / "rodent_ghostpair_scale080.xml"
-        ).resolve()
-    )
+    if walker_type == "rodent":
+        pair_render_xml_path = str(
+            (
+                Path(__file__).parent
+                / ".."
+                / "environment"
+                / "walker"
+                / "assets"
+                / "rodent"
+                / "rodent_ghostpair_scale080.xml"
+            ).resolve()
+        )
+    elif walker_type == "fly":
+        pair_render_xml_path = str(
+            (
+                Path(__file__).parent
+                / ".."
+                / "environment"
+                / "walker"
+                / "assets"
+                / "fruitfly"
+                / "fruitfly_force_pair.xml"
+            ).resolve()
+        )
+    else:
+        raise ValueError(f"Unsupported walker type: {walker_type}")
     # TODO: Make this ghost rendering walker agonist
     root = mjcf_dm.from_path(pair_render_xml_path)
     rescale.rescale_subtree(

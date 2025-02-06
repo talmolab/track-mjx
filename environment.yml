@@ -1,4 +1,4 @@
-name: track_mjx
+name: track-mjx
 channels:
   - conda-forge
   # - menpo

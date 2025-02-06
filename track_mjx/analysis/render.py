@@ -18,7 +18,6 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.animation as animation
 
 from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
 from PIL import Image
 from IPython.display import HTML
 
@@ -316,6 +315,7 @@ def display_video(frames, framerate=30):
     anim = animation.FuncAnimation(fig=fig, func=update, frames=frames, interval=interval, blit=True, repeat=False)
     return HTML(anim.to_html5_video())
 
+
 def global_local_pca_worker(
     frame_idx: int,
     pca_global: np.ndarray,
@@ -344,6 +344,7 @@ def global_local_pca_worker(
         var_global=var_global,
         terminated=is_terminated,
     )
+    
 
 def plot_global_and_local_pca_intention_with_clusters(
     pca_global: np.ndarray,
@@ -508,6 +509,7 @@ def render_with_global_and_local_pca_progression(
     matplotlib.use(orig_backend)
     return concat_frames
 
+
 def compute_forward_velocity(qposes, dt, smooth_sigma=2):
     """Computes and smooths forward velocity using central differencing."""
     
@@ -517,12 +519,14 @@ def compute_forward_velocity(qposes, dt, smooth_sigma=2):
     raw_velocities = np.append(raw_velocities, raw_velocities[-1])
     return gaussian_filter1d(raw_velocities, sigma=smooth_sigma)
 
+
 def compute_leg_phases(qposes, leg_indices, threshold=0.05):
     """Determines swing (1) or stance (0) phases for each leg tip."""
     
     leg_heights = qposes[:, leg_indices]
     raw_leg_phases = (leg_heights > threshold).astype(int) # > is swing, <= is stance
     return (raw_leg_phases > 0.5).astype(int)  # Re-binarize
+
 
 def plot_gait_analysis_horizontal(qposes, leg_indices, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix):
     """Plots multiple clips side-by-side in a horizontal layout but keeps each as a distinct figure."""

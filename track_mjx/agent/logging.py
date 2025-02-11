@@ -80,7 +80,7 @@ def make_rollout_renderer(env, cfg):
         )
 
         mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
-    elif cfg.env_config.walker_name == "flybody":
+    elif cfg.env_config.walker_name == "fly":
         spec = mujoco.MjSpec()
         spec = spec.from_file(str(_XML_PATH))
 

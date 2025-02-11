@@ -108,10 +108,13 @@ def main(cfg: DictConfig):
 
     logging.info(f"Loading data: {cfg.data_path}")
     data_path = hydra.utils.to_absolute_path(cfg.data_path)
-    reference_clip = load.make_multiclip_data(data_path)
-
-    # TODO (Kevin): add this as a yaml config
-    walker = Rodent(**walker_config)
+    try:
+        reference_clip = load.make_multiclip_data(data_path)
+    except KeyError:
+        logging.info(
+            f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
+        )
+        reference_clip = load.load_reference_clip_data(data_path)
 
     walker_map = {
         "rodent": Rodent,
@@ -121,28 +124,7 @@ def main(cfg: DictConfig):
     walker_class = walker_map[cfg_dict["walker_type"]]
     walker = walker_class(**walker_config)
 
-    # didn't use args** since penalty_pos_distance_scale need conversion
-    reward_config = RewardConfig(
-        too_far_dist=env_rewards.too_far_dist,
-        bad_pose_dist=env_rewards.bad_pose_dist,
-        bad_quat_dist=env_rewards.bad_quat_dist,
-        ctrl_cost_weight=env_rewards.ctrl_cost_weight,
-        ctrl_diff_cost_weight=env_rewards.ctrl_diff_cost_weight,
-        pos_reward_weight=env_rewards.pos_reward_weight,
-        quat_reward_weight=env_rewards.quat_reward_weight,
-        joint_reward_weight=env_rewards.joint_reward_weight,
-        angvel_reward_weight=env_rewards.angvel_reward_weight,
-        bodypos_reward_weight=env_rewards.bodypos_reward_weight,
-        endeff_reward_weight=env_rewards.endeff_reward_weight,
-        healthy_z_range=env_rewards.healthy_z_range,
-        pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
-        quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
-        joint_reward_exp_scale=env_rewards.joint_reward_exp_scale,
-        angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
-        bodypos_reward_exp_scale=env_rewards.bodypos_reward_exp_scale,
-        endeff_reward_exp_scale=env_rewards.endeff_reward_exp_scale,
-        penalty_pos_distance_scale=jp.array(env_rewards.penalty_pos_distance_scale),
-    )
+    reward_config = RewardConfig(**env_rewards)
 
     # Automatically match dict keys and func needs
     env = envs.get_environment(

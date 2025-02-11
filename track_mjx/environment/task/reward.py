@@ -1,32 +1,14 @@
 """All reward calculation and reward calculation helper functions"""
 
-import jax
 from jax import numpy as jp
-
-from brax.envs.base import PipelineEnv, State
-from brax.io import mjcf as mjcf_brax
-from brax import math as brax_math
-from dm_control.locomotion.walkers import rescale
-from dm_control import mjcf as mjcf_dm
-
-from jax import numpy as jp
-import mujoco
-from mujoco import mjx
-
 import numpy as np
-
-import os
-
 from typing import Union
-
+from omegaconf import ListConfig
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from mujoco import MjData
 
-
 from flax import struct
-from jax import numpy as jp
-from typing import Tuple
 
 
 @struct.dataclass
@@ -53,8 +35,18 @@ class RewardConfig:
     endeff_reward_exp_scale: float
     penalty_pos_distance_scale: jp.ndarray
 
+    def __post_init__(self):
+        if isinstance(self.penalty_pos_distance_scale, list) or isinstance(
+            self.penalty_pos_distance_scale, ListConfig
+        ):
+            object.__setattr__(
+                self,
+                "penalty_pos_distance_scale",
+                jp.array(self.penalty_pos_distance_scale),
+            )
 
-def _bounded_quat_dist(source: np.ndarray, target: np.ndarray) -> jp.ndarray:
+
+def _bounded_quat_dist(source: jp.ndarray, target: jp.ndarray) -> jp.ndarray:
     """Computes a quaternion distance limiting the difference to a max of pi/2.
 
     This function supports an arbitrary number of batch dimensions, B.

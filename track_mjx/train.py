@@ -23,8 +23,6 @@ import wandb
 from brax import envs
 import orbax.checkpoint as ocp
 from track_mjx.agent import custom_ppo
-import numpy as np
-import pickle
 import warnings
 from jax import numpy as jp
 
@@ -53,10 +51,6 @@ def main(cfg: DictConfig):
     except:
         n_devices = 1
         logging.info("Not using GPUs")
-
-    flags.DEFINE_enum("solver", "cg", ["cg", "newton"], "constraint solver")
-    flags.DEFINE_integer("iterations", 4, "number of solver iterations")
-    flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
 
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
@@ -92,12 +86,16 @@ def main(cfg: DictConfig):
                 abstract_config = OmegaConf.to_container(cfg, resolve=True)
                 restored_config = mngr.restore(
                     latest_step,
-                    args=ocp.args.Composite(config=ocp.args.JsonRestore(abstract_config)),
+                    args=ocp.args.Composite(
+                        config=ocp.args.JsonRestore(abstract_config)
+                    ),
                 )["config"]
                 print(f"Successfully restored config")
                 cfg = OmegaConf.create(restored_config)
-            except Exception as e: # TODO: too broad exception, fix later
-                print(f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs")
+            except Exception as e:  # TODO: too broad exception, fix later
+                print(
+                    f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs"
+                )
 
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
@@ -158,7 +156,9 @@ def main(cfg: DictConfig):
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     episode_length = (
-        traj_config.clip_length - traj_config.random_init_range - traj_config.traj_length
+        traj_config.clip_length
+        - traj_config.random_init_range
+        - traj_config.traj_length
     ) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")

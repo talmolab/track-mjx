@@ -75,8 +75,8 @@ def make_rollout_renderer(env, cfg):
         root = mjcf_dm.from_path(_XML_PATH)
         rescale.rescale_subtree(
             root,
-            0.9 / 0.8,
-            0.9 / 0.8,
+            walker_config.rescale_factor / 0.8,
+            walker_config.rescale_factor / 0.8,
         )
 
         mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr

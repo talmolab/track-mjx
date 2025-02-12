@@ -39,13 +39,14 @@ from track_mjx.agent.logging import setup_training_logging
 from track_mjx.environment.walker.rodent import Rodent
 import logging
 from track_mjx.environment.walker.fly import Fly
+from track_mjx.environment.walker.mouse_arm import MouseArm
 from track_mjx.environment.task.reward import RewardConfig
 
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
+@hydra.main(version_base=None, config_path="config", config_name="mouse-arm")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -59,6 +60,7 @@ def main(cfg: DictConfig):
     flags.DEFINE_integer("iterations", 4, "number of solver iterations")
     flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
 
+    envs.register_environment("mouse_arm_single_clip", SingleClipTracking)
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
@@ -111,12 +113,14 @@ def main(cfg: DictConfig):
 
     logging.info(f"Loading data: {cfg.data_path}")
     data_path = hydra.utils.to_absolute_path(cfg.data_path)
-    reference_clip = load.make_multiclip_data(data_path)
+    
+    reference_clip = load.make_singleclip_data(data_path)
 
     # TODO (Kevin): add this as a yaml config
-    walker = Rodent(**walker_config)
+    walker = MouseArm(**walker_config)
 
     walker_map = {
+        "mouse_arm": MouseArm,
         "rodent": Rodent,
         "fly": Fly,
     }

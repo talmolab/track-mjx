@@ -56,9 +56,12 @@ InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
 _PMAP_AXIS_NAME = "i"
+
+
 @flax.struct.dataclass
 class TrainingState:
     """Contains training state for the learner."""
+
     optimizer_state: optax.OptState
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
@@ -167,7 +170,7 @@ def train(
       ckpt_mgr: an optional checkpoint manager for saving policy checkpoints
       checkpoint_to_restore: an optional checkpoint to load before training, path
         to the checkpoint
-      config_dict: a dictionary that contains the configuration for the training, 
+      config_dict: a dictionary that contains the configuration for the training,
         will be saved to the orbax checkpoint alongside with the policy and training state
 
     Returns:
@@ -258,6 +261,9 @@ def train(
         preprocess_observations_fn=normalize,
     )
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
+
+    make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -435,11 +441,20 @@ def train(
 
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        options = ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork")  # TODO: need to specify it in the config
+        options = ocp.CheckpointManagerOptions(
+            create=False, step_prefix="PPONetwork"
+        )  # TODO: need to specify it in the config
         prev_ckpt_mgr = ocp.CheckpointManager(checkpoint_to_restore, options=options)
         latest_step = prev_ckpt_mgr.latest_step()
-        training_state = prev_ckpt_mgr.restore(latest_step, args=ocp.args.Composite(train_state=ocp.args.StandardRestore(training_state)))["train_state"]
-        logging.info(f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}")
+        training_state = prev_ckpt_mgr.restore(
+            latest_step,
+            args=ocp.args.Composite(
+                train_state=ocp.args.StandardRestore(training_state)
+            ),
+        )["train_state"]
+        logging.info(
+            f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}"
+        )
 
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
@@ -470,7 +485,9 @@ def train(
     # Run initial eval
     metrics = {}
     if process_id == 0 and num_evals > 1:
-        policy_param = _unpmap((training_state.normalizer_params, training_state.params.policy))
+        policy_param = _unpmap(
+            (training_state.normalizer_params, training_state.params.policy)
+        )
         metrics = evaluator.run_evaluation(
             policy_param,
             training_metrics={},
@@ -529,7 +546,7 @@ def train(
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=it,
-                make_policy=make_policy,
+                jit_logging_inference_fn=jit_logging_inference_fn,
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )

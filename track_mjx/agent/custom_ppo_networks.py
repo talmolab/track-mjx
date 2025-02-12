@@ -86,6 +86,52 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
     return make_policy
 
 
+def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
+    """Creates params and inference function for the PPO agent.
+    The policy takes the params as an input, so different sets of params can be used.
+    """
+
+    def make_logging_policy(deterministic: bool = False) -> types.Policy:
+        policy_network = ppo_networks.policy_network
+        # can modify this to provide stochastic action + noise
+        parametric_action_distribution = ppo_networks.parametric_action_distribution
+
+        def logging_policy(
+            params: types.PolicyParams,
+            observations: types.Observation,
+            key_sample: PRNGKey,
+        ) -> Tuple[types.Action, types.Extra]:
+            key_sample, key_network = jax.random.split(key_sample)
+            logits, _, _ = policy_network.apply(*params, observations, key_network)
+            # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
+
+            if deterministic:
+                return ppo_networks.parametric_action_distribution.mode(logits), {}
+
+            # action sampling is happening here, according to distribution parameter logits
+            raw_actions = parametric_action_distribution.sample_no_postprocessing(
+                logits, key_sample
+            )
+
+            # probability of selection specific action, actions with higher reward should have higher probability
+            log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
+
+            postprocessed_actions = parametric_action_distribution.postprocess(
+                raw_actions
+            )
+            return postprocessed_actions, {
+                # "latent_mean": latent_mean,
+                # "latent_logvar": latent_logvar,
+                "log_prob": log_prob,
+                "raw_action": raw_actions,
+                "logits": logits,
+            }
+
+        return logging_policy
+
+    return make_logging_policy
+
+
 # intention policy
 def make_intention_ppo_networks(
     observation_size: int,

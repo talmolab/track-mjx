@@ -23,19 +23,16 @@ import wandb
 from brax import envs
 import orbax.checkpoint as ocp
 from track_mjx.agent import custom_ppo
-import numpy as np
-import pickle
 import warnings
 from jax import numpy as jp
 
 from datetime import datetime
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
-from track_mjx.io.preprocess.mjx_preprocess import process_clip_to_train
 from track_mjx.io import load
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
-from track_mjx.agent.logging import setup_training_logging
+from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
 from track_mjx.environment.walker.rodent import Rodent
 import logging
 from track_mjx.environment.walker.fly import Fly
@@ -54,10 +51,6 @@ def main(cfg: DictConfig):
     except:
         n_devices = 1
         logging.info("Not using GPUs")
-
-    flags.DEFINE_enum("solver", "cg", ["cg", "newton"], "constraint solver")
-    flags.DEFINE_integer("iterations", 4, "number of solver iterations")
-    flags.DEFINE_integer("ls_iterations", 4, "number of linesearch iterations")
 
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
@@ -93,12 +86,16 @@ def main(cfg: DictConfig):
                 abstract_config = OmegaConf.to_container(cfg, resolve=True)
                 restored_config = mngr.restore(
                     latest_step,
-                    args=ocp.args.Composite(config=ocp.args.JsonRestore(abstract_config)),
+                    args=ocp.args.Composite(
+                        config=ocp.args.JsonRestore(abstract_config)
+                    ),
                 )["config"]
                 print(f"Successfully restored config")
                 cfg = OmegaConf.create(restored_config)
-            except Exception as e: # TODO: too broad exception, fix later
-                print(f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs")
+            except Exception as e:  # TODO: too broad exception, fix later
+                print(
+                    f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs"
+                )
 
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
@@ -111,10 +108,13 @@ def main(cfg: DictConfig):
 
     logging.info(f"Loading data: {cfg.data_path}")
     data_path = hydra.utils.to_absolute_path(cfg.data_path)
-    reference_clip = load.make_multiclip_data(data_path)
-
-    # TODO (Kevin): add this as a yaml config
-    walker = Rodent(**walker_config)
+    try:
+        reference_clip = load.make_multiclip_data(data_path)
+    except KeyError:
+        logging.info(
+            f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
+        )
+        reference_clip = load.load_reference_clip_data(data_path)
 
     walker_map = {
         "rodent": Rodent,
@@ -124,28 +124,7 @@ def main(cfg: DictConfig):
     walker_class = walker_map[cfg_dict["walker_type"]]
     walker = walker_class(**walker_config)
 
-    # didn't use args** since penalty_pos_distance_scale need conversion
-    reward_config = RewardConfig(
-        too_far_dist=env_rewards.too_far_dist,
-        bad_pose_dist=env_rewards.bad_pose_dist,
-        bad_quat_dist=env_rewards.bad_quat_dist,
-        ctrl_cost_weight=env_rewards.ctrl_cost_weight,
-        ctrl_diff_cost_weight=env_rewards.ctrl_diff_cost_weight,
-        pos_reward_weight=env_rewards.pos_reward_weight,
-        quat_reward_weight=env_rewards.quat_reward_weight,
-        joint_reward_weight=env_rewards.joint_reward_weight,
-        angvel_reward_weight=env_rewards.angvel_reward_weight,
-        bodypos_reward_weight=env_rewards.bodypos_reward_weight,
-        endeff_reward_weight=env_rewards.endeff_reward_weight,
-        healthy_z_range=env_rewards.healthy_z_range,
-        pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
-        quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
-        joint_reward_exp_scale=env_rewards.joint_reward_exp_scale,
-        angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
-        bodypos_reward_exp_scale=env_rewards.bodypos_reward_exp_scale,
-        endeff_reward_exp_scale=env_rewards.endeff_reward_exp_scale,
-        penalty_pos_distance_scale=jp.array(env_rewards.penalty_pos_distance_scale),
-    )
+    reward_config = RewardConfig(**env_rewards)
 
     # Automatically match dict keys and func needs
     env = envs.get_environment(
@@ -159,7 +138,9 @@ def main(cfg: DictConfig):
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     episode_length = (
-        traj_config.clip_length - traj_config.random_init_range - traj_config.traj_length
+        traj_config.clip_length
+        - traj_config.random_init_range
+        - traj_config.traj_length
     ) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
@@ -195,17 +176,24 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    def policy_params_fn(current_step, make_policy, params, policy_params_fn_key):
-        """wrapper function that pass in some args that this file has"""
-        return setup_training_logging(
-            current_step,
-            make_policy,
-            params,
-            policy_params_fn_key,
-            cfg=cfg,
-            env=env,
-            model_path=model_path,
-        )
+    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
+
+    # define the jit reset/step functions
+    jit_reset = jax.jit(rollout_env.reset)
+    jit_step = jax.jit(rollout_env.step)
+    renderer, mj_model, mj_data, scene_option = make_rollout_renderer(rollout_env, cfg)
+    policy_params_fn = functools.partial(
+        rollout_logging_fn,
+        rollout_env,
+        jit_reset,
+        jit_step,
+        cfg,
+        model_path,
+        renderer,
+        mj_model,
+        mj_data,
+        scene_option,
+    )
 
     make_inference_fn, params, _ = train_fn(
         environment=env,

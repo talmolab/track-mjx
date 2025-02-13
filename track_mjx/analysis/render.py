@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.animation as animation
 
+from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from PIL import Image
 from IPython.display import HTML
@@ -37,6 +38,15 @@ import functools
 
 from scipy.ndimage import gaussian_filter1d
 
+from ripser import ripser
+from persim import plot_diagrams
+from sklearn.manifold import Isomap
+from sklearn.neighbors import LocalOutlierFactor
+
+from track_mjx.analysis.utils import subsample_data
+
+from hydra import initialize, compose
+from hydra.core.global_hydra import GlobalHydra
 
 def agg_backend_context(func):
     """
@@ -514,22 +524,22 @@ def compute_forward_velocity(qposes, dt, smooth_sigma=2):
     """Computes and smooths forward velocity using central differencing."""
     
     com_positions = qposes[:, 0]
-    raw_velocities = (com_positions[2:] - com_positions[:-2]) / (2 * dt)  # Central difference
+    raw_velocities = (com_positions[2:] - com_positions[:-2]) / (2 * dt)  # central difference
     raw_velocities = np.insert(raw_velocities, 0, raw_velocities[0]) 
     raw_velocities = np.append(raw_velocities, raw_velocities[-1])
     return gaussian_filter1d(raw_velocities, sigma=smooth_sigma)
 
 
-def compute_leg_phases(qposes, leg_indices, threshold=0.05):
+def compute_height_based_leg_phases(qposes, leg_indices, threshold=0.05):
     """Determines swing (1) or stance (0) phases for each leg tip."""
     
     leg_heights = qposes[:, leg_indices]
     raw_leg_phases = (leg_heights > threshold).astype(int) # > is swing, <= is stance
-    return (raw_leg_phases > 0.5).astype(int)  # Re-binarize
+    return (raw_leg_phases > 0.5).astype(int)  # re-binarize
 
 
-def plot_gait_analysis_horizontal(qposes, leg_indices, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix):
-    """Plots multiple clips side-by-side in a horizontal layout but keeps each as a distinct figure."""
+def plot_height_based_gait_analysis(qposes, leg_indices, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix):
+    """Plots multiple clips side-by-side using height based GRF model"""
     
     fig, axes = plt.subplots(2, num_clips, figsize=(5 * num_clips, 6), gridspec_kw={'height_ratios': [1, 3]})
 
@@ -540,7 +550,7 @@ def plot_gait_analysis_horizontal(qposes, leg_indices, leg_labels, dt, clip_star
         qposes_clip = qposes[start_idx:end_idx, :]
 
         forward_velocity = compute_forward_velocity(qposes_clip, dt)
-        leg_phases = compute_leg_phases(qposes_clip, leg_indices)
+        leg_phases = compute_height_based_leg_phases(qposes_clip, leg_indices)
         
         time_axis = np.linspace(0, timesteps_per_clip * dt, timesteps_per_clip)
 
@@ -563,4 +573,260 @@ def plot_gait_analysis_horizontal(qposes, leg_indices, leg_labels, dt, clip_star
             axes[1, i].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
 
     plt.tight_layout()
+    plt.show()
+
+
+def compute_joint_torques(model, data, qpos, qvel, qacc, valid_joint_indices):
+    """
+    Computes joint torques using MuJoCo's inverse dynamics, keeping only `-0` joints.
+    """
+    expected_dim = len(valid_joint_indices)
+    actual_dim = len(qpos)
+
+    if actual_dim != expected_dim:
+        raise ValueError(f"Mismatch: Expected {expected_dim} qpos, got {actual_dim}.")
+
+    data.qpos.fill(0)
+    data.qvel.fill(0)
+    data.qacc.fill(0)
+
+    # assign only to the valid joints
+    data.qpos[valid_joint_indices] = qpos
+    data.qvel[valid_joint_indices] = qvel
+    data.qacc[valid_joint_indices] = qacc
+
+    mujoco.mj_inverse(model, data)
+    return np.copy(data.qfrc_inverse[valid_joint_indices])  # extract only valid joint torques
+
+
+def process_torque_estimation(model, qposes_rollout, dt, indices, valid_joint_indices):
+    """
+    Worker function to estimate torques for a subset of time steps.
+    """
+    data = mujoco.MjData(model)
+    torques = np.zeros((len(indices), len(valid_joint_indices)))
+
+    for i, t in enumerate(indices):
+        qpos = qposes_rollout[t, valid_joint_indices]  # only valid indexes are used
+        qvel = (qposes_rollout[t + 1, valid_joint_indices] - qposes_rollout[t - 1, valid_joint_indices]) / (2 * dt)
+        qacc = (qposes_rollout[t + 1, valid_joint_indices] - 2 * qposes_rollout[t, valid_joint_indices] + qposes_rollout[t - 1, valid_joint_indices]) / (dt ** 2)
+
+        torques[i] = compute_joint_torques(model, data, qpos, qvel, qacc, valid_joint_indices)
+
+    return torques
+
+
+def estimate_joint_forces_parallel(qposes_rollout, dt, walker_type, num_workers=mp.cpu_count()):
+    """
+    Estimates joint forces using parallel processing, using only `-0` joints.
+    """
+    num_steps = qposes_rollout.shape[0]
+    step_indices = np.array_split(range(1, num_steps - 1), num_workers)
+    
+    # valid index comes from configs
+    
+    if walker_type=='fly':
+        pair_render_xml_path = str(
+            (
+                Path(__file__).parent
+                / ".."
+                / "environment"
+                / "walker"
+                / "assets"
+                / "fruitfly"
+                / "fruitfly_force_pair.xml"
+            ).resolve()
+            )
+    elif walker_type=='rodent':
+        pair_render_xml_path = str(
+        (
+            Path(__file__).parent
+            / ".."
+            / "environment"
+            / "walker"
+            / "assets"
+            / "rodent"
+            / "rodent_ghostpair_spec.xml"
+        ).resolve()
+        )
+
+    model = mujoco.MjModel.from_xml_path(pair_render_xml_path)
+
+    # extract only joints ending with `-0`
+    valid_joint_names = [model.joint(i).name for i in range(model.njnt) if model.joint(i).name.endswith("-0")]
+    joint_name_to_index = {model.joint(i).name: i for i in range(model.njnt) if model.joint(i).name.endswith("-0")}
+    valid_joint_indices = np.array([joint_name_to_index[name] for name in valid_joint_names])
+    print(f"Using {len(valid_joint_indices)} valid joints out of {model.njnt}")
+
+    with mp.Pool(num_workers) as pool:
+        results = pool.starmap(process_torque_estimation, [(model, qposes_rollout, dt, indices, valid_joint_indices) for indices in step_indices])
+
+    return np.vstack(results)
+
+
+def estimate_ground_forces(qposes_rollout, dt, mass=0.01):
+    """
+    Approximates ground reaction forces using second derivative of Z positions.
+    """
+    z_positions = qposes_rollout[:, 2]
+    z_velocities = np.gradient(z_positions, dt)
+    z_accelerations = np.gradient(z_velocities, dt)
+    
+    ground_forces = mass * (z_accelerations + 9.81)  # F = m*a + gravity
+    return ground_forces
+
+
+def compute_leg_phases_from_joint_forces(joint_forces, contact_threshold=50):
+    """
+    Determines swing (1) or stance (0) phases for each leg based on joint forces.
+    """
+    if joint_forces.ndim == 1:  
+        joint_forces = joint_forces[:, np.newaxis]  # Ensure shape (T, 1)
+
+    # Stance (force above threshold) = 0, Swing (force below threshold) = 1
+    leg_phases = (np.abs(joint_forces) < contact_threshold).astype(int)
+    return leg_phases
+
+
+def plot_force_based_gait_analysis(joint_forces, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix, contact_threshold):
+    """
+    Plots multiple GRF clips with force based measures
+    """
+
+    fig, axes = plt.subplots(2, num_clips, figsize=(5 * num_clips, 6), gridspec_kw={'height_ratios': [1, 3]})
+
+    for i in tqdm(range(num_clips)):
+        clip_id = clip_start + i
+        start_idx = clip_id * timesteps_per_clip
+        end_idx = min(start_idx + timesteps_per_clip, len(joint_forces))
+
+        force_clip = joint_forces[start_idx:end_idx]
+
+        if force_clip.ndim == 1:
+            force_clip = force_clip[:, np.newaxis]  
+
+        time_axis = np.linspace(0, len(force_clip) * dt, len(force_clip))
+
+        # smoothed joint torques
+        summed_forces = np.sum(force_clip, axis=1) if force_clip.shape[1] > 1 else force_clip.squeeze()
+        smoothed_forces = gaussian_filter1d(summed_forces, sigma=2)
+
+        axes[0, i].plot(time_axis, smoothed_forces, color=color, linewidth=1)
+        axes[0, i].set_ylabel("Joint Torque (Nm)")
+        axes[0, i].set_xticks([])
+        axes[0, i].set_xlim(0, time_axis[-1])
+        axes[0, i].set_title(f"{title_prefix} - Clip {clip_id}")
+
+        # leg phases from estimated joint forces
+        phase_clip = compute_leg_phases_from_joint_forces(force_clip, contact_threshold)
+
+        im = axes[1, i].imshow(phase_clip.T, cmap="gray_r", aspect="auto", interpolation="nearest")
+        axes[1, i].set_yticks(np.arange(len(leg_labels)))
+        axes[1, i].set_yticklabels(leg_labels)
+        axes[1, i].set_xlabel("Time (s)")
+        axes[1, i].set_xticks(np.linspace(0, timesteps_per_clip - 1, 6))
+        axes[1, i].set_xticklabels(np.round(np.linspace(0, timesteps_per_clip * dt, 6), 2))
+
+        if i == num_clips - 1:
+            legend_patches = [plt.Line2D([0], [0], color="black", lw=4, label="Swing"),
+                              plt.Line2D([0], [0], color="white", lw=4, label="Stance")]
+            axes[1, i].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_grf_vanilla(qpos_fly, qpos_rodent, dt=0.002):
+    '''Vanilla plot functions for grf model'''
+
+    ground_forces = estimate_ground_forces(qpos_fly, dt)
+    ground_forces_rodent = estimate_ground_forces(qpos_rodent, dt)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    time_axis_fly = np.arange(len(ground_forces)) * dt
+    time_axis_rodent = np.arange(len(ground_forces_rodent)) * dt
+
+    axes[0].plot(time_axis_fly, ground_forces, color='blue', linewidth=1)
+    axes[0].set_title("Fly - Ground Reaction Forces")
+    axes[0].set_xlabel("Time (seconds)")
+    axes[0].set_ylabel("Force (N)")
+    axes[0].grid(True)
+
+    axes[1].plot(time_axis_rodent, ground_forces_rodent, color='orange', linewidth=1)
+    axes[1].set_title("Rodent - Ground Reaction Forces")
+    axes[1].set_xlabel("Time (seconds)")
+    axes[1].grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def estimate_intrinsic_dim(X, n_jobs=-1, sample_size=500):
+    """intrinsic dimensionality using MLE and using parallelized LOF"""
+    X_sample = subsample_data(X, sample_size)
+    lof = LocalOutlierFactor(n_neighbors=10, metric='euclidean', n_jobs=n_jobs)
+    return -lof.fit(X_sample).negative_outlier_factor_.mean()
+
+
+def fast_isomap(X, n_components=2, n_neighbors=15, sample_size=500):
+    """geodesic distances using Isomap on a subsample of the dataset for efficiency"""
+    X_sample = subsample_data(X, sample_size)
+    return Isomap(n_components=n_components, n_neighbors=n_neighbors).fit_transform(X_sample)
+
+    
+def plot_homology(fly_activations, rodent_activations, layer_idx, sample_size=500):
+    '''
+    Plottin the homology of data, trying to find topological informations
+    - H0 (Number of connected components, i.e clusters), this detects distinct activation states
+    - H1 (Number of loops), this identifies cyclic behaviors (e.g., locomotion)
+    - H2 (Number of voids), this finds higher-order structure (e.g., transitions between states, transient loops (from stopping to turning))
+    '''
+    scaler = StandardScaler()
+    pca = PCA(n_components=10)
+    fly_sampled = subsample_data(fly_activations[layer_idx], sample_size=sample_size)
+    fly_scaled = scaler.fit_transform(fly_sampled)
+    fly_reduced = pca.fit_transform(fly_scaled)
+
+    rodent_sampled = subsample_data(rodent_activations[layer_idx], sample_size=sample_size)
+    rodent_scaled = scaler.fit_transform(rodent_sampled)
+    rodent_reduced = pca.fit_transform(rodent_scaled)
+    print(f"Explained variance (Fly): {np.sum(pca.explained_variance_ratio_):.4f}")
+    print(f"Explained variance (Rodent): {np.sum(pca.explained_variance_ratio_):.4f}")
+
+    fly_diagrams = ripser(fly_reduced, maxdim=2)['dgms']
+    rodent_diagrams = ripser(rodent_reduced, maxdim=2)['dgms']
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    plot_diagrams(fly_diagrams, ax=axes[0])
+    axes[0].set_title(f"Fly - Persistence Diagram for {layer_idx[0]} - {layer_idx[1]}")
+
+    plot_diagrams(rodent_diagrams, ax=axes[1])
+    axes[1].set_title(f"Rodent - Persistence Diagram for {layer_idx[0]} - {layer_idx[1]}")
+
+    plt.show()
+    
+
+def plot_intrinsic(fly_activations, rodent_activations, layer_idx, sample_size=500):
+    '''
+    Plotting the intrinsic dimensionality
+    
+    Check if fly and rodent activations lie on similar low-dimensional manifolds by
+    estimating intrinsic dimensionality using MLE and visualize Isomap geodesics
+    '''
+    fly_dim = estimate_intrinsic_dim(fly_activations[layer_idx], sample_size=sample_size)
+    rodent_dim = estimate_intrinsic_dim(rodent_activations[layer_idx], sample_size=sample_size)
+
+    print(f"Estimated Intrinsic Dimensionality: Fly={fly_dim:.2f}, Rodent={rodent_dim:.2f}")
+
+    iso_fly = fast_isomap(fly_activations[layer_idx], sample_size=sample_size)
+    iso_rodent = fast_isomap(rodent_activations[layer_idx], sample_size=sample_size)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    axes[0].scatter(iso_fly[:, 0], iso_fly[:, 1], alpha=0.5)
+    axes[0].set_title(f"Fly - Isomap Projection for {layer_idx[0]} - {layer_idx[1]}")
+
+    axes[1].scatter(iso_rodent[:, 0], iso_rodent[:, 1], alpha=0.5, color='orange')
+    axes[1].set_title(f"Rodent - Isomap Projection for {layer_idx[0]} - {layer_idx[1]}")
+
     plt.show()

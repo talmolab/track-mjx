@@ -86,3 +86,10 @@ def extract_clip_info(snippet_path: str):
         return behavior, clip_number
     else:
         return None, None
+
+def subsample_data(X, sample_size):
+    """randomly subsamples the dataset for faster computation"""
+    
+    np.random.seed(42)
+    indices = np.random.choice(X.shape[0], sample_size, replace=False)
+    return X[indices]

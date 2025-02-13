@@ -664,18 +664,6 @@ def estimate_joint_forces_parallel(qposes_rollout, dt, walker_type, num_workers=
     return np.vstack(results)
 
 
-def estimate_ground_forces(qposes_rollout, dt, mass=0.01):
-    """
-    Approximates ground reaction forces using second derivative of Z positions.
-    """
-    z_positions = qposes_rollout[:, 2]
-    z_velocities = np.gradient(z_positions, dt)
-    z_accelerations = np.gradient(z_velocities, dt)
-    
-    ground_forces = mass * (z_accelerations + 9.81)  # F = m*a + gravity
-    return ground_forces
-
-
 def compute_leg_phases_from_joint_forces(joint_forces, contact_threshold=50):
     """
     Determines swing (1) or stance (0) phases for each leg based on joint forces.
@@ -683,7 +671,7 @@ def compute_leg_phases_from_joint_forces(joint_forces, contact_threshold=50):
     if joint_forces.ndim == 1:  
         joint_forces = joint_forces[:, np.newaxis]  # Ensure shape (T, 1)
 
-    # Stance (force above threshold) = 0, Swing (force below threshold) = 1
+    # stance (force above threshold) = 0, swing (force below threshold) = 1
     leg_phases = (np.abs(joint_forces) < contact_threshold).astype(int)
     return leg_phases
 
@@ -734,29 +722,73 @@ def plot_force_based_gait_analysis(joint_forces, leg_labels, dt, clip_start, num
 
     plt.tight_layout()
     plt.show()
+    
+
+def estimate_ground_forces_per_joint(qposes_rollout, dt, mass_per_joint, z_indices):
+    """
+    Approximates ground reaction forces for each joint using second derivative of Z positions.
+    """
+    # z-axis positions for the specified joints
+    z_positions = qposes_rollout[:, z_indices]  # Shape (T, J_selected)
+
+    # velocities and accelerations along Z-axis
+    z_velocities = np.gradient(z_positions, dt, axis=0)
+    z_accelerations = np.gradient(z_velocities, dt, axis=0)
+
+    # GRF per joint
+    ground_forces = mass_per_joint * (z_accelerations + 9.81)  # F = m*a + gravity
+    return ground_forces
 
 
-def plot_grf_vanilla(qpos_fly, qpos_rodent, dt=0.002):
-    '''Vanilla plot functions for grf model'''
+def compute_leg_phases_from_grf_per_joint(ground_forces_per_joint, contact_threshold=1.0):
+    """
+    Determines swing (1) or stance (0) phases per joint based on ground reaction forces.
+    """
+    # stance (force above threshold) = 0, swing (force below threshold) = 1
+    leg_phases = (np.abs(ground_forces_per_joint) < contact_threshold).astype(int)
+    
+    return leg_phases  # shape (T, J)
 
-    ground_forces = estimate_ground_forces(qpos_fly, dt)
-    ground_forces_rodent = estimate_ground_forces(qpos_rodent, dt)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+def plot_grf_based_gait_analysis_per_joint(ground_forces_per_joint, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix, contact_threshold):
+    """
+    Plots multiple GRF clips side-by-side, showing GRF per joint using calculation of the force pushing downward on the ground on the z-components.
+    """
 
-    time_axis_fly = np.arange(len(ground_forces)) * dt
-    time_axis_rodent = np.arange(len(ground_forces_rodent)) * dt
+    fig, axes = plt.subplots(2, num_clips, figsize=(5 * num_clips, 6), gridspec_kw={'height_ratios': [1, 3]})
 
-    axes[0].plot(time_axis_fly, ground_forces, color='blue', linewidth=1)
-    axes[0].set_title("Fly - Ground Reaction Forces")
-    axes[0].set_xlabel("Time (seconds)")
-    axes[0].set_ylabel("Force (N)")
-    axes[0].grid(True)
+    for i in range(num_clips):
+        clip_id = clip_start + i
+        start_idx = clip_id * timesteps_per_clip
+        end_idx = min(start_idx + timesteps_per_clip, len(ground_forces_per_joint))
 
-    axes[1].plot(time_axis_rodent, ground_forces_rodent, color='orange', linewidth=1)
-    axes[1].set_title("Rodent - Ground Reaction Forces")
-    axes[1].set_xlabel("Time (seconds)")
-    axes[1].grid(True)
+        grf_clip = ground_forces_per_joint[start_idx:end_idx]
+
+        time_axis = np.linspace(0, len(grf_clip) * dt, len(grf_clip))
+
+        for j in range(grf_clip.shape[1]):  # loop over joints
+            axes[0, i].plot(time_axis, grf_clip[:, j], color=color, alpha=0.6, linewidth=1, label=f"Joint {leg_labels[j]}" if i == 0 else "")
+
+        axes[0, i].set_ylabel("GRF per Joint (N)")
+        axes[0, i].set_xticks([])
+        axes[0, i].set_xlim(0, time_axis[-1])
+        axes[0, i].set_title(f"{title_prefix} - Clip {clip_id}")
+
+        # stance/swing per joint
+        phase_clip = compute_leg_phases_from_grf_per_joint(grf_clip, contact_threshold)
+
+        # stance/swing
+        im = axes[1, i].imshow(phase_clip.T, cmap="gray_r", aspect="auto", interpolation="nearest")
+        axes[1, i].set_yticks(np.arange(len(leg_labels)))
+        axes[1, i].set_yticklabels(leg_labels)
+        axes[1, i].set_xlabel("Time (s)")
+        axes[1, i].set_xticks(np.linspace(0, timesteps_per_clip - 1, 6))
+        axes[1, i].set_xticklabels(np.round(np.linspace(0, timesteps_per_clip * dt, 6), 2))
+
+        if i == num_clips - 1:
+            legend_patches = [plt.Line2D([0], [0], color="black", lw=4, label="Swing"),
+                              plt.Line2D([0], [0], color="white", lw=4, label="Stance")]
+            axes[1, i].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
 
     plt.tight_layout()
     plt.show()

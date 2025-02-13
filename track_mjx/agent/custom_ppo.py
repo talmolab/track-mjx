@@ -50,7 +50,7 @@ import orbax.checkpoint as ocp
 from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
-
+from track_mjx.agent import checkpoint
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
@@ -250,6 +250,14 @@ def train(
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
     env_state = reset_fn(key_envs)
+
+    # TODO: reference_obs_size should be part of optional kwargs (network factory-dependent)
+    config_dict["network_config"] = checkpoint.network_config(
+        env_state.obs.shape[-1],
+        env.action_size,
+        normalize_observations,
+        reference_obs_size=int(_unpmap(env_state.info["reference_obs_size"])[0]),
+    )
 
     normalize = lambda x, y: x
     if normalize_observations:

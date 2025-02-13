@@ -1,29 +1,12 @@
 import jax
 from jax import numpy as jp
 
-from brax.envs.base import PipelineEnv, State
-from brax.io import mjcf as mjcf_brax
-from brax import math as brax_math
-from dm_control.locomotion.walkers import rescale
-from dm_control import mjcf as mjcf_dm
-
-from jax.numpy import inf, ndarray
-import mujoco
-from mujoco import mjx
-
-import numpy as np
-
-import os
-
-import collections
-
-import typing
+from brax.envs.base import State
 from typing import Any
 
-from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
+from track_mjx.io.load import ReferenceClip
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
-
 from track_mjx.environment.task.reward import RewardConfig
 
 

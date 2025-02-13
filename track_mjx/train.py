@@ -59,13 +59,7 @@ def main(cfg: DictConfig):
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    # Generates a completely random UUID (version 4), take the first 8 characters
-    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
-    model_path = hydra.utils.to_absolute_path(model_path)
-    logging.info(f"Model Checkpoint Path: {model_path}")
-
-    # initialize orbax checkpoint manager
+    # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
         create=True,
         max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],
@@ -74,28 +68,26 @@ def main(cfg: DictConfig):
     )
     ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
 
-    # try to restore configs if previously trained
+    # Restore configs if previously trained
     if cfg.train_setup["checkpoint_to_restore"] is not None:
         with ocp.CheckpointManager(
             cfg.train_setup["checkpoint_to_restore"],
             options=mgr_options,
         ) as mngr:
             print(f"latest checkpoint step: {mngr.latest_step()}")
-            try:
-                latest_step = mngr.latest_step()
-                abstract_config = OmegaConf.to_container(cfg, resolve=True)
-                restored_config = mngr.restore(
-                    latest_step,
-                    args=ocp.args.Composite(
-                        config=ocp.args.JsonRestore(abstract_config)
-                    ),
-                )["config"]
-                print(f"Successfully restored config")
-                cfg = OmegaConf.create(restored_config)
-            except Exception as e:  # TODO: too broad exception, fix later
-                print(
-                    f"Failed to restore metadata. Falling back to default cfg: {e}, using current configs"
-                )
+            latest_step = mngr.latest_step()
+            abstract_config = OmegaConf.to_container(cfg, resolve=True)
+            restored_config = mngr.restore(
+                latest_step,
+                args=ocp.args.Composite(config=ocp.args.JsonRestore(abstract_config)),
+            )["config"]
+            print(f"Successfully restored config")
+            cfg = OmegaConf.create(restored_config)
+    else:
+        run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+        model_path = f"./{cfg.logging_config.model_path}/{run_id}"
+        model_path = hydra.utils.to_absolute_path(model_path)
+        logging.info(f"Model Checkpoint Path: {model_path}")
 
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
@@ -165,12 +157,14 @@ def main(cfg: DictConfig):
         config_dict=cfg_dict,
     )
 
+    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
         notes=f"clip_id: {cfg.logging_config.clip_id}",
+        id=run_id,
+        resume="allow",
     )
-    wandb.run.name = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps

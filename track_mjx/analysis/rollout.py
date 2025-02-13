@@ -16,7 +16,6 @@ import functools
 from track_mjx.agent import custom_ppo_networks
 import hydra
 import logging
-from track_mjx.io import preprocess as preprocessing
 from track_mjx.environment.task.reward import RewardConfig
 from jax import numpy as jnp
 
@@ -24,8 +23,27 @@ from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_losses as ppo_losses
+from track_mjx.io import load
+
 
 from omegaconf import DictConfig, OmegaConf
+
+
+def restore_checkpoint(checkpoint_path: str) -> DictConfig:
+    """Restores the whole checkpoint isntead of needing to get one part at a time, it's free!"""
+
+    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
+    with ocp.CheckpointManager(
+        checkpoint_path,
+        options=options,
+    ) as mngr:
+        print(f"latest checkpoint step: {mngr.latest_step()}")
+        config = mngr.restore(
+            mngr.latest_step(),
+            args=ocp.args.Composite(config=ocp.args.JsonRestore(None)),
+        )["config"]
+
+    return config
 
 
 def restore_config(checkpoint_path: str) -> DictConfig:
@@ -58,15 +76,19 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
 
     env_args = cfg_dict["env_config"]["env_args"]
     env_rewards = cfg_dict["env_config"]["reward_weights"]
-    train_config = cfg_dict["train_setup"]["train_config"]
     walker_config = cfg_dict["walker_config"]
     traj_config = cfg_dict["reference_config"]
 
-    # TODO(Scott): move this to track_mjx.io module
-    input_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
-    logging.info(f"Loading data: {input_data_path}")
-    with open(input_data_path, "rb") as file:
-        reference_clip = pickle.load(file)
+    reference_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
+    logging.info(f"Loading data: {reference_data_path}")
+    try:
+        reference_clip = load.make_multiclip_data(reference_data_path)
+    except KeyError:
+        logging.info(
+            f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
+        )
+        reference_clip = load.load_reference_clip_data(reference_data_path)
+
     walker_map = {
         "rodent": Rodent,
         "fly": Fly,
@@ -74,27 +96,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     walker_class = walker_map[cfg_dict["walker_type"]]
     walker = walker_class(**walker_config)
 
-    reward_config = RewardConfig(
-        too_far_dist=env_rewards.too_far_dist,
-        bad_pose_dist=env_rewards.bad_pose_dist,
-        bad_quat_dist=env_rewards.bad_quat_dist,
-        ctrl_cost_weight=env_rewards.ctrl_cost_weight,
-        ctrl_diff_cost_weight=env_rewards.ctrl_diff_cost_weight,
-        pos_reward_weight=env_rewards.pos_reward_weight,
-        quat_reward_weight=env_rewards.quat_reward_weight,
-        joint_reward_weight=env_rewards.joint_reward_weight,
-        angvel_reward_weight=env_rewards.angvel_reward_weight,
-        bodypos_reward_weight=env_rewards.bodypos_reward_weight,
-        endeff_reward_weight=env_rewards.endeff_reward_weight,
-        healthy_z_range=env_rewards.healthy_z_range,
-        pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
-        quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
-        joint_reward_exp_scale=env_rewards.joint_reward_exp_scale,
-        angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
-        bodypos_reward_exp_scale=env_rewards.bodypos_reward_exp_scale,
-        endeff_reward_exp_scale=env_rewards.endeff_reward_exp_scale,
-        penalty_pos_distance_scale=jnp.array(env_rewards.penalty_pos_distance_scale),
-    )
+    reward_config = RewardConfig(**env_rewards)
     # Automatically match dict keys and func needs
     env = envs.get_environment(
         env_name=cfg_dict["env_config"]["env_name"],
@@ -121,8 +123,24 @@ def create_abstract_policy(
     Returns:
         Tuple[Tuple, Callable]: The abstract policy and the policy function
     """
-    network_factory = functools.partial(
-        custom_ppo_networks.make_intention_ppo_networks,
+    # network_factory = functools.partial(
+    #     custom_ppo_networks.make_intention_ppo_networks,
+    #     encoder_hidden_layer_sizes=tuple(
+    #         cfg_dict["network_config"]["encoder_layer_sizes"]
+    #     ),
+    #     decoder_hidden_layer_sizes=tuple(
+    #         cfg_dict["network_config"]["decoder_layer_sizes"]
+    #     ),
+    #     value_hidden_layer_sizes=tuple(
+    #         cfg_dict["network_config"]["critic_layer_sizes"]
+    #     ),
+    # )
+
+    ppoe_network = custom_ppo_networks.make_intention_ppo_networks(
+        observation_size=cfg_dict["network_config"]["observation_size"],
+        reference_obs_size=cfg_dict["network_config"]["reference_obs_size"],
+        action_size=cfg_dict["network_config"]["action_size"],
+        intention_latent_size=cfg_dict["network_config"]["intention_size"],
         encoder_hidden_layer_sizes=tuple(
             cfg_dict["network_config"]["encoder_layer_sizes"]
         ),
@@ -134,15 +152,16 @@ def create_abstract_policy(
         ),
     )
 
-    reset_fn = environment.reset
-    key_envs = jax.random.key(1)
-    env_state = reset_fn(key_envs)
-
-    ppo_network = network_factory(
-        env_state.obs.shape[-1],
-        int(env_state.info["reference_obs_size"]),
-        environment.action_size,
-    )
+    # Instead of this, load a saved env_state.obs.shape, reference_obs_size, and action_size
+    # reset_fn = environment.reset
+    # key_envs = jax.random.key(1)
+    # env_state = reset_fn(key_envs)
+    # # ----------------------------
+    # ppo_network = network_factory(
+    #     env_state.obs.shape[-1],
+    #     int(env_state.info["reference_obs_size"]),
+    #     environment.action_size,
+    # )
 
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
     key_policy, key_value = jax.random.split(jax.random.key(1))
@@ -225,9 +244,8 @@ def create_rollout_generator(
         Generates a rollout using pre-compiled JIT functions.
 
         Args:
-            cfg_dict (Dict): Configuration dictionary.
             clip_idx (Optional[int]): Specific clip ID to generate the rollout for.
-
+            seed (int): Random seed for jax PRNGKey.
         Returns:
             Dict: A dictionary containing rollout data.
         """
@@ -296,11 +314,10 @@ def create_rollout_generator(
 
         # Reference and rollout qposes
         ref_traj = rollout_env._get_reference_clip(init_state.info)
-        qposes_ref = jnp.tile(
-            jnp.concatenate(
-                [ref_traj.position, ref_traj.quaternion, ref_traj.joints], axis=-1
-            ),
-            (int(environment._steps_for_cur_frame), 1),
+        qposes_ref = jnp.repeat(
+            jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+            int(environment._steps_for_cur_frame),
+            axis=0,
         )
 
         # Collect qposes from states

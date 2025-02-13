@@ -5,7 +5,7 @@ import numpy as np
 from typing import Union
 from omegaconf import ListConfig
 from track_mjx.environment.walker.base import BaseWalker
-from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
+from track_mjx.io.load import ReferenceClip
 from mujoco import MjData
 
 from flax import struct

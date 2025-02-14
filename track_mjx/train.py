@@ -79,7 +79,7 @@ def main(cfg: DictConfig):
         checkpoint_path = Path(cfg.train_setup["checkpoint_to_restore"])
         run_id = checkpoint_path.name
 
-        # Initialize checkpoint manager
+    # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
         create=True,
         max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],

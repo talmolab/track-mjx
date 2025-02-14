@@ -252,7 +252,8 @@ def train(
     env_state = reset_fn(key_envs)
 
     # TODO: reference_obs_size should be part of optional kwargs (network factory-dependent)
-    config_dict["network_config"] = checkpoint.network_config(
+    config_dict["network_config"] = checkpoint.add_to_network_config(
+        config_dict["network_config"],
         env_state.obs.shape[-1],
         env.action_size,
         normalize_observations,

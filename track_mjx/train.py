@@ -72,11 +72,17 @@ def main(cfg: DictConfig):
 
     # Load the checkpoint's config
     if cfg.train_setup["checkpoint_to_restore"] is not None:
+        # TODO: We set the restored config's checkpoint_to_restore to itself
+        # Because that restored config is used from now on. This is a hack.
+        checkpoint_to_restore = cfg.train_setup["checkpoint_to_restore"]
         # Load the checkpoint's config and update the run_id and checkpoint path
         cfg = OmegaConf.create(
-            checkpoint.load_config(cfg.train_setup["checkpoint_to_restore"])
+            checkpoint.load_config_from_checkpoint(
+                cfg.train_setup["checkpoint_to_restore"]
+            )
         )
-        checkpoint_path = Path(cfg.train_setup["checkpoint_to_restore"])
+        cfg.train_setup["checkpoint_to_restore"] = checkpoint_to_restore
+        checkpoint_path = Path(checkpoint_to_restore)
         run_id = checkpoint_path.name
 
     # Initialize checkpoint manager

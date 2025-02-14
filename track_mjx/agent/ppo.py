@@ -30,16 +30,14 @@ from brax.training import pmap
 from brax.training import types
 from brax.training.acme import running_statistics
 from brax.training.acme import specs
-import flax.training
-
-# from brax.training.agents.ppo import losses as ppo_losses
-from track_mjx.agent import losses as ppo_losses
-
-# from brax.training.agents.ppo import networks as ppo_networks
-from track_mjx.agent import ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
+import flax.training
+
+from track_mjx.agent import losses as ppo_losses
+from track_mjx.agent import ppo_networks
+
 import flax
 import flax.struct
 import jax
@@ -47,10 +45,8 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import orbax.checkpoint as ocp
-from flax.training import orbax_utils
 
 from track_mjx.environment import wrappers
-from track_mjx.agent import checkpoint
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
@@ -66,6 +62,9 @@ class TrainingState:
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
+
+
+from track_mjx.agent import checkpoint
 
 
 def _unpmap(v):
@@ -450,20 +449,10 @@ def train(
 
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        options = ocp.CheckpointManagerOptions(
-            create=False, step_prefix="PPONetwork"
-        )  # TODO: need to specify it in the config
-        prev_ckpt_mgr = ocp.CheckpointManager(checkpoint_to_restore, options=options)
-        latest_step = prev_ckpt_mgr.latest_step()
-        training_state = prev_ckpt_mgr.restore(
-            latest_step,
-            args=ocp.args.Composite(
-                train_state=ocp.args.StandardRestore(training_state)
-            ),
-        )["train_state"]
-        logging.info(
-            f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}"
+        training_state = checkpoint.load_training_state(
+            checkpoint_to_restore, training_state
         )
+        logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
 
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
@@ -492,6 +481,13 @@ def train(
     )
 
     # Run initial eval
+    start_it = 0
+    if ckpt_mgr is not None:
+        if ckpt_mgr.latest_step() is not None:
+            num_evals_after_init -= ckpt_mgr.latest_step()
+            start_it = ckpt_mgr.latest_step()
+            print(f"starting at eval: {num_evals_after_init} and it: {start_it}")
+
     metrics = {}
     if process_id == 0 and num_evals > 1:
         policy_param = _unpmap(
@@ -502,7 +498,7 @@ def train(
             training_metrics={},
         )
         logging.info(metrics)
-        progress_fn(0, metrics)
+        progress_fn(start_it, metrics)
         # Save checkpoints
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:
@@ -520,8 +516,9 @@ def train(
 
     training_metrics = {}
     training_walltime = 0
+    start_it += 1
     current_step = 0
-    for it in range(1, num_evals_after_init + 1):
+    for it in range(start_it, num_evals_after_init + start_it):
         logging.info("starting iteration %s %s", it, time.time() - xt)
         for _ in range(max(num_resets_per_eval, 1)):
             # optimization

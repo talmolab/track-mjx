@@ -1,41 +1,133 @@
-from brax.training.acme import running_statistics
+from brax.training.acme import running_statistics, specs
 
 from orbax import checkpoint as ocp
-from track_mjx.agent import ppo_networks
+from track_mjx.agent import ppo_networks, ppo
 from typing import Callable
 
+from track_mjx.agent import ppo_networks, losses
+from jax import numpy as jnp
+import jax
+from omegaconf import OmegaConf
+from pathlib import Path
 
-def load_checkpoint(
+
+def load_config_from_checkpoint(
     checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
 ):
-    """Load a checkpoint."""
+    """Load the config from a checkpoint."""
+    mgr_options = ocp.CheckpointManagerOptions(create=False, step_prefix=step_prefix)
+    with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
+        if step is None:
+            step = ckpt_mgr.latest_step()
+        return ckpt_mgr.restore(
+            step,
+            args=ocp.args.Composite(
+                config=ocp.args.JsonRestore(),
+            ),
+        )["config"]
+
+
+def load_training_state(
+    checkpoint_path: str,
+    abstract_training_state,
+    step_prefix: str = "PPONetwork",
+    step: int = None,
+) -> ppo.TrainingState:
+    """Load the training state from checkpoint, given an arbitrary reference training state."""
     mgr_options = ocp.CheckpointManagerOptions(
-        create=True,
+        create=False,
+        step_prefix=step_prefix,
+    )
+    with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
+        if step is None:
+            step = ckpt_mgr.latest_step()
+        return ckpt_mgr.restore(
+            step,
+            args=ocp.args.Composite(
+                train_state=ocp.args.StandardRestore(abstract_training_state),
+            ),
+        )["train_state"]
+
+
+def load_checkpoint_for_eval(
+    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
+):
+    """Load a checkpoint's cfg and policy. Can load to different devices via abstract state"""
+    mgr_options = ocp.CheckpointManagerOptions(
+        create=False,
         step_prefix=step_prefix,
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
     if step is None:
         step = ckpt_mgr.latest_step()
-    return ckpt_mgr.restore(
-        ckpt_mgr.latest_step(),
+
+    # First load the config
+    cfg = OmegaConf.create(
+        load_config_from_checkpoint(checkpoint_path, step_prefix, step)
+    )
+
+    # Then make an abstract policy to get the pytree structure
+    abstract_policy = make_abstract_policy(cfg)
+
+    # Then load the policy given the pytree structure
+    policy = ckpt_mgr.restore(
+        step,
         args=ocp.args.Composite(
-            config=ocp.args.JsonRestore(),
-            policy=ocp.args.PyTreeRestore(),
-            train_state=ocp.args.PyTreeRestore(),
+            policy=ocp.args.StandardRestore(abstract_policy),
         ),
+    )["policy"]
+
+    return {"cfg": cfg, "policy": policy}
+
+
+def make_abstract_policy(cfg):
+    """Create a random policy from a config."""
+    ppo_network = make_ppo_network_from_cfg(cfg)
+    key_policy, key_value = jax.random.split(jax.random.key(1))
+
+    init_params = losses.PPONetworkParams(
+        policy=ppo_network.policy_network.init(key_policy),
+        value=ppo_network.value_network.init(key_value),
+    )
+
+    return (
+        running_statistics.init_state(
+            specs.Array(cfg["network_config"]["observation_size"], jnp.dtype("float32"))
+        ),
+        init_params.policy,
     )
 
 
 def load_inference_fn(
-    ckpt, deterministic: bool = True, get_activation: bool = True
+    cfg, policy_params, deterministic: bool = True, get_activation: bool = True
 ) -> Callable:
     """
     Create a policy inference function from a checkpoint.
     """
-    cfg = ckpt["config"]
-    policy_params = ckpt["policy"]
-    policy_params[0] = running_statistics.RunningStatisticsState(**policy_params[0])
+    ppo_network = make_ppo_network_from_cfg(cfg)
+    make_policy = ppo_networks.make_inference_fn(ppo_network)
 
+    return make_policy(
+        policy_params, deterministic=deterministic, get_activation=get_activation
+    )
+
+
+def add_to_network_config(
+    network_config: dict,
+    observation_size: int,
+    action_size: int,
+    normalize_observations: bool,
+    **kwargs,
+):
+    """Add network info to the network config."""
+    network_config["normalize_observations"] = normalize_observations
+    network_config["action_size"] = action_size
+    network_config["observation_size"] = observation_size
+    network_config.update(kwargs)
+    return network_config
+
+
+def make_ppo_network_from_cfg(cfg):
     normalize = lambda x, y: x
     if cfg["network_config"]["normalize_observations"]:
         normalize = running_statistics.normalize
@@ -59,24 +151,4 @@ def load_inference_fn(
         raise ValueError(
             f"Unknown network architecture: {cfg['network_config']['arch_name']}"
         )
-
-    make_policy = ppo_networks.make_inference_fn(ppo_network)
-
-    return make_policy(
-        policy_params, deterministic=deterministic, get_activation=get_activation
-    )
-
-
-def add_to_network_config(
-    network_config: dict,
-    observation_size: int,
-    action_size: int,
-    normalize_observations: bool,
-    **kwargs,
-):
-    """Add network info to the network config."""
-    network_config["normalize_observations"] = normalize_observations
-    network_config["action_size"] = action_size
-    network_config["observation_size"] = observation_size
-    network_config.update(kwargs)
-    return network_config
+    return ppo_network

@@ -68,7 +68,7 @@ def main(cfg: DictConfig):
 
     # Generate a new run_id and associated checkpoint path
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    # TODO: Give use a base path given by the config for this
+    # TODO: Use a base path given by the config for this
     checkpoint_path = hydra.utils.to_absolute_path(
         f"./{cfg.logging_config.model_path}/{run_id}"
     )

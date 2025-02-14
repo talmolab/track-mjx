@@ -31,7 +31,7 @@ import logging
 from track_mjx.io import load
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
-from track_mjx.environment import custom_wrappers
+from track_mjx.environment import wrappers
 from track_mjx.agent import checkpoint
 from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
 from track_mjx.environment.walker.rodent import Rodent
@@ -155,7 +155,7 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
+    rollout_env = wrappers.RenderRolloutWrapperTracking(env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

@@ -49,7 +49,7 @@ import optax
 import orbax.checkpoint as ocp
 from flax.training import orbax_utils
 
-from track_mjx.environment import custom_wrappers
+from track_mjx.environment import wrappers
 from track_mjx.agent import checkpoint
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -235,7 +235,7 @@ def train(
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
     if isinstance(environment, envs.Env):
-        wrap_for_training = custom_wrappers.wrap
+        wrap_for_training = wrappers.wrap
     else:
         wrap_for_training = envs_v1.wrappers.wrap_for_training
 

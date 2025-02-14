@@ -22,7 +22,7 @@ import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-from track_mjx.agent import custom_ppo
+from track_mjx.agent import ppo, ppo_networks
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -32,13 +32,18 @@ from track_mjx.io import load
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import custom_wrappers
-from track_mjx.agent import custom_ppo_networks, checkpoint
+from track_mjx.agent import checkpoint
 from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+_WALKERS = {
+    "rodent": Rodent,
+    "fly": Fly,
+}
 
 
 @hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
@@ -58,34 +63,29 @@ def main(cfg: DictConfig):
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    # Initialize checkpoint manager
+    # Generate a new run_id and associated checkpoint path
+    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+    # TODO: Use a base path given by the config
+    checkpoint_path = hydra.utils.to_absolute_path(
+        f"./{cfg.logging_config.model_path}/{run_id}"
+    )
+
+    # Load the checkpoint's config
+    if cfg.train_setup["checkpoint_to_restore"] is not None:
+        # Load the checkpoint's config and update the run_id and checkpoint path
+        cfg = OmegaConf.create(
+            checkpoint.load_config(cfg.train_setup["checkpoint_to_restore"])
+        )
+        checkpoint_path = Path(cfg.train_setup["checkpoint_to_restore"])
+        run_id = checkpoint_path.name
+
+        # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
         create=True,
         max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],
         keep_period=cfg.train_setup["checkpoint_keep_period"],
         step_prefix="PPONetwork",
     )
-
-    # Generate a new run_id and associated checkpoint path
-    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    # TODO: Use a base path given by the config for this
-    checkpoint_path = hydra.utils.to_absolute_path(
-        f"./{cfg.logging_config.model_path}/{run_id}"
-    )
-
-    # Load the checkpoint's config for the network, but use the current config for all else.
-    if cfg.train_setup["checkpoint_to_restore"] is not None:
-        # Load the checkpoint's network config to be able to restore the networks
-        checkpoint_cfg = OmegaConf.create(
-            checkpoint.load_config(cfg.train_setup["checkpoint_to_restore"])
-        )
-        # Replace our network_config with the checkpoint's
-        cfg.network_config = checkpoint_cfg.network_config
-
-        # Update the run id and checkpoint path if resuming wandb logging
-        if cfg.logging_config.resume:
-            checkpoint_path = Path.cfg.train_setup["checkpoint_to_restore"]
-            run_id = checkpoint_path.name
 
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
@@ -99,26 +99,11 @@ def main(cfg: DictConfig):
     traj_config = cfg["reference_config"]
 
     logging.info(f"Loading data: {cfg.data_path}")
-    data_path = hydra.utils.to_absolute_path(cfg.data_path)
-    try:
-        reference_clip = load.make_multiclip_data(data_path)
-    except KeyError:
-        logging.info(
-            f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
-        )
-        reference_clip = load.load_reference_clip_data(data_path)
+    reference_clip = load.load_data(cfg.data_path)
 
-    walker_map = {
-        "rodent": Rodent,
-        "fly": Fly,
-    }
-
-    walker_class = walker_map[cfg_dict["walker_type"]]
-    walker = walker_class(**walker_config)
-
+    walker = _WALKERS[cfg_dict["walker_type"]](**walker_config)
     reward_config = RewardConfig(**env_rewards)
 
-    # Automatically match dict keys and func needs
     env = envs.get_environment(
         env_name=cfg.env_config.env_name,
         reference_clip=reference_clip,
@@ -138,7 +123,7 @@ def main(cfg: DictConfig):
     logging.info(f"episode_length {episode_length}")
 
     train_fn = functools.partial(
-        custom_ppo.train,
+        ppo.train,
         **train_config,
         num_evals=int(
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
@@ -147,7 +132,7 @@ def main(cfg: DictConfig):
         episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
         network_factory=functools.partial(
-            custom_ppo_networks.make_intention_ppo_networks,
+            ppo_networks.make_intention_ppo_networks,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
@@ -182,7 +167,7 @@ def main(cfg: DictConfig):
         jit_reset,
         jit_step,
         cfg,
-        model_path,
+        checkpoint_path,
         renderer,
         mj_model,
         mj_data,

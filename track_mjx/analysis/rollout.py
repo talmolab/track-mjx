@@ -13,7 +13,7 @@ from brax.training.acme import running_statistics, specs
 from typing import Dict, List, Callable, Tuple
 import orbax.checkpoint as ocp
 import functools
-from track_mjx.agent import custom_ppo_networks
+from track_mjx.agent import ppo_networks
 import hydra
 import logging
 from track_mjx.environment.task.reward import RewardConfig
@@ -22,7 +22,7 @@ from jax import numpy as jnp
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import custom_wrappers
-from track_mjx.agent import custom_losses as ppo_losses
+from track_mjx.agent import losses as ppo_losses
 from track_mjx.io import load
 
 
@@ -136,7 +136,7 @@ def create_abstract_policy(
     #     ),
     # )
 
-    ppoe_network = custom_ppo_networks.make_intention_ppo_networks(
+    ppoe_network = ppo_networks.make_intention_ppo_networks(
         observation_size=cfg_dict["network_config"]["observation_size"],
         reference_obs_size=cfg_dict["network_config"]["reference_obs_size"],
         action_size=cfg_dict["network_config"]["action_size"],
@@ -163,7 +163,7 @@ def create_abstract_policy(
     #     environment.action_size,
     # )
 
-    make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
+    make_policy = ppo_networks.make_inference_fn(ppo_network)
     key_policy, key_value = jax.random.split(jax.random.key(1))
 
     init_params = ppo_losses.PPONetworkParams(

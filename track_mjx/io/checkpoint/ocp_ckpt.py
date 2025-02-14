@@ -3,12 +3,15 @@ Helper functions for saving and loading checkpoint for Orbax checkpoint.
 """
 
 import orbax.checkpoint as ocp
-from track_mjx.agent.custom_losses import PPONetworkParams
-from track_mjx.agent.custom_ppo import TrainingState
+from track_mjx.agent.losses import PPONetworkParams
+from track_mjx.agent.ppo import TrainingState
 
 
 def checkpoint_save(
-    ckpt_mgr: ocp.CheckpointManager, step: int, policy_params: PPONetworkParams, train_params: TrainingState
+    ckpt_mgr: ocp.CheckpointManager,
+    step: int,
+    policy_params: PPONetworkParams,
+    train_params: TrainingState,
 ):
     """
     Save the checkpoint. ocp will save both policy module (for easier rollout) and

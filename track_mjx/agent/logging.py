@@ -16,9 +16,9 @@ from brax import envs
 from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
 
-from track_mjx.agent import custom_ppo
-from track_mjx.agent import custom_ppo_networks
-from track_mjx.agent import custom_losses
+from track_mjx.agent import ppo
+from track_mjx.agent import ppo_networks
+from track_mjx.agent import losses
 from brax.io import model
 import numpy as np
 from jax import numpy as jp
@@ -137,7 +137,7 @@ def rollout_logging_fn(
     scene_option,
     current_step: int,  # all args above this one are passed in by functools.partial
     jit_logging_inference_fn,
-    params: custom_losses.PPONetworkParams,
+    params: losses.PPONetworkParams,
     policy_params_fn_key: jax.random.PRNGKey,
 ) -> None:
     """Logs metrics and videos for a reinforcement learning training rollout.
@@ -260,13 +260,13 @@ def rollout_logging_fn(
 def render_rollout(
     num_steps: int,
     make_policy: Callable[
-        [custom_losses.PPONetworkParams, bool],
+        [losses.PPONetworkParams, bool],
         Callable[
             [jax.numpy.ndarray, jax.random.PRNGKey],
             tuple[jax.numpy.ndarray, dict[str, Any]],
         ],
     ],
-    params: custom_losses.PPONetworkParams,
+    params: losses.PPONetworkParams,
     rollout_key: jax.random.PRNGKey,
     cfg: DictConfig,
     env: Env,

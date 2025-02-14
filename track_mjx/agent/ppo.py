@@ -33,10 +33,10 @@ from brax.training.acme import specs
 import flax.training
 
 # from brax.training.agents.ppo import losses as ppo_losses
-from track_mjx.agent import custom_losses as ppo_losses
+from track_mjx.agent import losses as ppo_losses
 
 # from brax.training.agents.ppo import networks as ppo_networks
-from track_mjx.agent import custom_ppo_networks
+from track_mjx.agent import ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
@@ -110,8 +110,8 @@ def train(
     gae_lambda: float = 0.95,
     deterministic_eval: bool = False,
     network_factory: types.NetworkFactory[
-        custom_ppo_networks.PPOImitationNetworks
-    ] = custom_ppo_networks.make_intention_ppo_networks,
+        ppo_networks.PPOImitationNetworks
+    ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
     eval_env: Optional[envs.Env] = None,
@@ -268,9 +268,9 @@ def train(
         env.action_size,
         preprocess_observations_fn=normalize,
     )
-    make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
+    make_policy = ppo_networks.make_inference_fn(ppo_network)
 
-    make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
+    make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     optimizer = optax.adam(learning_rate=learning_rate)

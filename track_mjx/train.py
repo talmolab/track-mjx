@@ -1,8 +1,9 @@
 """
-Entries point for track-mjx. Load the config file, create environments, initialize network, and start training.
+Entry point for track-mjx. Load the config file, create environments, initialize network, and start training.
 """
 
 import os
+import sys
 
 # set default env variable if not set
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
@@ -14,7 +15,6 @@ os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )
 
-from absl import flags
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import functools
@@ -24,21 +24,20 @@ from brax import envs
 import orbax.checkpoint as ocp
 from track_mjx.agent import custom_ppo
 import warnings
-from jax import numpy as jp
-
+from pathlib import Path
 from datetime import datetime
+import logging
+
+from track_mjx.io import load
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
-from track_mjx.io import load
 from track_mjx.environment import custom_wrappers
-from track_mjx.agent import custom_ppo_networks
+from track_mjx.agent import custom_ppo_networks, checkpoint
 from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
 from track_mjx.environment.walker.rodent import Rodent
-import logging
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
 
-FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -66,37 +65,38 @@ def main(cfg: DictConfig):
         keep_period=cfg.train_setup["checkpoint_keep_period"],
         step_prefix="PPONetwork",
     )
-    ckpt_mgr = ocp.CheckpointManager(model_path, options=mgr_options)
 
-    # Restore configs if previously trained
+    # Generate a new run_id and associated checkpoint path
+    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+    # TODO: Give use a base path given by the config for this
+    checkpoint_path = hydra.utils.to_absolute_path(
+        f"./{cfg.logging_config.model_path}/{run_id}"
+    )
+
+    # Load the checkpoint's config for the network, but use the current config for all else.
     if cfg.train_setup["checkpoint_to_restore"] is not None:
-        with ocp.CheckpointManager(
-            cfg.train_setup["checkpoint_to_restore"],
-            options=mgr_options,
-        ) as mngr:
-            print(f"latest checkpoint step: {mngr.latest_step()}")
-            latest_step = mngr.latest_step()
-            abstract_config = OmegaConf.to_container(cfg, resolve=True)
-            restored_config = mngr.restore(
-                latest_step,
-                args=ocp.args.Composite(config=ocp.args.JsonRestore(abstract_config)),
-            )["config"]
-            print(f"Successfully restored config")
-            cfg = OmegaConf.create(restored_config)
-    else:
-        run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-        model_path = f"./{cfg.logging_config.model_path}/{run_id}"
-        model_path = hydra.utils.to_absolute_path(model_path)
-        logging.info(f"Model Checkpoint Path: {model_path}")
+        # Load the checkpoint's network config to be able to restore the networks
+        checkpoint_cfg = OmegaConf.create(
+            checkpoint.load_config(cfg.train_setup["checkpoint_to_restore"])
+        )
+        # Replace our network_config with the checkpoint's
+        cfg.network_config = checkpoint_cfg.network_config
+
+        # Update the run id and checkpoint path if resuming wandb logging
+        if cfg.logging_config.resume:
+            checkpoint_path = Path.cfg.train_setup["checkpoint_to_restore"]
+            run_id = checkpoint_path.name
+
+    ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
+
+    logging.info(f"run_id: {run_id}")
+    logging.info(f"Training checkpoint path: {checkpoint_path}")
 
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
     walker_config = cfg["walker_config"]
     traj_config = cfg["reference_config"]
-
-    # TODO: Fix this dependency issue
-    import sys
 
     logging.info(f"Loading data: {cfg.data_path}")
     data_path = hydra.utils.to_absolute_path(cfg.data_path)

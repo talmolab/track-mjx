@@ -7,13 +7,8 @@ import jax
 from brax.envs.base import Env
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
-import pickle
 from brax import envs
-from brax.training.acme import running_statistics, specs
-from typing import Dict, List, Callable, Tuple
-import orbax.checkpoint as ocp
-import functools
-from track_mjx.agent import ppo_networks
+from typing import Dict, Callable
 import hydra
 import logging
 from track_mjx.environment.task.reward import RewardConfig
@@ -22,51 +17,10 @@ from jax import numpy as jnp
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import wrappers
-from track_mjx.agent import losses as ppo_losses
 from track_mjx.io import load
 
 
-from omegaconf import DictConfig, OmegaConf
-
-
-def restore_checkpoint(checkpoint_path: str) -> DictConfig:
-    """Restores the whole checkpoint isntead of needing to get one part at a time, it's free!"""
-
-    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
-    with ocp.CheckpointManager(
-        checkpoint_path,
-        options=options,
-    ) as mngr:
-        print(f"latest checkpoint step: {mngr.latest_step()}")
-        config = mngr.restore(
-            mngr.latest_step(),
-            args=ocp.args.Composite(config=ocp.args.JsonRestore(None)),
-        )["config"]
-
-    return config
-
-
-def restore_config(checkpoint_path: str) -> DictConfig:
-    """
-    Restore the config from the checkpoint
-
-    Args:
-        checkpoint_path (str): The path to the checkpoint
-
-    Returns:
-        DictConfig: The restored config
-    """
-    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
-    with ocp.CheckpointManager(
-        checkpoint_path,
-        options=options,
-    ) as mngr:
-        print(f"latest checkpoint step: {mngr.latest_step()}")
-        config = mngr.restore(
-            mngr.latest_step(),
-            args=ocp.args.Composite(config=ocp.args.JsonRestore(None)),
-        )["config"]
-    return config
+from omegaconf import DictConfig
 
 
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:
@@ -107,115 +61,6 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
         **traj_config,
     )
     return env
-
-
-def create_abstract_policy(
-    environment: Env, cfg_dict: Dict | DictConfig
-) -> Tuple[Tuple, Callable]:
-    """
-    Create the policy function for the environment
-
-    Args:
-        environment (Env): The environment to create the policy for
-        cfg_dict (Dict): The config dictionary, direct translation from the
-            yaml file
-
-    Returns:
-        Tuple[Tuple, Callable]: The abstract policy and the policy function
-    """
-    # network_factory = functools.partial(
-    #     custom_ppo_networks.make_intention_ppo_networks,
-    #     encoder_hidden_layer_sizes=tuple(
-    #         cfg_dict["network_config"]["encoder_layer_sizes"]
-    #     ),
-    #     decoder_hidden_layer_sizes=tuple(
-    #         cfg_dict["network_config"]["decoder_layer_sizes"]
-    #     ),
-    #     value_hidden_layer_sizes=tuple(
-    #         cfg_dict["network_config"]["critic_layer_sizes"]
-    #     ),
-    # )
-
-    ppoe_network = ppo_networks.make_intention_ppo_networks(
-        observation_size=cfg_dict["network_config"]["observation_size"],
-        reference_obs_size=cfg_dict["network_config"]["reference_obs_size"],
-        action_size=cfg_dict["network_config"]["action_size"],
-        intention_latent_size=cfg_dict["network_config"]["intention_size"],
-        encoder_hidden_layer_sizes=tuple(
-            cfg_dict["network_config"]["encoder_layer_sizes"]
-        ),
-        decoder_hidden_layer_sizes=tuple(
-            cfg_dict["network_config"]["decoder_layer_sizes"]
-        ),
-        value_hidden_layer_sizes=tuple(
-            cfg_dict["network_config"]["critic_layer_sizes"]
-        ),
-    )
-
-    # Instead of this, load a saved env_state.obs.shape, reference_obs_size, and action_size
-    # reset_fn = environment.reset
-    # key_envs = jax.random.key(1)
-    # env_state = reset_fn(key_envs)
-    # # ----------------------------
-    # ppo_network = network_factory(
-    #     env_state.obs.shape[-1],
-    #     int(env_state.info["reference_obs_size"]),
-    #     environment.action_size,
-    # )
-
-    make_policy = ppo_networks.make_inference_fn(ppo_network)
-    key_policy, key_value = jax.random.split(jax.random.key(1))
-
-    init_params = ppo_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key_policy),
-        value=ppo_network.value_network.init(key_value),
-    )
-
-    abstract_policy = (
-        running_statistics.init_state(
-            specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
-        ),
-        init_params.policy,
-    )
-
-    return abstract_policy, make_policy
-
-
-def restore_policy(checkpoint_path: str, abstract_policy: Tuple) -> Tuple:
-    """
-    Restore the policy from the checkpoint
-
-    Args:
-        checkpoint_path (str): The path to the checkpoint
-        abstract_policy (Callable): The abstract policy for loading
-
-    Returns:
-        Tuple: The restored policy
-    """
-    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
-    with ocp.CheckpointManager(
-        checkpoint_path,
-        options=options,
-    ) as mngr:
-        print(f"latest checkpoint step: {mngr.latest_step()}")
-        policy = mngr.restore(
-            mngr.latest_step(),
-            args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy)),
-        )["policy"]
-    return policy
-
-
-def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callable:
-    rollout_env = wrappers.RenderRolloutWrapperTracking(environment)
-    abstract_policy, make_policy = create_abstract_policy(rollout_env, cfg_dict)
-    # load the checkpoint
-    policy = restore_policy(
-        cfg_dict["train_setup"]["checkpoint_to_restore"], abstract_policy
-    )
-    jit_inference_fn = jax.jit(
-        make_policy(policy, deterministic=True, get_activation=True)
-    )
-    return jit_inference_fn
 
 
 def create_rollout_generator(

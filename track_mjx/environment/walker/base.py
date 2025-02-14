@@ -160,7 +160,7 @@ class BaseWalker(ABC):
         Returns:
             jp.ndarray: The root's orientation quaternion. Shape (4,).
         """
-        return qpos[3:7]
+        return qpos
 
     def get_all_loc_joints(self, qpos: jp.ndarray) -> jp.ndarray:
         """Extracts all joint positional values (excluding the root position and orientation) from the state vector.
@@ -171,7 +171,7 @@ class BaseWalker(ABC):
         Returns:
             jp.ndarray: The joint positions. Shape (num_joints,).
         """
-        return qpos[7:]
+        return qpos
 
     def compute_local_track_positions(
         self, ref_positions: jp.ndarray, qpos: jp.ndarray
@@ -221,14 +221,37 @@ class BaseWalker(ABC):
         """Compute joint distances relative to reference joints.
 
         Args:
-            ref_joints: Reference joint positions
-            qpos: Full state vector containing joint positions
+            ref_joints: Reference joint positions.
+            qpos: Full state vector containing joint positions.
 
         Returns:
             Joint distances Shape (num_joints,).
         """
-        joints = self.get_all_loc_joints(qpos)
-        joint_dist = (ref_joints - joints)[:, self._joint_idxs].flatten()
+        joints = self.get_all_loc_joints(qpos)  # Extract all joint positions
+
+        # 🚀 Debugging outputs
+        #print(f"DEBUG: ref_joints.shape = {ref_joints.shape}")  # Expect (4,)
+        #print(f"DEBUG: joints.shape = {joints.shape}")  # Expect (4,)
+        #print(f"DEBUG: _joint_idxs.shape = {self._joint_idxs.shape}")  # Should match
+        #print(f"DEBUG: _joint_idxs = {self._joint_idxs}")  # Ensure not empty
+
+        # 🚀 Catch empty joint indices case
+        if self._joint_idxs.shape[0] == 0:
+            raise ValueError("BUG: _joint_idxs is empty! Check _initialize_indices().")
+
+        # Ensure ref_joints and joints have the correct shape
+        if ref_joints.shape != joints.shape:
+            raise ValueError(
+                f"Shape mismatch! ref_joints: {ref_joints.shape}, joints: {joints.shape}"
+            )
+
+        # 🚀 Ensure indexing is correct
+        if self._joint_idxs.max() >= joints.shape[0]:
+            raise ValueError(
+                f"BUG: _joint_idxs contains out-of-range indices: {self._joint_idxs}"
+            )
+
+        joint_dist = (ref_joints - joints)[self._joint_idxs].flatten()
 
         return joint_dist
 
@@ -238,20 +261,65 @@ class BaseWalker(ABC):
         """Compute local body positions relative to reference positions, rotated by the agent's orientation.
 
         Args:
-            ref_positions: Reference body positions
-            xpos: Agent's current body positions
-            qpos: Agent's full state vector, including orientation quaternion
+            ref_positions: Reference body positions (may have multiple frames).
+            xpos: Agent's current body positions.
+            qpos: Agent's full state vector, including orientation quaternion.
 
         Returns:
-            Local body position differences, rotated to align with agent orientation
+            Local body position differences, rotated to align with agent orientation.
         """
-        quat = self.get_root_quaternion_from_qpos(qpos)
-        body_pos_dist_local = jax.vmap(
-            lambda a, b: jax.vmap(brax_math.rotate, in_axes=(0, None))(a, b),
-            in_axes=(0, None),
-        )(
-            (ref_positions - xpos)[:, self._body_idxs],
-            quat,
-        ).flatten()
 
-        return body_pos_dist_local
+        # 🚀 Debugging print
+        # print(
+        #     f"DEBUG: ref_positions.shape = {ref_positions.shape}"
+        # )  # Expect (5, 9, 3) or (9, 3)
+        #print(f"DEBUG: xpos.shape = {xpos.shape}")  # Expect (9, 3)
+        #print(f"DEBUG: qpos.shape = {qpos.shape}")  # Expect (4,)
+
+        # If reference positions have multiple frames, select only the first frame
+        if len(ref_positions.shape) == 3:
+            ref_positions = ref_positions[0]  # Extract first frame
+            print(f"DEBUG: Using first frame of ref_positions: {ref_positions.shape}")
+
+        # Ensure valid body indices
+        if self._body_idxs.shape[0] == 0:
+            raise ValueError(
+                f"BUG: _body_idxs is empty! ref_positions.shape = {ref_positions.shape}"
+            )
+
+        # Extract valid body positions
+        if ref_positions.shape != xpos.shape:
+            raise ValueError(
+                f"Mismatch in ref_positions and xpos after correction: {ref_positions.shape} vs {xpos.shape}"
+            )
+
+        body_positions = (ref_positions - xpos)[self._body_idxs]
+
+        # 🚀 Debugging print
+        #print(f"DEBUG: body_positions.shape = {body_positions.shape}")  # Expect (N, 3)
+
+        # Ensure valid dimensions for rotation
+        if body_positions.shape[0] == 0 or body_positions.shape[1] != 3:
+            raise ValueError(
+                f"Invalid body positions shape! Expected (N,3), got {body_positions.shape}"
+            )
+
+        quat = self.get_root_quaternion_from_qpos(qpos)
+
+        # 🚀 Debugging print
+        #print(f"DEBUG: quat.shape before reshape = {quat.shape}")  # Expect (4,)
+        #print(f"DEBUG: quat before reshape = {quat}")  # Expect (4,)
+
+        # Ensure quaternion is of shape (4,) and not (1,)
+        # if quat.shape[0] == 1:
+        #    quat = jp.concatenate([quat, jp.zeros(3)])  # Pad with zeros if needed
+
+        #print(f"DEBUG: quat.shape after reshape = {quat.shape}")  # Ensure it's (4,)
+        #print(f"DEBUG: quat after reshape = {quat}")  # Ensure it's (4,)
+
+        # Fix rotation step by ensuring correct input shapes
+        body_pos_dist_local = jax.vmap(brax_math.rotate, in_axes=(0, None))(
+            body_positions, quat
+        )
+
+        return body_pos_dist_local.flatten()

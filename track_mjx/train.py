@@ -25,15 +25,17 @@ import orbax.checkpoint as ocp
 from track_mjx.agent import custom_ppo
 import warnings
 from jax import numpy as jp
+from track_mjx.io.load import make_mousearm_multiclip_data
 
 from datetime import datetime
-from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
+from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking, MouseArmMultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.io import load
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
 from track_mjx.environment.walker.rodent import Rodent
+from track_mjx.environment.walker.mouse_arm import MouseArm
 import logging
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
@@ -42,7 +44,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
+@hydra.main(version_base=None, config_path="config", config_name="mouse-arm")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -52,6 +54,7 @@ def main(cfg: DictConfig):
         n_devices = 1
         logging.info("Not using GPUs")
 
+    envs.register_environment("mouse_arm_multi_clip", MouseArmMultiClipTracking)
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
@@ -109,7 +112,7 @@ def main(cfg: DictConfig):
     logging.info(f"Loading data: {cfg.data_path}")
     data_path = hydra.utils.to_absolute_path(cfg.data_path)
     try:
-        reference_clip = load.make_multiclip_data(data_path)
+        reference_clip = make_mousearm_multiclip_data(data_path)
     except KeyError:
         logging.info(
             f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
@@ -117,6 +120,7 @@ def main(cfg: DictConfig):
         reference_clip = load.load_reference_clip_data(data_path)
 
     walker_map = {
+        "mouse-arm": MouseArm,
         "rodent": Rodent,
         "fly": Fly,
     }

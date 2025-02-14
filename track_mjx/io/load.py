@@ -13,8 +13,8 @@ class ReferenceClip:
     """Immutable dataclass defining the trajectory features used in the tracking task."""
 
     # qpos
-    position: jp.ndarray = None
-    quaternion: jp.ndarray = None
+    #position: jp.ndarray = None
+    #quaternion: jp.ndarray = None
     joints: jp.ndarray = None
 
     # xpos
@@ -65,13 +65,13 @@ def make_singleclip_data(traj_data_path):
         xquat = jp.array(data["xquat"][()])
         return (
             ReferenceClip(
-                position=qpos[:, :3],
-                quaternion=qpos[:, 3:7],
-                joints=qpos[:, 7:],
+                #position=qpos[:, :3],
+                #quaternion=qpos[:, 3:7],
+                joints=qpos,
                 body_positions=xpos,
-                velocity=qvel[:, :3],
-                angular_velocity=qvel[:, 3:6],
-                joints_velocity=qvel[:, 6:],
+                velocity=qvel,
+                #angular_velocity=qvel[:, 3:6],
+                joints_velocity=qvel,
                 body_quaternions=xquat,
             ),
         )
@@ -109,6 +109,40 @@ def make_multiclip_data(traj_data_path):
             joints_velocity=batch_qvel[:, :, 6:],
             body_quaternions=batch_xquat,
         )
+    
+def make_mousearm_multiclip_data(traj_data_path):
+    """Creates ReferenceClip object with multiclip tracking data.
+    Features have shape = (clips, frames, dims)
+    """
+
+    def reshape_frames(arr, clip_len):
+        return jp.array(
+            arr[()].reshape(arr.shape[0] // clip_len, clip_len, *arr.shape[1:])
+        )
+
+    with h5py.File(traj_data_path, "r") as data:
+        # Read the config string as yaml in to dict
+        yaml_str = data["config"][()]
+        yaml_str = yaml_str.decode("utf-8")
+        config = yaml.safe_load(yaml_str)
+        clip_len = config["stac"]["n_frames_per_clip"]
+
+        # Reshape the data to (clips, frames, dims)
+        batch_qpos = reshape_frames(data["qpos"], clip_len)
+        batch_xpos = reshape_frames(data["xpos"], clip_len)
+        batch_qvel = reshape_frames(data["qvel"], clip_len)
+        batch_xquat = reshape_frames(data["xquat"], clip_len)
+        return ReferenceClip(
+            #position=batch_qpos,
+            #quaternion=batch_qpos,
+            joints=batch_qpos,
+            body_positions=batch_xpos,
+            velocity=batch_qvel,
+            #angular_velocity=batch_qvel,
+            joints_velocity=batch_qvel,
+            body_quaternions=batch_xquat,
+        )
+
 
 
 def load_reference_clip_data(

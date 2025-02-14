@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
 from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
+from track_mjx.environment.walker.mouse_arm import MouseArm
 from track_mjx.environment.task.reward import RewardConfig
 
 
@@ -34,7 +35,7 @@ class SingleClipTracking(PipelineEnv):
     def __init__(
         self,
         reference_clip: ReferenceClip | None,
-        walker: BaseWalker,
+        walker: MouseArm,
         reward_config: RewardConfig,
         physics_steps_per_control_step: int,
         reset_noise_scale: float,
@@ -163,14 +164,14 @@ class SingleClipTracking(PipelineEnv):
         #     jp.zeros((self.sys.nq,)),
         # )
 
-        new_qpos = jp.concatenate(
-            (
-                reference_frame.position,
-                reference_frame.quaternion,
-                reference_frame.joints,
-            ),
-            axis=0,
-        )
+        print(f"reference_frame.joints.shape: {reference_frame.joints.shape}")
+        print(f"DEBUG: sys.nq is set to {self.sys.nq}")
+
+
+        new_qpos = reference_frame.joints
+
+        print(f"new_qpos.shape: {new_qpos.shape}, self.sys.nq: {self.sys.nq}")
+
         qpos = new_qpos + jax.random.uniform(
             rng1, (self.sys.nq,), minval=low, maxval=hi
         )
@@ -192,19 +193,19 @@ class SingleClipTracking(PipelineEnv):
 
         reward, done, zero = jp.zeros(3)
         metrics = {
-            "pos_reward": zero,
-            "quat_reward": zero,
+            #"pos_reward": zero,
+            #"quat_reward": zero,
             "joint_reward": zero,
-            "angvel_reward": zero,
+            #"angvel_reward": zero,
             "bodypos_reward": zero,
             "endeff_reward": zero,
             "reward_ctrlcost": zero,
             "ctrl_diff_cost": zero,
-            "too_far": zero,
-            "bad_pose": zero,
-            "bad_quat": zero,
-            "fall": zero,
-            "nan": zero,
+            #"too_far": zero,
+            #"bad_pose": zero,
+            #"bad_quat": zero,
+            #"fall": zero,
+            #"nan": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -231,18 +232,18 @@ class SingleClipTracking(PipelineEnv):
 
         # reward calculation
         (
-            pos_reward,
-            quat_reward,
+            #pos_reward,
+            #quat_reward,
             joint_reward,
-            angvel_reward,
+            #angvel_reward,
             bodypos_reward,
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
-            too_far,
-            bad_pose,
-            bad_quat,
-            fall,
+            #too_far,
+            #bad_pose,
+            #bad_quat,
+            #fall,
             info,
         ) = compute_tracking_rewards(
             data=data,
@@ -258,9 +259,9 @@ class SingleClipTracking(PipelineEnv):
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
         reward = (
             joint_reward
-            + pos_reward
-            + quat_reward
-            + angvel_reward
+            #+ pos_reward
+            #+ quat_reward
+            #+ angvel_reward
             + bodypos_reward
             + endeff_reward
             - ctrl_cost
@@ -268,7 +269,7 @@ class SingleClipTracking(PipelineEnv):
         )
 
         # Raise done flag if terminating
-        done = jp.max(jp.array([fall, too_far, bad_pose, bad_quat]))
+        done = jp.array(0.0)
 
         # Handle nans during sim by resetting env
         reward = jp.nan_to_num(reward)
@@ -282,19 +283,19 @@ class SingleClipTracking(PipelineEnv):
         done = jp.max(jp.array([nan, done]))
 
         state.metrics.update(
-            pos_reward=pos_reward,
-            quat_reward=quat_reward,
+            #pos_reward=pos_reward,
+            #quat_reward=quat_reward,
             joint_reward=joint_reward,
-            angvel_reward=angvel_reward,
+            #angvel_reward=angvel_reward,
             bodypos_reward=bodypos_reward,
             endeff_reward=endeff_reward,
             reward_ctrlcost=-ctrl_cost,
             ctrl_diff_cost=ctrl_diff_cost,
-            too_far=too_far,
-            bad_pose=bad_pose,
-            bad_quat=bad_quat,
-            fall=fall,
-            nan=nan,
+            #too_far=too_far,
+            #bad_pose=bad_pose,
+            #bad_quat=bad_quat,
+            #fall=fall,
+            #nan=nan,
         )
 
         return state.replace(
@@ -302,7 +303,13 @@ class SingleClipTracking(PipelineEnv):
         )
 
     def _get_reference_clip(self, info) -> ReferenceClip:
-        """Returns reference clip; to be overridden in child classes"""
+        """Ensures the reference clip contains valid joint data."""
+        if self._reference_clip is None:
+            raise ValueError("ReferenceClip is not initialized!")
+        
+        if self._reference_clip.joints.size == 0:
+            raise ValueError("ReferenceClip has no joint data!")
+
         return self._reference_clip
 
     def _get_reference_trajectory(self, info, data) -> ReferenceClip:
@@ -320,56 +327,27 @@ class SingleClipTracking(PipelineEnv):
 
         return jax.tree_util.tree_map(f, self._get_reference_clip(info))
 
-    def _get_obs(
-        self, data: mjx.Data, info: dict[str, Any]
-    ) -> tuple[jp.ndarray, jp.ndarray]:
-        """Constructs the observation for the environment.
-
-        Args:
-            data: Current Mujoco simulation data.
-            info: Information dictionary containing the current state and reference trajectory details.
-
-        Returns:
-            Tuple[jp.ndarray, jp.ndarray]:
-                - `reference_obs`: Reference trajectory-based observation.
-                - `proprioceptive_obs`: Observations of the agent's internal state (position and velocity).
-        """
-
+    def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> tuple[jp.ndarray, jp.ndarray]:
+        """Constructs the observation for the environment."""
         ref_traj = self._get_reference_trajectory(info, data)
 
-        # walker methods to compute the necessary distances and differences
-        track_pos_local = self.walker.compute_local_track_positions(
-            ref_traj.position, data.qpos
-        )
-        quat_dist = self.walker.compute_quat_distances(ref_traj.quaternion, data.qpos)
-        joint_dist = self.walker.compute_local_joint_distances(
-            ref_traj.joints, data.qpos
-        )
-        body_pos_dist_local = self.walker.compute_local_body_positions(
-            ref_traj.body_positions, data.xpos, data.qpos
-        )
+        # Ensure reference trajectory matches qpos
+        ref_joints = ref_traj.joints[0]  # Take only the first frame
 
-        reference_obs = jp.concatenate(
-            [
-                track_pos_local,
-                quat_dist,
-                joint_dist,
-                body_pos_dist_local,
-            ]
-        )
+        #print(f"DEBUG: ref_joints.shape = {ref_joints.shape}")  # Expect (4,)
+        #print(f"DEBUG: data.qpos.shape = {data.qpos.shape}")  # Expect (4,)
 
-        # jax.debug.print("track_pos_local: {}", track_pos_local)
-        # jax.debug.print("quat_dist: {}", quat_dist)
-        # jax.debug.print("joint_dist: {}", joint_dist)
-        # jax.debug.print("body_pos_dist_local: {}", body_pos_dist_local)
+        if ref_joints.shape != data.qpos.shape:
+            raise ValueError(f"Shape mismatch: ref_joints {ref_joints.shape} vs data.qpos {data.qpos.shape}")
 
-        prorioceptive_obs = jp.concatenate(
-            [
-                data.qpos,
-                data.qvel,
-            ]
-        )
-        return reference_obs, prorioceptive_obs
+        joint_dist = self.walker.compute_local_joint_distances(ref_joints, data.qpos)
+        body_pos_dist_local = self.walker.compute_local_body_positions(ref_traj.body_positions, data.xpos, data.qpos)
+
+        reference_obs = jp.concatenate([joint_dist, body_pos_dist_local])
+        proprioceptive_obs = jp.concatenate([data.qpos, data.qvel])
+
+        return reference_obs, proprioceptive_obs
+
 
     def _get_cur_frame(self, info, data: mjx.Data) -> int:
         """Returns the current frame index based on the simulation time"""

@@ -92,6 +92,15 @@ def make_rollout_renderer(env, cfg):
                 geom.pos *= walker_config.rescale_factor
 
         mj_model = spec.compile()
+
+    elif cfg.env_config.walker_name == "mouse_arm":
+        root = mjcf_dm.from_path(_XML_PATH)
+        rescale.rescale_subtree(
+            root,
+            walker_config.rescale_factor,  # Use correct rescale factor
+            walker_config.rescale_factor,
+        )
+        mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
     else:
         raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
 
@@ -120,7 +129,7 @@ def make_rollout_renderer(env, cfg):
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=512, width=512)
+    renderer = mujoco.Renderer(mj_model, height=480, width=640)
 
     return renderer, mj_model, mj_data, scene_option
 
@@ -173,38 +182,38 @@ def rollout_logging_fn(
         state = jit_step(state, ctrl)
         rollout.append(state)
 
-    pos_rewards = [state.metrics["pos_reward"] for state in rollout]
-    endeff_rewards = [state.metrics["endeff_reward"] for state in rollout]
-    quat_rewards = [state.metrics["quat_reward"] for state in rollout]
-    angvel_rewards = [state.metrics["angvel_reward"] for state in rollout]
+    # pos_rewards = [state.metrics["pos_reward"] for state in rollout]
+    # endeff_rewards = [state.metrics["endeff_reward"] for state in rollout]
+    # quat_rewards = [state.metrics["quat_reward"] for state in rollout]
+    # angvel_rewards = [state.metrics["angvel_reward"] for state in rollout]
     bodypos_rewards = [state.metrics["bodypos_reward"] for state in rollout]
     joint_rewards = [state.metrics["joint_reward"] for state in rollout]
     summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
     joint_distances = [state.info["joint_distance"] for state in rollout]
-    torso_heights = [
-        state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
-    ]
+    # torso_heights = [
+    #     state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
+    # ]
 
-    log_metric_to_wandb(
-        "pos_rewards",
-        list(enumerate(pos_rewards)),
-        title="pos_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "endeff_rewards",
-        list(enumerate(endeff_rewards)),
-        title="endeff_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "quat_rewards",
-        list(enumerate(quat_rewards)),
-        title="quat_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "angvel_rewards",
-        list(enumerate(angvel_rewards)),
-        title="angvel_rewards for each rollout frame",
-    )
+    # log_metric_to_wandb(
+    #     "pos_rewards",
+    #     list(enumerate(pos_rewards)),
+    #     title="pos_rewards for each rollout frame",
+    # )
+    # log_metric_to_wandb(
+    #     "endeff_rewards",
+    #     list(enumerate(endeff_rewards)),
+    #     title="endeff_rewards for each rollout frame",
+    # )
+    # log_metric_to_wandb(
+    #     "quat_rewards",
+    #     list(enumerate(quat_rewards)),
+    #     title="quat_rewards for each rollout frame",
+    # )
+    # log_metric_to_wandb(
+    #     "angvel_rewards",
+    #     list(enumerate(angvel_rewards)),
+    #     title="angvel_rewards for each rollout frame",
+    # )
     log_metric_to_wandb(
         "bodypos_rewards",
         list(enumerate(bodypos_rewards)),
@@ -225,11 +234,11 @@ def rollout_logging_fn(
         list(enumerate(joint_distances)),
         title="joint_distances for each rollout frame",
     )
-    log_metric_to_wandb(
-        "torso_heights",
-        list(enumerate(torso_heights)),
-        title="torso_heights for each rollout frame",
-    )
+    # log_metric_to_wandb(
+    #     "torso_heights",
+    #     list(enumerate(torso_heights)),
+    #     title="torso_heights for each rollout frame",
+    # )
 
     # Render the walker with the reference expert demonstration trajectory
     qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])

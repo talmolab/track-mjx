@@ -22,7 +22,7 @@ import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-from track_mjx.agent import custom_ppo
+from track_mjx.agent import custom_ppo_lstm as custom_ppo # lstm training here
 import warnings
 from jax import numpy as jp
 
@@ -163,6 +163,8 @@ def main(cfg: DictConfig):
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
+        get_activation=cfg.train_setup.train_config.get_activation,
+        use_lstm=cfg.train_setup.train_config.use_lstm,
     )
 
     wandb.init(

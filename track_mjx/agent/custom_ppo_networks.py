@@ -37,7 +37,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
     """Creates params and inference function for the PPO agent."""
 
     def make_policy(
-        params: types.PolicyParams, deterministic: bool = False, get_activation: bool = False
+        params: types.PolicyParams, deterministic: bool = False, get_activation: bool = False, use_lstm: bool = False,
     ) -> types.Policy:
         policy_network = ppo_networks.policy_network
         # can modify this to provide stochastic action + noise
@@ -49,14 +49,24 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
         ) -> Tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
+            
             if get_activation:
-                logits, _, _, activations = policy_network.apply(*params, observations, key_network, get_activation=True)
+                if use_lstm:
+                    logits, _, _, hidden_states, activations = policy_network.apply(*params, observations, key_network, get_activation=True)
+                else:
+                    logits, _, _, activations = policy_network.apply(*params, observations, key_network, get_activation=True)
                 # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
-                logits, _, _ = policy_network.apply(*params, observations, key_network)
+                if use_lstm:
+                    logits, _, _, hidden_states = policy_network.apply(*params, observations, key_network)
+                else:
+                    logits, _, _ = policy_network.apply(*params, observations, key_network)
+            
             if deterministic:
+                # no lstm arguments
                 if get_activation:
                     return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}
+                
                 return ppo_networks.parametric_action_distribution.mode(logits), {}
 
 
@@ -79,6 +89,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 "raw_action": raw_actions,
                 "logits": logits,
                 "activations": activations,
+                "hidden_states": hidden_states,
             }
 
         return policy
@@ -142,6 +153,8 @@ def make_intention_ppo_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    get_activation: bool = True,
+    use_lstm: bool = True,
 ) -> PPOImitationNetworks:
     """Make Imitation PPO networks with preprocessor."""
     parametric_action_distribution = distribution.NormalTanhDistribution(
@@ -155,6 +168,8 @@ def make_intention_ppo_networks(
         preprocess_observations_fn=preprocess_observations_fn,
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        get_activation=get_activation,
+        use_lstm=use_lstm,
     )
     value_network = networks.make_value_network(
         observation_size,

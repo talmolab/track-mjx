@@ -3,6 +3,9 @@ data/
 model_checkpoints/
 wandb/
 outputs/
+eval_renderings/
+fly_rollout_info/
+rodent_rollout_info/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

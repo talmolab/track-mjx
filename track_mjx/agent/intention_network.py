@@ -82,6 +82,35 @@ class Decoder(nn.Module):
             return x, activations
         return x
 
+class LSTMDecoder(nn.Module):
+    """LSTM-based decoder for sequential action generation."""
+    layer_sizes: Sequence[int]
+    hidden_dim: int = 128
+    activation: networks.ActivationFn = nn.relu
+    kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform()
+    bias: bool = True
+
+    @nn.compact
+    def __call__(self, x, hidden_state, get_activation: bool = False):
+        activations = {}
+
+        # LSTM layer
+        lstm = nn.LSTMCell(name="lstm")
+        new_hidden_state, x = lstm(hidden_state, x)
+
+        for i, hidden_size in enumerate(self.layer_sizes):
+            x = nn.Dense(
+                hidden_size, name=f"hidden_{i}", kernel_init=self.kernel_init, use_bias=self.bias
+            )(x)
+            x = self.activation(x)
+            x = nn.LayerNorm()(x)
+            if get_activation:
+                activations[f"layer_{i}"] = x
+        
+        if get_activation:
+            return x, new_hidden_state, activations
+        return x, new_hidden_state
+
 
 def reparameterize(rng, mean, logvar):
     std = jnp.exp(0.5 * logvar)
@@ -100,24 +129,36 @@ class IntentionNetwork(nn.Module):
     def setup(self):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
+        self.lstm_decoder = LSTMDecoder(layer_sizes=self.decoder_layers, hidden_dim=128) #TODO: hard codeed now, change it later
 
-    def __call__(self, obs, key, get_activation: bool = False):
+    def __call__(self, obs, key, hidden_state, get_activation: bool = False, use_lstm: bool = False):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
         
         if get_activation:
-            (latent_mean, latent_logvar), encoder_activations = self.encoder(traj, get_activation=True)
+            (latent_mean, latent_logvar), encoder_activations = self.encoder(traj, get_activation=get_activation)
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
-            action, decoder_activations = self.decoder(concatenated, get_activation=True)
-            return action, latent_mean, latent_logvar, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
+            
+            if use_lstm:
+                action, new_hidden_state, decoder_activations = self.lstm_decoder(concatenated, hidden_state, get_activation=get_activation)
+                return action, latent_mean, latent_logvar, new_hidden_state, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
+            else:
+                action, decoder_activations = self.decoder(concatenated, get_activation=get_activation)
+                return action, latent_mean, latent_logvar, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
         else:
-            latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
+            latent_mean, latent_logvar = self.encoder(traj, get_activation=get_activation)
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            action = self.decoder(
-                jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
-            )
-            return action, latent_mean, latent_logvar
+            
+            if use_lstm:
+                action, new_hidden_state = self.lstm_decoder(jnp.concatenate([z, obs[..., self.reference_obs_size:]], axis=-1), hidden_state)
+                return action, latent_mean, latent_logvar, new_hidden_state
+            
+            else:
+                action = self.decoder(
+                    jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+                )
+                return action, latent_mean, latent_logvar
 
 
 def make_intention_policy(
@@ -128,6 +169,8 @@ def make_intention_policy(
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    get_activation: bool = True,
+    use_lstm: bool = True,
 ) -> networks.FeedForwardNetwork:
     """Creates an intention policy network."""
 
@@ -138,15 +181,21 @@ def make_intention_policy(
         latents=latent_size,
     )
 
-    def apply(processor_params, policy_params, obs, key, get_activation: bool = False):
+    # def apply(processor_params, policy_params, obs, key, get_activation: bool = False):
+    #     """Applies the policy network with observation normalizer."""
+    #     obs = preprocess_observations_fn(obs, processor_params)
+    #     return policy_module.apply(policy_params, obs=obs, key=key, get_activation=get_activation)
+    
+    def apply(processor_params, policy_params, obs, key, hidden_state, get_activation, use_lstm):
         """Applies the policy network with observation normalizer."""
         obs = preprocess_observations_fn(obs, processor_params)
-        return policy_module.apply(policy_params, obs=obs, key=key, get_activation=get_activation)
+        return policy_module.apply(policy_params, obs=obs, key=key, hidden_state=hidden_state, get_activation=get_activation, use_lstm=use_lstm)
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)
+    dummy_hidden_state = jnp.zeros((1, 128))
 
     return networks.FeedForwardNetwork(
-        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
+        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key, dummy_hidden_state, get_activation, use_lstm),
         apply=apply,
     )

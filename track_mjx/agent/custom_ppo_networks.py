@@ -51,6 +51,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
             
+            # here determines if use hidden states
             if get_activation:
                 if use_lstm:
                     print('Using Activation + LSTM')
@@ -65,12 +66,11 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                     logits, _, _ = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)
             
             if deterministic:
-                # no lstm arguments
+                # returning hidden_states here
                 if get_activation:
-                    return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}
+                    return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}, hidden_states
                 
-                return ppo_networks.parametric_action_distribution.mode(logits), {}
-
+                return ppo_networks.parametric_action_distribution.mode(logits), {}, hidden_states
 
             # action sampling is happening here, according to distribution parameter logits
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
@@ -92,7 +92,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 "logits": logits,
                 "activations": activations,
                 "hidden_states": hidden_states,
-            }
+            }, hidden_state
 
         return policy
 

@@ -490,7 +490,10 @@ def train(
 
     evaluator = acting.Evaluator(
         eval_env,
-        functools.partial(make_policy, deterministic=deterministic_eval),
+        functools.partial(make_policy,
+                          deterministic=deterministic_eval,
+                          get_activation=get_activation,
+                          use_lstm=use_lstm,),
         num_eval_envs=num_eval_envs,
         episode_length=episode_length,
         action_repeat=action_repeat,

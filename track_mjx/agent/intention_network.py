@@ -131,7 +131,7 @@ class IntentionNetwork(nn.Module):
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
         self.lstm_decoder = LSTMDecoder(layer_sizes=self.decoder_layers, hidden_dim=128) #TODO: hard codeed now, change it later
 
-    def __call__(self, obs, key, hidden_state, get_activation: bool = False, use_lstm: bool = False):
+    def __call__(self, obs, key, hidden_state, get_activation, use_lstm):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
         

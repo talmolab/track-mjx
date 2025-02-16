@@ -46,19 +46,20 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
         def policy(
             observations: types.Observation,
             key_sample: PRNGKey,
+            hidden_state: jnp.ndarray,
         ) -> Tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
             
             if get_activation:
                 if use_lstm:
-                    logits, _, _, hidden_states, activations = policy_network.apply(*params, observations, key_network, get_activation=True)
+                    logits, _, _, hidden_states, activations = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)
                 else:
-                    logits, _, _, activations = policy_network.apply(*params, observations, key_network, get_activation=True)
+                    logits, _, _, activations = policy_network.apply(*params, observations, key_network, get_activation=get_activation)
                 # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
                 if use_lstm:
-                    logits, _, _, hidden_states = policy_network.apply(*params, observations, key_network)
+                    logits, _, _, hidden_states = policy_network.apply(*params, observations, key_network, hidden_state, use_lstm=use_lstm)
                 else:
                     logits, _, _ = policy_network.apply(*params, observations, key_network)
             

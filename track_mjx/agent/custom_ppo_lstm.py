@@ -293,8 +293,14 @@ def train(
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
+        get_activation=get_activation,
         use_lstm=use_lstm, # add args here
     )
+    
+    gradient_update_fn = gradients.gradient_update_fn(
+        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
+        ) # partial loss here, this would inherent parameters from loss_fn
+        
     
     def minibatch_step(
         carry,
@@ -303,18 +309,9 @@ def train(
     ):   
         optimizer_state, params, hidden_state, key = carry
         
-        loss_fn = functools.partial(
-            loss_fn,
-            hidden_state=hidden_state
-        )
-        
-        gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
-        ) # partial loss here, moved into mini_batch steps
-        
         key, key_loss = jax.random.split(key)
         (_, metrics), params, optimizer_state = gradient_update_fn(
-            params, normalizer_params, data, key_loss, optimizer_state=optimizer_state
+            params, hidden_state, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
         )
 
         return (optimizer_state, params, key), metrics
@@ -453,14 +450,16 @@ def train(
         )  # pytype: disable=bad-return-type  # py311-upgrade
         
     
-    ### Init training state all from here
-    init_params = ppo_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key_policy),
-        value=ppo_network.value_network.init(key_value),
-    )
     dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
         jax.random.PRNGKey(0), (num_envs,)
     )
+    
+    # All init here, this policy_network is class of IntentionNetwork
+    init_params = ppo_losses.PPONetworkParams(
+        policy=ppo_network.policy_network.init(key=key_policy, hidden_state=dummy_hidden_state), # policy network here is an function to be instantiated
+        value=ppo_network.value_network.init(key_value),
+    )
+    
     training_state = TrainingState(  # pytype: disable=wrong-arg-types  # jax-ndarray
         optimizer_state=optimizer.init(
             init_params
@@ -527,6 +526,7 @@ def train(
         )
         metrics = evaluator.run_evaluation(
             policy_param,
+            training_state.hidden_state,
             training_metrics={},
         )
         logging.info(metrics)

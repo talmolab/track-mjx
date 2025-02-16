@@ -113,6 +113,7 @@ def compute_ppo_loss(
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
+    get_activation: bool = True,
     use_lstm: bool = True,
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Computes PPO loss.
@@ -132,7 +133,9 @@ def compute_ppo_loss(
       gae_lambda: General advantage estimation lambda.
       clipping_epsilon: Policy loss clipping epsilon
       normalize_advantage: whether to normalize advantage estimate
+      get_activation: boolean argument for getting activations
       use_lstm: boolean argument for using lstm decoder
+      
 
     Returns:
       A tuple (loss, metrics)
@@ -148,7 +151,7 @@ def compute_ppo_loss(
     
     if use_lstm:
       policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(
-      normalizer_params, params.policy, data.observation, policy_key, hidden_state, use_lstm=use_lstm
+      normalizer_params, params.policy, data.observation, policy_key, hidden_state, get_activation=get_activation, use_lstm=use_lstm
       )
       
     else:

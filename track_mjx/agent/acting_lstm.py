@@ -111,21 +111,18 @@ class Evaluator:
         eval_env = envs.training.EvalWrapper(eval_env)
 
         def generate_eval_unroll(policy_params: PolicyParams,
+                                 hidden_state: jnp.ndarray,
                                  key: PRNGKey) -> Tuple[State, Tuple[jnp.ndarray, jnp.ndarray]]:
             reset_keys = jax.random.split(key, num_eval_envs)
             eval_first_state = eval_env.reset(reset_keys)
 
-            # initialize hidden state for LSTM (c, h)
-            dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
-                jax.random.PRNGKey(0), (num_eval_envs,)
-            )
 
             final_state, _, final_hidden_state = generate_unroll(
                 eval_env,
                 eval_first_state,
                 eval_policy_fn(policy_params),
                 key,
-                dummy_hidden_state, 
+                hidden_state, 
                 unroll_length=episode_length // action_repeat
             )
             return final_state, final_hidden_state
@@ -135,13 +132,14 @@ class Evaluator:
 
     def run_evaluation(self,
                        policy_params: PolicyParams,
+                       hidden_state: jnp.ndarray,
                        training_metrics: Metrics,
                        aggregate_episodes: bool = True) -> Metrics:
         """Run one epoch of evaluation with LSTM tracking."""
         self._key, unroll_key = jax.random.split(self._key)
 
         t = time.time()
-        eval_state, hidden_state = self._generate_eval_unroll(policy_params, unroll_key)
+        eval_state, hidden_state = self._generate_eval_unroll(policy_params, hidden_state, unroll_key)
         eval_metrics = eval_state.info['eval_metrics']
         eval_metrics.active_episodes.block_until_ready()
         epoch_eval_time = time.time() - t

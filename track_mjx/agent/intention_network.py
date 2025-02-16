@@ -190,7 +190,8 @@ def make_intention_policy(
         """Applies the policy network with observation normalizer."""
         obs = preprocess_observations_fn(obs, processor_params)
         return policy_module.apply(policy_params, obs=obs, key=key, hidden_state=hidden_state, get_activation=get_activation, use_lstm=use_lstm)
-
+    
+    # dummy variables nly take effects when making the policy, not when using it.
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)
     dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(

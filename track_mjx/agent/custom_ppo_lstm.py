@@ -55,6 +55,8 @@ from flax.training import orbax_utils
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import acting_lstm as acting
 
+from flax import linen as nn
+
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
@@ -68,6 +70,7 @@ class TrainingState:
 
     optimizer_state: optax.OptState
     params: ppo_losses.PPONetworkParams
+    hidden_state: jnp.ndarray
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
 
@@ -290,18 +293,25 @@ def train(
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
+        use_lstm=use_lstm, # add args here
     )
-
-    gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
-    )
-
+    
     def minibatch_step(
         carry,
         data: types.Transition,
         normalizer_params: running_statistics.RunningStatisticsState,
-    ):
-        optimizer_state, params, key = carry
+    ):   
+        optimizer_state, params, hidden_state, key = carry
+        
+        loss_fn = functools.partial(
+            loss_fn,
+            hidden_state=hidden_state
+        )
+        
+        gradient_update_fn = gradients.gradient_update_fn(
+        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
+        ) # partial loss here, moved into mini_batch steps
+        
         key, key_loss = jax.random.split(key)
         (_, metrics), params, optimizer_state = gradient_update_fn(
             params, normalizer_params, data, key_loss, optimizer_state=optimizer_state
@@ -315,7 +325,7 @@ def train(
         data: types.Transition,
         normalizer_params: running_statistics.RunningStatisticsState,
     ):
-        optimizer_state, params, key = carry
+        optimizer_state, params, hidden_state, key = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
 
         def convert_data(x: jnp.ndarray):
@@ -326,7 +336,7 @@ def train(
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
-            (optimizer_state, params, key_grad),
+            (optimizer_state, params, hidden_state, key_grad),
             shuffled_data,
             length=num_minibatches,
         )
@@ -335,6 +345,7 @@ def train(
     def training_step(
         carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t
     ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey], Metrics]:
+        
         training_state, state, key = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
@@ -351,15 +362,15 @@ def train(
                 current_state,
                 policy, # has  hidden states
                 current_key,
-                unroll_length,
                 hidden_state,
+                unroll_length,
                 extra_fields=("truncation",),
             )
             return (next_state, next_key, new_hidden_state), data
 
-        (state, _), data = jax.lax.scan(
+        (state, _, new_hidden_state), data = jax.lax.scan(
             f,
-            (state, key_generate_unroll),
+            (state, key_generate_unroll, training_state.hidden_state),
             (),
             length=batch_size * num_minibatches // num_envs,
         )
@@ -379,7 +390,7 @@ def train(
 
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
-            (training_state.optimizer_state, training_state.params, key_sgd),
+            (training_state.optimizer_state, training_state.params, training_state.hidden_state,key_sgd), # pass in hidden in carry
             (),
             length=num_updates_per_batch,
         )
@@ -387,6 +398,7 @@ def train(
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,
             params=params,
+            hidden_state=new_hidden_state,
             normalizer_params=normalizer_params,
             env_steps=jnp.int32(
                 training_state.env_steps + env_step_per_training_step / 1e3
@@ -403,6 +415,7 @@ def train(
             (),
             length=num_training_steps_per_epoch,
         )
+        
         loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
@@ -438,16 +451,22 @@ def train(
             env_state,
             metrics,
         )  # pytype: disable=bad-return-type  # py311-upgrade
-
+        
+    
+    ### Init training state all from here
     init_params = ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
+    )
+    dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
+        jax.random.PRNGKey(0), (num_envs,)
     )
     training_state = TrainingState(  # pytype: disable=wrong-arg-types  # jax-ndarray
         optimizer_state=optimizer.init(
             init_params
         ),  # pytype: disable=wrong-arg-types  # numpy-scalars
         params=init_params,
+        hidden_state=dummy_hidden_state,
         normalizer_params=running_statistics.init_state(
             specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
         ),
@@ -553,6 +572,7 @@ def train(
                 _unpmap(
                     (training_state.normalizer_params, training_state.params.policy)
                 ),
+                training_state.hidden_state,
                 training_metrics,
             )
             logging.info(metrics)

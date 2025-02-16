@@ -101,6 +101,7 @@ def compute_gae(
 
 def compute_ppo_loss(
     params: PPONetworkParams,
+    hidden_state: jnp.ndarray,
     normalizer_params: Any,
     data: types.Transition,
     rng: jnp.ndarray,
@@ -112,11 +113,13 @@ def compute_ppo_loss(
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
+    use_lstm: bool = True,
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Computes PPO loss.
 
     Args:
       params: Network parameters,
+      hidden_state: hidden state of lstm
       normalizer_params: Parameters of the normalizer.
       data: Transition that with leading dimension [B, T]. extra fields required
         are ['state_extras']['truncation'] ['policy_extras']['raw_action']
@@ -129,6 +132,7 @@ def compute_ppo_loss(
       gae_lambda: General advantage estimation lambda.
       clipping_epsilon: Policy loss clipping epsilon
       normalize_advantage: whether to normalize advantage estimate
+      use_lstm: boolean argument for using lstm decoder
 
     Returns:
       A tuple (loss, metrics)
@@ -141,9 +145,16 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits, latent_mean, latent_logvar = policy_apply(
+    
+    if use_lstm:
+      policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(
+      normalizer_params, params.policy, data.observation, policy_key, hidden_state, use_lstm=use_lstm
+      )
+      
+    else:
+      policy_logits, latent_mean, latent_logvar = policy_apply(
         normalizer_params, params.policy, data.observation, policy_key
-    )
+      )
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 

@@ -624,7 +624,6 @@ def estimate_joint_forces_parallel(qposes_rollout, dt, walker_type, num_workers=
     step_indices = np.array_split(range(1, num_steps - 1), num_workers)
     
     # valid index comes from configs
-    
     if walker_type=='fly':
         pair_render_xml_path = str(
             (

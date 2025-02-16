@@ -6,6 +6,7 @@ import numpy as np
 import jax
 from brax.envs.base import Env
 from track_mjx.environment.walker.rodent import Rodent
+from track_mjx.environment.walker.mouse_arm import MouseArm
 from track_mjx.environment.walker.fly import Fly
 import pickle
 from brax import envs
@@ -20,7 +21,10 @@ from track_mjx.io import preprocess as preprocessing
 from track_mjx.environment.task.reward import RewardConfig
 from jax import numpy as jnp
 
-from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
+from track_mjx.environment.task.multi_clip_tracking import (
+    MultiClipTracking,
+    MouseArmMultiClipTracking,
+)
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_losses as ppo_losses
@@ -52,6 +56,7 @@ def restore_config(checkpoint_path: str) -> DictConfig:
 
 
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:
+    envs.register_environment("mouse_arm_multi_clip", MouseArmMultiClipTracking)
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
@@ -68,6 +73,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     with open(input_data_path, "rb") as file:
         reference_clip = pickle.load(file)
     walker_map = {
+        "mouse_arm": MouseArm,
         "rodent": Rodent,
         "fly": Fly,
     }
@@ -75,25 +81,25 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     walker = walker_class(**walker_config)
 
     reward_config = RewardConfig(
-        too_far_dist=env_rewards.too_far_dist,
-        bad_pose_dist=env_rewards.bad_pose_dist,
-        bad_quat_dist=env_rewards.bad_quat_dist,
+        # too_far_dist=env_rewards.too_far_dist,
+        # bad_pose_dist=env_rewards.bad_pose_dist,
+        # bad_quat_dist=env_rewards.bad_quat_dist,
         ctrl_cost_weight=env_rewards.ctrl_cost_weight,
         ctrl_diff_cost_weight=env_rewards.ctrl_diff_cost_weight,
-        pos_reward_weight=env_rewards.pos_reward_weight,
-        quat_reward_weight=env_rewards.quat_reward_weight,
+        # pos_reward_weight=env_rewards.pos_reward_weight,
+        # quat_reward_weight=env_rewards.quat_reward_weight,
         joint_reward_weight=env_rewards.joint_reward_weight,
-        angvel_reward_weight=env_rewards.angvel_reward_weight,
+        # angvel_reward_weight=env_rewards.angvel_reward_weight,
         bodypos_reward_weight=env_rewards.bodypos_reward_weight,
         endeff_reward_weight=env_rewards.endeff_reward_weight,
-        healthy_z_range=env_rewards.healthy_z_range,
-        pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
-        quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
+        # healthy_z_range=env_rewards.healthy_z_range,
+        # pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
+        # quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
         joint_reward_exp_scale=env_rewards.joint_reward_exp_scale,
-        angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
+        # angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
         bodypos_reward_exp_scale=env_rewards.bodypos_reward_exp_scale,
         endeff_reward_exp_scale=env_rewards.endeff_reward_exp_scale,
-        penalty_pos_distance_scale=jnp.array(env_rewards.penalty_pos_distance_scale),
+        # penalty_pos_distance_scale=jnp.array(env_rewards.penalty_pos_distance_scale),
     )
     # Automatically match dict keys and func needs
     env = envs.get_environment(
@@ -267,16 +273,16 @@ def create_rollout_generator(
 
         # Compute rewards and metrics
         rewards = {
-            "pos_rewards": jax.vmap(lambda s: s.metrics["pos_reward"])(rollout_states),
+            # "pos_rewards": jax.vmap(lambda s: s.metrics["pos_reward"])(rollout_states),
             "endeff_rewards": jax.vmap(lambda s: s.metrics["endeff_reward"])(
                 rollout_states
             ),
-            "quat_rewards": jax.vmap(lambda s: s.metrics["quat_reward"])(
-                rollout_states
-            ),
-            "angvel_rewards": jax.vmap(lambda s: s.metrics["angvel_reward"])(
-                rollout_states
-            ),
+            # "quat_rewards": jax.vmap(lambda s: s.metrics["quat_reward"])(
+            #     rollout_states
+            # ),
+            # "angvel_rewards": jax.vmap(lambda s: s.metrics["angvel_reward"])(
+            #     rollout_states
+            # ),
             "bodypos_rewards": jax.vmap(lambda s: s.metrics["bodypos_reward"])(
                 rollout_states
             ),
@@ -289,17 +295,15 @@ def create_rollout_generator(
             "joint_distances": jax.vmap(lambda s: s.info["joint_distance"])(
                 rollout_states
             ),
-            "torso_heights": jax.vmap(
-                lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
-            )(rollout_states),
+            # "torso_heights": jax.vmap(
+            #     lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
+            # )(rollout_states),
         }
 
         # Reference and rollout qposes
         ref_traj = rollout_env._get_reference_clip(init_state.info)
         qposes_ref = jnp.tile(
-            jnp.concatenate(
-                [ref_traj.position, ref_traj.quaternion, ref_traj.joints], axis=-1
-            ),
+            jnp.concatenate([ref_traj.joints], axis=-1),
             (int(environment._steps_for_cur_frame), 1),
         )
 

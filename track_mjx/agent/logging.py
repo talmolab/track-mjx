@@ -245,7 +245,7 @@ def rollout_logging_fn(
     ref_traj = env._get_reference_clip(rollout[0].info)
     print(f"clip_id:{rollout[0].info}")
     qposes_ref = np.repeat(
-        np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+        np.hstack([ref_traj.joints]),
         env._steps_for_cur_frame,
         axis=0,
     )
@@ -255,7 +255,19 @@ def rollout_logging_fn(
 
     with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-            mj_data.qpos = np.append(qpos1, qpos2)
+            # Debugging: Check shapes
+            print(f"Shape of qpos1: {qpos1.shape}, qpos1: {qpos1}")
+            print(f"Shape of qpos2: {qpos2.shape}, qpos2: {qpos2}")
+            print(f"Expected mj_data.qpos shape: {mj_data.qpos.shape}")
+
+            # Ensure qpos1 and qpos2 match mj_data.qpos.shape
+            qpos_combined = np.append(qpos1, qpos2)
+
+            # Truncate or reshape to fit expected mj_data.qpos shape
+            qpos_combined = qpos_combined[: mj_data.qpos.shape[0]]
+
+            # Assign safely
+            mj_data.qpos[:] = qpos_combined
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(
                 mj_data, camera=env_config.render_camera_name, scene_option=scene_option
@@ -326,7 +338,7 @@ def render_rollout(
     ref_traj = rollout_env._get_reference_clip(rollout[0].info)
     print(f"clip_id:{rollout[0].info}")
     qposes_ref = np.repeat(
-        np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+        np.hstack([ref_traj.joints]),
         env._steps_for_cur_frame,
         axis=0,
     )

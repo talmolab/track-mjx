@@ -151,6 +151,7 @@ class IntentionNetwork(nn.Module):
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
             
             if use_lstm:
+                print('Just LSTM, no Activation')
                 action, new_hidden_state = self.lstm_decoder(jnp.concatenate([z, obs[..., self.reference_obs_size:]], axis=-1), hidden_state)
                 return action, latent_mean, latent_logvar, new_hidden_state
             
@@ -194,11 +195,12 @@ def make_intention_policy(
     # dummy variables here, actual pass in in training loops
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)
-    dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
-        jax.random.PRNGKey(0), (1,)
-    )
-
+    # dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
+    #     jax.random.PRNGKey(0), (1,)
+    # )
+    
+    # lambda function here to pass in hidden from training loop
     return networks.FeedForwardNetwork(
-        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key, dummy_hidden_state, get_activation, use_lstm),
+        init=lambda key, hidden_state: policy_module.init(key, dummy_total_obs, dummy_key, hidden_state, get_activation, use_lstm),
         apply=apply,
     )

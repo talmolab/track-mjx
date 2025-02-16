@@ -293,7 +293,6 @@ def train(
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
-        get_activation=get_activation,
         use_lstm=use_lstm, # add args here
     )
     
@@ -337,7 +336,7 @@ def train(
             shuffled_data,
             length=num_minibatches,
         )
-        return (optimizer_state, params, key), metrics
+        return (optimizer_state, params, hidden_state, key), metrics # carry shape maintains
 
     def training_step(
         carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t

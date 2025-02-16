@@ -95,7 +95,7 @@ class LSTMDecoder(nn.Module):
         activations = {}
 
         # LSTM layer
-        lstm = nn.LSTMCell(name="lstm")
+        lstm = nn.LSTMCell(features=self.hidden_dim, name="lstm")
         new_hidden_state, x = lstm(hidden_state, x)
 
         for i, hidden_size in enumerate(self.layer_sizes):
@@ -193,7 +193,9 @@ def make_intention_policy(
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)
-    dummy_hidden_state = jnp.zeros((1, 128))
+    dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
+        jax.random.PRNGKey(0), (1,)
+    )
 
     return networks.FeedForwardNetwork(
         init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key, dummy_hidden_state, get_activation, use_lstm),

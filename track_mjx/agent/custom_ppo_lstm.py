@@ -24,7 +24,7 @@ from typing import Callable, Optional, Tuple, Union, Sequence
 from absl import logging
 from brax import base
 from brax import envs
-from brax.training import acting
+# from brax.training import acting
 from brax.training import gradients
 from brax.training import pmap
 from brax.training import types
@@ -53,6 +53,7 @@ import orbax.checkpoint as ocp
 from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
+from track_mjx.agent import acting_lstm as acting
 
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -83,67 +84,6 @@ def _strip_weak_type(tree):
         return leaf.astype(leaf.dtype)
 
     return jax.tree_util.tree_map(f, tree)
-
-
-
-# LSTM stuff
-State = Union[envs.State, envs_v1.State]
-Env = Union[envs.Env, envs_v1.Env, envs_v1.Wrapper]
-
-def actor_step(
-    env: Env,
-    env_state: State,
-    policy: Policy,
-    key: PRNGKey,
-    hidden_state: jnp.ndarray,  # New hidden state input
-    extra_fields: Sequence[str] = ()
-) -> Tuple[State, Transition, jnp.ndarray]:
-    """Collect data and update LSTM hidden state."""
-    actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state)  
-    # Ensure policy now returns the updated LSTM hidden state
-
-    nstate = env.step(env_state, actions)
-    state_extras = {x: nstate.info[x] for x in extra_fields}
-
-    return nstate, Transition(  
-        observation=env_state.obs,
-        action=actions,
-        reward=nstate.reward,
-        discount=1 - nstate.done,
-        next_observation=nstate.obs,
-        extras={
-            'policy_extras': policy_extras,
-            'state_extras': state_extras
-        }
-    ), new_hidden_state  # Return the updated LSTM hidden state
-
-def generate_unroll(
-    env: Env,
-    env_state: State,
-    policy: Policy,
-    key: PRNGKey,
-    hidden_state: jnp.ndarray,  # LSTM hidden state passed in
-    unroll_length: int,
-    extra_fields: Sequence[str] = ()
-) -> Tuple[State, Transition, jnp.ndarray]:  # Return final hidden state
-    """Collect trajectories of given unroll_length while tracking LSTM state."""
-
-    @jax.jit
-    def f(carry, unused_t):
-        state, current_key, hidden_state = carry  # Track hidden state
-        current_key, next_key = jax.random.split(current_key)
-
-        nstate, transition, new_hidden_state = actor_step(
-            env, state, policy, current_key, hidden_state, extra_fields=extra_fields
-        )  # Capture updated hidden state
-
-        return (nstate, next_key, new_hidden_state), transition
-
-    (final_state, _, final_hidden_state), data = jax.lax.scan(
-        f, (env_state, key, hidden_state), (), length=unroll_length
-    )
-    
-    return final_state, data, final_hidden_state  # Return final hidden state
 
 
 def train(
@@ -333,7 +273,7 @@ def train(
         get_activation=get_activation,
         use_lstm=use_lstm,
     )
-    make_policy = custom_ppo_networks.make_inference_fn(ppo_network, get_activation=get_activation, use_lstm=use_lstm)
+    make_policy = custom_ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
 
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
@@ -399,14 +339,14 @@ def train(
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
         policy = make_policy(
-            (training_state.normalizer_params, training_state.params.policy)
+            params=(training_state.normalizer_params, training_state.params.policy), get_activation=get_activation, use_lstm=use_lstm, # pass in here
         )
         
         #TODO: make this embeded in custom_ppo
         def f(carry, unused_t):
             current_state, current_key, hidden_state = carry
             current_key, next_key = jax.random.split(current_key)
-            next_state, data, new_hidden_state = generate_unroll(
+            next_state, data, new_hidden_state = acting.generate_unroll(
                 env,
                 current_state,
                 policy,

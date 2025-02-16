@@ -79,6 +79,12 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
 
 The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/train.py) and relies on the config in [`track_mjx/config/rodent-mc-intention.yaml`](track_mjx/config/rodent-mc-intention.yaml).
 
+To download data, you can call:
+
+```bash
+gdown --id <google file id> -O data.h5
+```
+
 After running `conda activate track_mjx`, you can run training with:
 
 ```bash

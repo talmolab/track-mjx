@@ -13,7 +13,9 @@ from flax import struct
 
 @struct.dataclass
 class RewardConfig:
-    """All configuration for reward computation, including weights and scaling."""
+    """Weights and scales for the imitation reward terms.
+    Initialized through env_config.reward_weights in the config.yaml file.
+    """
 
     too_far_dist: float
     bad_pose_dist: float

@@ -7,6 +7,7 @@ import jax
 from brax.envs.base import Env
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
+from track_mjx.environment.walker.mouse_arm import MouseArm
 import pickle
 from brax import envs
 from brax.training.acme import running_statistics, specs
@@ -52,6 +53,7 @@ def restore_config(checkpoint_path: str) -> DictConfig:
 
 
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:
+    envs.register_environment("mouse_arm_multi_clip", MultiClipTracking)
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
@@ -68,6 +70,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     with open(input_data_path, "rb") as file:
         reference_clip = pickle.load(file)
     walker_map = {
+        "mouse-arm": MouseArm,
         "rodent": Rodent,
         "fly": Fly,
     }
@@ -75,25 +78,25 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     walker = walker_class(**walker_config)
 
     reward_config = RewardConfig(
-        too_far_dist=env_rewards.too_far_dist,
-        bad_pose_dist=env_rewards.bad_pose_dist,
-        bad_quat_dist=env_rewards.bad_quat_dist,
+        # too_far_dist=env_rewards.too_far_dist,
+        # bad_pose_dist=env_rewards.bad_pose_dist,
+        # bad_quat_dist=env_rewards.bad_quat_dist,
         ctrl_cost_weight=env_rewards.ctrl_cost_weight,
         ctrl_diff_cost_weight=env_rewards.ctrl_diff_cost_weight,
-        pos_reward_weight=env_rewards.pos_reward_weight,
-        quat_reward_weight=env_rewards.quat_reward_weight,
+        # pos_reward_weight=env_rewards.pos_reward_weight,
+        # quat_reward_weight=env_rewards.quat_reward_weight,
         joint_reward_weight=env_rewards.joint_reward_weight,
         angvel_reward_weight=env_rewards.angvel_reward_weight,
         bodypos_reward_weight=env_rewards.bodypos_reward_weight,
         endeff_reward_weight=env_rewards.endeff_reward_weight,
-        healthy_z_range=env_rewards.healthy_z_range,
-        pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
-        quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
+        # healthy_z_range=env_rewards.healthy_z_range,
+        # pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
+        # quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
         joint_reward_exp_scale=env_rewards.joint_reward_exp_scale,
         angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
         bodypos_reward_exp_scale=env_rewards.bodypos_reward_exp_scale,
         endeff_reward_exp_scale=env_rewards.endeff_reward_exp_scale,
-        penalty_pos_distance_scale=jnp.array(env_rewards.penalty_pos_distance_scale),
+        # penalty_pos_distance_scale=jnp.array(env_rewards.penalty_pos_distance_scale),
     )
     # Automatically match dict keys and func needs
     env = envs.get_environment(
@@ -163,39 +166,71 @@ def create_abstract_policy(
 
 
 def restore_policy(checkpoint_path: str, abstract_policy: Tuple) -> Tuple:
-    """
-    Restore the policy from the checkpoint
-
-    Args:
-        checkpoint_path (str): The path to the checkpoint
-        abstract_policy (Callable): The abstract policy for loading
-
-    Returns:
-        Tuple: The restored policy
-    """
     options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
-    with ocp.CheckpointManager(
-        checkpoint_path,
-        options=options,
-    ) as mngr:
-        print(f"latest checkpoint step: {mngr.latest_step()}")
+    with ocp.CheckpointManager(checkpoint_path, options=options) as mngr:
+        latest_step = mngr.latest_step()
+        print(f"[restore_policy] Latest checkpoint step: {latest_step}")
         policy = mngr.restore(
-            mngr.latest_step(),
+            latest_step,
             args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy)),
         )["policy"]
+
+    # Debug: Print a summary of the restored policy parameters
+    def print_tree(tree, prefix=""):
+        flat, _ = jax.tree_util.tree_flatten(tree)
+        for i, x in enumerate(flat):
+            if hasattr(x, "shape"):
+                print(
+                    f"{prefix}Param {i}: shape={x.shape}, dtype={x.dtype}, mean={jnp.nanmean(x):.6f}"
+                )
+            else:
+                print(f"{prefix}Param {i}: {x}")
+
+    print("[restore_policy] Restored policy parameters:")
+    print_tree(policy, prefix="Policy: ")
+
     return policy
 
 
 def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callable:
+    # Wrap the environment
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(environment)
+
+    # Create the abstract policy (network architecture, initial params, etc.)
     abstract_policy, make_policy = create_abstract_policy(rollout_env, cfg_dict)
-    # load the checkpoint
-    policy = restore_policy(
-        cfg_dict["train_setup"]["checkpoint_to_restore"], abstract_policy
+
+    # Debug: Print summary of the abstract policy
+    print("Abstract policy summary:")
+    jax.tree_util.tree_map(
+        lambda x: print(x.shape, x.dtype, jnp.nanmean(x)), abstract_policy
     )
+
+    # Load the checkpoint
+    checkpoint_path = cfg_dict["train_setup"]["checkpoint_to_restore"]
+    policy = restore_policy(checkpoint_path, abstract_policy)
+
+    # Check if restored policy contains any NaNs
+    def contains_nans(tree):
+        flat, _ = jax.tree_util.tree_flatten(tree)
+        return any(jnp.any(jnp.isnan(x)) for x in flat if hasattr(x, "dtype"))
+
+    if contains_nans(policy):
+        raise ValueError("Restored policy parameters contain NaNs!")
+    else:
+        print("Restored policy parameters look good!")
+
+    # Build and jit the inference function
     jit_inference_fn = jax.jit(
         make_policy(policy, deterministic=True, get_activation=True)
     )
+
+    # Optional: test a quick inference on a known observation
+    test_obs = rollout_env.reset(jax.random.PRNGKey(0)).obs
+    ctrl, activations = jit_inference_fn(test_obs, jax.random.PRNGKey(42))
+    print("Test control output from inference function:", ctrl)
+    if jnp.any(jnp.isnan(ctrl)):
+        raise ValueError("Inference function returned NaN control values!")
+
     return jit_inference_fn
 
 
@@ -247,7 +282,10 @@ def create_rollout_generator(
             state, act_rng = carry
             act_rng, new_rng = jax.random.split(act_rng)
             ctrl, extras = jit_inference_fn(state.obs, act_rng)
+            jax.debug.print("Control: {x}", x=ctrl)
             next_state = jit_step(state, ctrl)
+            if jnp.any(jnp.isnan(next_state.pipeline_state.qpos)):
+                raise ValueError("qpos became NaN after stepping the environment!")
             return (next_state, new_rng), (next_state, ctrl, extras["activations"])
 
         # Run rollout
@@ -267,31 +305,31 @@ def create_rollout_generator(
 
         # Compute rewards and metrics
         rewards = {
-            "pos_rewards": jax.vmap(lambda s: s.metrics["pos_reward"])(rollout_states),
+            # "pos_rewards": jax.vmap(lambda s: s.metrics["pos_reward"])(rollout_states),
             "endeff_rewards": jax.vmap(lambda s: s.metrics["endeff_reward"])(
                 rollout_states
             ),
-            "quat_rewards": jax.vmap(lambda s: s.metrics["quat_reward"])(
-                rollout_states
-            ),
-            "angvel_rewards": jax.vmap(lambda s: s.metrics["angvel_reward"])(
-                rollout_states
-            ),
+            # "quat_rewards": jax.vmap(lambda s: s.metrics["quat_reward"])(
+            #     rollout_states
+            # ),
+            # "angvel_rewards": jax.vmap(lambda s: s.metrics["angvel_reward"])(
+            #     rollout_states
+            # ),
             "bodypos_rewards": jax.vmap(lambda s: s.metrics["bodypos_reward"])(
                 rollout_states
             ),
             "joint_rewards": jax.vmap(lambda s: s.metrics["joint_reward"])(
                 rollout_states
             ),
-            "summed_pos_distances": jax.vmap(lambda s: s.info["summed_pos_distance"])(
-                rollout_states
-            ),
+            # "summed_pos_distances": jax.vmap(lambda s: s.info["summed_pos_distance"])(
+            #     rollout_states
+            # ),
             "joint_distances": jax.vmap(lambda s: s.info["joint_distance"])(
                 rollout_states
             ),
-            "torso_heights": jax.vmap(
-                lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
-            )(rollout_states),
+            # "torso_heights": jax.vmap(
+            #     lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
+            # )(rollout_states),
         }
 
         # Reference and rollout qposes

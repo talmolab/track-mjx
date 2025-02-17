@@ -80,6 +80,21 @@ def make_rollout_renderer(env, cfg):
         )
 
         mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+
+    elif cfg.env_config.walker_name == "mouse_arm":
+        # TODO: Make this ghost rendering walker agonist
+        spec = mujoco.MjSpec()
+        spec = spec.from_file(str(_XML_PATH))
+
+        # in training scaled by this amount as well
+        for geom in spec.geoms:
+            if geom.size is not None:
+                geom.size *= walker_config.rescale_factor
+            if geom.pos is not None:
+                geom.pos *= walker_config.rescale_factor
+
+        mj_model = spec.compile()
+
     elif cfg.env_config.walker_name == "fly":
         spec = mujoco.MjSpec()
         spec = spec.from_file(str(_XML_PATH))
@@ -120,7 +135,7 @@ def make_rollout_renderer(env, cfg):
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=512, width=512)
+    renderer = mujoco.Renderer(mj_model, height=480, width=640)
 
     return renderer, mj_model, mj_data, scene_option
 
@@ -171,40 +186,42 @@ def rollout_logging_fn(
         obs = state.obs
         ctrl, extras = jit_logging_inference_fn(params, obs, act_rng)
         state = jit_step(state, ctrl)
+        if jp.any(jp.isnan(state.pipeline_state.qpos)):
+            raise ValueError("qpos is NaN after stepping the environment!")
         rollout.append(state)
 
-    pos_rewards = [state.metrics["pos_reward"] for state in rollout]
+    #    pos_rewards = [state.metrics["pos_reward"] for state in rollout]
     endeff_rewards = [state.metrics["endeff_reward"] for state in rollout]
-    quat_rewards = [state.metrics["quat_reward"] for state in rollout]
-    angvel_rewards = [state.metrics["angvel_reward"] for state in rollout]
+    #    quat_rewards = [state.metrics["quat_reward"] for state in rollout]
+    #    angvel_rewards = [state.metrics["angvel_reward"] for state in rollout]
     bodypos_rewards = [state.metrics["bodypos_reward"] for state in rollout]
     joint_rewards = [state.metrics["joint_reward"] for state in rollout]
-    summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
+    # summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
     joint_distances = [state.info["joint_distance"] for state in rollout]
-    torso_heights = [
-        state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
-    ]
+    # torso_heights = [
+    #     state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
+    # ]
 
-    log_metric_to_wandb(
-        "pos_rewards",
-        list(enumerate(pos_rewards)),
-        title="pos_rewards for each rollout frame",
-    )
+    # log_metric_to_wandb(
+    #     "pos_rewards",
+    #     list(enumerate(pos_rewards)),
+    #     title="pos_rewards for each rollout frame",
+    # )
     log_metric_to_wandb(
         "endeff_rewards",
         list(enumerate(endeff_rewards)),
         title="endeff_rewards for each rollout frame",
     )
-    log_metric_to_wandb(
-        "quat_rewards",
-        list(enumerate(quat_rewards)),
-        title="quat_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "angvel_rewards",
-        list(enumerate(angvel_rewards)),
-        title="angvel_rewards for each rollout frame",
-    )
+    # log_metric_to_wandb(
+    #     "quat_rewards",
+    #     list(enumerate(quat_rewards)),
+    #     title="quat_rewards for each rollout frame",
+    # )
+    # log_metric_to_wandb(
+    #     "angvel_rewards",
+    #     list(enumerate(angvel_rewards)),
+    #     title="angvel_rewards for each rollout frame",
+    # )
     log_metric_to_wandb(
         "bodypos_rewards",
         list(enumerate(bodypos_rewards)),
@@ -215,28 +232,28 @@ def rollout_logging_fn(
         list(enumerate(joint_rewards)),
         title="joint_rewards for each rollout frame",
     )
-    log_metric_to_wandb(
-        "summed_pos_distances",
-        list(enumerate(summed_pos_distances)),
-        title="summed_pos_distances for each rollout frame",
-    )
+    # log_metric_to_wandb(
+    #     "summed_pos_distances",
+    #     list(enumerate(summed_pos_distances)),
+    #     title="summed_pos_distances for each rollout frame",
+    # )
     log_metric_to_wandb(
         "joint_distances",
         list(enumerate(joint_distances)),
         title="joint_distances for each rollout frame",
     )
-    log_metric_to_wandb(
-        "torso_heights",
-        list(enumerate(torso_heights)),
-        title="torso_heights for each rollout frame",
-    )
+    # log_metric_to_wandb(
+    #     "torso_heights",
+    #     list(enumerate(torso_heights)),
+    #     title="torso_heights for each rollout frame",
+    # )
 
     # Render the walker with the reference expert demonstration trajectory
     qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
     ref_traj = env._get_reference_clip(rollout[0].info)
     print(f"clip_id:{rollout[0].info}")
     qposes_ref = np.repeat(
-        np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+        np.hstack([ref_traj.joints]),
         env._steps_for_cur_frame,
         axis=0,
     )
@@ -246,7 +263,7 @@ def rollout_logging_fn(
 
     with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-            mj_data.qpos = np.append(qpos1, qpos2)
+            mj_data.qpos = qpos1
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(
                 mj_data, camera=env_config.render_camera_name, scene_option=scene_option
@@ -293,13 +310,19 @@ def render_rollout(
     # do a rollout on the saved model
     state = jit_reset(reset_rng)
 
+    print(f"Step reset, qpos: {state.pipeline_state.qpos}")
+
     rollout = [state]
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
         ctrl, extras = jit_inference_fn(obs, act_rng)
-        state = jit_step(state, ctrl)
-        rollout.append(state)
+
+        print(f"Step {i}, ctrl: {ctrl}")
+
+        state = jit_step(state, ctrl)  # Step environment
+
+        print(f"Step {i}, qpos: {state.pipeline_state.qpos}")
 
     # might include those reward term in the visual rendering
     # pos_rewards = [state.metrics["pos_reward"] for state in rollout]
@@ -314,13 +337,16 @@ def render_rollout(
 
     # Render the walker with the reference expert demonstration trajectory
     qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
+    print(f"DEBUG: {qposes_rollout}")
     ref_traj = rollout_env._get_reference_clip(rollout[0].info)
+    print(f"ref traj: {ref_traj}")
     print(f"clip_id:{rollout[0].info}")
     qposes_ref = np.repeat(
-        np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+        np.hstack([ref_traj.joints]),
         env._steps_for_cur_frame,
         axis=0,
     )
+    print(f"qposes ref: {qposes_ref}")
 
     pair_render_xml_path = env.walker._pair_rendering_xml_path
     _XML_PATH = (
@@ -331,6 +357,23 @@ def render_rollout(
     )
 
     if cfg.env_config.walker_name == "rodent":
+        # TODO: Make this ghost rendering walker agonist
+        root = mjcf_dm.from_path(_XML_PATH)
+        rescale.rescale_subtree(
+            root,
+            0.9 / 0.8,
+            0.9 / 0.8,
+        )
+
+        mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+        mj_model.opt.solver = {
+            "cg": mujoco.mjtSolver.mjSOL_CG,
+            "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+        }["cg"]
+        mj_model.opt.iterations = 6
+        mj_model.opt.ls_iterations = 6
+        mj_data = mujoco.MjData(mj_model)
+    elif cfg.env_config.walker_name == "mouse_arm":
         # TODO: Make this ghost rendering walker agonist
         root = mjcf_dm.from_path(_XML_PATH)
         rescale.rescale_subtree(
@@ -387,7 +430,7 @@ def render_rollout(
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=512, width=512)
+    renderer = mujoco.Renderer(mj_model, height=480, width=640)
 
     # render while stepping using mujoco
     video_path = f"{model_path}/{num_steps}.mp4"

@@ -1,0 +1,93 @@
+data_path: /root/vast/eric/stac-mjx/mouse_arm_ik_only_new.h5
+walker_type: mouse-arm
+
+env_config:
+  env_name: mouse_arm_multi_clip
+  task_name: imitation
+  walker_name: mouse_arm
+  render_camera_name: close_profile
+  render_fps: 5
+
+  env_args:
+    solver: "cg"
+    iterations: 4
+    ls_iterations: 4
+    physics_steps_per_control_step: 5
+    reset_noise_scale: 1e-3
+    mj_model_timestep: 0.002
+    mocap_hz: 50
+
+  reward_weights:
+    ctrl_cost_weight: 0.02
+    ctrl_diff_cost_weight: 0.02
+    joint_reward_weight: 1.0
+    bodypos_reward_weight: 0.0
+    endeff_reward_weight: 1.0
+    joint_reward_exp_scale: 0.25
+    bodypos_reward_exp_scale: 1.0
+    endeff_reward_exp_scale: 1.0
+
+reference_config:
+  clip_length: 100
+  random_init_range: 50
+  traj_length: 5
+
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [512,512,512]
+  decoder_layer_sizes: [512,512,512]
+  critic_layer_sizes: [512,512,512]
+  intention_size: 60
+  kl_weight: 1e-4
+
+train_setup:
+  agent_name: mouse_arm
+  run_name: imitation_debug
+  checkpoint_to_restore:
+  checkpoint_max_to_keep: 
+  checkpoint_keep_period: 
+  eval_every: 100
+  episode_length: 100
+  reset_every: 20_000_000
+  train_config:
+    num_envs: 4
+    num_timesteps: 10_000_000_000
+    batch_size: 124
+    num_minibatches: 4
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2     
+    discounting: 0.95        
+    action_repeat: 1
+    entropy_cost: 1e-2
+    reward_scaling: 1
+    normalize_observations: True
+    unroll_length: 20
+    seed: 0
+
+logging_config:
+  project_name: vnl_debug
+  clip_id: -1
+  model_path: model_checkpoints
+  algo_name: ppo
+
+walker_config:
+  torque_actuators: False
+  rescale_factor: 1.0
+  joint_names:
+    - sh_elv
+    - sh_extension
+    - sh_rotation
+    - elbow_joint
+  body_names:
+    - world
+    - ground
+    - clavicle
+    - scapula
+    - humerus
+    - ulna
+    - elbow
+    - radius
+    - wrist_body
+  end_eff_names:
+    - wrist_body

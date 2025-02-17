@@ -34,6 +34,7 @@ from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
 from track_mjx.environment.walker.rodent import Rodent
+from track_mjx.environment.walker.mouse_arm import MouseArm
 import logging
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
@@ -42,7 +43,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
+@hydra.main(version_base=None, config_path="config", config_name="mouse-arm")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -53,6 +54,7 @@ def main(cfg: DictConfig):
         logging.info("Not using GPUs")
 
     envs.register_environment("rodent_single_clip", SingleClipTracking)
+    envs.register_environment("mouse_arm_multi_clip", MultiClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
 
@@ -117,6 +119,7 @@ def main(cfg: DictConfig):
         reference_clip = load.load_reference_clip_data(data_path)
 
     walker_map = {
+        "mouse-arm": MouseArm,
         "rodent": Rodent,
         "fly": Fly,
     }

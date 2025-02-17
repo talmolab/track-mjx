@@ -13,16 +13,16 @@ class ReferenceClip:
     """Immutable dataclass defining the trajectory features used in the tracking task."""
 
     # qpos
-    position: jp.ndarray = None
-    quaternion: jp.ndarray = None
+    # position: jp.ndarray = None
+    # quaternion: jp.ndarray = None
     joints: jp.ndarray = None
 
     # xpos
     body_positions: jp.ndarray = None
 
     # velocity (inferred)
-    velocity: jp.ndarray = None
-    angular_velocity: jp.ndarray = None
+    # velocity: jp.ndarray = None
+    # angular_velocity: jp.ndarray = None
     joints_velocity: jp.ndarray = None
 
     # xquat
@@ -65,13 +65,13 @@ def make_singleclip_data(traj_data_path):
         xquat = jp.array(data["xquat"][()])
         return (
             ReferenceClip(
-                position=qpos[:, :3],
-                quaternion=qpos[:, 3:7],
-                joints=qpos[:, 7:],
+                # position=qpos[:, :3],
+                # quaternion=qpos[:, 3:7],
+                joints=qpos,
                 body_positions=xpos,
-                velocity=qvel[:, :3],
-                angular_velocity=qvel[:, 3:6],
-                joints_velocity=qvel[:, 6:],
+                # velocity=qvel[:, :3],
+                # angular_velocity=qvel[:, 3:6],
+                joints_velocity=qvel,
                 body_quaternions=xquat,
             ),
         )
@@ -100,13 +100,13 @@ def make_multiclip_data(traj_data_path):
         batch_qvel = reshape_frames(data["qvel"], clip_len)
         batch_xquat = reshape_frames(data["xquat"], clip_len)
         return ReferenceClip(
-            position=batch_qpos[:, :, :3],
-            quaternion=batch_qpos[:, :, 3:7],
-            joints=batch_qpos[:, :, 7:],
+            # position=batch_qpos[:, :, :3],
+            # quaternion=batch_qpos[:, :, 3:7],
+            joints=batch_qpos,
             body_positions=batch_xpos,
-            velocity=batch_qvel[:, :, :3],
-            angular_velocity=batch_qvel[:, :, 3:6],
-            joints_velocity=batch_qvel[:, :, 6:],
+            # velocity=batch_qvel[:, :, :3],
+            # angular_velocity=batch_qvel[:, :, 3:6],
+            joints_velocity=batch_qvel,
             body_quaternions=batch_xquat,
         )
 
@@ -137,14 +137,14 @@ def load_reference_clip_data(
             # Load datasets and convert them to JAX arrays.
             data = {}
             for key in [
-                "angular_velocity",
+                # "angular_velocity",
                 "body_positions",
                 "body_quaternions",
                 "joints",
                 "joints_velocity",
-                "position",
-                "quaternion",
-                "velocity",
+                # "position",
+                # "quaternion",
+                # "velocity",
             ]:
                 if key not in group:
                     raise KeyError(

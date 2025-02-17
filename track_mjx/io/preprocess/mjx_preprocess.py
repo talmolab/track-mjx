@@ -26,8 +26,8 @@ class ReferenceClip:
     """This dataclass is used to store the trajectory in the env."""
 
     # qpos
-    position: jp.ndarray = None
-    quaternion: jp.ndarray = None
+    # position: jp.ndarray = None
+    # quaternion: jp.ndarray = None
     joints: jp.ndarray = None
 
     # xpos
@@ -36,7 +36,7 @@ class ReferenceClip:
     # velocity (inferred)
     velocity: jp.ndarray = None
     joints_velocity: jp.ndarray = None
-    angular_velocity: jp.ndarray = None
+    # angular_velocity: jp.ndarray = None
 
     # xquat
     body_quaternions: jp.ndarray = None
@@ -44,10 +44,10 @@ class ReferenceClip:
 
 def process_clip_to_train(
     stac_path: Text,
-    mjcf_path: str = "./assets/rodent.xml",
-    scale_factor: float = 0.9,
+    mjcf_path: str = "./assets/mouse_arm/arm_model_v3_torque.xml",
+    scale_factor: float = 1.0,
     start_step: int = 0,
-    clip_length: int = 250,
+    clip_length: int = 100,
     max_qvel: float = 20.0,
     dt: float = 0.02,
 ):
@@ -100,36 +100,37 @@ def process_clip(
 ):
     """Process a set of joint angles into the features that
        the referenced trajectory is composed of. This function
-       will process only one clip. Rodent only for now.
+       will process only one clip.
 
     Args:
-        stac_path (Text): _description_
-        save_file (Text): _description_
-        scale_factor (float, optional): _description_. Defaults to 0.9.
-        start_step (int, optional): _description_. Defaults to 0.
-        clip_length (int, optional): _description_. Defaults to 250.
-        max_qvel (float, optional): _description_. Defaults to 20.0.
-        dt (float, optional): _description_. Defaults to 0.02.
-        ref_steps (Tuple, optional): _description_. Defaults to (1, 2, 3, 4, 5, 6, 7, 8, 9, 10).
+        mocap_qpos (jp.ndarray): Motion capture joint positions over time.
+        mjx_model (mjx.Model): The MJX model object.
+        mjx_data (mjx.Data): The MJX data object.
+        max_qvel (float, optional): Velocity clipping threshold. Defaults to 20.0.
+        dt (float, optional): Timestep for velocity calculation. Defaults to 0.02.
+
+    Returns:
+        ReferenceClip: Processed clip with joints, velocities, and kinematics.
     """
 
-    # Feature logic for a single clip here
+    # Initialize empty clip
     clip = ReferenceClip()
 
+    # Extract features: joints, body positions, and body quaternions
     clip = extract_features(mjx_model, mjx_data, clip, mocap_qpos)
-    # Padding for velocity corner case.
+
+    # Padding for velocity computation (handle boundary conditions)
     mocap_qpos = jp.concatenate([mocap_qpos, mocap_qpos[-1, jp.newaxis, :]], axis=0)
 
-    # Calculate qvel, clip.
+    # Compute joint velocities (no longer handling position/quaternion velocities)
     mocap_qvel = compute_velocity_from_kinematics(mocap_qpos, dt)
-    vels = mocap_qvel[:, 6:]
-    clipped_vels = jp.clip(vels, -max_qvel, max_qvel)
 
-    mocap_qvel = mocap_qvel.at[:, 6:].set(clipped_vels)
+    # Since we only have 4 joints, ensure we clip velocities correctly
+    clipped_vels = jp.clip(mocap_qvel, -max_qvel, max_qvel)
+
+    # Replace velocity attributes in `clip`
     clip = clip.replace(
-        velocity=mocap_qvel[:, :3],
-        angular_velocity=mocap_qvel[:, 3:6],
-        joints_velocity=mocap_qvel[:, 6:],
+        joints_velocity=clipped_vels,
     )
 
     return clip
@@ -142,20 +143,18 @@ def extract_features(mjx_model, mjx_data, clip, mocap_qpos):
         qpos = mjx_data.qpos
         xpos = mjx_data.xpos
         xquat = mjx_data.xquat
-        return mjx_data, (qpos[:3], qpos[3:7], qpos[7:], xpos, xquat)
+        return mjx_data, (qpos, xpos, xquat)
 
-    mjx_data, (position, quaternion, joints, body_positions, body_quaternions) = (
-        jax.lax.scan(
-            f,
-            mjx_data,
-            mocap_qpos,
-        )
+    mjx_data, (joints, body_positions, body_quaternions) = jax.lax.scan(
+        f,
+        mjx_data,
+        mocap_qpos,
     )
 
     # Add features to ReferenceClip
     return clip.replace(
-        position=position,
-        quaternion=quaternion,
+        # position=position,
+        # quaternion=quaternion,
         joints=joints,
         body_positions=body_positions,
         body_quaternions=body_quaternions,
@@ -196,29 +195,24 @@ def set_position(
 
 
 @jit
+@jit
 def compute_velocity_from_kinematics(
     qpos_trajectory: jp.ndarray, dt: float
 ) -> jp.ndarray:
-    """Computes velocity trajectory from position trajectory.
+    """Computes velocity trajectory from joint angles.
 
     Args:
-        qpos_trajectory (jp.ndarray): trajectory of qpos values T x ?
-          Note assumes has freejoint as the first 7 dimensions
+        qpos_trajectory (jp.ndarray): trajectory of qpos values [T x 4]
         dt (float): timestep between qpos entries
 
     Returns:
-        jp.ndarray: Trajectory of velocities.
+        jp.ndarray: Trajectory of joint velocities [T-1, 4].
     """
-    qvel_translation = (qpos_trajectory[1:, :3] - qpos_trajectory[:-1, :3]) / dt
-    qvel_gyro = []
-    for t in range(qpos_trajectory.shape[0] - 1):
-        normed_diff = tr.quat_diff(qpos_trajectory[t, 3:7], qpos_trajectory[t + 1, 3:7])
-        normed_diff /= jp.linalg.norm(normed_diff)
-        angle = tr.quat_to_axisangle(normed_diff)
-        qvel_gyro.append(angle / dt)
-    qvel_gyro = jp.stack(qvel_gyro)
-    qvel_joints = (qpos_trajectory[1:, 7:] - qpos_trajectory[:-1, 7:]) / dt
-    return jp.concatenate([qvel_translation, qvel_gyro, qvel_joints], axis=1)
+
+    # Compute velocity as finite difference of joint angles
+    qvel_joints = (qpos_trajectory[1:] - qpos_trajectory[:-1]) / dt
+
+    return qvel_joints  # Shape: [T-1, 4]f
 
 
 def save_reference_clip_to_h5(

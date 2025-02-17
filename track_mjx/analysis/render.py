@@ -56,7 +56,7 @@ def agg_backend_context(func):
 
 def render_from_saved_rollout(
     rollout: dict,
-    walker_type: str = "rodent",
+    walker_type: str = "mouse-arm",
 ) -> list:
     """
     Render a rollout from saved qposes.
@@ -78,6 +78,18 @@ def render_from_saved_rollout(
                 / "assets"
                 / "rodent"
                 / "rodent_ghostpair_scale080.xml"
+            ).resolve()
+        )
+    if walker_type == "mouse-arm":
+        pair_render_xml_path = str(
+            (
+                Path(__file__).parent
+                / ".."
+                / "environment"
+                / "walker"
+                / "assets"
+                / "mouse_arm"
+                / "arm_model_v3_ghostpair.xml"
             ).resolve()
         )
     elif walker_type == "fly":
@@ -116,7 +128,9 @@ def render_from_saved_rollout(
     renderer = mujoco.Renderer(mj_model, height=480, width=640)
     frames = []
     print("MuJoCo Rendering...")
-    for qpos1, qpos2 in tqdm(zip(qposes_rollout, qposes_ref), total=len(qposes_rollout)):
+    for qpos1, qpos2 in tqdm(
+        zip(qposes_rollout, qposes_ref), total=len(qposes_rollout)
+    ):
         mj_data.qpos = np.append(qpos1, qpos2)
         mujoco.mj_forward(mj_model, mj_data)
         renderer.update_scene(
@@ -180,11 +194,15 @@ def plot_pca_intention(
     if idx_in_this_episode <= window_size:
         plt.xlim(0, window_size)
     else:
-        plt.xlim(idx_in_this_episode - window_size, idx_in_this_episode)  # dynamically move xlim as time progress
+        plt.xlim(
+            idx_in_this_episode - window_size, idx_in_this_episode
+        )  # dynamically move xlim as time progress
     plt.ylim(*y_lim)
     plt.legend(loc="upper right")
     plt.xlabel("Timestep")
-    plt.title(f"PCA {feature_name} Progression for Clip {clip_idx}")  # TODO make it configurable
+    plt.title(
+        f"PCA {feature_name} Progression for Clip {clip_idx}"
+    )  # TODO make it configurable
     # Get the current figure
     fig = plt.gcf()
     # Create a canvas for rendering
@@ -240,12 +258,20 @@ def render_with_pca_progression(
     for idx, frame in tqdm(enumerate(frames_mujoco)):
         concat_frames.append(np.hstack([frame, frames_pca[idx]]))
     reward_plot = plot_pca_intention(
-        len(frames_mujoco) - 1, episode_start, pca_projections, clip_idx, feature_name, n_components, terminated=True
+        len(frames_mujoco) - 1,
+        episode_start,
+        pca_projections,
+        clip_idx,
+        feature_name,
+        n_components,
+        terminated=True,
     )
     plt.close("all")  # Figure auto-closing upon backend switching is deprecated.
     matplotlib.use(orig_backend)
     for _ in range(50):
-        concat_frames.append(np.hstack([frames_mujoco[-1], reward_plot]))  # create stoppage when episode terminates
+        concat_frames.append(
+            np.hstack([frames_mujoco[-1], reward_plot])
+        )  # create stoppage when episode terminates
     return concat_frames
 
 
@@ -272,5 +298,7 @@ def display_video(frames, framerate=30):
         return [im]
 
     interval = 1000 / framerate
-    anim = animation.FuncAnimation(fig=fig, func=update, frames=frames, interval=interval, blit=True, repeat=False)
+    anim = animation.FuncAnimation(
+        fig=fig, func=update, frames=frames, interval=interval, blit=True, repeat=False
+    )
     return HTML(anim.to_html5_video())

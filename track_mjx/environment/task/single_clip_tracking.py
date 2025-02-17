@@ -100,6 +100,10 @@ class SingleClipTracking(PipelineEnv):
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
 
+        self.clip_length = clip_length
+        self.random_init_range = random_init_range
+        self.traj_length = traj_length
+
     def reset(self, rng: jp.ndarray) -> State:
         """Resets the environment to an initial state.
 
@@ -112,15 +116,15 @@ class SingleClipTracking(PipelineEnv):
         _, start_rng, rng = jax.random.split(rng, 3)
 
         episode_length = (
-            clip_length - random_init_range - traj_length
+            self.clip_length - self.random_init_range - self.traj_length
         ) * self._steps_for_cur_frame
 
-        frame_range = clip_length - episode_length - traj_length
+        frame_range = self.clip_length - episode_length - self.traj_length
         start_frame = jax.random.randint(start_rng, (), 0, frame_range)
 
         info = {
             "start_frame": start_frame,
-            "summed_pos_distance": 0.0,
+            # "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nv,)),
@@ -165,8 +169,8 @@ class SingleClipTracking(PipelineEnv):
 
         new_qpos = jp.concatenate(
             (
-                reference_frame.position,
-                reference_frame.quaternion,
+                # reference_frame.position,
+                # reference_frame.quaternion,
                 reference_frame.joints,
             ),
             axis=0,
@@ -192,19 +196,19 @@ class SingleClipTracking(PipelineEnv):
 
         reward, done, zero = jp.zeros(3)
         metrics = {
-            "pos_reward": zero,
-            "quat_reward": zero,
+            # "pos_reward": zero,
+            # "quat_reward": zero,
             "joint_reward": zero,
-            "angvel_reward": zero,
+            # "angvel_reward": zero,
             "bodypos_reward": zero,
             "endeff_reward": zero,
             "reward_ctrlcost": zero,
             "ctrl_diff_cost": zero,
-            "too_far": zero,
-            "bad_pose": zero,
-            "bad_quat": zero,
-            "fall": zero,
-            "nan": zero,
+            # "too_far": zero,
+            # "bad_pose": zero,
+            # "bad_quat": zero,
+            # "fall": zero,
+            # "nan": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -231,18 +235,18 @@ class SingleClipTracking(PipelineEnv):
 
         # reward calculation
         (
-            pos_reward,
-            quat_reward,
+            # pos_reward,
+            # quat_reward,
             joint_reward,
-            angvel_reward,
+            # angvel_reward,
             bodypos_reward,
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
-            too_far,
-            bad_pose,
-            bad_quat,
-            fall,
+            # too_far,
+            # bad_pose,
+            # bad_quat,
+            # fall,
             info,
         ) = compute_tracking_rewards(
             data=data,
@@ -258,9 +262,9 @@ class SingleClipTracking(PipelineEnv):
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
         reward = (
             joint_reward
-            + pos_reward
-            + quat_reward
-            + angvel_reward
+            # + pos_reward
+            # + quat_reward
+            # + angvel_reward
             + bodypos_reward
             + endeff_reward
             - ctrl_cost
@@ -268,7 +272,7 @@ class SingleClipTracking(PipelineEnv):
         )
 
         # Raise done flag if terminating
-        done = jp.max(jp.array([fall, too_far, bad_pose, bad_quat]))
+        done = jp.array(0.0)
 
         # Handle nans during sim by resetting env
         reward = jp.nan_to_num(reward)
@@ -282,19 +286,19 @@ class SingleClipTracking(PipelineEnv):
         done = jp.max(jp.array([nan, done]))
 
         state.metrics.update(
-            pos_reward=pos_reward,
-            quat_reward=quat_reward,
+            # pos_reward=pos_reward,
+            # quat_reward=quat_reward,
             joint_reward=joint_reward,
-            angvel_reward=angvel_reward,
+            # angvel_reward=angvel_reward,
             bodypos_reward=bodypos_reward,
             endeff_reward=endeff_reward,
             reward_ctrlcost=-ctrl_cost,
             ctrl_diff_cost=ctrl_diff_cost,
-            too_far=too_far,
-            bad_pose=bad_pose,
-            bad_quat=bad_quat,
-            fall=fall,
-            nan=nan,
+            # too_far=too_far,
+            # bad_pose=bad_pose,
+            # bad_quat=bad_quat,
+            # fall=fall,
+            # nan=nan,
         )
 
         return state.replace(
@@ -338,10 +342,10 @@ class SingleClipTracking(PipelineEnv):
         ref_traj = self._get_reference_trajectory(info, data)
 
         # walker methods to compute the necessary distances and differences
-        track_pos_local = self.walker.compute_local_track_positions(
-            ref_traj.position, data.qpos
-        )
-        quat_dist = self.walker.compute_quat_distances(ref_traj.quaternion, data.qpos)
+        # track_pos_local = self.walker.compute_local_track_positions(
+        #     ref_traj.position, data.qpos
+        # )
+        # quat_dist = self.walker.compute_quat_distances(ref_traj.quaternion, data.qpos)
         joint_dist = self.walker.compute_local_joint_distances(
             ref_traj.joints, data.qpos
         )
@@ -351,8 +355,8 @@ class SingleClipTracking(PipelineEnv):
 
         reference_obs = jp.concatenate(
             [
-                track_pos_local,
-                quat_dist,
+                # track_pos_local,
+                # quat_dist,
                 joint_dist,
                 body_pos_dist_local,
             ]

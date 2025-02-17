@@ -84,7 +84,7 @@ class MultiClipTracking(SingleClipTracking):
         )
         if reference_clip is not None:
             self._reference_clips = reference_clip
-            self._n_clips = reference_clip.position.shape[0]
+            self._n_clips = reference_clip.body_positions.shape[0]
         else:
             print("No reference clip provided, in pure rendering mode.")
 
@@ -107,7 +107,7 @@ class MultiClipTracking(SingleClipTracking):
         info = {
             "clip_idx": clip_idx,
             "start_frame": start_frame,
-            "summed_pos_distance": 0.0,
+            # "summed_pos_distance": 0.0,
             "quat_distance": 0.0,
             "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),

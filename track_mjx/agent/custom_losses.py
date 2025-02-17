@@ -209,10 +209,10 @@ def compute_ppo_loss(
     )
 
     total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss
-    return total_loss, {
+    return total_loss, ({
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
         "kl_latent_loss": kl_latent_loss,
         "entropy_loss": entropy_loss,
-    }
+    }, new_hidden_state) # need to be just two things for jax.value_and_grad(loss_fn, has_aux=has_aux) to work

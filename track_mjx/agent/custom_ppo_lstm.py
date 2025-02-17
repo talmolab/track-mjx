@@ -25,7 +25,7 @@ from absl import logging
 from brax import base
 from brax import envs
 # from brax.training import acting
-from brax.training import gradients
+# from brax.training import gradients
 from brax.training import pmap
 from brax.training import types
 from brax.training.acme import running_statistics
@@ -54,6 +54,7 @@ from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import acting_lstm as acting
+from track_mjx.agent import gradients_lstm as gradients
 
 from flax import linen as nn
 
@@ -309,11 +310,11 @@ def train(
         optimizer_state, params, hidden_state, key = carry
         
         key, key_loss = jax.random.split(key)
-        (_, metrics), params, optimizer_state = gradient_update_fn(
+        (_, metrics, new_hidden_state), params, optimizer_state = gradient_update_fn(
             params, hidden_state, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
         )
 
-        return (optimizer_state, params, key), metrics
+        return (optimizer_state, params, new_hidden_state, key), metrics
 
     def sgd_step(
         carry,

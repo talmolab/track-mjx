@@ -85,10 +85,10 @@ def load_checkpoint_for_eval(
     return {"cfg": cfg, "policy": policy}
 
 
-def make_abstract_policy(cfg):
+def make_abstract_policy(cfg: OmegaConf, seed: int = 1):
     """Create a random policy from a config."""
     ppo_network = make_ppo_network_from_cfg(cfg)
-    key_policy, key_value = jax.random.split(jax.random.key(1))
+    key_policy, key_value = jax.random.split(jax.random.key(seed))
 
     init_params = losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),

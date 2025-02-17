@@ -32,7 +32,7 @@ from track_mjx.io import load
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import wrappers
-from track_mjx.agent import checkpoint
+from track_mjx.agent import checkpointing
 from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
@@ -77,7 +77,7 @@ def main(cfg: DictConfig):
         checkpoint_to_restore = cfg.train_setup["checkpoint_to_restore"]
         # Load the checkpoint's config and update the run_id and checkpoint path
         cfg = OmegaConf.create(
-            checkpoint.load_config_from_checkpoint(
+            checkpointing.load_config_from_checkpoint(
                 cfg.train_setup["checkpoint_to_restore"]
             )
         )

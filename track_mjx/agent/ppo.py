@@ -64,7 +64,7 @@ class TrainingState:
     env_steps: jnp.ndarray
 
 
-from track_mjx.agent import checkpoint
+from track_mjx.agent import checkpointing
 
 
 def _unpmap(v):
@@ -450,7 +450,7 @@ def train(
 
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        training_state = checkpoint.load_training_state(
+        training_state = checkpointing.load_training_state(
             checkpoint_to_restore, training_state
         )
         logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
@@ -561,7 +561,7 @@ def train(
             )
             # Save checkpoint
             if ckpt_mgr is not None:
-                checkpoint.save(
+                checkpointing.save(
                     ckpt_mgr, it, policy_param, _unpmap(training_state), config_dict
                 )
 

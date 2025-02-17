@@ -331,13 +331,13 @@ def train(
             return x
 
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
-        (optimizer_state, params, _), metrics = jax.lax.scan(
+        (optimizer_state, params, new_hidden_state, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, hidden_state, key_grad),
             shuffled_data,
             length=num_minibatches,
         )
-        return (optimizer_state, params, hidden_state, key), metrics # carry shape maintains
+        return (optimizer_state, params, new_hidden_state, key), metrics # carry shape maintains, now updated
 
     def training_step(
         carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t
@@ -363,6 +363,9 @@ def train(
                 unroll_length,
                 extra_fields=("truncation",),
             )
+            
+            new_hidden_state = jnp.reshape(new_hidden_state, hidden_state.shape)
+            
             return (next_state, next_key, new_hidden_state), data
 
         (state, _, new_hidden_state), data = jax.lax.scan(
@@ -384,10 +387,11 @@ def train(
             data.observation,
             pmap_axis_name=_PMAP_AXIS_NAME,
         )
-
-        (optimizer_state, params, _), metrics = jax.lax.scan(
+        
+        # techniqually, whatever sgd hidden returns doesn't matter
+        (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
-            (training_state.optimizer_state, training_state.params, training_state.hidden_state,key_sgd), # pass in hidden in carry
+            (training_state.optimizer_state, training_state.params, training_state.hidden_state, key_sgd), # pass in hidden in carry
             (),
             length=num_updates_per_batch,
         )

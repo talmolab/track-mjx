@@ -117,21 +117,6 @@ def load_inference_fn(
     )
 
 
-def add_to_network_config(
-    network_config: dict,
-    observation_size: int,
-    action_size: int,
-    normalize_observations: bool,
-    **kwargs,
-):
-    """Add network info to the network config."""
-    network_config["normalize_observations"] = normalize_observations
-    network_config["action_size"] = action_size
-    network_config["observation_size"] = observation_size
-    network_config.update(kwargs)
-    return network_config
-
-
 def make_ppo_network_from_cfg(cfg):
     """Create a PPONetwork from a config."""
     normalize = lambda x, y: x

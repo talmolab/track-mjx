@@ -8,7 +8,6 @@ from track_mjx.agent import ppo_networks, losses
 from jax import numpy as jnp
 import jax
 from omegaconf import OmegaConf
-from pathlib import Path
 
 
 def load_config_from_checkpoint(
@@ -52,7 +51,13 @@ def load_training_state(
 def load_checkpoint_for_eval(
     checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
 ):
-    """Load a checkpoint's cfg and policy. Can load to different devices via abstract state"""
+    """Load a checkpoint's config and policy. Creates an abstract state to define structure.
+
+    Returns: {
+        cfg: config,
+        policy: policy params
+        }
+    """
     mgr_options = ocp.CheckpointManagerOptions(
         create=False,
         step_prefix=step_prefix,
@@ -102,7 +107,7 @@ def load_inference_fn(
     cfg, policy_params, deterministic: bool = True, get_activation: bool = True
 ) -> Callable:
     """
-    Create a policy inference function from a checkpoint.
+    Create a ppo policy inference function from a checkpoint.
     """
     ppo_network = make_ppo_network_from_cfg(cfg)
     make_policy = ppo_networks.make_inference_fn(ppo_network)
@@ -128,6 +133,7 @@ def add_to_network_config(
 
 
 def make_ppo_network_from_cfg(cfg):
+    """Create a PPONetwork from a config."""
     normalize = lambda x, y: x
     if cfg["network_config"]["normalize_observations"]:
         normalize = running_statistics.normalize
@@ -152,3 +158,17 @@ def make_ppo_network_from_cfg(cfg):
             f"Unknown network architecture: {cfg['network_config']['arch_name']}"
         )
     return ppo_network
+
+
+def save(ckpt_mgr, step, policy, training_state, config):
+    """Save a checkpoint during training.
+    Consists of policy, training state and config.
+    """
+    ckpt_mgr.save(
+        step=step,
+        args=ocp.args.Composite(
+            policy=ocp.args.StandardSave(policy),
+            train_state=ocp.args.StandardSave(training_state),
+            config=ocp.args.JsonSave(config),
+        ),
+    )

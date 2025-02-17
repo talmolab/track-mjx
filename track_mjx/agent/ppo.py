@@ -480,14 +480,16 @@ def train(
         key=eval_key,
     )
 
-    # Run initial eval
+    # Logic to restore iteration count from checkpoint
     start_it = 0
     if ckpt_mgr is not None:
         if ckpt_mgr.latest_step() is not None:
             num_evals_after_init -= ckpt_mgr.latest_step()
             start_it = ckpt_mgr.latest_step()
-            print(f"starting at eval: {num_evals_after_init} and it: {start_it}")
 
+    print(f"Starting at eval: {num_evals_after_init} and it: {start_it}")
+
+    # Run initial eval
     metrics = {}
     if process_id == 0 and num_evals > 1:
         policy_param = _unpmap(
@@ -556,15 +558,10 @@ def train(
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )
-            # Save checkpoints
+            # Save checkpoint
             if ckpt_mgr is not None:
-                ckpt_mgr.save(
-                    step=it,
-                    args=ocp.args.Composite(
-                        policy=ocp.args.StandardSave(policy_param),
-                        train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                        config=ocp.args.JsonSave(config_dict),
-                    ),
+                checkpoint.save(
+                    ckpt_mgr, it, policy_param, _unpmap(training_state), config_dict
                 )
 
     total_steps = current_step

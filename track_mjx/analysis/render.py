@@ -111,6 +111,11 @@ def render_from_saved_rollout(
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
 
+    # Calulate realtime rendering fps
+    render_fps = (
+        1.0 / mj_model.opt.timestep
+    ) / cfg.env_config.env_args.physics_steps_per_control_step
+
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
     renderer = mujoco.Renderer(mj_model, height=480, width=640)
@@ -121,13 +126,10 @@ def render_from_saved_rollout(
     ):
         mj_data.qpos = np.append(qpos1, qpos2)
         mujoco.mj_forward(mj_model, mj_data)
-        renderer.update_scene(
-            mj_data,
-            camera=cfg.env_config.render.camera_name,
-        )
+        renderer.update_scene(mj_data, camera=cfg.env_config.render_camera_name)
         pixels = renderer.render()
         frames.append(pixels)
-    return frames
+    return frames, render_fps
 
 
 def plot_pca_intention(

@@ -22,6 +22,7 @@ import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
+# from track_mjx.agent import custom_ppo
 from track_mjx.agent import custom_ppo_lstm as custom_ppo # lstm training here
 import warnings
 from jax import numpy as jp
@@ -42,7 +43,7 @@ FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips-mlp")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:

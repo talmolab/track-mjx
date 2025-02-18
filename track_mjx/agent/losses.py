@@ -17,7 +17,7 @@
 See: https://arxiv.org/pdf/1707.06347.pdf
 """
 
-from typing import Any, Tuple
+from typing import Any, Callable, Tuple
 
 from brax.training import types
 from brax.training.agents.ppo import networks as ppo_networks
@@ -25,6 +25,7 @@ from brax.training.types import Params
 import flax
 import jax
 import jax.numpy as jnp
+import optax
 
 
 @flax.struct.dataclass
@@ -104,6 +105,7 @@ def compute_ppo_loss(
     normalizer_params: Any,
     data: types.Transition,
     rng: jnp.ndarray,
+    step: int,
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
     kl_weight: float = 1e-3,
@@ -112,6 +114,7 @@ def compute_ppo_loss(
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
+    kl_schedule: Callable | None = None,
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Computes PPO loss.
 
@@ -191,6 +194,9 @@ def compute_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL Divergence for latent layer
+    if kl_schedule is not None:
+        kl_weight = kl_schedule(step)
+
     kl_latent_loss = kl_weight * (
         -0.5
         * jnp.mean(1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar))
@@ -204,3 +210,27 @@ def compute_ppo_loss(
         "kl_latent_loss": kl_latent_loss,
         "entropy_loss": entropy_loss,
     }
+
+
+def create_ramp_schedule(
+    max_value: float = 0.1,
+    min_value: float = 0.0001,
+    ramp_steps: int = 1000,
+    warmup_steps: int = 0,
+    smoothing: str = "linear",
+) -> optax.Schedule:
+    """
+    Creates a schedule that smoothly ramps from 0 to a maximum value.
+    """
+
+    def schedule_fn(step):
+        step = jnp.asarray(step, dtype=jnp.float32)
+        progress = jnp.clip((step - warmup_steps) / ramp_steps, min_value, 1)
+
+        if smoothing == "cosine":
+            progress = 0.5 * (1 - jnp.cos(jnp.pi * progress))
+
+        is_warmup = step < warmup_steps
+        return jnp.where(is_warmup, min_value, progress * max_value)
+
+    return schedule_fn

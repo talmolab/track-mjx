@@ -25,7 +25,6 @@ from absl import logging
 from brax import base
 from brax import envs
 from brax.training import acting
-from brax.training import gradients
 from brax.training import pmap
 from brax.training import types
 from brax.training.acme import running_statistics
@@ -35,8 +34,8 @@ from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
 import flax.training
 
-from track_mjx.agent import losses as ppo_losses
-from track_mjx.agent import ppo_networks
+from track_mjx.agent import losses, ppo_networks, gradients
+from track_mjx.environment import wrappers
 
 import flax
 import flax.struct
@@ -45,8 +44,6 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import orbax.checkpoint as ocp
-
-from track_mjx.environment import wrappers
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
@@ -59,7 +56,7 @@ class TrainingState:
     """Contains training state for the learner."""
 
     optimizer_state: optax.OptState
-    params: ppo_losses.PPONetworkParams
+    params: losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
 
@@ -81,6 +78,7 @@ def _strip_weak_type(tree):
     return jax.tree_util.tree_map(f, tree)
 
 
+# TODO: Pass in a loss-specific config instead of throwing them all in individually.
 def train(
     environment: Union[envs_v1.Env, envs.Env],
     num_timesteps: int,
@@ -118,6 +116,7 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
+    use_kl_schedule: bool = True,
 ):
     """PPO training.
 
@@ -276,8 +275,13 @@ def train(
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
+    kl_schedule = (
+        losses.create_ramp_schedule(max_value=kl_weight, ramp_steps=num_evals // 2)
+        if use_kl_schedule
+        else None
+    )
     loss_fn = functools.partial(
-        ppo_losses.compute_ppo_loss,
+        losses.compute_ppo_loss,
         ppo_network=ppo_network,
         entropy_cost=entropy_cost,
         kl_weight=kl_weight,
@@ -286,6 +290,7 @@ def train(
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
+        kl_schedule=kl_schedule,
     )
 
     gradient_update_fn = gradients.gradient_update_fn(
@@ -433,7 +438,7 @@ def train(
             metrics,
         )  # pytype: disable=bad-return-type  # py311-upgrade
 
-    init_params = ppo_losses.PPONetworkParams(
+    init_params = losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
     )

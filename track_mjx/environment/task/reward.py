@@ -5,7 +5,7 @@ import numpy as np
 from typing import Union
 from omegaconf import ListConfig
 from track_mjx.environment.walker.base import BaseWalker
-from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
+from track_mjx.io.load import ReferenceClip
 from mujoco import MjData
 
 from flax import struct
@@ -13,7 +13,9 @@ from flax import struct
 
 @struct.dataclass
 class RewardConfig:
-    """All configuration for reward computation, including weights and scaling."""
+    """Weights and scales for the imitation reward terms.
+    Initialized through env_config.reward_weights in the config.yaml file.
+    """
 
     too_far_dist: float
     bad_pose_dist: float

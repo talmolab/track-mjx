@@ -30,16 +30,14 @@ from brax.training import pmap
 from brax.training import types
 from brax.training.acme import running_statistics
 from brax.training.acme import specs
-import flax.training
-
-# from brax.training.agents.ppo import losses as ppo_losses
-from track_mjx.agent import custom_losses as ppo_losses
-
-# from brax.training.agents.ppo import networks as ppo_networks
-from track_mjx.agent import custom_ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
+import flax.training
+
+from track_mjx.agent import losses as ppo_losses
+from track_mjx.agent import ppo_networks
+
 import flax
 import flax.struct
 import jax
@@ -47,10 +45,8 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import orbax.checkpoint as ocp
-from flax.training import orbax_utils
 
-from track_mjx.environment import custom_wrappers
-
+from track_mjx.environment import wrappers
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
@@ -66,6 +62,9 @@ class TrainingState:
     params: ppo_losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
+
+
+from track_mjx.agent import checkpointing
 
 
 def _unpmap(v):
@@ -110,8 +109,8 @@ def train(
     gae_lambda: float = 0.95,
     deterministic_eval: bool = False,
     network_factory: types.NetworkFactory[
-        custom_ppo_networks.PPOImitationNetworks
-    ] = custom_ppo_networks.make_intention_ppo_networks,
+        ppo_networks.PPOImitationNetworks
+    ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
     eval_env: Optional[envs.Env] = None,
@@ -235,7 +234,7 @@ def train(
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
     if isinstance(environment, envs.Env):
-        wrap_for_training = custom_wrappers.wrap
+        wrap_for_training = wrappers.wrap
     else:
         wrap_for_training = envs_v1.wrappers.wrap_for_training
 
@@ -251,6 +250,16 @@ def train(
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
     env_state = reset_fn(key_envs)
 
+    # TODO: reference_obs_size should be optional (network factory-dependent)
+    config_dict["network_config"].update(
+        {
+            "observation_size": env_state.obs.shape[-1],
+            "action_size": env.action_size,
+            "normalize_observations": normalize_observations,
+            "reference_obs_size": int(_unpmap(env_state.info["reference_obs_size"])[0]),
+        }
+    )
+
     normalize = lambda x, y: x
     if normalize_observations:
         normalize = running_statistics.normalize
@@ -260,9 +269,9 @@ def train(
         env.action_size,
         preprocess_observations_fn=normalize,
     )
-    make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
+    make_policy = ppo_networks.make_inference_fn(ppo_network)
 
-    make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
+    make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     optimizer = optax.adam(learning_rate=learning_rate)
@@ -441,20 +450,10 @@ def train(
 
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        options = ocp.CheckpointManagerOptions(
-            create=False, step_prefix="PPONetwork"
-        )  # TODO: need to specify it in the config
-        prev_ckpt_mgr = ocp.CheckpointManager(checkpoint_to_restore, options=options)
-        latest_step = prev_ckpt_mgr.latest_step()
-        training_state = prev_ckpt_mgr.restore(
-            latest_step,
-            args=ocp.args.Composite(
-                train_state=ocp.args.StandardRestore(training_state)
-            ),
-        )["train_state"]
-        logging.info(
-            f"Restored checkpoint at step {latest_step} at {checkpoint_to_restore}"
+        training_state = checkpointing.load_training_state(
+            checkpoint_to_restore, training_state
         )
+        logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
 
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
@@ -482,6 +481,15 @@ def train(
         key=eval_key,
     )
 
+    # Logic to restore iteration count from checkpoint
+    start_it = 0
+    if ckpt_mgr is not None:
+        if ckpt_mgr.latest_step() is not None:
+            num_evals_after_init -= ckpt_mgr.latest_step()
+            start_it = ckpt_mgr.latest_step()
+
+    print(f"Starting at eval: {num_evals_after_init} and it: {start_it}")
+
     # Run initial eval
     metrics = {}
     if process_id == 0 and num_evals > 1:
@@ -493,7 +501,7 @@ def train(
             training_metrics={},
         )
         logging.info(metrics)
-        progress_fn(0, metrics)
+        progress_fn(start_it, metrics)
         # Save checkpoints
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:
@@ -511,8 +519,9 @@ def train(
 
     training_metrics = {}
     training_walltime = 0
+    start_it += 1
     current_step = 0
-    for it in range(1, num_evals_after_init + 1):
+    for it in range(start_it, num_evals_after_init + start_it):
         logging.info("starting iteration %s %s", it, time.time() - xt)
         for _ in range(max(num_resets_per_eval, 1)):
             # optimization
@@ -550,15 +559,10 @@ def train(
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )
-            # Save checkpoints
+            # Save checkpoint
             if ckpt_mgr is not None:
-                ckpt_mgr.save(
-                    step=it,
-                    args=ocp.args.Composite(
-                        policy=ocp.args.StandardSave(policy_param),
-                        train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                        config=ocp.args.JsonSave(config_dict),
-                    ),
+                checkpointing.save(
+                    ckpt_mgr, it, policy_param, _unpmap(training_state), config_dict
                 )
 
     total_steps = current_step

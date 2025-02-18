@@ -55,8 +55,8 @@ def agg_backend_context(func):
 
 
 def render_from_saved_rollout(
+    cfg,
     rollout: dict,
-    walker_type: str = "rodent",
 ) -> list:
     """
     Render a rollout from saved qposes.
@@ -68,7 +68,7 @@ def render_from_saved_rollout(
         list: list of frames of the rendering
     """
     qposes_ref, qposes_rollout = rollout["qposes_ref"], rollout["qposes_rollout"]
-    if walker_type == "rodent":
+    if cfg.walker_type == "rodent":
         pair_render_xml_path = str(
             (
                 Path(__file__).parent
@@ -80,7 +80,7 @@ def render_from_saved_rollout(
                 / "rodent_ghostpair_scale080.xml"
             ).resolve()
         )
-    elif walker_type == "fly":
+    elif cfg.walker_type == "fly":
         pair_render_xml_path = str(
             (
                 Path(__file__).parent
@@ -93,13 +93,13 @@ def render_from_saved_rollout(
             ).resolve()
         )
     else:
-        raise ValueError(f"Unsupported walker type: {walker_type}")
+        raise ValueError(f"Unsupported walker type: {cfg.walker_type}")
     # TODO: Make this ghost rendering walker agonist
     root = mjcf_dm.from_path(pair_render_xml_path)
     rescale.rescale_subtree(
         root,
-        0.9 / 0.8,
-        0.9 / 0.8,
+        cfg.walker_config.rescale_factor / 0.8,
+        cfg.walker_config.rescale_factor / 0.8,
     )
 
     mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
@@ -111,21 +111,25 @@ def render_from_saved_rollout(
     mj_model.opt.ls_iterations = 6
     mj_data = mujoco.MjData(mj_model)
 
+    # Calulate realtime rendering fps
+    render_fps = (
+        1.0 / mj_model.opt.timestep
+    ) / cfg.env_config.env_args.physics_steps_per_control_step
+
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
     renderer = mujoco.Renderer(mj_model, height=480, width=640)
     frames = []
     print("MuJoCo Rendering...")
-    for qpos1, qpos2 in tqdm(zip(qposes_rollout, qposes_ref), total=len(qposes_rollout)):
+    for qpos1, qpos2 in tqdm(
+        zip(qposes_rollout, qposes_ref), total=len(qposes_rollout)
+    ):
         mj_data.qpos = np.append(qpos1, qpos2)
         mujoco.mj_forward(mj_model, mj_data)
-        renderer.update_scene(
-            mj_data,
-            camera="close_profile",
-        )
+        renderer.update_scene(mj_data, camera=cfg.env_config.render_camera_name)
         pixels = renderer.render()
         frames.append(pixels)
-    return frames
+    return frames, render_fps
 
 
 def plot_pca_intention(
@@ -180,11 +184,15 @@ def plot_pca_intention(
     if idx_in_this_episode <= window_size:
         plt.xlim(0, window_size)
     else:
-        plt.xlim(idx_in_this_episode - window_size, idx_in_this_episode)  # dynamically move xlim as time progress
+        plt.xlim(
+            idx_in_this_episode - window_size, idx_in_this_episode
+        )  # dynamically move xlim as time progress
     plt.ylim(*y_lim)
     plt.legend(loc="upper right")
     plt.xlabel("Timestep")
-    plt.title(f"PCA {feature_name} Progression for Clip {clip_idx}")  # TODO make it configurable
+    plt.title(
+        f"PCA {feature_name} Progression for Clip {clip_idx}"
+    )  # TODO make it configurable
     # Get the current figure
     fig = plt.gcf()
     # Create a canvas for rendering
@@ -240,12 +248,20 @@ def render_with_pca_progression(
     for idx, frame in tqdm(enumerate(frames_mujoco)):
         concat_frames.append(np.hstack([frame, frames_pca[idx]]))
     reward_plot = plot_pca_intention(
-        len(frames_mujoco) - 1, episode_start, pca_projections, clip_idx, feature_name, n_components, terminated=True
+        len(frames_mujoco) - 1,
+        episode_start,
+        pca_projections,
+        clip_idx,
+        feature_name,
+        n_components,
+        terminated=True,
     )
     plt.close("all")  # Figure auto-closing upon backend switching is deprecated.
     matplotlib.use(orig_backend)
     for _ in range(50):
-        concat_frames.append(np.hstack([frames_mujoco[-1], reward_plot]))  # create stoppage when episode terminates
+        concat_frames.append(
+            np.hstack([frames_mujoco[-1], reward_plot])
+        )  # create stoppage when episode terminates
     return concat_frames
 
 
@@ -272,5 +288,7 @@ def display_video(frames, framerate=30):
         return [im]
 
     interval = 1000 / framerate
-    anim = animation.FuncAnimation(fig=fig, func=update, frames=frames, interval=interval, blit=True, repeat=False)
+    anim = animation.FuncAnimation(
+        fig=fig, func=update, frames=frames, interval=interval, blit=True, repeat=False
+    )
     return HTML(anim.to_html5_video())

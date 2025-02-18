@@ -169,7 +169,7 @@ def rollout_logging_fn(
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        ctrl, extras = jit_logging_inference_fn(params, obs, act_rng)
+        ctrl, _, _ = jit_logging_inference_fn(params, obs, act_rng)
         state = jit_step(state, ctrl)
         rollout.append(state)
 

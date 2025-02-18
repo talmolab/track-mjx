@@ -280,7 +280,7 @@ def train(
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
 
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True, get_activation=False, use_lstm=use_lstm,))
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -314,7 +314,7 @@ def train(
             params, hidden_state, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
         )
 
-        return (optimizer_state, params, new_hidden_state, key), metrics
+        return (optimizer_state, params, hidden_state, key), metrics
 
     def sgd_step(
         carry,
@@ -363,8 +363,6 @@ def train(
                 unroll_length,
                 extra_fields=("truncation",),
             )
-            
-            new_hidden_state = jnp.reshape(new_hidden_state, hidden_state.shape)
             
             return (next_state, next_key, new_hidden_state), data
 
@@ -588,7 +586,7 @@ def train(
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=it,
-                jit_logging_inference_fn=jit_logging_inference_fn,
+                jit_logging_inference_fn=jit_logging_inference_fn, # takes in jitted logging inference
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )

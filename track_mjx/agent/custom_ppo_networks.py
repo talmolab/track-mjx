@@ -100,45 +100,59 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
 
 
 def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
-    """Creates params and inference function for the PPO agent.
-    The policy takes the params as an input, so different sets of params can be used.
-    """
+    """Creates params and inference function for the PPO agent with LSTM support."""
 
-    def make_logging_policy(deterministic: bool = False) -> types.Policy:
+    def make_logging_policy(
+        deterministic: bool = False, get_activation: bool = False, use_lstm: bool = True
+    ) -> types.Policy:
         policy_network = ppo_networks.policy_network
-        # can modify this to provide stochastic action + noise
         parametric_action_distribution = ppo_networks.parametric_action_distribution
 
         def logging_policy(
             params: types.PolicyParams,
             observations: types.Observation,
             key_sample: PRNGKey,
+            hidden_state: jnp.ndarray,
         ) -> Tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
-            logits, _, _ = policy_network.apply(*params, observations, key_network)
-            # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
+            activations = None
+
+            if use_lstm:
+                logits, _, _, hidden_states = policy_network.apply(
+                    *params,
+                    observations,
+                    key_network,
+                    hidden_state,
+                    get_activation=get_activation,
+                    use_lstm=use_lstm,
+                )
+            else:
+                logits, _, _ = policy_network.apply(
+                    *params,
+                    observations,
+                    key_network,
+                    hidden_state,
+                    get_activation=get_activation,
+                    use_lstm=use_lstm,
+                )
 
             if deterministic:
-                return ppo_networks.parametric_action_distribution.mode(logits), {}
+                return ppo_networks.parametric_action_distribution.mode(logits), {}, hidden_states
 
-            # action sampling is happening here, according to distribution parameter logits
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
                 logits, key_sample
             )
-
-            # probability of selection specific action, actions with higher reward should have higher probability
             log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
+            postprocessed_actions = parametric_action_distribution.postprocess(raw_actions)
 
-            postprocessed_actions = parametric_action_distribution.postprocess(
-                raw_actions
-            )
             return postprocessed_actions, {
                 # "latent_mean": latent_mean,
                 # "latent_logvar": latent_logvar,
                 "log_prob": log_prob,
                 "raw_action": raw_actions,
                 "logits": logits,
-            }
+                "hidden_states": hidden_states,
+            }, hidden_states
 
         return logging_policy
 

@@ -198,7 +198,7 @@ def main(cfg: DictConfig):
     make_inference_fn, params, _ = train_fn(
         environment=env,
         progress_fn=wandb_progress,
-        policy_params_fn=policy_params_fn,
+        policy_params_fn=policy_params_fn,# fill in the rest in training
     )
 
 

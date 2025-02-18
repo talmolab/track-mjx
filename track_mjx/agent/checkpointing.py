@@ -9,6 +9,8 @@ from jax import numpy as jnp
 import jax
 from omegaconf import OmegaConf
 
+import logging
+
 
 def load_config_from_checkpoint(
     checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
@@ -18,6 +20,8 @@ def load_config_from_checkpoint(
     with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
         if step is None:
             step = ckpt_mgr.latest_step()
+
+        logging.info(f"Loading config from {checkpoint_path} at step {step}")
         return ckpt_mgr.restore(
             step,
             args=ocp.args.Composite(
@@ -40,6 +44,9 @@ def load_training_state(
     with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
         if step is None:
             step = ckpt_mgr.latest_step()
+
+        logging.info(f"Loading training state from {checkpoint_path} at step {step}")
+
         return ckpt_mgr.restore(
             step,
             args=ocp.args.Composite(
@@ -65,6 +72,8 @@ def load_checkpoint_for_eval(
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
     if step is None:
         step = ckpt_mgr.latest_step()
+
+    logging.info(f"Loading checkpoint from {checkpoint_path} at step {step}")
 
     # First load the config
     cfg = OmegaConf.create(

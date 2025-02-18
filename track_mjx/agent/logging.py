@@ -26,6 +26,8 @@ from jax import numpy as jp
 from track_mjx.environment import custom_wrappers
 from brax.envs.base import Env
 
+from flax import linen as nn
+
 
 def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
     """Logs a list of metrics to wandb with a specified title.
@@ -160,16 +162,21 @@ def rollout_logging_fn(
 
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
+    num_envs =cfg['train_setup']['train_config']
 
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
 
     state = jit_reset(reset_rng)
+    
+    hidden_state = nn.LSTMCell(features=128).initialize_carry(
+        jax.random.PRNGKey(0), (num_envs,)
+    )
 
     rollout = [state]
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        ctrl, _, _ = jit_logging_inference_fn(params, obs, act_rng)
+        ctrl, extras, hidden_state = jit_logging_inference_fn(params, obs, act_rng, hidden_state)
         state = jit_step(state, ctrl)
         rollout.append(state)
 

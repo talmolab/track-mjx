@@ -117,6 +117,7 @@ def train(
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
     use_kl_schedule: bool = True,
+    kl_ramp_up_frac: float = 0.25,
 ):
     """PPO training.
 
@@ -275,11 +276,12 @@ def train(
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
-    kl_schedule = (
-        losses.create_ramp_schedule(max_value=kl_weight, ramp_steps=num_evals // 2)
-        if use_kl_schedule
-        else None
-    )
+    kl_schedule = None
+    if use_kl_schedule:
+        kl_schedule = losses.create_ramp_schedule(
+            max_value=kl_weight, ramp_steps=int(num_evals * kl_ramp_up_frac)
+        )
+
     loss_fn = functools.partial(
         losses.compute_ppo_loss,
         ppo_network=ppo_network,

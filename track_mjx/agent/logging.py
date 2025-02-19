@@ -27,8 +27,8 @@ from track_mjx.environment import wrappers
 from brax.envs.base import Env
 
 
-def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
-    """Logs a list of metrics to wandb with a specified title.
+def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):
+    """Logs a table of values and its line plot to wandb.
 
     Args:
         metric_name: The key under which to log the metric.
@@ -49,11 +49,11 @@ def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
 
     wandb.log(
         {
-            f"eval/rollout_{metric_name}": wandb.plot.line(
+            name: wandb.plot.line(
                 table,
                 "frame",
                 metric_name,
-                title=title or f"{metric_name} for each rollout frame",
+                title=title,
             )
         },
         commit=False,
@@ -173,63 +173,16 @@ def rollout_logging_fn(
         state = jit_step(state, ctrl)
         rollout.append(state)
 
-    pos_rewards = [state.metrics["pos_reward"] for state in rollout]
-    endeff_rewards = [state.metrics["endeff_reward"] for state in rollout]
-    quat_rewards = [state.metrics["quat_reward"] for state in rollout]
-    angvel_rewards = [state.metrics["angvel_reward"] for state in rollout]
-    bodypos_rewards = [state.metrics["bodypos_reward"] for state in rollout]
-    joint_rewards = [state.metrics["joint_reward"] for state in rollout]
-    summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
-    joint_distances = [state.info["joint_distance"] for state in rollout]
-    torso_heights = [
-        state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
-    ]
-
-    log_metric_to_wandb(
-        "pos_rewards",
-        list(enumerate(pos_rewards)),
-        title="pos_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "endeff_rewards",
-        list(enumerate(endeff_rewards)),
-        title="endeff_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "quat_rewards",
-        list(enumerate(quat_rewards)),
-        title="quat_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "angvel_rewards",
-        list(enumerate(angvel_rewards)),
-        title="angvel_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "bodypos_rewards",
-        list(enumerate(bodypos_rewards)),
-        title="bodypos_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "joint_rewards",
-        list(enumerate(joint_rewards)),
-        title="joint_rewards for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "summed_pos_distances",
-        list(enumerate(summed_pos_distances)),
-        title="summed_pos_distances for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "joint_distances",
-        list(enumerate(joint_distances)),
-        title="joint_distances for each rollout frame",
-    )
-    log_metric_to_wandb(
-        "torso_heights",
-        list(enumerate(torso_heights)),
-        title="torso_heights for each rollout frame",
-    )
+    for rollout_metric in cfg.logging_config.rollout_metrics:
+        log_lineplot_to_wandb(
+            f"eval/rollout_{rollout_metric}",
+            rollout_metric,
+            list(enumerate([state.metrics[rollout_metric] for state in rollout])),
+            title=f"{rollout_metric} for each rollout frame",
+        )
+    # torso_heights = [
+    #     state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
+    # ]
 
     # Render the walker with the reference expert demonstration trajectory
     qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])

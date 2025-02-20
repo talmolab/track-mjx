@@ -520,171 +520,6 @@ def render_with_global_and_local_pca_progression(
     return concat_frames
 
 
-def compute_forward_velocity(qposes, dt, smooth_sigma=2):
-    """Computes and smooths forward velocity using central differencing."""
-    
-    com_positions = qposes[:, 0]
-    raw_velocities = (com_positions[2:] - com_positions[:-2]) / (2 * dt)  # central difference
-    raw_velocities = np.insert(raw_velocities, 0, raw_velocities[0]) 
-    raw_velocities = np.append(raw_velocities, raw_velocities[-1])
-    return gaussian_filter1d(raw_velocities, sigma=smooth_sigma)
-
-def compute_xpos_from_qpos(walker_type, qpos_traj):
-    """
-    Computes Cartesian positions (`xpos`) of all bodies from a given `qpos` trajectory.
-
-    Args:
-        model (MjModel): Loaded MuJoCo model.
-        qpos_traj (np.array): Shape (T, nq) containing joint positions over time.
-
-    Returns:
-        np.array: Shape (T, nb, 3) with `xpos` positions (global frame).
-    """
-    # valid index comes from configs
-    if walker_type=='fly':
-        pair_render_xml_path = str(
-            (
-                Path(__file__).parent
-                / ".."
-                / "environment"
-                / "walker"
-                / "assets"
-                / "fruitfly"
-                / "fruitfly_force_pair.xml"
-            ).resolve()
-            )
-    elif walker_type=='rodent':
-        pair_render_xml_path = str(
-        (
-            Path(__file__).parent
-            / ".."
-            / "environment"
-            / "walker"
-            / "assets"
-            / "rodent"
-            / "rodent_ghostpair_spec.xml"
-        ).resolve()
-        )
-
-    model = mujoco.MjModel.from_xml_path(pair_render_xml_path)
-    data = mujoco.MjData(model)
-
-    # Extract valid joint indices
-    valid_joint_names = [model.joint(i).name for i in range(model.njnt) if model.joint(i).name.endswith("-0")]
-    joint_name_to_index = {model.joint(i).name: i for i in range(model.njnt) if model.joint(i).name.endswith("-0")}
-    valid_joint_indices = np.array([joint_name_to_index[name] for name in valid_joint_names])
-
-    print(f"Expected joint indices count: {len(valid_joint_indices)}, qpos_traj shape: {qpos_traj.shape[1]}")
-
-    # Ensure `qpos` is mapped into the full model's qpos structure
-    full_qpos_size = model.nq
-    xpos_traj = np.zeros((qpos_traj.shape[0], len(valid_joint_indices), 3))
-
-    for t in range(qpos_traj.shape[0]):
-        full_qpos = np.zeros(full_qpos_size)  # Initialize full qpos
-
-        # Check if qpos_traj and valid_joint_indices match in size
-        if qpos_traj.shape[1] != len(valid_joint_indices):
-            raise ValueError(
-                f"Mismatch detected at timestep {t}: qpos_traj has {qpos_traj.shape[1]} values, "
-                f"but expected {len(valid_joint_indices)} valid joint indices"
-            )
-
-        full_qpos[valid_joint_indices] = qpos_traj[t]  # Assign valid joints
-        data.qpos[:] = full_qpos  # Set `qpos` in MuJoCo
-        mujoco.mj_forward(model, data)  # Compute positions
-
-        # Extract `xpos` for `-0` joints
-        xpos_traj[t] = data.xpos[valid_joint_indices]
-
-    return xpos_traj
-
-
-# def compute_height_based_leg_phases(qposes, leg_indices, threshold=0.05):
-#     """Determines swing (1) or stance (0) phases for each leg tip."""
-    
-#     leg_heights = qposes[:, leg_indices]
-#     raw_leg_phases = (leg_heights > threshold).astype(int) # > is swing, <= is stance
-#     return (raw_leg_phases > 0.5).astype(int)  # re-binarize
-
-
-def compute_height_based_leg_phases(xpos, leg_indices, threshold=0.05, smooth_sigma=3, min_duration=10):
-    """
-    Determines swing (1) or stance (0) phases per leg tip using `xpos` height.
-    
-    - Uses Gaussian smoothing to remove noise.
-    - Applies thresholding to detect stance/swing.
-    - Filters short-duration phases to remove flickering.
-
-    Args:
-        xpos (np.array): Shape (T, J, 3) containing 3D positions of joints (x, y, z).
-        leg_indices (list): Indices of leg joints to analyze.
-        threshold (float): Height threshold for detecting stance.
-        smooth_sigma (int): Gaussian filter strength for denoising.
-        min_duration (int): Minimum duration of stance/swing phase to be valid.
-
-    Returns:
-        np.array: Contact states (T, J) where 0=stance, 1=swing.
-    """
-    leg_heights = xpos[:, leg_indices, 2]  # Extract z-coordinates for selected joints
-    smoothed_heights = gaussian_filter1d(leg_heights, sigma=smooth_sigma, axis=0)  # Smooth heights
-
-    # Compute stance/swing binary states
-    contact_states = (smoothed_heights > threshold).astype(int)
-
-    # Remove short-duration stance/swing events
-    for joint in range(contact_states.shape[1]):
-        for t in range(1, len(contact_states) - 1):
-            if contact_states[t, joint] != contact_states[t - 1, joint]:
-                start = t
-                while t < len(contact_states) - 1 and contact_states[t, joint] == contact_states[start, joint]:
-                    t += 1
-                duration = t - start
-                if duration < min_duration:
-                    contact_states[start:t, joint] = 1 - contact_states[start, joint]  # Flip small transitions
-
-    return contact_states
-
-
-
-def plot_height_based_gait_analysis(qposes, leg_indices, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix):
-    """Plots multiple clips side-by-side using height based GRF model"""
-    
-    fig, axes = plt.subplots(2, num_clips, figsize=(5 * num_clips, 6), gridspec_kw={'height_ratios': [1, 3]})
-
-    for i in range(num_clips):
-        clip_id = clip_start + i
-        start_idx = clip_id * timesteps_per_clip
-        end_idx = start_idx + timesteps_per_clip
-        qposes_clip = qposes[start_idx:end_idx, :]
-
-        forward_velocity = compute_forward_velocity(qposes_clip, dt)
-        leg_phases = compute_height_based_leg_phases(qposes_clip, leg_indices)
-        
-        time_axis = np.linspace(0, timesteps_per_clip * dt, timesteps_per_clip)
-
-        axes[0, i].plot(time_axis, forward_velocity, color=color, linewidth=1)
-        axes[0, i].set_ylabel("Velocity (mm/s)")
-        axes[0, i].set_xticks([])
-        axes[0, i].set_xlim(0, time_axis[-1])
-        axes[0, i].set_title(f"{title_prefix} - Clip {clip_id}")
-
-        im = axes[1, i].imshow(leg_phases.T, cmap="gray_r", aspect="auto", interpolation="nearest")
-        axes[1, i].set_yticks(np.arange(len(leg_labels)))
-        axes[1, i].set_yticklabels(leg_labels)
-        axes[1, i].set_xlabel("Time (s)")
-        axes[1, i].set_xticks(np.linspace(0, timesteps_per_clip - 1, 6))
-        axes[1, i].set_xticklabels(np.round(np.linspace(0, timesteps_per_clip * dt, 6), 2))
-        
-        if i == num_clips - 1:
-            legend_patches = [plt.Line2D([0], [0], color="black", lw=4, label="Swing"),
-                              plt.Line2D([0], [0], color="white", lw=4, label="Stance")]
-            axes[1, i].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
-
-    plt.tight_layout()
-    plt.show()
-
-
 def compute_joint_torques(model, data, qpos, qvel, qacc, valid_joint_indices):
     """
     Computes joint torques using MuJoCo's inverse dynamics, keeping only `-0` joints.
@@ -830,76 +665,6 @@ def plot_force_based_gait_analysis(joint_forces, leg_labels, dt, clip_start, num
 
     plt.tight_layout()
     plt.show()
-    
-
-# def estimate_ground_forces_per_joint(qposes_rollout, dt, mass_per_joint, z_indices):
-#     """
-#     Approximates ground reaction forces for each joint using second derivative of Z positions.
-#     """
-#     # z-axis positions for the specified joints
-#     z_positions = qposes_rollout[:, z_indices]  # Shape (T, J_selected)
-
-#     # velocities and accelerations along Z-axis
-#     z_velocities = np.gradient(z_positions, dt, axis=0)
-#     z_accelerations = np.gradient(z_velocities, dt, axis=0)
-
-#     # GRF per joint
-#     ground_forces = mass_per_joint * (z_accelerations + 9.81)  # F = m*a + gravity
-#     return ground_forces
-
-
-# def compute_leg_phases_from_grf_per_joint(ground_forces_per_joint, contact_threshold=1.0):
-#     """
-#     Determines swing (1) or stance (0) phases per joint based on ground reaction forces.
-#     """
-#     # stance (force above threshold) = 0, swing (force below threshold) = 1
-#     leg_phases = (np.abs(ground_forces_per_joint) < contact_threshold).astype(int)
-    
-#     return leg_phases  # shape (T, J)
-
-
-# def plot_grf_based_gait_analysis_per_joint(ground_forces_per_joint, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix, contact_threshold):
-#     """
-#     Plots multiple GRF clips side-by-side, showing GRF per joint using calculation of the force pushing downward on the ground on the z-components.
-#     """
-
-#     fig, axes = plt.subplots(2, num_clips, figsize=(5 * num_clips, 6), gridspec_kw={'height_ratios': [1, 3]})
-
-#     for i in range(num_clips):
-#         clip_id = clip_start + i
-#         start_idx = clip_id * timesteps_per_clip
-#         end_idx = min(start_idx + timesteps_per_clip, len(ground_forces_per_joint))
-
-#         grf_clip = ground_forces_per_joint[start_idx:end_idx]
-
-#         time_axis = np.linspace(0, len(grf_clip) * dt, len(grf_clip))
-
-#         for j in range(grf_clip.shape[1]):  # loop over joints
-#             axes[0, i].plot(time_axis, grf_clip[:, j], color=color, alpha=0.6, linewidth=1, label=f"Joint {leg_labels[j]}" if i == 0 else "")
-
-#         axes[0, i].set_ylabel("GRF per Joint (N)")
-#         axes[0, i].set_xticks([])
-#         axes[0, i].set_xlim(0, time_axis[-1])
-#         axes[0, i].set_title(f"{title_prefix} - Clip {clip_id}")
-
-#         # stance/swing per joint
-#         phase_clip = compute_leg_phases_from_grf_per_joint(grf_clip, contact_threshold)
-
-#         # stance/swing
-#         im = axes[1, i].imshow(phase_clip.T, cmap="gray_r", aspect="auto", interpolation="nearest")
-#         axes[1, i].set_yticks(np.arange(len(leg_labels)))
-#         axes[1, i].set_yticklabels(leg_labels)
-#         axes[1, i].set_xlabel("Time (s)")
-#         axes[1, i].set_xticks(np.linspace(0, timesteps_per_clip - 1, 6))
-#         axes[1, i].set_xticklabels(np.round(np.linspace(0, timesteps_per_clip * dt, 6), 2))
-
-#         if i == num_clips - 1:
-#             legend_patches = [plt.Line2D([0], [0], color="black", lw=4, label="Swing"),
-#                               plt.Line2D([0], [0], color="white", lw=4, label="Stance")]
-#             axes[1, i].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
-
-#     plt.tight_layout()
-#     plt.show()
 
 
 def estimate_ground_forces_per_joint(qposes_rollout, dt, mass_per_joint, z_indices, smooth_sigma=5):
@@ -910,17 +675,17 @@ def estimate_ground_forces_per_joint(qposes_rollout, dt, mass_per_joint, z_indic
    
     z_positions = qposes_rollout[:, z_indices]  # Shape (T, J_selected)
 
-    # velocities and accelerations along Z-axis
+    # velocities and accelerations along z-axis
     z_velocities = np.gradient(z_positions, dt, axis=0)
     z_accelerations = np.gradient(z_velocities, dt, axis=0)
 
-    # raw GRF per joint
+    # raw grf per joint
     ground_forces = mass_per_joint * (z_accelerations + 9.81)  # F = m*a + gravity
 
     # binary masks
     ground_forces[np.abs(ground_forces) < 1e-4] = 0
 
-    # smooth GRF with Gaussian filter
+    # smooth grf with gaussian filter
     ground_forces_smooth = gaussian_filter1d(ground_forces, sigma=smooth_sigma, axis=0)
 
     return ground_forces_smooth
@@ -931,8 +696,8 @@ def compute_leg_phases_from_grf_per_joint(ground_forces_per_joint, contact_thres
     Determines swing (1) or stance (0) phases per joint based on ground reaction forces.
     Uses thresholding and short-event filtering.
     """
-    # convert GRF into stance/swing binary
-    leg_phases = (np.abs(ground_forces_per_joint) > contact_threshold).astype(int)
+    # stance/swing binary
+    leg_phases = (np.abs(ground_forces_per_joint) < contact_threshold).astype(int) # when force is small, the leg is in swing (1)
 
     # remove short stance/swing events (transient noise)
     for joint in range(leg_phases.shape[1]):
@@ -965,7 +730,6 @@ def plot_grf_based_gait_analysis_per_joint(ground_forces_per_joint, leg_labels, 
 
         time_axis = np.linspace(0, len(grf_clip) * dt, len(grf_clip))
 
-        # GRF per joint
         for j in range(grf_clip.shape[1]):  
             axes[0, i].plot(time_axis, grf_clip[:, j], color=color, alpha=0.6, linewidth=1, label=f"Joint {leg_labels[j]}" if i == 0 else "")
 
@@ -974,7 +738,7 @@ def plot_grf_based_gait_analysis_per_joint(ground_forces_per_joint, leg_labels, 
         axes[0, i].set_xlim(0, time_axis[-1])
         axes[0, i].set_title(f"{title_prefix} - Clip {clip_id}")
 
-        # Stance/Swing per joint
+        # stance/swing per joint
         im = axes[1, i].imshow(phase_clip.T, cmap="gray_r", aspect="auto", interpolation="nearest")
         axes[1, i].set_yticks(np.arange(len(leg_labels)))
         axes[1, i].set_yticklabels(leg_labels)
@@ -989,7 +753,6 @@ def plot_grf_based_gait_analysis_per_joint(ground_forces_per_joint, leg_labels, 
 
     plt.tight_layout()
     plt.show()
-
 
 
 def estimate_intrinsic_dim(X, n_jobs=-1, sample_size=500):

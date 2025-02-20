@@ -108,9 +108,6 @@ class SingleClipTracking(PipelineEnv):
 
         info = {
             "start_frame": start_frame,
-            "summed_pos_distance": 0.0,
-            "quat_distance": 0.0,
-            "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nv,)),
         }
 
@@ -193,6 +190,9 @@ class SingleClipTracking(PipelineEnv):
             "bad_quat": zero,
             "fall": zero,
             "nan": zero,
+            "joint_distance": zero,
+            "summed_pos_distance": zero,
+            "quat_distance": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -232,6 +232,9 @@ class SingleClipTracking(PipelineEnv):
             bad_quat,
             fall,
             info,
+            joint_distance,
+            summed_pos_distance,
+            quat_distance,
         ) = compute_tracking_rewards(
             data=data,
             reference_clip=reference_clip,

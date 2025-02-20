@@ -529,13 +529,122 @@ def compute_forward_velocity(qposes, dt, smooth_sigma=2):
     raw_velocities = np.append(raw_velocities, raw_velocities[-1])
     return gaussian_filter1d(raw_velocities, sigma=smooth_sigma)
 
+def compute_xpos_from_qpos(walker_type, qpos_traj):
+    """
+    Computes Cartesian positions (`xpos`) of all bodies from a given `qpos` trajectory.
 
-def compute_height_based_leg_phases(qposes, leg_indices, threshold=0.05):
-    """Determines swing (1) or stance (0) phases for each leg tip."""
+    Args:
+        model (MjModel): Loaded MuJoCo model.
+        qpos_traj (np.array): Shape (T, nq) containing joint positions over time.
+
+    Returns:
+        np.array: Shape (T, nb, 3) with `xpos` positions (global frame).
+    """
+    # valid index comes from configs
+    if walker_type=='fly':
+        pair_render_xml_path = str(
+            (
+                Path(__file__).parent
+                / ".."
+                / "environment"
+                / "walker"
+                / "assets"
+                / "fruitfly"
+                / "fruitfly_force_pair.xml"
+            ).resolve()
+            )
+    elif walker_type=='rodent':
+        pair_render_xml_path = str(
+        (
+            Path(__file__).parent
+            / ".."
+            / "environment"
+            / "walker"
+            / "assets"
+            / "rodent"
+            / "rodent_ghostpair_spec.xml"
+        ).resolve()
+        )
+
+    model = mujoco.MjModel.from_xml_path(pair_render_xml_path)
+    data = mujoco.MjData(model)
+
+    # Extract valid joint indices
+    valid_joint_names = [model.joint(i).name for i in range(model.njnt) if model.joint(i).name.endswith("-0")]
+    joint_name_to_index = {model.joint(i).name: i for i in range(model.njnt) if model.joint(i).name.endswith("-0")}
+    valid_joint_indices = np.array([joint_name_to_index[name] for name in valid_joint_names])
+
+    print(f"Expected joint indices count: {len(valid_joint_indices)}, qpos_traj shape: {qpos_traj.shape[1]}")
+
+    # Ensure `qpos` is mapped into the full model's qpos structure
+    full_qpos_size = model.nq
+    xpos_traj = np.zeros((qpos_traj.shape[0], len(valid_joint_indices), 3))
+
+    for t in range(qpos_traj.shape[0]):
+        full_qpos = np.zeros(full_qpos_size)  # Initialize full qpos
+
+        # Check if qpos_traj and valid_joint_indices match in size
+        if qpos_traj.shape[1] != len(valid_joint_indices):
+            raise ValueError(
+                f"Mismatch detected at timestep {t}: qpos_traj has {qpos_traj.shape[1]} values, "
+                f"but expected {len(valid_joint_indices)} valid joint indices"
+            )
+
+        full_qpos[valid_joint_indices] = qpos_traj[t]  # Assign valid joints
+        data.qpos[:] = full_qpos  # Set `qpos` in MuJoCo
+        mujoco.mj_forward(model, data)  # Compute positions
+
+        # Extract `xpos` for `-0` joints
+        xpos_traj[t] = data.xpos[valid_joint_indices]
+
+    return xpos_traj
+
+
+# def compute_height_based_leg_phases(qposes, leg_indices, threshold=0.05):
+#     """Determines swing (1) or stance (0) phases for each leg tip."""
     
-    leg_heights = qposes[:, leg_indices]
-    raw_leg_phases = (leg_heights > threshold).astype(int) # > is swing, <= is stance
-    return (raw_leg_phases > 0.5).astype(int)  # re-binarize
+#     leg_heights = qposes[:, leg_indices]
+#     raw_leg_phases = (leg_heights > threshold).astype(int) # > is swing, <= is stance
+#     return (raw_leg_phases > 0.5).astype(int)  # re-binarize
+
+
+def compute_height_based_leg_phases(xpos, leg_indices, threshold=0.05, smooth_sigma=3, min_duration=10):
+    """
+    Determines swing (1) or stance (0) phases per leg tip using `xpos` height.
+    
+    - Uses Gaussian smoothing to remove noise.
+    - Applies thresholding to detect stance/swing.
+    - Filters short-duration phases to remove flickering.
+
+    Args:
+        xpos (np.array): Shape (T, J, 3) containing 3D positions of joints (x, y, z).
+        leg_indices (list): Indices of leg joints to analyze.
+        threshold (float): Height threshold for detecting stance.
+        smooth_sigma (int): Gaussian filter strength for denoising.
+        min_duration (int): Minimum duration of stance/swing phase to be valid.
+
+    Returns:
+        np.array: Contact states (T, J) where 0=stance, 1=swing.
+    """
+    leg_heights = xpos[:, leg_indices, 2]  # Extract z-coordinates for selected joints
+    smoothed_heights = gaussian_filter1d(leg_heights, sigma=smooth_sigma, axis=0)  # Smooth heights
+
+    # Compute stance/swing binary states
+    contact_states = (smoothed_heights > threshold).astype(int)
+
+    # Remove short-duration stance/swing events
+    for joint in range(contact_states.shape[1]):
+        for t in range(1, len(contact_states) - 1):
+            if contact_states[t, joint] != contact_states[t - 1, joint]:
+                start = t
+                while t < len(contact_states) - 1 and contact_states[t, joint] == contact_states[start, joint]:
+                    t += 1
+                duration = t - start
+                if duration < min_duration:
+                    contact_states[start:t, joint] = 1 - contact_states[start, joint]  # Flip small transitions
+
+    return contact_states
+
 
 
 def plot_height_based_gait_analysis(qposes, leg_indices, leg_labels, dt, clip_start, num_clips, timesteps_per_clip, color, title_prefix):

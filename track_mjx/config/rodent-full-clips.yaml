@@ -98,7 +98,6 @@ logging_config:
     - bad_pose
     - bad_quat
     - fall
-    - info
 
 walker_config:
   torque_actuators: False 

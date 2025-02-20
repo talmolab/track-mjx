@@ -67,10 +67,12 @@ class MouseArm(BaseWalker):
 
         # Apply torque actuator modifications if needed
         if torque_actuators:
-            for actuator in root.find_all("actuator"):
-                actuator.gainprm = [actuator.forcerange[1]]
-                del actuator.biastype
-                del actuator.biasprm
+            pass
+            # for actuator in root.find_all("actuator"):
+            #     print(dir(actuator))
+            #     actuator.gainprm = [actuator.forcerange[1]]
+            #     del actuator.biastype
+            #     del actuator.biasprm
 
         # Rescale the entire model
         # rescale.rescale_subtree(root, rescale_factor, rescale_factor)

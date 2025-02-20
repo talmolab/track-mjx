@@ -119,8 +119,8 @@ def render_from_saved_rollout(
         "cg": mujoco.mjtSolver.mjSOL_CG,
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
     }["cg"]
-    mj_model.opt.iterations = 6
-    mj_model.opt.ls_iterations = 6
+    mj_model.opt.iterations = 20
+    mj_model.opt.ls_iterations = 20
     mj_data = mujoco.MjData(mj_model)
 
     # save rendering and log to wandb

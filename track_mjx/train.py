@@ -63,7 +63,7 @@ def main(cfg: DictConfig):
 
     # Generates a completely random UUID (version 4), take the first 8 characters
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}_{cfg.data_path}_{run_id}"
+    model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}/{os.path.splitext(os.path.basename(cfg.data_path))[0]}_{run_id}"
     model_path = hydra.utils.to_absolute_path(model_path)
     logging.info(f"Model Checkpoint Path: {model_path}")
 

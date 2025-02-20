@@ -83,17 +83,8 @@ def make_rollout_renderer(env, cfg):
 
     elif cfg.env_config.walker_name == "mouse_arm":
         # TODO: Make this ghost rendering walker agonist
-        spec = mujoco.MjSpec()
-        spec = spec.from_file(str(_XML_PATH))
-
-        # in training scaled by this amount as well
-        for geom in spec.geoms:
-            if geom.size is not None:
-                geom.size *= walker_config.rescale_factor
-            if geom.pos is not None:
-                geom.pos *= walker_config.rescale_factor
-
-        mj_model = spec.compile()
+        root = mjcf_dm.from_path(_XML_PATH)
+        mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
 
     elif cfg.env_config.walker_name == "fly":
         spec = mujoco.MjSpec()
@@ -115,8 +106,8 @@ def make_rollout_renderer(env, cfg):
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
     }["cg"]
 
-    mj_model.opt.iterations = 6
-    mj_model.opt.ls_iterations = 6
+    mj_model.opt.iterations = 20
+    mj_model.opt.ls_iterations = 20
     mj_data = mujoco.MjData(mj_model)
 
     site_id = [
@@ -263,7 +254,7 @@ def rollout_logging_fn(
 
     with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-            mj_data.qpos = qpos1
+            mj_data.qpos = np.append(qpos1, qpos2)  
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(
                 mj_data, camera=env_config.render_camera_name, scene_option=scene_option
@@ -318,11 +309,11 @@ def render_rollout(
         obs = state.obs
         ctrl, extras = jit_inference_fn(obs, act_rng)
 
-        print(f"Step {i}, ctrl: {ctrl}")
+        #print(f"Step {i}, ctrl: {ctrl}")
 
         state = jit_step(state, ctrl)  # Step environment
 
-        print(f"Step {i}, qpos: {state.pipeline_state.qpos}")
+        #print(f"Step {i}, qpos: {state.pipeline_state.qpos}")
 
     # might include those reward term in the visual rendering
     # pos_rewards = [state.metrics["pos_reward"] for state in rollout]
@@ -376,19 +367,13 @@ def render_rollout(
     elif cfg.env_config.walker_name == "mouse_arm":
         # TODO: Make this ghost rendering walker agonist
         root = mjcf_dm.from_path(_XML_PATH)
-        rescale.rescale_subtree(
-            root,
-            0.9 / 0.8,
-            0.9 / 0.8,
-        )
-
         mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
         mj_model.opt.solver = {
             "cg": mujoco.mjtSolver.mjSOL_CG,
             "newton": mujoco.mjtSolver.mjSOL_NEWTON,
         }["cg"]
-        mj_model.opt.iterations = 6
-        mj_model.opt.ls_iterations = 6
+        mj_model.opt.iterations = 20
+        mj_model.opt.ls_iterations = 20
         mj_data = mujoco.MjData(mj_model)
     elif cfg.env_config.walker_name == "flybody":
         spec = mujoco.MjSpec()

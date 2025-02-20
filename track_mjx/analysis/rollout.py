@@ -193,17 +193,22 @@ def restore_policy(checkpoint_path: str, abstract_policy: Tuple) -> Tuple:
 
 
 def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callable:
-    # Wrap the environment
+    # Wrap the environment to get a rollout version
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(environment)
 
-    # Create the abstract policy (network architecture, initial params, etc.)
+    # Create the abstract policy (defines the network architecture and initial parameters)
     abstract_policy, make_policy = create_abstract_policy(rollout_env, cfg_dict)
 
-    # Debug: Print summary of the abstract policy
+    # Debug: Print a summary of the abstract policy parameters.
     print("Abstract policy summary:")
-    jax.tree_util.tree_map(
-        lambda x: print(x.shape, x.dtype, jnp.nanmean(x)), abstract_policy
-    )
+
+    def print_stats(x):
+        if hasattr(x, "shape"):
+            print(
+                f"Shape: {x.shape}, dtype: {x.dtype}, mean: {jnp.nanmean(x):.6f}, min: {jnp.nanmin(x):.6f}, max: {jnp.nanmax(x):.6f}"
+            )
+
+    jax.tree_util.tree_map(print_stats, abstract_policy)
 
     # Load the checkpoint
     checkpoint_path = cfg_dict["train_setup"]["checkpoint_to_restore"]
@@ -219,13 +224,23 @@ def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callab
     else:
         print("Restored policy parameters look good!")
 
+        # Print a detailed summary of the restored parameters
+        def print_param_summary(x):
+            if hasattr(x, "shape"):
+                print(
+                    f"Param: shape={x.shape}, dtype={x.dtype}, mean={jnp.nanmean(x):.6f}, min={jnp.nanmin(x):.6f}, max={jnp.nanmax(x):.6f}"
+                )
+
+        jax.tree_util.tree_map(print_param_summary, policy)
+
     # Build and jit the inference function
     jit_inference_fn = jax.jit(
         make_policy(policy, deterministic=True, get_activation=True)
     )
 
     # Optional: test a quick inference on a known observation
-    test_obs = rollout_env.reset(jax.random.PRNGKey(0)).obs
+    test_state = rollout_env.reset(jax.random.PRNGKey(0))
+    test_obs = test_state.obs
     ctrl, activations = jit_inference_fn(test_obs, jax.random.PRNGKey(42))
     print("Test control output from inference function:", ctrl)
     if jnp.any(jnp.isnan(ctrl)):

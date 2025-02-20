@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<mujoco model="mouse">
-	<option timestep="0.001" gravity="0 0 0"/>
+<mujoco model="mouse_ghostpair">
+	<option timestep="0.002" solver="CG" iterations="20" ls_iterations="20"></option>
 	<size njmax="1000" nconmax="400" nkey="1" nuser_jnt="1"/>
 	<asset>
 		<texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="0.6 0.8 1" width="256" height="1536"/>
 		<texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
 		<material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+		<material name="ghost_material" rgba="1 1 1 0.3" specular="0" shininess="0"/>
 		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Scapula_right_v3.stl"/>
 		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Humerus_right_v3.stl"/>
 		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Clavicle_right_v3.stl"/>
 		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Ulna_right_v3.stl"/>
 		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Radius_right_v3.stl"/>
 		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Segments_Hand.stl"/>
-
 	</asset>
 	<worldbody>
 		<light directional="true"/>
@@ -20,45 +20,46 @@
 			<camera name="close_profile" pos="0.04 .004 0.037" fovy="20" quat="0.6532815 0.2705981 0.2705981 0.6532815"/>
 			<camera name="my_camera1" pos="0.04 .004 0.037" fovy="20" quat="0.6532815 0.2705981 0.2705981 0.6532815"/>
 
+			<!-- Active Model (Original) -->
 			<!--SOB Clavicle-->
 			<body name="clavicle" pos="0 0 0" euler="0 0 0">
 				<!--Mesh Geom-->
-				<geom type="mesh" mesh="Bone_Clavicle_right_v3" pos="0 0 0.0005"/>
+				<geom type="mesh" mesh="Bone_Clavicle_right_v3" pos="0 0 0.0005" contype="1" conaffinity="0"/>
 						
 				<!--SOB Scapula-->
 				<body name="scapula" pos="-0.0001 -0.0001 0.0005" euler="-30 -15 0">
 					<!--Mesh Geom-->
-					<geom type="mesh" mesh="Bone_Scapula_right_v3" pos="0.0 0.0 0.0"/>
+					<geom type="mesh" mesh="Bone_Scapula_right_v3" pos="0 0 0" contype="1" conaffinity="0"/>
 					
 					<!--SOB Humerus-->
 					<body name="humerus" pos="0 0.0007 -0.0002" euler="-15 0 0">						
 						<!-- Glenohumeral (aka shoulder) Joint-->					
 						<inertial pos="-0.0005 0.0003 -0.004" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
-												<!--Mesh Geom-->
-						<geom type="mesh" mesh="Bone_Humerus_right_v3" pos="0.0 0.0 0.0"/>
+						<!--Mesh Geom-->
+						<geom type="mesh" mesh="Bone_Humerus_right_v3" pos="0 0 0" contype="1" conaffinity="0"/>
 
-						<joint name="sh_elv" type="hinge" pos="0 0 0" axis="0 1 0" damping="0.001" range="-70 0" limited="true"/>
+						<joint name="sh_elv" type="hinge" pos="0 0 0" axis="0 1 0" damping="0.0004" range="-70 0" limited="true"/>
 						<!-- Extension Joint: Yaw around Z-axis -->
-						<joint name="sh_extension" type="hinge" pos="0 0 0" axis="0 0 1" damping="0.001" range="-70 40" limited="true"/>
+						<joint name="sh_extension" type="hinge" pos="0 0 0" axis="0 0 1" damping="0.0004" range="-70 40" limited="true"/>
 						<!-- Rotation Joint: Roll around X-axis -->
-						<joint name="sh_rotation" type="hinge" pos="0 0 0" axis="1 0 0" damping="0.001" range="-25 89" limited="true"/>
+						<joint name="sh_rotation" type="hinge" pos="0 0 0" axis="1 0 0" damping="0.0004" range="-25 89" limited="true"/>
 						
 						<!--SOB Ulna-->
 						<body name="ulna" pos="-0.0005 0.0003 -0.0068" euler="-15 0 0">
 							<!--Mesh Geom-->
-							<geom type="mesh" mesh="Bone_Ulna_right_v3" pos="0.0 0.0 0.0"/>
+							<geom type="mesh" mesh="Bone_Ulna_right_v3" pos="0 0 0" contype="1" conaffinity="0"/>
 							
 							<!-- Elbow Joint -->
-							<joint name="elbow_joint" pos="0 0 0" axis="1 0 0" stiffness="0.000001" damping="0.00001" range="-80 90" limited="true"/>
+							<joint name="elbow_joint" type="hinge" pos="0 0 0" axis="1 0 0" stiffness="0.000001" damping="0.00003" range="-80 90" limited="true"/>
 							<inertial pos="-0.0009 0.004 0.0005" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
-
-							<body name="elbow" pos="0.0 0.0 0.0" euler="0 0 0">
+		
+							<body name="elbow" pos="0 0 0" euler="0 0 0">
 								<geom name="elbow_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8" />
 
 								<!--SOB Radius-->
 								<body name="radius" pos="0.00035 0.0002 0.0002" euler="0 0 0">
 									<!--Mesh Geom-->
-									<geom type="mesh" mesh="Bone_Radius_right_v3" pos="0.0 0.0 0.0"/>
+									<geom type="mesh" mesh="Bone_Radius_right_v3" pos="0 0 0" contype="1" conaffinity="0"/>
 									<body name="wrist_body" pos="-0.002 0.0065 0.0005" euler="0 0 0">
 										<geom name="wrist_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8" />
 										<!-- <geom name="wrist_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8" /> -->
@@ -72,14 +73,64 @@
 						</body>
 					</body>
 				</body>
+				
+				<!-- Ghost Model (Duplicate with appended names) -->
+				<body name="mouse_ghost" pos="0 0 0">
+					<!--SOB Clavicle-->
+					<body name="clavicle_ghost" pos="0 0 0" euler="0 0 0">
+						<!--Mesh Geom-->
+						<geom name="clavicle_ghost_geom" type="mesh" mesh="Bone_Clavicle_right_v3" pos="0 0 0.0005" contype="1" conaffinity="0" material="ghost_material"/>
+						
+						<!--SOB Scapula-->
+						<body name="scapula_ghost" pos="-0.0001 -0.0001 0.0005" euler="-30 -15 0">
+							<!--Mesh Geom-->
+							<geom name="scapula_ghost_geom" type="mesh" mesh="Bone_Scapula_right_v3" pos="0 0 0" contype="1" conaffinity="0" material="ghost_material"/>
+							
+							<!--SOB Humerus-->
+							<body name="humerus_ghost" pos="0 0.0007 -0.0002" euler="-15 0 0">
+								<!-- Glenohumeral (aka shoulder) Joint-->
+								<inertial pos="-0.0005 0.0003 -0.004" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
+								<!--Mesh Geom-->
+								<geom name="humerus_ghost_geom" type="mesh" mesh="Bone_Humerus_right_v3" pos="0 0 0" contype="1" conaffinity="0" material="ghost_material"/>
+		
+								<joint name="sh_elv_ghost" type="hinge" pos="0 0 0" axis="0 1 0" damping="0.001" range="-70 0" limited="true"/>
+								<!-- Extension Joint: Yaw around Z-axis -->
+								<joint name="sh_extension_ghost" type="hinge" pos="0 0 0" axis="0 0 1" damping="0.001" range="-70 40" limited="true"/>
+								<!-- Rotation Joint: Roll around X-axis -->
+								<joint name="sh_rotation_ghost" type="hinge" pos="0 0 0" axis="1 0 0" damping="0.001" range="-25 89" limited="true"/>
+								
+								<!--SOB Ulna-->
+								<body name="ulna_ghost" pos="-0.0005 0.0003 -0.0068" euler="-15 0 0">
+									<geom name="ulna_ghost_geom" type="mesh" mesh="Bone_Ulna_right_v3" pos="0 0 0" contype="1" conaffinity="0" material="ghost_material"/>
+									
+									<!-- Elbow Joint -->
+									<joint name="elbow_joint_ghost" type="hinge" pos="0 0 0" axis="1 0 0" stiffness="0.000001" damping="0.00003" range="-80 90" limited="true"/>
+									<inertial pos="-0.0009 0.004 0.0005" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
+		
+									<body name="elbow_ghost" pos="0 0 0" euler="0 0 0">
+										<geom name="elbow_marker_ghost" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
+		
+										<!--SOB Radius-->
+										<body name="radius_ghost" pos="0.00035 0.0002 0.0002" euler="0 0 0">
+											<geom name="radius_ghost_geom" type="mesh" mesh="Bone_Radius_right_v3" pos="0 0 0" contype="1" conaffinity="0" material="ghost_material"/>
+											<body name="wrist_body_ghost" pos="-0.002 0.0065 0.0005" euler="0 0 0">
+												<geom name="wrist_marker_ghost" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
+											</body>
+										</body>
+									</body>
+								</body>
+							</body>
+						</body>
+					</body>
+				</body>
 				<!--EOB Ground-->
 			</body>
 		</body>
 	</worldbody>
-	<actuator>
-		<motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-1 1" forcerange="-.001 .001"/>
-		<motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-1 1" forcerange="-.001 .001"/>
-		<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-1 1" forcerange="-.001 .001"/>
-		<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-1 1" forcerange="-.0001 .0001"/>
-	</actuator>
+		<actuator>
+			<motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-1 1" forcerange="-.001 .001"/>
+			<motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-1 1" forcerange="-.001 .001"/>
+			<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-1 1" forcerange="-.001 .001"/>
+			<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-1 1" forcerange="-.0001 .0001"/>
+		</actuator>
 </mujoco>

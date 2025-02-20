@@ -31,6 +31,7 @@ def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: 
     """Logs a table of values and its line plot to wandb.
 
     Args:
+        name: The name of the lineplot in wandb (i.e. eval/reward_over_rollout).
         metric_name: The key under which to log the metric.
         data: List of (x, y) tuples or two lists (frames, rewards).
         title: Title for the wandb plot.

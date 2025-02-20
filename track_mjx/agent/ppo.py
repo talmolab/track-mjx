@@ -126,6 +126,10 @@ def train(
       environment: the environment to train
       num_timesteps: the total number of environment steps to use during training
       episode_length: the length of an environment episode
+      ckpt_mgr: an orbax checkpoint manager for saving policy checkpoints
+      config_dict: a dictionary that contains the configuration for the training,
+        will be saved to the orbax checkpoint alongside with the policy and training state
+      checkpoint_to_restore: Optional path for a checkpoint to load to resume training
       action_repeat: the number of timesteps to repeat an action
       num_envs: the number of parallel environments to use for rollouts
         NOTE: `num_envs` must be divisible by the total number of chips since each
@@ -167,11 +171,10 @@ def train(
         saving policy checkpoints
       randomization_fn: a user-defined callback function that generates randomized
         environments
-      ckpt_mgr: an optional checkpoint manager for saving policy checkpoints
-      checkpoint_to_restore: an optional checkpoint to load before training, path
-        to the checkpoint
-      config_dict: a dictionary that contains the configuration for the training,
-        will be saved to the orbax checkpoint alongside with the policy and training state
+      use_kl_schedule: whether to use a ramping schedule for the kl weight in the PPO loss
+        (intention network variational layer)
+      kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
+
 
     Returns:
       Tuple of (make_policy function, network params, metrics)

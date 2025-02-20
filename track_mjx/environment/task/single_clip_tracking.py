@@ -176,6 +176,8 @@ class SingleClipTracking(PipelineEnv):
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
 
         reward, done, zero = jp.zeros(3)
+
+        # TODO: Set up a metrics dataclass
         metrics = {
             "pos_reward": zero,
             "quat_reward": zero,
@@ -286,6 +288,9 @@ class SingleClipTracking(PipelineEnv):
             bad_quat=bad_quat,
             fall=fall,
             nan=nan,
+            joint_distance=joint_distance,
+            summed_pos_distance=summed_pos_distance,
+            quat_distance=quat_distance,
         )
 
         return state.replace(

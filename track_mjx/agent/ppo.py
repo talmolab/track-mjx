@@ -566,15 +566,6 @@ def train(
             logging.info(metrics)
             progress_fn(current_step, metrics)
 
-            # Log kl schedule
-            if use_kl_schedule:
-                wandb.log(
-                    {
-                        "training/kl_weight": kl_schedule(it),
-                    },
-                    commit=False,
-                )
-
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )

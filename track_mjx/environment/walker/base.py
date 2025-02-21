@@ -128,39 +128,39 @@ class BaseWalker(ABC):
         """
         return xpos[self.endeff_idxs]
 
-    # def get_torso_position(self, xpos: jp.ndarray) -> jp.ndarray:
-    #     """
-    #     Get torso position from state.
+    def get_torso_position(self, xpos: jp.ndarray) -> jp.ndarray:
+        """
+        Get torso position from state.
 
-    #     Args:
-    #         xpos: Full position state vector
+        Args:
+            xpos: Full position state vector
 
-    #     Returns:
-    #         Torso position vector
-    #     """
-    #     return xpos[self.torso_idx]
+        Returns:
+            Torso position vector
+        """
+        return xpos[self.torso_idx]
 
-    # def get_root_from_qpos(self, qpos: jp.ndarray) -> jp.ndarray:
-    #     """Extracts the root's positional values (x, y, z) from the state vector.
+    def get_root_from_qpos(self, qpos: jp.ndarray) -> jp.ndarray:
+        """Extracts the root's positional values (x, y, z) from the state vector.
 
-    #     Args:
-    #         qpos (jp.ndarray): The full positional state vector of the model.
+        Args:
+            qpos (jp.ndarray): The full positional state vector of the model.
 
-    #     Returns:
-    #         jp.ndarray: The root's positional values. Shape (3,).
-    #     """
-    #     return qpos[:3]
+        Returns:
+            jp.ndarray: The root's positional values. Shape (3,).
+        """
+        return qpos[:3]
 
-    # def get_root_quaternion_from_qpos(self, qpos: jp.ndarray) -> jp.ndarray:
-    #     """Extracts the root's orientation quaternion (qw, qx, qy, qz) from the state vector.
+    def get_root_quaternion_from_qpos(self, qpos: jp.ndarray) -> jp.ndarray:
+        """Extracts the root's orientation quaternion (qw, qx, qy, qz) from the state vector.
 
-    #     Args:
-    #         qpos (jp.ndarray): The full positional state vector of the model.
+        Args:
+            qpos (jp.ndarray): The full positional state vector of the model.
 
-    #     Returns:
-    #         jp.ndarray: The root's orientation quaternion. Shape (4,).
-    #     """
-    #     return qpos
+        Returns:
+            jp.ndarray: The root's orientation quaternion. Shape (4,).
+        """
+        return qpos
 
     def get_all_loc_joints(self, qpos: jp.ndarray) -> jp.ndarray:
         """Extracts all joint positional values (excluding the root position and orientation) from the state vector.
@@ -173,47 +173,47 @@ class BaseWalker(ABC):
         """
         return qpos
 
-    # def compute_local_track_positions(
-    #     self, ref_positions: jp.ndarray, qpos: jp.ndarray
-    # ) -> jp.ndarray:
-    #     """Compute local position differences for tracking, rotated to align with agent orientation.
+    def compute_local_track_positions(
+        self, ref_positions: jp.ndarray, qpos: jp.ndarray
+    ) -> jp.ndarray:
+        """Compute local position differences for tracking, rotated to align with agent orientation.
 
-    #     Args:
-    #         ref_positions: Reference positions
-    #         qpos: Full state vector containing orientation quaternion
+        Args:
+            ref_positions: Reference positions
+            qpos: Full state vector containing orientation quaternion
 
-    #     Returns:
-    #         Local position differences rotated to align with agent orientation
-    #     """
-    #     root = self.get_root_from_qpos(qpos)
-    #     quat = self.get_root_quaternion_from_qpos(qpos)
+        Returns:
+            Local position differences rotated to align with agent orientation
+        """
+        root = self.get_root_from_qpos(qpos)
+        quat = self.get_root_quaternion_from_qpos(qpos)
 
-    #     track_pos_local = jax.vmap(
-    #         lambda pos, quat: brax_math.rotate(pos, quat),
-    #         in_axes=(0, None),
-    #     )(ref_positions - root, quat).flatten()
+        track_pos_local = jax.vmap(
+            lambda pos, quat: brax_math.rotate(pos, quat),
+            in_axes=(0, None),
+        )(ref_positions - root, quat).flatten()
 
-    #     return track_pos_local
+        return track_pos_local
 
-    # def compute_quat_distances(
-    #     self, ref_quats: jp.ndarray, qpos: jp.ndarray
-    # ) -> jp.ndarray:
-    #     """Compute quaternion distances for rotational alignment.
+    def compute_quat_distances(
+        self, ref_quats: jp.ndarray, qpos: jp.ndarray
+    ) -> jp.ndarray:
+        """Compute quaternion distances for rotational alignment.
 
-    #     Args:
-    #         ref_quats: Reference quaternions
-    #         qpos: Full state vector containing orientation quaternion
+        Args:
+            ref_quats: Reference quaternions
+            qpos: Full state vector containing orientation quaternion
 
-    #     Returns:
-    #         Quaternion distances
-    #     """
-    #     quat = self.get_root_quaternion_from_qpos(qpos)
-    #     quat_dist = jax.vmap(
-    #         lambda ref_quat, agent_quat: brax_math.relative_quat(ref_quat, agent_quat),
-    #         in_axes=(0, None),
-    #     )(ref_quats, quat).flatten()
+        Returns:
+            Quaternion distances
+        """
+        quat = self.get_root_quaternion_from_qpos(qpos)
+        quat_dist = jax.vmap(
+            lambda ref_quat, agent_quat: brax_math.relative_quat(ref_quat, agent_quat),
+            in_axes=(0, None),
+        )(ref_quats, quat).flatten()
 
-    #     return quat_dist
+        return quat_dist
 
     def compute_local_joint_distances(
         self, ref_joints: jp.ndarray, qpos: jp.ndarray

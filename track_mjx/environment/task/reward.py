@@ -46,73 +46,73 @@ class RewardConfig:
     #         )
 
 
-# def _bounded_quat_dist(source: jp.ndarray, target: jp.ndarray) -> jp.ndarray:
-#     """Computes a quaternion distance limiting the difference to a max of pi/2.
+def _bounded_quat_dist(source: jp.ndarray, target: jp.ndarray) -> jp.ndarray:
+    """Computes a quaternion distance limiting the difference to a max of pi/2.
 
-#     This function supports an arbitrary number of batch dimensions, B.
+    This function supports an arbitrary number of batch dimensions, B.
 
-#     Args:
-#         source: a quaternion, shape (B, 4).
-#         target: another quaternion, shape (B, 4).
+    Args:
+        source: a quaternion, shape (B, 4).
+        target: another quaternion, shape (B, 4).
 
-#     Returns:
-#         Quaternion distance, shape (B, 1).
-#     """
-#     source /= jp.linalg.norm(source, axis=-1, keepdims=True)
-#     target /= jp.linalg.norm(target, axis=-1, keepdims=True)
-#     # "Distance" in interval [-1, 1].
-#     dist = 2 * jp.einsum("...i,...i", source, target) ** 2 - 1
-#     # Clip at 1 to avoid occasional machine epsilon leak beyond 1.
-#     dist = jp.minimum(1.0, dist)
-#     # Divide by 2 and add an axis to ensure consistency with expected return
-#     # shape and magnitude.
-#     return 0.5 * jp.arccos(dist)[..., np.newaxis]
-
-
-# def compute_pos_reward(
-#     pos_array: jp.ndarray,
-#     reference_clip_pos: jp.ndarray,
-#     weight: float,
-#     pos_reward_exp_scale: float,
-# ) -> tuple[jp.ndarray, jp.ndarray]:
-#     """Position-based reward.
-
-#     Args:
-#         pos_array: Current position data.
-#         reference_clip_pos: Reference trajectory position data.
-#         weight: Weight for the reward.
-#         pos_reward_exp_scale: Scaling factor for position rewards.
-
-#     Returns:
-#         Tuple[jp.ndarray, jp.ndarray]: Weighted position reward and position distance.
-#     """
-#     pos_distance = pos_array - reference_clip_pos
-#     weighted_pos_reward = weight * jp.exp(
-#         -pos_reward_exp_scale * jp.sum(pos_distance**2)
-#     )
-#     return weighted_pos_reward, pos_distance
+    Returns:
+        Quaternion distance, shape (B, 1).
+    """
+    source /= jp.linalg.norm(source, axis=-1, keepdims=True)
+    target /= jp.linalg.norm(target, axis=-1, keepdims=True)
+    # "Distance" in interval [-1, 1].
+    dist = 2 * jp.einsum("...i,...i", source, target) ** 2 - 1
+    # Clip at 1 to avoid occasional machine epsilon leak beyond 1.
+    dist = jp.minimum(1.0, dist)
+    # Divide by 2 and add an axis to ensure consistency with expected return
+    # shape and magnitude.
+    return 0.5 * jp.arccos(dist)[..., np.newaxis]
 
 
-# def compute_quat_reward(
-#     quat_array: jp.ndarray,
-#     reference_clip_quat: jp.ndarray,
-#     weight: float,
-#     quat_reward_exp_scale: float,
-# ) -> tuple[jp.ndarray, jp.ndarray]:
-#     """Quaternion-based reward.
+def compute_pos_reward(
+    pos_array: jp.ndarray,
+    reference_clip_pos: jp.ndarray,
+    weight: float,
+    pos_reward_exp_scale: float,
+) -> tuple[jp.ndarray, jp.ndarray]:
+    """Position-based reward.
 
-#     Args:
-#         quat_array: Current quaternion data.
-#         reference_clip_quat: Reference trajectory data.
-#         weight: Weight for the reward.
-#         quat_reward_exp_scale: Scaling factor for quaternion rewards.
+    Args:
+        pos_array: Current position data.
+        reference_clip_pos: Reference trajectory position data.
+        weight: Weight for the reward.
+        pos_reward_exp_scale: Scaling factor for position rewards.
 
-#     Returns:
-#         Tuple[jp.ndarray, jp.ndarray]: Weighted quaternion reward and quaternion distance.
-#     """
-#     quat_distance = jp.sum(_bounded_quat_dist(quat_array, reference_clip_quat) ** 2)
-#     weighted_quat_reward = weight * jp.exp(-quat_reward_exp_scale * quat_distance)
-#     return weighted_quat_reward, quat_distance
+    Returns:
+        Tuple[jp.ndarray, jp.ndarray]: Weighted position reward and position distance.
+    """
+    pos_distance = pos_array - reference_clip_pos
+    weighted_pos_reward = weight * jp.exp(
+        -pos_reward_exp_scale * jp.sum(pos_distance**2)
+    )
+    return weighted_pos_reward, pos_distance
+
+
+def compute_quat_reward(
+    quat_array: jp.ndarray,
+    reference_clip_quat: jp.ndarray,
+    weight: float,
+    quat_reward_exp_scale: float,
+) -> tuple[jp.ndarray, jp.ndarray]:
+    """Quaternion-based reward.
+
+    Args:
+        quat_array: Current quaternion data.
+        reference_clip_quat: Reference trajectory data.
+        weight: Weight for the reward.
+        quat_reward_exp_scale: Scaling factor for quaternion rewards.
+
+    Returns:
+        Tuple[jp.ndarray, jp.ndarray]: Weighted quaternion reward and quaternion distance.
+    """
+    quat_distance = jp.sum(_bounded_quat_dist(quat_array, reference_clip_quat) ** 2)
+    weighted_quat_reward = weight * jp.exp(-quat_reward_exp_scale * quat_distance)
+    return weighted_quat_reward, quat_distance
 
 
 def compute_joint_reward(
@@ -137,27 +137,27 @@ def compute_joint_reward(
     return weighted_joint_reward, joint_distance
 
 
-# def compute_angvel_reward(
-#     angvel_array: jp.ndarray,
-#     reference_clip_angvel: jp.ndarray,
-#     weight: float,
-#     angvel_reward_exp_scale: float,
-# ) -> jp.ndarray:
-#     """Angular velocity-based reward.
+def compute_angvel_reward(
+    angvel_array: jp.ndarray,
+    reference_clip_angvel: jp.ndarray,
+    weight: float,
+    angvel_reward_exp_scale: float,
+) -> jp.ndarray:
+    """Angular velocity-based reward.
 
-#     Args:
-#         angvel_array: Current angular velocity data.
-#         reference_clip_angvel: Reference trajectory angular velocity data.
-#         weight: Weight for the reward.
-#         angvel_reward_exp_scale: Scaling factor for angular velocity rewards.
+    Args:
+        angvel_array: Current angular velocity data.
+        reference_clip_angvel: Reference trajectory angular velocity data.
+        weight: Weight for the reward.
+        angvel_reward_exp_scale: Scaling factor for angular velocity rewards.
 
-#     Returns:
-#         jp.ndarray: Weighted angular velocity reward.
-#     """
-#     weighted_angvel_reward = weight * jp.exp(
-#         -angvel_reward_exp_scale * jp.sum((angvel_array - reference_clip_angvel) ** 2)
-#     )
-#     return weighted_angvel_reward
+    Returns:
+        jp.ndarray: Weighted angular velocity reward.
+    """
+    weighted_angvel_reward = weight * jp.exp(
+        -angvel_reward_exp_scale * jp.sum((angvel_array - reference_clip_angvel) ** 2)
+    )
+    return weighted_angvel_reward
 
 
 def compute_bodypos_reward(
@@ -239,55 +239,55 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
-# def compute_health_penalty(
-#     torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
-# ) -> jp.ndarray:
-#     """Computes a penalty for being outside the healthy z-range.
+def compute_health_penalty(
+    torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
+) -> jp.ndarray:
+    """Computes a penalty for being outside the healthy z-range.
 
-#     Args:
-#         torso_z: Torso z-position.
-#         healthy_z_range: Minimum and maximum healthy z-range.
+    Args:
+        torso_z: Torso z-position.
+        healthy_z_range: Minimum and maximum healthy z-range.
 
-#     Returns:
-#         jp.ndarray: Fall penalty (0 for healthy, 1 for unhealthy).
-#     """
-#     min_z, max_z = healthy_z_range
-#     is_healthy = jp.where(torso_z < min_z, 0.0, 1.0)
-#     is_healthy = jp.where(torso_z > max_z, 0.0, is_healthy)
-#     fall = 1.0 - is_healthy
-#     return fall
+    Returns:
+        jp.ndarray: Fall penalty (0 for healthy, 1 for unhealthy).
+    """
+    min_z, max_z = healthy_z_range
+    is_healthy = jp.where(torso_z < min_z, 0.0, 1.0)
+    is_healthy = jp.where(torso_z > max_z, 0.0, is_healthy)
+    fall = 1.0 - is_healthy
+    return fall
 
 
-# def compute_penalty_terms(
-#     pos_distance: jp.ndarray,
-#     joint_distance: jp.ndarray,
-#     quat_distance: jp.ndarray,
-#     too_far_dist: float,
-#     bad_pose_dist: float,
-#     bad_quat_dist: float,
-#     penalty_pos_distance_scale: jp.ndarray,
-# ) -> tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
-#     """Computes penalty terms based on distances.
+def compute_penalty_terms(
+    pos_distance: jp.ndarray,
+    joint_distance: jp.ndarray,
+    quat_distance: jp.ndarray,
+    too_far_dist: float,
+    bad_pose_dist: float,
+    bad_quat_dist: float,
+    penalty_pos_distance_scale: jp.ndarray,
+) -> tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
+    """Computes penalty terms based on distances.
 
-#     Args:
-#         pos_distance: Distance in position space.
-#         joint_distance: Distance in joint space.
-#         quat_distance: Quaternion distance.
-#         too_far_dist: Threshold for position distance penalty.
-#         bad_pose_dist: Threshold for joint distance penalty.
-#         bad_quat_dist: Threshold for quaternion distance penalty.
-#         penalty_pos_distance_scale: Scaling factor for positional penalties as an array.
+    Args:
+        pos_distance: Distance in position space.
+        joint_distance: Distance in joint space.
+        quat_distance: Quaternion distance.
+        too_far_dist: Threshold for position distance penalty.
+        bad_pose_dist: Threshold for joint distance penalty.
+        bad_quat_dist: Threshold for quaternion distance penalty.
+        penalty_pos_distance_scale: Scaling factor for positional penalties as an array.
 
-#     Returns:
-#         Tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
-#             Penalties for being too far, bad pose, bad quaternion,
-#             and the summed position distance.
-#     """
-#     summed_pos_distance = jp.sum((pos_distance * penalty_pos_distance_scale) ** 2)
-#     too_far = jp.where(summed_pos_distance > too_far_dist, 1.0, 0.0)
-#     bad_pose = jp.where(joint_distance > bad_pose_dist, 1.0, 0.0)
-#     bad_quat = jp.where(quat_distance > bad_quat_dist, 1.0, 0.0)
-#     return too_far, bad_pose, bad_quat, summed_pos_distance
+    Returns:
+        Tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
+            Penalties for being too far, bad pose, bad quaternion,
+            and the summed position distance.
+    """
+    summed_pos_distance = jp.sum((pos_distance * penalty_pos_distance_scale) ** 2)
+    too_far = jp.where(summed_pos_distance > too_far_dist, 1.0, 0.0)
+    bad_pose = jp.where(joint_distance > bad_pose_dist, 1.0, 0.0)
+    bad_quat = jp.where(quat_distance > bad_quat_dist, 1.0, 0.0)
+    return too_far, bad_pose, bad_quat, summed_pos_distance
 
 
 def compute_tracking_rewards(

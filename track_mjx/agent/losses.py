@@ -209,6 +209,7 @@ def compute_ppo_loss(
         "v_loss": v_loss,
         "kl_latent_loss": kl_latent_loss,
         "entropy_loss": entropy_loss,
+        "kl_weight": kl_weight,
     }
 
 

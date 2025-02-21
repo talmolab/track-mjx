@@ -246,6 +246,8 @@ class SingleClipTracking(PipelineEnv):
             reward_config=self._reward_config,
         )
 
+        if "rng" in info:
+            info["rng"] = jax.random.split(info["rng"])[1]
         info["prev_ctrl"] = action
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
         obs = jp.concatenate([reference_obs, proprioceptive_obs])

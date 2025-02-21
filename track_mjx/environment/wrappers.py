@@ -57,7 +57,7 @@ class RenderRolloutWrapperTracking(Wrapper):
         """
         _, clip_rng, rng = jax.random.split(rng, 3)
         if clip_idx is None:
-            clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
+            clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)
         info = {
             "clip_idx": clip_idx,
             "start_frame": 0,
@@ -116,3 +116,34 @@ class EvalClipWrapperTracking(Wrapper):
         }
 
         return self.reset_from_clip(rng, info, noise=False)
+
+
+class HighLevelWrapper(Wrapper):
+    """Takes a decoder inference function and uses it to get the ctrl used in the sim step"""
+
+    def __init__(self, env, decoder_inference_fn, reference_obs_size):
+        self._decoder_inference_fn = decoder_inference_fn
+        self._reference_obs_size = reference_obs_size
+        super().__init__(env)
+
+    # TODO remove clipid later
+    def reset(self, rng: jax.Array, clip_idx) -> State:
+        info_rng, rng = jax.random.split(rng)
+        state = self.env.reset(rng, clip_idx)
+        state.info["rng"] = info_rng
+        return state
+
+    def step(self, state: State, latents: jax.Array) -> State:
+        _, action_rng = jax.random.split(state.info["rng"])
+
+        obs = state.obs
+
+        # TODO replace reference obs size
+        action, _ = self._decoder_inference_fn(
+            jp.concatenate(
+                [latents, obs[..., self._reference_obs_size :]],
+                axis=-1,
+            ),
+            action_rng,
+        )
+        return self.env.step(state, action)

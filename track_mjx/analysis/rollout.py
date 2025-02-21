@@ -129,6 +129,7 @@ def create_rollout_generator(
         rollout_states = jax.tree.map(prepend, init_state, states)
 
         # Compute rewards and metrics
+        # TODO: refactor to collect metrics based on cfg metric list
         rewards = {
             "pos_rewards": jax.vmap(lambda s: s.metrics["pos_reward"])(rollout_states),
             "endeff_rewards": jax.vmap(lambda s: s.metrics["endeff_reward"])(

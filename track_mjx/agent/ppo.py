@@ -46,6 +46,9 @@ import numpy as np
 import optax
 import orbax.checkpoint as ocp
 
+from pathlib import Path
+from omegaconf import OmegaConf
+
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
 
@@ -87,6 +90,7 @@ def train(
     ckpt_mgr: ocp.CheckpointManager,
     config_dict: dict,
     checkpoint_to_restore: str | None = None,
+    continue_training: bool = True,
     action_repeat: int = 1,
     num_envs: int = 1,
     max_devices_per_host: Optional[int] = None,
@@ -267,14 +271,156 @@ def train(
     normalize = lambda x, y: x
     if normalize_observations:
         normalize = running_statistics.normalize
+    task_obs_size = int(_unpmap(env_state.info["reference_obs_size"])[0])
     ppo_network = network_factory(
         env_state.obs.shape[-1],
-        int(_unpmap(env_state.info["reference_obs_size"])[0]),
+        task_obs_size,
         env.action_size,
         preprocess_observations_fn=normalize,
     )
     make_policy = ppo_networks.make_inference_fn(ppo_network)
 
+    # Load from checkpoint, and set params for decoder if freeze, or all if continuing
+    if checkpoint_to_restore is not None and Path(checkpoint_to_restore).exists():
+        Eval_it = int(checkpoint_to_restore.stem)
+        logging.info("restoring from checkpoint %s", checkpoint_to_restore)
+        # env_steps = int(epath.Path(checkpoint_path).stem)
+        ckptr = ocp.CompositeCheckpointHandler()
+        file_path = checkpoint_to_restore.parent / "networks_metadata.yaml"
+        checkpoint_metadata = OmegaConf.load(file_path.as_posix())
+        tracking_task_obs_size = checkpoint_metadata["task_obs_size"]  # 935
+        # tracking_obs_size = (
+        #     env_state.obs.shape[-1] - task_obs_size + tracking_task_obs_size
+        # )
+        tracking_total_obs_size = checkpoint_metadata["total_obs_size"]  # 1020
+        checkpoint_ppo_network = checkpoint_network_factory(
+            tracking_total_obs_size,
+            tracking_task_obs_size,
+            env.action_size,
+            preprocess_observations_fn=running_statistics.normalize,
+            continue_training=continue_training,
+        )
+        checkpoint_init_params = ppo_losses.PPONetworkParams(
+            policy=checkpoint_ppo_network.policy_network.init(key_policy),
+            value=checkpoint_ppo_network.value_network.init(key_value),
+        )
+        target = ocp.args.Composite(
+            normalizer_params=ocp.args.StandardRestore(
+                running_statistics.init_state(
+                    specs.Array(tracking_total_obs_size, jnp.dtype("float32"))
+                )
+            ),
+            params=ocp.args.StandardRwestore(checkpoint_init_params),
+            env_steps=ocp.args.ArrayRestore(0),
+        )
+        loaded_ckpt = ckptr.restore(checkpoint_path.resolve(), args=target)
+        loaded_normalizer_params = loaded_ckpt["normalizer_params"]
+        loaded_params = loaded_ckpt["params"]
+        env_steps = loaded_ckpt["env_steps"]
+
+        # Only partially replace initial policy if freezing decoder
+        if freeze_mask_fn is not None:
+            decoder_params = loaded_ckpt["params"].policy["params"]["decoder"]
+            if continue_training:
+                init_params = init_params.replace(policy=loaded_params.policy)
+            else:
+                full_policy = init_params.policy
+                full_policy["params"]["decoder"] = loaded_ckpt["params"].policy[
+                    "params"
+                ]["decoder"]
+                init_params = init_params.replace(
+                    policy=full_policy,
+                )
+            optimizer = optax.multi_transform(
+                {
+                    "learned": optax.adam(learning_rate=learning_rate),
+                    "frozen": optax.set_to_zero(),
+                },
+                freeze_mask_fn(init_params),
+            )
+            print("Freezing layers")
+
+            normalizer_params = running_statistics.init_state(
+                specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
+            )
+            # init_params.policy["params"]["decoder"] = loaded_params.policy["params"][
+            #     "decoder"
+            # ]
+            running_statistics_mask = jnp.arange(env_state.obs.shape[-1]) < int(
+                task_obs_size
+            )
+            mean = normalizer_params.mean.at[task_obs_size:].set(
+                loaded_normalizer_params.mean[tracking_task_obs_size:]
+            )
+            std = normalizer_params.std.at[task_obs_size:].set(
+                loaded_normalizer_params.std[tracking_task_obs_size:]
+            )
+            summed_variance = normalizer_params.summed_variance.at[task_obs_size:].set(
+                loaded_normalizer_params.summed_variance[tracking_task_obs_size:]
+            )
+            normalizer_params = RunningStatisticsState(
+                count=jnp.zeros(()), mean=mean, summed_variance=summed_variance, std=std
+            )
+            decoder_policy = ppo_networks.make_decoder_policy_fn(
+                checkpoint_path.parent, (loaded_normalizer_params, decoder_params)
+            )
+            env = wrappers.HighLevelWrapper(
+                environment, decoder_inference_fn=decoder_policy, policy_key=key_policy
+            )
+            env = wrap_for_training(
+                env,
+                episode_length=episode_length,
+                action_repeat=action_repeat,
+                randomization_fn=v_randomization_fn,
+            )
+
+            reset_fn = jax.jit(jax.vmap(env.reset))
+            assert running_statistics_mask.shape == normalizer_params.mean.shape
+        else:
+            init_params = init_params.replace(policy=loaded_params.policy)
+            running_statistics_mask = None
+            normalizer_params = loaded_normalizer_params
+            optimizer = optax.adam(learning_rate=learning_rate)
+            decoder_params = None
+            print("Not freezing any layers")
+
+        if continue_training:
+            print("continuing training")
+            init_params = init_params.replace(value=loaded_params.value)
+            normalizer_params = loaded_normalizer_params
+        else:
+            Eval_it = 0
+            env_steps = 0
+        # print(jax.tree_util.tree_map(lambda x: x.shape, init_params)) # Checking output shapes
+    else:
+        running_statistics_mask = None
+        normalizer_params = running_statistics.init_state(
+            specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
+        )
+
+        decoder_params = None
+        optimizer = optax.adam(learning_rate=learning_rate)
+        Eval_it = 0
+        env_steps = 0
+
+    training_state = TrainingState(  # pytype: disable=wrong-arg-types  # jax-ndarray
+        optimizer_state=optimizer.init(
+            init_params
+        ),  # pytype: disable=wrong-arg-types  # numpy-scalars
+        params=init_params,
+        normalizer_params=normalizer_params,
+        env_steps=env_steps,
+    )
+    if num_timesteps == 0:
+        return (
+            make_policy,
+            (
+                training_state.normalizer_params,
+                training_state.params,
+                training_state.env_steps,
+            ),
+            decoder_params,
+        )
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 

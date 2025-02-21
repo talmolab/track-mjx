@@ -373,8 +373,7 @@ def compute_tracking_rewards(
         action, info["prev_ctrl"], reward_config.ctrl_diff_cost_weight
     )
 
-    xpos = data.xpos
-    torso_z = walker.get_torso_position(xpos)[2]
+    torso_z = walker.get_torso_position(data.xpos)[2]
     fall = compute_health_penalty(torso_z, reward_config.healthy_z_range)
     too_far, bad_pose, bad_quat, summed_pos_distance = compute_penalty_terms(
         pos_distance,
@@ -385,10 +384,6 @@ def compute_tracking_rewards(
         reward_config.bad_quat_dist,
         reward_config.penalty_pos_distance_scale,
     )
-
-    info["joint_distance"] = joint_distance
-    info["summed_pos_distance"] = summed_pos_distance
-    info["quat_distance"] = quat_distance
 
     return (
         pos_reward,
@@ -404,4 +399,7 @@ def compute_tracking_rewards(
         bad_quat,
         fall,
         info,
+        joint_distance,
+        summed_pos_distance,
+        quat_distance,
     )

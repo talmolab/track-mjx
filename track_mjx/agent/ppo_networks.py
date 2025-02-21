@@ -22,7 +22,6 @@ from jax import random
 import flax
 from flax import linen as nn
 
-# import intention_network  # TODO(Scott): Do we need this?
 from track_mjx.agent import intention_network
 
 
@@ -37,7 +36,9 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
     """Creates params and inference function for the PPO agent."""
 
     def make_policy(
-        params: types.PolicyParams, deterministic: bool = False, get_activation: bool = False
+        params: types.PolicyParams,
+        deterministic: bool = False,
+        get_activation: bool = False,
     ) -> types.Policy:
         policy_network = ppo_networks.policy_network
         # can modify this to provide stochastic action + noise
@@ -50,15 +51,18 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
             if get_activation:
-                logits, _, _, activations = policy_network.apply(*params, observations, key_network, get_activation=True)
+                logits, _, _, activations = policy_network.apply(
+                    *params, observations, key_network, get_activation=True
+                )
                 # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
                 logits, _, _ = policy_network.apply(*params, observations, key_network)
             if deterministic:
                 if get_activation:
-                    return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}
+                    return ppo_networks.parametric_action_distribution.mode(logits), {
+                        "activations": activations
+                    }
                 return ppo_networks.parametric_action_distribution.mode(logits), {}
-
 
             # action sampling is happening here, according to distribution parameter logits
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
@@ -71,7 +75,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             postprocessed_actions = parametric_action_distribution.postprocess(
                 raw_actions
             )
-            
+
             return postprocessed_actions, {
                 # "latent_mean": latent_mean,
                 # "latent_logvar": latent_logvar,
@@ -102,7 +106,9 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             key_sample: PRNGKey,
         ) -> Tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
-            logits, _, _ = policy_network.apply(*params, observations, key_network)
+            logits, (latent_mean, latent_logvar) = policy_network.apply(
+                *params, observations, key_network
+            )
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
 
             if deterministic:
@@ -120,8 +126,8 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
                 raw_actions
             )
             return postprocessed_actions, {
-                # "latent_mean": latent_mean,
-                # "latent_logvar": latent_logvar,
+                "latent_mean": latent_mean,
+                "latent_logvar": latent_logvar,
                 "log_prob": log_prob,
                 "raw_action": raw_actions,
                 "logits": logits,

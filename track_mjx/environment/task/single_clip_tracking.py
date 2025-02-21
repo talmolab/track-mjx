@@ -108,9 +108,6 @@ class SingleClipTracking(PipelineEnv):
 
         info = {
             "start_frame": start_frame,
-            "summed_pos_distance": 0.0,
-            "quat_distance": 0.0,
-            "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nv,)),
         }
 
@@ -179,6 +176,8 @@ class SingleClipTracking(PipelineEnv):
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
 
         reward, done, zero = jp.zeros(3)
+
+        # TODO: Set up a metrics dataclass
         metrics = {
             "pos_reward": zero,
             "quat_reward": zero,
@@ -186,13 +185,16 @@ class SingleClipTracking(PipelineEnv):
             "angvel_reward": zero,
             "bodypos_reward": zero,
             "endeff_reward": zero,
-            "reward_ctrlcost": zero,
+            "ctrl_cost": zero,
             "ctrl_diff_cost": zero,
             "too_far": zero,
             "bad_pose": zero,
             "bad_quat": zero,
             "fall": zero,
             "nan": zero,
+            "joint_distance": zero,
+            "summed_pos_distance": zero,
+            "quat_distance": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -232,6 +234,9 @@ class SingleClipTracking(PipelineEnv):
             bad_quat,
             fall,
             info,
+            joint_distance,
+            summed_pos_distance,
+            quat_distance,
         ) = compute_tracking_rewards(
             data=data,
             reference_clip=reference_clip,
@@ -276,13 +281,16 @@ class SingleClipTracking(PipelineEnv):
             angvel_reward=angvel_reward,
             bodypos_reward=bodypos_reward,
             endeff_reward=endeff_reward,
-            reward_ctrlcost=-ctrl_cost,
+            ctrl_cost=-ctrl_cost,
             ctrl_diff_cost=ctrl_diff_cost,
             too_far=too_far,
             bad_pose=bad_pose,
             bad_quat=bad_quat,
             fall=fall,
             nan=nan,
+            joint_distance=joint_distance,
+            summed_pos_distance=summed_pos_distance,
+            quat_distance=quat_distance,
         )
 
         return state.replace(

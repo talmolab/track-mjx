@@ -49,7 +49,8 @@ network_config:
   decoder_layer_sizes: [512,512,512]
   critic_layer_sizes: [512,512,512]
   intention_size: 60
-  kl_weight: 1e-4
+  kl_schedule: True # Whether to use a ramping KL schedule
+  kl_weight: 1e-4 # The maximum weight if schedule is True
 
 train_setup:
   agent_name: rodent
@@ -81,6 +82,22 @@ logging_config:
   clip_id: -1
   model_path: model_checkpoints
   algo_name: ppo
+  rollout_metrics:
+    - pos_reward
+    - quat_reward
+    - joint_reward
+    - angvel_reward
+    - bodypos_reward
+    - endeff_reward
+    - summed_pos_distance
+    - joint_distance
+    - quat_distance
+    - ctrl_cost
+    - ctrl_diff_cost
+    - too_far
+    - bad_pose
+    - bad_quat
+    - fall
 
 walker_config:
   torque_actuators: False 

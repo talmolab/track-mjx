@@ -146,6 +146,7 @@ def main(cfg: DictConfig):
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
+        use_kl_schedule=cfg.network_config.kl_schedule,
     )
 
     run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"

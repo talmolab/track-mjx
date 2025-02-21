@@ -61,9 +61,6 @@ class RenderRolloutWrapperTracking(Wrapper):
         info = {
             "clip_idx": clip_idx,
             "start_frame": 0,
-            "summed_pos_distance": 0.0,
-            "quat_distance": 0.0,
-            "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),
         }
 
@@ -115,9 +112,6 @@ class EvalClipWrapperTracking(Wrapper):
         info = {
             "clip_idx": clip_idx,
             "start_frame": 0,
-            "summed_pos_distance": 0.0,
-            "quat_distance": 0.0,
-            "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),
         }
 

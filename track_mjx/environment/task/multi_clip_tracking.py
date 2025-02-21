@@ -90,9 +90,6 @@ class MultiClipTracking(SingleClipTracking):
         info = {
             "clip_idx": clip_idx,
             "start_frame": start_frame,
-            "summed_pos_distance": 0.0,
-            "quat_distance": 0.0,
-            "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),
         }
 

@@ -106,7 +106,7 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             key_sample: PRNGKey,
         ) -> Tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
-            logits, (latent_mean, latent_logvar) = policy_network.apply(
+            logits, latent_mean, latent_logvar = policy_network.apply(
                 *params, observations, key_network
             )
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)

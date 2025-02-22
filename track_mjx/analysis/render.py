@@ -522,7 +522,7 @@ def render_with_global_and_local_pca_progression(
 
 def compute_joint_torques(model, data, qpos, qvel, qacc, valid_joint_indices):
     """
-    Computes joint torques using MuJoCo's inverse dynamics, keeping only `-0` joints.
+    Computes joint torques using MuJoCo's inverse dynamics, keeping only `-0` (non-ghost) joints.
     """
     expected_dim = len(valid_joint_indices)
     actual_dim = len(qpos)
@@ -562,7 +562,7 @@ def process_torque_estimation(model, qposes_rollout, dt, indices, valid_joint_in
 
 def estimate_joint_forces_parallel(qposes_rollout, dt, walker_type, num_workers=mp.cpu_count()):
     """
-    Estimates joint forces using parallel processing, using only `-0` joints.
+    Estimates joint forces using parallel processing, using only `-0` (non-ghost) joints.
     """
     num_steps = qposes_rollout.shape[0]
     step_indices = np.array_split(range(1, num_steps - 1), num_workers)
@@ -770,7 +770,7 @@ def fast_isomap(X, n_components=2, n_neighbors=15, sample_size=500):
     
 def plot_homology(fly_activations, rodent_activations, layer_idx, sample_size=500):
     '''
-    Plottin the homology of data, trying to find topological informations
+    Plotting the homology of data, trying to find topological informations
     - H0 (Number of connected components, i.e clusters), this detects distinct activation states
     - H1 (Number of loops), this identifies cyclic behaviors (e.g., locomotion)
     - H2 (Number of voids), this finds higher-order structure (e.g., transitions between states, transient loops (from stopping to turning))

@@ -185,7 +185,7 @@ def make_decoder_policy(
         layer_sizes=list(decoder_hidden_layer_sizes) + [param_size],
     )
 
-    def apply(processor_params, policy_params, obs, key):
+    def apply(processor_params, policy_params, obs):
         temp_obs = obs
         obs = preprocess_observations_fn(
             obs[..., -processor_params.mean.shape[-1] :], processor_params

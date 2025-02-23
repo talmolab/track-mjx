@@ -106,7 +106,7 @@ def load_checkpoint_for_eval(
         load_config_from_checkpoint(checkpoint_path, step_prefix, step)
     )
 
-    policy = load_policy
+    policy = load_policy(checkpoint_path, cfg, ckpt_mgr, step_prefix, step)
 
     return {"cfg": cfg, "policy": policy}
 

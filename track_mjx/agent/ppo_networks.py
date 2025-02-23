@@ -188,29 +188,27 @@ def make_intention_ppo_networks(
     )
 
 
-def make_decoder_policy_fn(ckpt_path: str | Path):
+def make_decoder_policy_fn(ckpt_path: str | Path, step: int = None):
 
     def make_decoder_policy(
         params, policy_network, parametric_action_distribution
     ) -> types.Policy:
         def policy(
             observations: types.Observation,
-            key_sample: PRNGKey,
         ) -> Tuple[types.Action, types.Extra]:
-            key_sample, key_network = jax.random.split(key_sample)
-            logits, extras = policy_network.apply(*params, observations, key_network)
+            logits, extras = policy_network.apply(*params, observations)
             return parametric_action_distribution.mode(logits), extras
 
         return policy
 
-    cfg = checkpointing.load_config_from_checkpoint(ckpt_path)
+    cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step=step)
     observation_size = cfg["network_config"]["observation_size"]
     reference_obs_size = cfg["network_config"]["reference_obs_size"]
     action_size = cfg["network_config"]["action_size"]
     intention_latent_size = cfg["network_config"]["intention_size"]
     decoder_hidden_layer_sizes = cfg["network_config"]["decoder_layer_sizes"]
 
-    intention_policy_params = checkpointing.load_policy(ckpt_path, cfg)
+    intention_policy_params = checkpointing.load_policy(ckpt_path, cfg, step=step)
 
     parametric_action_distribution = distribution.NormalTanhDistribution(
         event_size=action_size

@@ -126,16 +126,7 @@ class HighLevelWrapper(Wrapper):
         self._reference_obs_size = reference_obs_size
         super().__init__(env)
 
-    # TODO remove clipid later
-    def reset(self, rng: jax.Array, clip_idx) -> State:
-        info_rng, rng = jax.random.split(rng)
-        state = self.env.reset(rng, clip_idx)
-        state.info["rng"] = info_rng
-        return state
-
     def step(self, state: State, latents: jax.Array) -> State:
-        _, action_rng = jax.random.split(state.info["rng"])
-
         obs = state.obs
 
         # TODO replace reference obs size
@@ -144,6 +135,5 @@ class HighLevelWrapper(Wrapper):
                 [latents, obs[..., self._reference_obs_size :]],
                 axis=-1,
             ),
-            action_rng,
         )
         return self.env.step(state, action)

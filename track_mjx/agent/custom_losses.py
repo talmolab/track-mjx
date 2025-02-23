@@ -151,7 +151,21 @@ def compute_ppo_loss(
       policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(
       normalizer_params, params.policy, data.observation, policy_key, hidden_state, get_activation=False, use_lstm=use_lstm
       )
-      
+      h_t, c_t = new_hidden_state
+
+      print("h_t shape (before reshaping):", h_t.shape)
+      print("c_t shape (before reshaping):", c_t.shape)
+
+      final_h_t = jax.tree_util.tree_map(lambda x: x[-1], h_t)
+      final_c_t = jax.tree_util.tree_map(lambda x: x[-1], c_t)
+
+      final_hidden_state = (
+          final_h_t.reshape(-1, 128).mean(axis=0), 
+          final_c_t.reshape(-1, 128).mean(axis=0)
+      )
+
+      print("final_hidden_state shape (after extraction):", final_h_t.shape, final_c_t.shape)
+        
     else:
       policy_logits, latent_mean, latent_logvar = policy_apply(
         normalizer_params, params.policy, data.observation, policy_key
@@ -215,4 +229,4 @@ def compute_ppo_loss(
         "v_loss": v_loss,
         "kl_latent_loss": kl_latent_loss,
         "entropy_loss": entropy_loss,
-    }, new_hidden_state) # need to be just two things for jax.value_and_grad(loss_fn, has_aux=has_aux) to work
+    }, final_hidden_state) # need to be just two things for jax.value_and_grad(loss_fn, has_aux=has_aux) to work

@@ -314,7 +314,7 @@ def train(
             params, hidden_state, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
         )
 
-        return (optimizer_state, params, hidden_state, key), metrics
+        return (optimizer_state, params, new_hidden_state, key), metrics
 
     def sgd_step(
         carry,
@@ -451,10 +451,11 @@ def train(
             metrics,
         )  # pytype: disable=bad-return-type  # py311-upgrade
         
-    
+        
     dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
         jax.random.PRNGKey(0), (num_envs,)
     )
+    print("Final hidden state shape:", dummy_hidden_state[1].shape)
     
     # All init here, this policy_network is class of IntentionNetwork
     init_params = ppo_losses.PPONetworkParams(

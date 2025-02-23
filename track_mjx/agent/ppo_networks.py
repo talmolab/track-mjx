@@ -51,18 +51,25 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
             if get_activation:
-                logits, _, _, activations = policy_network.apply(
+                logits, latent_mean, latent_logvar, activations = policy_network.apply(
                     *params, observations, key_network, get_activation=True
                 )
                 # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
-                logits, _, _ = policy_network.apply(*params, observations, key_network)
+                logits, latent_mean, latent_logvar = policy_network.apply(
+                    *params, observations, key_network
+                )
             if deterministic:
                 if get_activation:
                     return ppo_networks.parametric_action_distribution.mode(logits), {
-                        "activations": activations
+                        "activations": activations,
+                        "latent_mean": latent_mean,
+                        "latent_logvar": latent_logvar,
                     }
-                return ppo_networks.parametric_action_distribution.mode(logits), {}
+                return ppo_networks.parametric_action_distribution.mode(logits), {
+                    "latent_mean": latent_mean,
+                    "latent_logvar": latent_logvar,
+                }
 
             # action sampling is happening here, according to distribution parameter logits
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
@@ -77,8 +84,8 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             )
 
             return postprocessed_actions, {
-                # "latent_mean": latent_mean,
-                # "latent_logvar": latent_logvar,
+                "latent_mean": latent_mean,
+                "latent_logvar": latent_logvar,
                 "log_prob": log_prob,
                 "raw_action": raw_actions,
                 "logits": logits,
@@ -106,13 +113,16 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             key_sample: PRNGKey,
         ) -> Tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
-            logits, (latent_mean, latent_logvar) = policy_network.apply(
+            logits, latent_mean, latent_logvar = policy_network.apply(
                 *params, observations, key_network
             )
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
 
             if deterministic:
-                return ppo_networks.parametric_action_distribution.mode(logits), {}
+                return ppo_networks.parametric_action_distribution.mode(logits), {
+                    "latent_mean": latent_mean,
+                    "latent_logvar": latent_logvar,
+                }
 
             # action sampling is happening here, according to distribution parameter logits
             raw_actions = parametric_action_distribution.sample_no_postprocessing(

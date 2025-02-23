@@ -54,12 +54,13 @@ def agg_backend_context(func):
     return wrapper
 
 
-def render_from_saved_rollout(
+def render_rollout(
     cfg,
     rollout: dict,
 ) -> list:
     """
     Render a rollout from saved qposes.
+    Rollout is a dict output from analysis.rollout.generate_rollout()
 
     Args:
         rollout (dict): A dictionary containing the qposes of the reference and rollout trajectories.

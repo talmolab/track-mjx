@@ -755,6 +755,122 @@ def plot_grf_based_gait_analysis_per_joint(ground_forces_per_joint, leg_labels, 
     plt.show()
 
 
+def find_onsets_offsets(signal, threshold=0.5):
+    """
+    Finds the onsets and offsets of a square signal.
+
+    Args:
+        signal: The input signal (numpy array).
+        threshold: The threshold for determining onsets and offsets (default: 0.5).
+
+    Returns:
+        onsets: A list of indices corresponding to the onsets.
+        offsets: A list of indices corresponding to the offsets.
+    """
+
+    onsets = []
+    offsets = []
+
+    state = 0  # 0: low, 1: high
+
+    for i, value in enumerate(signal):
+        if state == 0 and value > threshold:
+            onsets.append(i)
+            state = 1
+        elif state == 1 and value < threshold:
+            offsets.append(i)
+            state = 0
+
+    return onsets, offsets
+
+def calculate_peakforces(sdata_binary,sdata):
+    '''Calculating peak force'''
+    
+    onsets_all,offsets_all = [],[]
+    for clip_idx in range(sdata_binary.shape[0]):
+        clip_onsets, clip_offsets = [],[]
+        for end_eff_idx in range(sdata_binary.shape[2]):
+            dim_onsets, dim_offsets = [],[]
+            for dim in range(sdata_binary.shape[3]):
+                onsets, offsets = find_onsets_offsets(sdata_binary[clip_idx,:,end_eff_idx,dim])
+                dim_onsets.append(onsets)
+                dim_offsets.append(offsets)
+            clip_onsets.append(dim_onsets)
+            clip_offsets.append(dim_offsets)
+        onsets_all.append(clip_onsets)
+        offsets_all.append(clip_offsets)
+        
+    sdata_square = np.zeros_like(sdata)
+    sdata_square.shape
+    peak_force_all,peak_force_all_std = [],[]
+    for clip_idx,(clip_onsets,clip_offsets) in enumerate(zip(onsets_all,offsets_all)):
+        peak_force_end_eff,peak_force_end_eff_std = [],[]
+        for end_eff_idx,(end_eff_onsets,end_eff_offsets) in enumerate(zip(clip_onsets,clip_offsets)):
+            peak_force_dim, peak_force_std = [], []
+            for dim,(dim_on,dim_off) in enumerate(zip(end_eff_onsets,end_eff_offsets)):
+                peak_force = []
+                for on,off in zip(dim_on,dim_off):
+                    if off-on<10:
+                        # print(on,off)
+                        continue
+                    else:
+                        sign = np.sign(np.mean(sdata[clip_idx,on:off,end_eff_idx,dim]))
+                        sdata_square[clip_idx,on:off,end_eff_idx,dim] = sign * np.nanmean(np.abs(sdata[clip_idx,on:off,end_eff_idx,dim]))
+                        peak_force.append(np.nanmean(np.abs(sdata[clip_idx,on:off,end_eff_idx,dim])))
+                peak_force_dim.append(np.nanmean(peak_force))
+                peak_force_std.append(np.nanstd(peak_force))
+            peak_force_end_eff.append(peak_force_dim)
+            peak_force_end_eff_std.append(peak_force_std)
+        peak_force_all.append(peak_force_end_eff)
+        peak_force_all_std.append(peak_force_end_eff_std)
+    peak_force_all = np.stack(peak_force_all)
+    peak_force_all_std = np.stack(peak_force_all_std)
+    return peak_force_all, peak_force_all_std, sdata_square
+
+
+def plot_peak_force_gait(peak_force_ctrl, end_eff_indices, leg_labels, dt, timesteps_per_clip, color, title_prefix, contact_threshold):
+    """
+    Plots a single gait clip using peak force control data.
+    """
+
+    fig, axes = plt.subplots(2, 1, figsize=(6, 6), gridspec_kw={'height_ratios': [1, 3]})
+
+    # force data for one clip
+    force_clip = peak_force_ctrl[:timesteps_per_clip, end_eff_indices]  # Shape: (T, Selected Joints, xyz)
+
+    # sum across force dimensions (x, y, z) for each joint
+    summed_forces = np.sum(np.abs(force_clip), axis=-1)  # Shape: (T, Joints)
+
+    smoothed_forces = gaussian_filter1d(summed_forces, sigma=2, axis=0)
+
+    # stance (force > threshold)
+    phase_clip = (smoothed_forces > contact_threshold).astype(int)
+
+    time_axis = np.linspace(0, timesteps_per_clip * dt, timesteps_per_clip)
+
+    axes[0].plot(time_axis, np.sum(smoothed_forces, axis=1), color=color, linewidth=1)
+    axes[0].set_ylabel("Peak Force (N)")
+    axes[0].set_xticks([])
+    axes[0].set_xlim(0, time_axis[-1])
+    axes[0].set_title(f"{title_prefix}")
+
+    im = axes[1].imshow(phase_clip.T, cmap="gray_r", aspect="auto", interpolation="nearest")
+    axes[1].set_yticks(np.arange(len(leg_labels)))
+    axes[1].set_yticklabels(leg_labels)
+    axes[1].set_xlabel("Time (s)")
+    axes[1].set_xticks(np.linspace(0, timesteps_per_clip - 1, 6))
+    axes[1].set_xticklabels(np.round(np.linspace(0, timesteps_per_clip * dt, 6), 2))
+
+    legend_patches = [
+        plt.Line2D([0], [0], color="black", lw=4, label="Swing"),
+        plt.Line2D([0], [0], color="white", lw=4, label="Stance")
+    ]
+    axes[1].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
+
+    plt.tight_layout()
+    plt.show()
+
+
 def estimate_intrinsic_dim(X, n_jobs=-1, sample_size=500):
     """intrinsic dimensionality using MLE and using parallelized LOF"""
     X_sample = subsample_data(X, sample_size)
@@ -797,29 +913,5 @@ def plot_homology(fly_activations, rodent_activations, layer_idx, sample_size=50
 
     plot_diagrams(rodent_diagrams, ax=axes[1])
     axes[1].set_title(f"Rodent - Persistence Diagram for {layer_idx[0]} - {layer_idx[1]}")
-
-    plt.show()
-    
-
-def plot_intrinsic(fly_activations, rodent_activations, layer_idx, sample_size=500):
-    '''
-    Plotting the intrinsic dimensionality
-    
-    Check if fly and rodent activations lie on similar low-dimensional manifolds by
-    estimating intrinsic dimensionality using MLE and visualize Isomap geodesics
-    '''
-    fly_dim = estimate_intrinsic_dim(fly_activations[layer_idx], sample_size=sample_size)
-    rodent_dim = estimate_intrinsic_dim(rodent_activations[layer_idx], sample_size=sample_size)
-
-    print(f"Estimated Intrinsic Dimensionality: Fly={fly_dim:.2f}, Rodent={rodent_dim:.2f}")
-
-    iso_fly = fast_isomap(fly_activations[layer_idx], sample_size=sample_size)
-    iso_rodent = fast_isomap(rodent_activations[layer_idx], sample_size=sample_size)
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    axes[0].scatter(iso_fly[:, 0], iso_fly[:, 1], alpha=0.5)
-    axes[0].set_title(f"Fly - Isomap Projection for {layer_idx[0]} - {layer_idx[1]}")
-
-    axes[1].scatter(iso_rodent[:, 0], iso_rodent[:, 1], alpha=0.5, color='orange')
-    axes[1].set_title(f"Rodent - Isomap Projection for {layer_idx[0]} - {layer_idx[1]}")
 
     plt.show()

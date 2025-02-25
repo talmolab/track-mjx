@@ -10,6 +10,7 @@ from brax.envs.wrappers.training import (
 import jax
 from jax import numpy as jp
 from mujoco import mjx
+from flax import linen as nn
 
 
 def wrap(
@@ -40,6 +41,43 @@ def wrap(
     env = AutoResetWrapperTracking(env)
     return env
 
+
+class LSTMAutoResetWrapper(Wrapper):
+    """Automatically resets environment and tracks LSTM hidden state."""
+
+    def __init__(self, env: Env, lstm_features: int = 128):
+        super().__init__(env)
+        self.lstm_features = lstm_features
+
+    def initialize_hidden_state(self, rng: jax.Array, num_envs: int) -> Tuple[jp.ndarray, jp.ndarray]:
+        """Initializes LSTM hidden state (h_t, c_t) for each environment."""
+        lstm_cell = nn.LSTMCell(features=self.lstm_features)
+        return lstm_cell.initialize_carry(rng, (num_envs,)) # shape (num_envs, lstm_hidden_shape)
+
+    def reset(self, rng: jax.Array) -> State:
+        """Resets environment and reinitializes LSTM hidden state."""
+        state = self.env.reset(rng)
+        hidden_state = self.initialize_hidden_state(rng, state.obs.shape[0])
+        state.info["hidden_state"] = hidden_state
+        return state
+
+    def step(self, state: State, action: jax.Array) -> State:
+        """Steps through environment and maintains hidden state."""
+        next_state = self.env.step(state, action)
+
+        def where_done(new_x, old_x):
+            """Reinitialize hidden state where done == True."""
+            done = state.done[..., None]  # automatically expands shape for broadcasting to (num_envs, 1)
+            return jp.where(done, new_x, old_x)
+
+        # reset hidden state for environments that are done
+        new_hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0), state.obs.shape[0])
+        hidden_state = jax.tree_map(lambda x, y: where_done(x, y), new_hidden_state, state.info["hidden_state"])
+
+        next_state.info["hidden_state"] = hidden_state
+        
+        return next_state
+    
 
 class RenderRolloutWrapperTracking(Wrapper):
     """Always resets to the first frame of the clips for complete rollouts."""

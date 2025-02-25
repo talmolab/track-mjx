@@ -258,6 +258,9 @@ def train(
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
     )
+    
+    if use_lstm:
+        env = custom_wrappers.LSTMAutoResetWrapper(env, lstm_features=128)
 
     reset_fn = jax.jit(jax.vmap(env.reset))
     key_envs = jax.random.split(key_env, num_envs // process_count)
@@ -338,6 +341,7 @@ def train(
         # Jax.lax.scan should scan through minibatches
         
         print(f'In sgd step, shape of hidden state into scanning is {hidden_state[0].shape}')
+        
         (optimizer_state, params, new_hidden_state, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, hidden_state, key_grad),
@@ -461,14 +465,9 @@ def train(
             env_state,
             metrics,
         )  # pytype: disable=bad-return-type  # py311-upgrade
-        
-        
-    dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
-        jax.random.PRNGKey(0), (num_envs,)
-    ) # just zeros
-    print("Final hidden state shape:", dummy_hidden_state[1].shape)
     
     # All init here, this policy_network is class of IntentionNetwork
+    dummy_hidden_state = env_state.info["hidden_state"]
     init_params = ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key=key_policy, hidden_state=dummy_hidden_state), # policy network here is an function to be instantiated
         value=ppo_network.value_network.init(key_value),

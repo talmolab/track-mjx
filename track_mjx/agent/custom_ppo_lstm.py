@@ -25,7 +25,7 @@ from absl import logging
 from brax import base
 from brax import envs
 # from brax.training import acting
-# from brax.training import gradients
+from brax.training import gradients
 from brax.training import pmap
 from brax.training import types
 from brax.training.acme import running_statistics
@@ -54,7 +54,7 @@ from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import acting_lstm as acting
-from track_mjx.agent import gradients_lstm as gradients
+# from track_mjx.agent import gradients_lstm as gradients
 
 from flax import linen as nn
 
@@ -297,6 +297,7 @@ def train(
         use_lstm=use_lstm, # add args here
     )
     
+    # use brax gradient function now
     gradient_update_fn = gradients.gradient_update_fn(
         loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
         ) # partial loss here, this would inherent parameters from loss_fn
@@ -310,11 +311,11 @@ def train(
         optimizer_state, params, hidden_state, key = carry
         
         key, key_loss = jax.random.split(key)
-        (_, metrics, new_hidden_state), params, optimizer_state = gradient_update_fn(
+        (_, metrics), params, optimizer_state = gradient_update_fn(
             params, hidden_state, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
         )
 
-        return (optimizer_state, params, new_hidden_state, key), metrics
+        return (optimizer_state, params, hidden_state, key), metrics
 
     def sgd_step(
         carry,
@@ -331,6 +332,12 @@ def train(
             return x
 
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
+        
+        #TODO: remove hidden state completely here, normally is just same output as input
+        
+        # Jax.lax.scan should scan through minibatches
+        
+        print(f'In sgd step, shape of hidden state into scanning is {hidden_state[0].shape}')
         (optimizer_state, params, new_hidden_state, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, hidden_state, key_grad),
@@ -365,13 +372,17 @@ def train(
             )
             
             return (next_state, next_key, new_hidden_state), data
-
+        
         (state, _, new_hidden_state), data = jax.lax.scan(
             f,
             (state, key_generate_unroll, training_state.hidden_state),
             (),
             length=batch_size * num_minibatches // num_envs,
         )
+        
+        print(f'In sgd step, new hidden shape is: {new_hidden_state[0].shape}')
+        print(f'In sgd step, passedin hidden shape is: {training_state.hidden_state[0].shape}')
+        
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(
@@ -388,8 +399,8 @@ def train(
         
         # techniqually, whatever sgd hidden returns doesn't matter
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
-            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
-            (training_state.optimizer_state, training_state.params, training_state.hidden_state, key_sgd), # pass in hidden in carry
+            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params), # should pass in new_hidden_state
+            (training_state.optimizer_state, training_state.params, new_hidden_state, key_sgd), # pass in hidden in carry
             (),
             length=num_updates_per_batch,
         )
@@ -454,7 +465,7 @@ def train(
         
     dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
         jax.random.PRNGKey(0), (num_envs,)
-    )
+    ) # just zeros
     print("Final hidden state shape:", dummy_hidden_state[1].shape)
     
     # All init here, this policy_network is class of IntentionNetwork

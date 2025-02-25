@@ -146,25 +146,15 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+    print(f'In loss function, the data shape is {data.shape}')
     
     if use_lstm:
       policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(
       normalizer_params, params.policy, data.observation, policy_key, hidden_state, get_activation=False, use_lstm=use_lstm
       )
+      print(f'In loss function, the new hidden shape is {new_hidden_state}')
       h_t, c_t = new_hidden_state
-
       print("h_t shape (before reshaping):", h_t.shape)
-      print("c_t shape (before reshaping):", c_t.shape)
-
-      final_h_t = jax.tree_util.tree_map(lambda x: x[-1], h_t)
-      final_c_t = jax.tree_util.tree_map(lambda x: x[-1], c_t)
-
-      final_hidden_state = (
-          final_h_t.reshape(-1, 128).mean(axis=0), 
-          final_c_t.reshape(-1, 128).mean(axis=0)
-      )
-
-      print("final_hidden_state shape (after extraction):", final_h_t.shape, final_c_t.shape)
         
     else:
       policy_logits, latent_mean, latent_logvar = policy_apply(
@@ -223,10 +213,10 @@ def compute_ppo_loss(
     )
 
     total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss
-    return total_loss, ({
+    return total_loss, {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
         "kl_latent_loss": kl_latent_loss,
         "entropy_loss": entropy_loss,
-    }, final_hidden_state) # need to be just two things for jax.value_and_grad(loss_fn, has_aux=has_aux) to work
+    } # need to be just two things for jax.value_and_grad(loss_fn, has_aux=has_aux) to work

@@ -6,6 +6,7 @@ outputs/
 eval_renderings/
 fly_rollout_info/
 rodent_rollout_info/
+force_analysis_rollout/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

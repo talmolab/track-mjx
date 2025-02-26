@@ -139,7 +139,11 @@ class Evaluator:
         self._key, unroll_key = jax.random.split(self._key)
 
         t = time.time()
+        
+        print(f'In evals, hidden have shape: {hidden_state[0].shape}')
+        
         eval_state, hidden_state = self._generate_eval_unroll(policy_params, hidden_state, unroll_key)
+        
         eval_metrics = eval_state.info['eval_metrics']
         eval_metrics.active_episodes.block_until_ready()
         epoch_eval_time = time.time() - t

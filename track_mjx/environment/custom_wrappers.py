@@ -43,40 +43,43 @@ def wrap(
 
 
 class LSTMAutoResetWrapper(Wrapper):
-    """Automatically resets environment and tracks LSTM hidden state."""
+    """Automatically resets environment and tracks LSTM hidden state per environment."""
 
     def __init__(self, env: Env, lstm_features: int = 128):
         super().__init__(env)
         self.lstm_features = lstm_features
 
-    def initialize_hidden_state(self, rng: jax.Array, num_envs: int) -> Tuple[jp.ndarray, jp.ndarray]:
+    def initialize_hidden_state(self, rng: jax.Array) -> Tuple[jp.ndarray, jp.ndarray]:
         """Initializes LSTM hidden state (h_t, c_t) for each environment."""
         lstm_cell = nn.LSTMCell(features=self.lstm_features)
-        return lstm_cell.initialize_carry(rng, (num_envs,)) # shape (num_envs, lstm_hidden_shape)
+        return lstm_cell.initialize_carry(rng, (1,))
 
     def reset(self, rng: jax.Array) -> State:
-        """Resets environment and reinitializes LSTM hidden state."""
+        """Resets environment and reinitializes hidden state."""
         state = self.env.reset(rng)
-        hidden_state = self.initialize_hidden_state(rng, state.obs.shape[0])
+        hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
         state.info["hidden_state"] = hidden_state
         return state
 
     def step(self, state: State, action: jax.Array) -> State:
-        """Steps through environment and maintains hidden state."""
+        """Steps through the environment and resets hidden state for done envs."""
         next_state = self.env.step(state, action)
 
         def where_done(new_x, old_x):
             """Reinitialize hidden state where done == True."""
-            done = state.done[..., None]  # automatically expands shape for broadcasting to (num_envs, 1)
-            return jp.where(done, new_x, old_x)
+            done = state.done[..., None]  # Expands shape for broadcasting
+            return jp.where(done, new_x, old_x)  # Reset where `done == True`
 
-        # reset hidden state for environments that are done
-        new_hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0), state.obs.shape[0])
-        hidden_state = jax.tree_map(lambda x, y: where_done(x, y), new_hidden_state, state.info["hidden_state"])
+        new_hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
+        hidden_state = jax.tree_map(
+            lambda x, y: where_done(x, y),
+            new_hidden_state,
+            state.info["hidden_state"],  # Keep hidden where `done == False`
+        )
 
         next_state.info["hidden_state"] = hidden_state
-        
         return next_state
+
     
 
 class RenderRolloutWrapperTracking(Wrapper):

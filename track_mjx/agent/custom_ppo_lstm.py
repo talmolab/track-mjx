@@ -251,16 +251,16 @@ def train(
         wrap_for_training = custom_wrappers.wrap
     else:
         wrap_for_training = envs_v1.wrappers.wrap_for_training
-
+        
+    if use_lstm:
+        environment = custom_wrappers.LSTMAutoResetWrapper(environment, lstm_features=128)
+        
     env = wrap_for_training(
         environment,
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
     )
-    
-    if use_lstm:
-        env = custom_wrappers.LSTMAutoResetWrapper(env, lstm_features=128)
 
     reset_fn = jax.jit(jax.vmap(env.reset))
     key_envs = jax.random.split(key_env, num_envs // process_count)
@@ -340,12 +340,12 @@ def train(
         
         # Jax.lax.scan should scan through minibatches
         
-        print(f'In sgd step, shape of hidden state into scanning is {hidden_state[0].shape}')
+        print(f'In sgd step, shape of shuffled data into scanning is {shuffled_data.observation.shape}')
         
         (optimizer_state, params, new_hidden_state, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, hidden_state, key_grad),
-            shuffled_data,
+            shuffled_data, # scan this
             length=num_minibatches,
         )
         return (optimizer_state, params, new_hidden_state, key), metrics # carry shape maintains, now updated
@@ -385,7 +385,7 @@ def train(
         )
         
         print(f'In sgd step, new hidden shape is: {new_hidden_state[0].shape}')
-        print(f'In sgd step, passedin hidden shape is: {training_state.hidden_state[0].shape}')
+        print(f'In sgd step, passed in hidden shape is: {training_state.hidden_state[0].shape}')
         
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
@@ -403,8 +403,8 @@ def train(
         
         # techniqually, whatever sgd hidden returns doesn't matter
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
-            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params), # should pass in new_hidden_state
-            (training_state.optimizer_state, training_state.params, new_hidden_state, key_sgd), # pass in hidden in carry
+            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params), 
+            (training_state.optimizer_state, training_state.params, new_hidden_state, key_sgd), # should pass in new_hidden_state
             (),
             length=num_updates_per_batch,
         )
@@ -468,6 +468,14 @@ def train(
     
     # All init here, this policy_network is class of IntentionNetwork
     dummy_hidden_state = env_state.info["hidden_state"]
+    
+    # dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
+    #     jax.random.PRNGKey(0), (num_envs,)
+    # )
+    
+    print(f'In training, the dummy hidden shape is: {dummy_hidden_state[0].shape}')
+    print(f'In training, the env obs shape is: {env_state.obs.shape}')
+    
     init_params = ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key=key_policy, hidden_state=dummy_hidden_state), # policy network here is an function to be instantiated
         value=ppo_network.value_network.init(key_value),
@@ -512,13 +520,17 @@ def train(
         v_randomization_fn = functools.partial(
             randomization_fn, rng=jax.random.split(eval_key, num_eval_envs)
         )
+    
+    if use_lstm:
+        eval_env = custom_wrappers.LSTMAutoResetWrapper(eval_env, lstm_features=128)
+        
     eval_env = wrap_for_training(
         eval_env,
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
     )
-
+    
     evaluator = acting.Evaluator(
         eval_env,
         functools.partial(make_policy,

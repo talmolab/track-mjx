@@ -146,15 +146,13 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    print(f'In loss function, the data shape is {data.shape}')
+    print(f'In loss function, the data shape is {data.observation.shape}')
     
     if use_lstm:
       policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(
       normalizer_params, params.policy, data.observation, policy_key, hidden_state, get_activation=False, use_lstm=use_lstm
       )
-      print(f'In loss function, the new hidden shape is {new_hidden_state}')
-      h_t, c_t = new_hidden_state
-      print("h_t shape (before reshaping):", h_t.shape)
+      print(f'In loss function, the new hidden shape is {new_hidden_state[0].shape}')
         
     else:
       policy_logits, latent_mean, latent_logvar = policy_apply(

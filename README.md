@@ -88,7 +88,7 @@ gdown --id <google file id> -O data.h5
 After running `conda activate track_mjx`, you can run training with:
 
 ```bash
-python -m track_mjx.train data_path="data/FlyReferenceClip.p" +hydra.job.config_name="fly-mc-intention"
+python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
 ```
 
 The `data_path` will need to point to a Pickle file with the outputs of [`stac-mjx`](https://github.com/talmolab/stac-mjx) (see [#23](https://github.com/talmolab/track-mjx/issues/23)).

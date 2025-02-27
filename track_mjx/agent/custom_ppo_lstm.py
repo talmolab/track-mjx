@@ -358,13 +358,6 @@ def train(
         policy = make_policy(
             params=(training_state.normalizer_params, training_state.params.policy), get_activation=get_activation, use_lstm=use_lstm, # pass in here
         )
-        
-        # Use hidden state ONLY when reset occurs
-        # hidden_state = jax.lax.select(
-        #     state.info.get("reset", False),
-        #     state.info["hidden_state"],
-        #     training_state.hidden_state 
-        # )
 
         #TODO: make this embeded in custom_ppo
         def f(carry, unused_t):
@@ -382,20 +375,18 @@ def train(
             
             return (next_state, next_key, new_hidden_state), data
         
-        # expand dim for ensuring parralel once in generate output, (128,) -> (1, 128)
-        hidden_state = jnp.expand_dims(training_state.hidden_state, axis=0)
         
         (state, _, new_hidden_state), data = jax.lax.scan(
             f,
-            (state, key_generate_unroll, hidden_state),
+            (state, key_generate_unroll, training_state.hidden_state),
             (),
             length=batch_size * num_minibatches // num_envs,
         )
         
-        new_hidden_state = jnp.squeeze(new_hidden_state, axis=0)  # (1, 128) -> (128,)
-        
         print(f'In sgd step, passed in hidden shape is: {training_state.hidden_state[0].shape}')
         print(f'In sgd step, new hidden shape is: {new_hidden_state[0].shape}')
+        
+        print(f'In sgd step, data.observation shape is: {data.observation.shape}')
         
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
@@ -403,6 +394,20 @@ def train(
             lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
         )
         assert data.discount.shape[1:] == (unroll_length,)
+        
+        print(f'In sgd step, data.observation shape after shaping is: {data.observation.shape}')
+        
+        # do the same for hidden
+        new_hidden_state = (
+            jnp.swapaxes(new_hidden_state[0], 1, 2),
+            jnp.swapaxes(new_hidden_state[1], 1, 2),
+        )
+        new_hidden_state = (
+            jnp.reshape(new_hidden_state[0], (-1,) + new_hidden_state[0].shape[2:]),
+            jnp.reshape(new_hidden_state[1], (-1,) + new_hidden_state[1].shape[2:]),
+        )
+        
+        print(f'In sgd step, new hidden shape after shaping is: {new_hidden_state[0].shape}')
 
         # Update normalization params and normalize observations.
         normalizer_params = running_statistics.update(
@@ -420,19 +425,6 @@ def train(
         )
         
         print(f'In training step, state.done has shape: {state.done.shape}')
-        
-        def reset_where_done(new_x, old_x):
-            """
-            reset hidden state for done environments after doing one times in training step,
-            then apply the selective reset later
-            """
-            
-            done = state.done[..., None]  # expand dimensions for broadcasting
-            return jnp.where(done, new_x, old_x)
-
-        reset_hidden_state = nn.LSTMCell(features=128).initialize_carry(jax.random.PRNGKey(0), (1,))
-        new_hidden_state = jax.tree_map(reset_where_done, reset_hidden_state, new_hidden_state)
-        
         print(f'In training step, the updated from env hidden state shape is: {new_hidden_state[1].shape}')
 
         new_training_state = TrainingState(
@@ -493,12 +485,12 @@ def train(
         )  # pytype: disable=bad-return-type  # py311-upgrade
     
     # All init here, this policy_network is class of IntentionNetwork
-    # dummy_hidden_state = env_state.info["first_hidden_state"]
-    # dummy_hidden_state_squeeze = (jnp.squeeze(dummy_hidden_state[0], axis=0), jnp.squeeze(dummy_hidden_state[1], axis=0))
+    dummy_hidden_state = env_state.info["hidden_state"]
+    dummy_hidden_state_squeeze = (jnp.squeeze(dummy_hidden_state[0], axis=0), jnp.squeeze(dummy_hidden_state[1], axis=0))
     
-    dummy_hidden_state_squeeze = nn.LSTMCell(features=128).initialize_carry(
-        jax.random.PRNGKey(0), (num_envs,)
-    )
+    # dummy_hidden_state_squeeze = nn.LSTMCell(features=128).initialize_carry(
+    #     jax.random.PRNGKey(0), (num_envs,)
+    # )
     
     print(f'In training, the dummy hidden shape is: {dummy_hidden_state_squeeze[0].shape}')
     print(f'In training, the env obs shape is: {env_state.obs.shape}')

@@ -42,11 +42,27 @@ def actor_step(
     extra_fields: Sequence[str] = ()
 ) -> Tuple[State, Transition, jnp.ndarray]:
     """Collect data and update LSTM hidden state."""
+    
+    print(f'In actor step, state obs shape is: {env_state.obs.shape}')
+    
     actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state)  
     # ensure policy now returns the updated LSTM hidden state
-
+    
+    # print(f'In actor step, new action shape is: {actions.shape}')
     nstate = env.step(env_state, actions)
     state_extras = {x: nstate.info[x] for x in extra_fields}
+    
+    info_hidden = nstate.info['hidden_state']
+    print(f'In actor step, info hidden state shape is: {info_hidden[1].shape}')
+    print(f'In actor step, passed in hidden state shape is: {hidden_state[1].shape}')
+    
+    done = nstate.done[:, None]  # get done flags (batch_size, num_envs)
+    new_hidden_state = (
+        jnp.where(done, info_hidden[0], hidden_state[0]), 
+        jnp.where(done, info_hidden[1], hidden_state[1])
+    )
+    
+    print(f'In actor step, updated hidden state after reset hidden shape: {new_hidden_state[0].shape}')
 
     return nstate, Transition(  
         observation=env_state.obs,
@@ -59,6 +75,7 @@ def actor_step(
             'state_extras': state_extras
         }
     ), new_hidden_state
+    
 
 def generate_unroll(
     env: Env,
@@ -70,11 +87,6 @@ def generate_unroll(
     extra_fields: Sequence[str] = ()
 ) -> Tuple[State, Transition, jnp.ndarray]:
     """Collect trajectories of given unroll_length while tracking LSTM state."""
-    
-    # ensure hidden state exists in state.info at the beginning
-    # if "hidden_state" not in env_state.info:
-    #     env_state.info["hidden_state"] = (hidden_state[0].reshape(128, 128),
-    #                                       hidden_state[1].reshape(128, 128))
 
     @jax.jit
     def f(carry, unused_t):
@@ -85,11 +97,14 @@ def generate_unroll(
             env, state, policy, current_key, hidden_state, extra_fields=extra_fields
         )  # updated hidden state
 
-        return (nstate, next_key, new_hidden_state), transition
+        return (nstate, next_key, new_hidden_state), (transition, new_hidden_state)
 
-    (final_state, _, final_hidden_state), data = jax.lax.scan(
+    # carry shape need to match, so out hidden would not have unroll length if in carry
+    (final_state, _, final_hidden_state), (data, complete_hidden_state) = jax.lax.scan(
         f, (env_state, key, hidden_state), (), length=unroll_length
     )
+    
+    print(f'In generate unroll, the hidden shape is: {complete_hidden_state[0].shape}')
     
     return final_state, data, final_hidden_state
 
@@ -120,14 +135,19 @@ class Evaluator:
                                  key: PRNGKey) -> Tuple[State, Tuple[jnp.ndarray, jnp.ndarray]]:
             reset_keys = jax.random.split(key, num_eval_envs)
             eval_first_state = eval_env.reset(reset_keys)
-
+            
+            
+            #TODO: Swapped out, clean later
+            dummy_hidden_state = eval_first_state.info["hidden_state"]
+            
+            print(f'In evals, info hidden have shape: {dummy_hidden_state[0].shape}')
 
             final_state, _, final_hidden_state = generate_unroll(
                 eval_env,
                 eval_first_state,
                 eval_policy_fn(policy_params),
                 key,
-                hidden_state, 
+                dummy_hidden_state, 
                 unroll_length=episode_length // action_repeat
             )
             return final_state, final_hidden_state
@@ -145,7 +165,7 @@ class Evaluator:
 
         t = time.time()
         
-        print(f'In evals, hidden have shape: {hidden_state[0].shape}')
+        print(f'In evals, passed in hidden have shape: {hidden_state[0].shape}')
         
         eval_state, hidden_state = self._generate_eval_unroll(policy_params, hidden_state, unroll_key)
         

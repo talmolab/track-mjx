@@ -251,10 +251,8 @@ def train(
         wrap_for_training = custom_wrappers.wrap
     else:
         wrap_for_training = envs_v1.wrappers.wrap_for_training
-        
-    if use_lstm:
-        environment = custom_wrappers.LSTMAutoResetWrapper(environment, lstm_features=128)
-        
+    
+    #TODO: make it work for both lstm and mlp
     env = wrap_for_training(
         environment,
         episode_length=episode_length,
@@ -361,6 +359,15 @@ def train(
             params=(training_state.normalizer_params, training_state.params.policy), get_activation=get_activation, use_lstm=use_lstm, # pass in here
         )
         
+        # Use hidden state ONLY when reset occurs
+        # hidden_state = jax.lax.select(
+        #     state.info.get("reset", False),
+        #     state.info["hidden_state"],
+        #     training_state.hidden_state 
+        # )
+        
+        print(f'In training step, state.done has shape: {state.done.shape}')
+
         #TODO: make this embeded in custom_ppo
         def f(carry, unused_t):
             current_state, current_key, hidden_state = carry
@@ -384,8 +391,8 @@ def train(
             length=batch_size * num_minibatches // num_envs,
         )
         
-        print(f'In sgd step, new hidden shape is: {new_hidden_state[0].shape}')
         print(f'In sgd step, passed in hidden shape is: {training_state.hidden_state[0].shape}')
+        print(f'In sgd step, new hidden shape is: {new_hidden_state[0].shape}')
         
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
@@ -408,6 +415,21 @@ def train(
             (),
             length=num_updates_per_batch,
         )
+        
+        def reset_where_done(new_x, old_x):
+            """
+            reset hidden state for done environments after doing one times in training step,
+            then apply the selective reset
+            """
+            
+            done = state.done[..., None]  # Expand dimensions for broadcasting
+            return jnp.where(done, new_x, old_x)
+
+        num_envs = state.obs.shape[0]
+        reset_hidden_state = nn.LSTMCell(features=128).initialize_carry(jax.random.PRNGKey(0), (num_envs,))
+        new_hidden_state = jax.tree_map(reset_where_done, reset_hidden_state, new_hidden_state)
+        
+        print(f'In training step, the updated from env hidden state shape is: {new_hidden_state[1].shape}')
 
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,
@@ -467,17 +489,19 @@ def train(
         )  # pytype: disable=bad-return-type  # py311-upgrade
     
     # All init here, this policy_network is class of IntentionNetwork
-    dummy_hidden_state = env_state.info["hidden_state"]
+    # dummy_hidden_state = env_state.info["first_hidden_state"]
+    # dummy_hidden_state_squeeze = (jnp.squeeze(dummy_hidden_state[0], axis=0),
+    #                               jnp.squeeze(dummy_hidden_state[1], axis=0))
     
-    # dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
-    #     jax.random.PRNGKey(0), (num_envs,)
-    # )
+    dummy_hidden_state_squeeze = nn.LSTMCell(features=128).initialize_carry(
+        jax.random.PRNGKey(0), (num_envs,)
+    )
     
-    print(f'In training, the dummy hidden shape is: {dummy_hidden_state[0].shape}')
+    print(f'In training, the dummy hidden shape is: {dummy_hidden_state_squeeze[0].shape}')
     print(f'In training, the env obs shape is: {env_state.obs.shape}')
     
     init_params = ppo_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key=key_policy, hidden_state=dummy_hidden_state), # policy network here is an function to be instantiated
+        policy=ppo_network.policy_network.init(key=key_policy, hidden_state=dummy_hidden_state_squeeze), # policy network here is an function to be instantiated
         value=ppo_network.value_network.init(key_value),
     )
     
@@ -486,7 +510,7 @@ def train(
             init_params
         ),  # pytype: disable=wrong-arg-types  # numpy-scalars
         params=init_params,
-        hidden_state=dummy_hidden_state,
+        hidden_state=dummy_hidden_state_squeeze,
         normalizer_params=running_statistics.init_state(
             specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
         ),
@@ -520,9 +544,6 @@ def train(
         v_randomization_fn = functools.partial(
             randomization_fn, rng=jax.random.split(eval_key, num_eval_envs)
         )
-    
-    if use_lstm:
-        eval_env = custom_wrappers.LSTMAutoResetWrapper(eval_env, lstm_features=128)
         
     eval_env = wrap_for_training(
         eval_env,

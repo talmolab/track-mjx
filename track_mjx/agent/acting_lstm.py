@@ -70,6 +70,11 @@ def generate_unroll(
     extra_fields: Sequence[str] = ()
 ) -> Tuple[State, Transition, jnp.ndarray]:
     """Collect trajectories of given unroll_length while tracking LSTM state."""
+    
+    # ensure hidden state exists in state.info at the beginning
+    # if "hidden_state" not in env_state.info:
+    #     env_state.info["hidden_state"] = (hidden_state[0].reshape(128, 128),
+    #                                       hidden_state[1].reshape(128, 128))
 
     @jax.jit
     def f(carry, unused_t):

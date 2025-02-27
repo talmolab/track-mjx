@@ -96,17 +96,20 @@ def generate_unroll(
         nstate, transition, new_hidden_state = actor_step(
             env, state, policy, current_key, hidden_state, extra_fields=extra_fields
         )  # updated hidden state
-
+        
+        # both here and in forward, provide 20 here
+        # return the final hidden in carry for carry alignment (forward), return stacked hidden in extra field for backward
         return (nstate, next_key, new_hidden_state), (transition, new_hidden_state)
 
     # carry shape need to match, so out hidden would not have unroll length if in carry
-    (final_state, _, final_hidden_state), (data, complete_hidden_state) = jax.lax.scan(
+    (final_state, _, forward_hidden_state), (data, backward_hidden_state) = jax.lax.scan(
         f, (env_state, key, hidden_state), (), length=unroll_length
     )
     
-    print(f'In generate unroll, the hidden shape is: {complete_hidden_state[0].shape}')
+    print(f'In generate unroll, the forward hidden shape is: {forward_hidden_state[0].shape}')
+    print(f'In generate unroll, the backward hidden shape is: {backward_hidden_state[0].shape}')
     
-    return final_state, data, final_hidden_state
+    return final_state, data, forward_hidden_state, backward_hidden_state
 
 class Evaluator:
     """Class to run evaluations with LSTM state handling."""
@@ -141,8 +144,9 @@ class Evaluator:
             dummy_hidden_state = eval_first_state.info["hidden_state"]
             
             print(f'In evals, info hidden have shape: {dummy_hidden_state[0].shape}')
-
-            final_state, _, final_hidden_state = generate_unroll(
+            
+            # unstack one here
+            final_state, _, final_hidden_state, _ = generate_unroll(
                 eval_env,
                 eval_first_state,
                 eval_policy_fn(policy_params),

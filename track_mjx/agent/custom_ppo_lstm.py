@@ -338,7 +338,7 @@ def train(
         
         # Jax.lax.scan should scan through minibatches
         
-        print(f'In sgd step, shape of shuffled data into scanning is {shuffled_data.observation.shape}')
+        print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
         
         (optimizer_state, params, new_hidden_state, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
@@ -363,7 +363,7 @@ def train(
         def f(carry, unused_t):
             current_state, current_key, hidden_state = carry
             current_key, next_key = jax.random.split(current_key)
-            next_state, data, new_hidden_state = acting.generate_unroll(
+            next_state, data, forward_hidden_state, backward_hidden_state = acting.generate_unroll(
                 env,
                 current_state,
                 policy, # has  hidden states
@@ -373,20 +373,22 @@ def train(
                 extra_fields=("truncation",),
             )
             
-            return (next_state, next_key, new_hidden_state), data
+            # both here and in actor_step, provide 4 here
+            # return the final hidden in carry for carry alignment (forward), return stacked hidden in extra field for backward
+            return (next_state, next_key, forward_hidden_state), (data, backward_hidden_state)
         
         
-        (state, _, new_hidden_state), data = jax.lax.scan(
+        (state, _, forward_hidden_state), (data, backward_hidden_state) = jax.lax.scan(
             f,
             (state, key_generate_unroll, training_state.hidden_state),
             (),
             length=batch_size * num_minibatches // num_envs,
         )
         
-        print(f'In sgd step, passed in hidden shape is: {training_state.hidden_state[0].shape}')
-        print(f'In sgd step, new hidden shape is: {new_hidden_state[0].shape}')
-        
-        print(f'In sgd step, data.observation shape is: {data.observation.shape}')
+        print(f'In training step, passed into forward hidden shape is: {training_state.hidden_state[0].shape}')
+        print(f'In training step, new unstack hidden (forward) shape is: {forward_hidden_state[0].shape}')
+        print(f'In training step, new stacked (backward) hidden shape is: {backward_hidden_state[0].shape}')
+        print(f'In training step, data.observation shape is: {data.observation.shape}')
         
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
@@ -397,17 +399,14 @@ def train(
         
         print(f'In sgd step, data.observation shape after shaping is: {data.observation.shape}')
         
-        # do the same for hidden
-        new_hidden_state = (
-            jnp.swapaxes(new_hidden_state[0], 1, 2),
-            jnp.swapaxes(new_hidden_state[1], 1, 2),
-        )
-        new_hidden_state = (
-            jnp.reshape(new_hidden_state[0], (-1,) + new_hidden_state[0].shape[2:]),
-            jnp.reshape(new_hidden_state[1], (-1,) + new_hidden_state[1].shape[2:]),
-        )
+        # convert hidden num_envs to mini_batch x batch  (num_envs, feature_dim) -> (minibatch_dim, batch_dim, feature_dim)
+        reshaped_new_hidden_state = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), backward_hidden_state)
+        # Shape now: (2, 128, 1024) <-- (num_minibatches, batch_size, hidden_dim)
         
-        print(f'In sgd step, new hidden shape after shaping is: {new_hidden_state[0].shape}')
+        reshaped_new_hidden_state = jax.tree_util.tree_map(
+            lambda x: jnp.reshape(x, (num_minibatches ,unroll_length, batch_size, -1)), reshaped_new_hidden_state
+        )
+        # Shape now: (4, 20, 512, 128)
 
         # Update normalization params and normalize observations.
         normalizer_params = running_statistics.update(
@@ -416,21 +415,21 @@ def train(
             pmap_axis_name=_PMAP_AXIS_NAME,
         )
         
+        print(f'In training step, state.done has shape: {state.done.shape}')
+        print(f'In training step, the updated  reshaped hidden state is: {reshaped_new_hidden_state[1].shape}')
+        
         # techniqually, whatever sgd hidden returns doesn't matter
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params), 
-            (training_state.optimizer_state, training_state.params, new_hidden_state, key_sgd), # should pass in new_hidden_state
+            (training_state.optimizer_state, training_state.params, reshaped_new_hidden_state, key_sgd), # should pass in new_hidden_state
             (),
             length=num_updates_per_batch,
         )
-        
-        print(f'In training step, state.done has shape: {state.done.shape}')
-        print(f'In training step, the updated from env hidden state shape is: {new_hidden_state[1].shape}')
 
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,
             params=params,
-            hidden_state=new_hidden_state,
+            hidden_state=forward_hidden_state, #TODO: which to store?
             normalizer_params=normalizer_params,
             env_steps=jnp.int32(
                 training_state.env_steps + env_step_per_training_step / 1e3

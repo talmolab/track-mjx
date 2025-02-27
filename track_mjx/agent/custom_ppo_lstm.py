@@ -365,8 +365,6 @@ def train(
         #     state.info["hidden_state"],
         #     training_state.hidden_state 
         # )
-        
-        print(f'In training step, state.done has shape: {state.done.shape}')
 
         #TODO: make this embeded in custom_ppo
         def f(carry, unused_t):
@@ -384,12 +382,17 @@ def train(
             
             return (next_state, next_key, new_hidden_state), data
         
+        # expand dim for ensuring parralel once in generate output, (128,) -> (1, 128)
+        hidden_state = jnp.expand_dims(training_state.hidden_state, axis=0)
+        
         (state, _, new_hidden_state), data = jax.lax.scan(
             f,
-            (state, key_generate_unroll, training_state.hidden_state),
+            (state, key_generate_unroll, hidden_state),
             (),
             length=batch_size * num_minibatches // num_envs,
         )
+        
+        new_hidden_state = jnp.squeeze(new_hidden_state, axis=0)  # (1, 128) -> (128,)
         
         print(f'In sgd step, passed in hidden shape is: {training_state.hidden_state[0].shape}')
         print(f'In sgd step, new hidden shape is: {new_hidden_state[0].shape}')
@@ -416,17 +419,18 @@ def train(
             length=num_updates_per_batch,
         )
         
+        print(f'In training step, state.done has shape: {state.done.shape}')
+        
         def reset_where_done(new_x, old_x):
             """
             reset hidden state for done environments after doing one times in training step,
-            then apply the selective reset
+            then apply the selective reset later
             """
             
-            done = state.done[..., None]  # Expand dimensions for broadcasting
+            done = state.done[..., None]  # expand dimensions for broadcasting
             return jnp.where(done, new_x, old_x)
 
-        num_envs = state.obs.shape[0]
-        reset_hidden_state = nn.LSTMCell(features=128).initialize_carry(jax.random.PRNGKey(0), (num_envs,))
+        reset_hidden_state = nn.LSTMCell(features=128).initialize_carry(jax.random.PRNGKey(0), (1,))
         new_hidden_state = jax.tree_map(reset_where_done, reset_hidden_state, new_hidden_state)
         
         print(f'In training step, the updated from env hidden state shape is: {new_hidden_state[1].shape}')
@@ -490,8 +494,7 @@ def train(
     
     # All init here, this policy_network is class of IntentionNetwork
     # dummy_hidden_state = env_state.info["first_hidden_state"]
-    # dummy_hidden_state_squeeze = (jnp.squeeze(dummy_hidden_state[0], axis=0),
-    #                               jnp.squeeze(dummy_hidden_state[1], axis=0))
+    # dummy_hidden_state_squeeze = (jnp.squeeze(dummy_hidden_state[0], axis=0), jnp.squeeze(dummy_hidden_state[1], axis=0))
     
     dummy_hidden_state_squeeze = nn.LSTMCell(features=128).initialize_carry(
         jax.random.PRNGKey(0), (num_envs,)

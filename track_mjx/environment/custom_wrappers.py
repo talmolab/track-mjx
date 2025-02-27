@@ -43,71 +43,71 @@ def wrap(
     return env
 
 
-class LSTMAutoResetWrapperTracking(Wrapper):
-    """Automatically resets Brax envs that are done and tracks LSTM hidden states."""
+# class LSTMAutoResetWrapperTracking(Wrapper):
+#     """Automatically resets Brax envs that are done and tracks LSTM hidden states."""
 
-    def __init__(self, env: Env, lstm_features: int = 128):
-        """Initializes the wrapper with LSTM tracking."""
-        super().__init__(env)
-        self.lstm_features = lstm_features
+#     def __init__(self, env: Env, lstm_features: int = 128):
+#         """Initializes the wrapper with LSTM tracking."""
+#         super().__init__(env)
+#         self.lstm_features = lstm_features
 
-    def initialize_hidden_state(self, rng: jax.Array, num_envs: int) -> Tuple[jp.ndarray, jp.ndarray]:
-        """Initializes LSTM hidden state (h_t, c_t) for each environment."""
-        lstm_cell = nn.LSTMCell(features=self.lstm_features)
-        return lstm_cell.initialize_carry(rng, (num_envs,))  # shape: (num_envs, hidden_dim)
+#     def initialize_hidden_state(self, rng: jax.Array, num_envs: int) -> Tuple[jp.ndarray, jp.ndarray]:
+#         """Initializes LSTM hidden state (h_t, c_t) for each environment."""
+#         lstm_cell = nn.LSTMCell(features=self.lstm_features)
+#         return lstm_cell.initialize_carry(rng, (num_envs,))  # shape: (num_envs, hidden_dim)
 
-    def reset(self, rng: jax.Array) -> State:
-        """Resets the environment and reinitializes LSTM hidden states."""
-        state = self.env.reset(rng)
-        state.info["first_pipeline_state"] = state.pipeline_state
-        state.info["first_obs"] = state.obs
-        state.info["first_prev_ctrl"] = state.info["prev_ctrl"]
+#     def reset(self, rng: jax.Array) -> State:
+#         """Resets the environment and reinitializes LSTM hidden states."""
+#         state = self.env.reset(rng)
+#         state.info["first_pipeline_state"] = state.pipeline_state
+#         state.info["first_obs"] = state.obs
+#         state.info["first_prev_ctrl"] = state.info["prev_ctrl"]
 
-        # initialize hidden state per environment
-        num_envs = state.obs.shape[0]
-        hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0), num_envs)
-        state.info["first_hidden_state"] = hidden_state
+#         # initialize hidden state per environment
+#         num_envs = state.obs.shape[0]
+#         hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0), num_envs)
+#         state.info["first_hidden_state"] = hidden_state
         
-        return state
+#         return state
 
-    def step(self, state: State, action: jax.Array) -> State:
-        """Steps through the environment and resets hidden states for done envs."""
-        if "steps" in state.info:
-            steps = state.info["steps"]
-            steps = jp.where(state.done, jp.zeros_like(steps), steps)
-            state.info.update(steps=steps)
+#     def step(self, state: State, action: jax.Array) -> State:
+#         """Steps through the environment and resets hidden states for done envs."""
+#         if "steps" in state.info:
+#             steps = state.info["steps"]
+#             steps = jp.where(state.done, jp.zeros_like(steps), steps)
+#             state.info.update(steps=steps)
 
-        state = state.replace(done=jp.zeros_like(state.done))
-        state = self.env.step(state, action)
+#         state = state.replace(done=jp.zeros_like(state.done))
+#         state = self.env.step(state, action)
 
-        def where_done(x, y):
-            """Reinitialize hidden state where done == True."""
-            done = state.done
-            if done.shape:
-                done = jp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # Broadcasts over batch dim
-            return jp.where(done, x, y)  # Reset only where `done == True`
+#         def where_done(x, y):
+#             """Reinitialize hidden state where done == True."""
+#             done = state.done
+#             if done.shape:
+#                 done = jp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # Broadcasts over batch dim
+#             return jp.where(done, x, y)  # Reset only where `done == True`
 
-        pipeline_state = jax.tree.map(
-            where_done, state.info["first_pipeline_state"], state.pipeline_state
-        )
-        obs = where_done(state.info["first_obs"], state.obs)
-        state.info["prev_ctrl"] = where_done(
-            state.info["first_prev_ctrl"],
-            state.info["prev_ctrl"],
-        )
+#         pipeline_state = jax.tree.map(
+#             where_done, state.info["first_pipeline_state"], state.pipeline_state
+#         )
+#         obs = where_done(state.info["first_obs"], state.obs)
+#         state.info["prev_ctrl"] = where_done(
+#             state.info["first_prev_ctrl"],
+#             state.info["prev_ctrl"],
+#         )
 
-        # reset LSTM hidden states for completed environments
-        num_envs = state.obs.shape[0]
-        new_hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0), num_envs)
-        hidden_state = jax.tree_map(
-            lambda x, y: where_done(x, y),
-            new_hidden_state,
-            state.info.get("hidden_state", new_hidden_state),  # default to new hidden if missing
-        )
+#         # reset LSTM hidden states for completed environments
+#         num_envs = state.obs.shape[0]
+#         new_hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0), num_envs)
+#         hidden_state = jax.tree_map(
+#             lambda x, y: where_done(x, y),
+#             new_hidden_state,
+#             state.info.get("hidden_state", new_hidden_state),  # default to new hidden if missing
+#         )
 
-        state.info["hidden_state"] = (hidden_state[0].reshape(-1, 128),
-                                      hidden_state[1].reshape(-1, 128))
-        return state.replace(pipeline_state=pipeline_state, obs=obs)
+#         state.info["hidden_state"] = (hidden_state[0].reshape(-1, 128),
+#                                       hidden_state[1].reshape(-1, 128))
+#         return state.replace(pipeline_state=pipeline_state, obs=obs)
     
 
 class RenderRolloutWrapperTracking(Wrapper):

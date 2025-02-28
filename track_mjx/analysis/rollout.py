@@ -64,7 +64,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
 
 
 def create_rollout_generator(
-    ref_traj_config: Dict | DictConfig, environment: Env, inference_fn: Callable
+    cfg: Dict | DictConfig, environment: Env, inference_fn: Callable
 ) -> Callable[[int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
@@ -76,6 +76,7 @@ def create_rollout_generator(
     Returns:
         Callable: A generate_rollout function that can be called with configuration.
     """
+    ref_traj_config = cfg["reference_config"]
     # Wrap the environment
     rollout_env = wrappers.RenderRolloutWrapperTracking(environment)
 
@@ -128,34 +129,12 @@ def create_rollout_generator(
 
         rollout_states = jax.tree.map(prepend, init_state, states)
 
-        # Compute rewards and metrics
-        rewards = {
-            "pos_rewards": jax.vmap(lambda s: s.metrics["pos_reward"])(rollout_states),
-            "endeff_rewards": jax.vmap(lambda s: s.metrics["endeff_reward"])(
-                rollout_states
-            ),
-            "quat_rewards": jax.vmap(lambda s: s.metrics["quat_reward"])(
-                rollout_states
-            ),
-            "angvel_rewards": jax.vmap(lambda s: s.metrics["angvel_reward"])(
-                rollout_states
-            ),
-            "bodypos_rewards": jax.vmap(lambda s: s.metrics["bodypos_reward"])(
-                rollout_states
-            ),
-            "joint_rewards": jax.vmap(lambda s: s.metrics["joint_reward"])(
-                rollout_states
-            ),
-            "summed_pos_distances": jax.vmap(lambda s: s.info["summed_pos_distance"])(
-                rollout_states
-            ),
-            "joint_distances": jax.vmap(lambda s: s.info["joint_distance"])(
-                rollout_states
-            ),
-            "torso_heights": jax.vmap(
-                lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
-            )(rollout_states),
-        }
+        # Get metrics
+        rollout_metrics = {}
+        for rollout_metric in cfg.logging_config.rollout_metrics:
+            rollout_metrics[f"{rollout_metric}s"] = jax.vmap(
+                lambda s: s.metrics[rollout_metric]
+            )(rollout_states)
 
         # Reference and rollout qposes
         ref_traj = rollout_env._get_reference_clip(init_state.info)
@@ -169,7 +148,7 @@ def create_rollout_generator(
         qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
 
         return {
-            "rewards": rewards,
+            "rollout_metrics": rollout_metrics,
             "observations": jax.vmap(lambda s: s.obs)(rollout_states),
             "ctrl": ctrls,
             "activations": activations,

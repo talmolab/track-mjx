@@ -429,7 +429,7 @@ def train(
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,
             params=params,
-            hidden_state=forward_hidden_state, #TODO: which to store?
+            hidden_state=forward_hidden_state,
             normalizer_params=normalizer_params,
             env_steps=jnp.int32(
                 training_state.env_steps + env_step_per_training_step / 1e3
@@ -485,7 +485,10 @@ def train(
     
     # All init here, this policy_network is class of IntentionNetwork
     dummy_hidden_state = env_state.info["hidden_state"]
-    dummy_hidden_state_squeeze = (jnp.squeeze(dummy_hidden_state[0], axis=0), jnp.squeeze(dummy_hidden_state[1], axis=0))
+    # dummy_hidden_state_squeeze = (jnp.squeeze(dummy_hidden_state[0], axis=0),
+    #                               jnp.squeeze(dummy_hidden_state[1], axis=0))
+    
+    dummy_hidden_state_squeeze = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), dummy_hidden_state)
     
     # dummy_hidden_state_squeeze = nn.LSTMCell(features=128).initialize_carry(
     #     jax.random.PRNGKey(0), (num_envs,)

@@ -57,10 +57,15 @@ def actor_step(
     print(f'In actor step, passed in hidden state shape is: {hidden_state[1].shape}')
     
     done = nstate.done[:, None]  # get done flags (batch_size, num_envs)
-    new_hidden_state = (
-        jnp.where(done, info_hidden[0], hidden_state[0]), 
-        jnp.where(done, info_hidden[1], hidden_state[1])
-    )
+    # new_hidden_state = (
+    #     jnp.where(done, info_hidden[0], hidden_state[0]), 
+    #     jnp.where(done, info_hidden[1], hidden_state[1])
+    # )
+    
+    # need to use new hidden state, just hidden state no update
+    new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
+    # num_resets = jnp.sum(done)
+    # jax.debug.print("Number of hidden states replaced: {}", num_resets)
     
     print(f'In actor step, updated hidden state after reset hidden shape: {new_hidden_state[0].shape}')
 

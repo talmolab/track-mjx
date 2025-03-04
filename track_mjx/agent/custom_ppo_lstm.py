@@ -338,8 +338,8 @@ def train(
             extracts the last timestep (index -1) over unroll_length (20),
             and averages over minibatches (dim=0).
             """
-            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])  # (4, 20, 512, 128)
-            x = x[:, -1]  # take the last time step over unroll_length → (4, 512, 128)
+            x = jnp.reshape(x, (num_minibatches, unroll_length, batch_size, -1))  # (4, 20, 512, 128)
+            x = x[:, -1,:,:]  # take the last time step over unroll_length → (4, 512, 128)
             x = jnp.mean(x, axis=0)  # average over minibatches → (512, 128)
             return x
 
@@ -360,7 +360,9 @@ def train(
             shuffled_data, # scan this
             length=num_minibatches,
         )
-        return (optimizer_state, params, new_hidden_state, key), metrics # carry shape maintains, now updated
+        
+        # return hidden_state for shape consistent, not used later
+        return (optimizer_state, params, hidden_state, key), metrics # carry shape maintains, now updated
 
     def training_step(
         carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t

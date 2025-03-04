@@ -331,18 +331,32 @@ def train(
             x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
             return x
+        
+        def convert_hidden(x: jnp.ndarray):
+            """
+            Reshapes hidden state from (2048, 128) → (4, 20, 512, 128),
+            extracts the last timestep (index -1) over unroll_length (20),
+            and averages over minibatches (dim=0).
+            """
+            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])  # (4, 20, 512, 128)
+            x = x[:, -1]  # take the last time step over unroll_length → (4, 512, 128)
+            x = jnp.mean(x, axis=0)  # average over minibatches → (512, 128)
+            return x
 
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
+        converted_hidden_state = jax.tree_util.tree_map(convert_hidden, hidden_state)
+        
         
         #TODO: remove hidden state completely here, normally is just same output as input
         
         # Jax.lax.scan should scan through minibatches
         
         print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
+        print(f'In sgd step, shape of hidden after second reshape and into scanning is {converted_hidden_state[1].shape}')
         
         (optimizer_state, params, new_hidden_state, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
-            (optimizer_state, params, hidden_state, key_grad),
+            (optimizer_state, params, converted_hidden_state, key_grad),
             shuffled_data, # scan this
             length=num_minibatches,
         )
@@ -397,15 +411,16 @@ def train(
         )
         assert data.discount.shape[1:] == (unroll_length,)
         
-        print(f'In sgd step, data.observation shape after shaping is: {data.observation.shape}')
+        print(f'In training step, data.observation shape after shaping is: {data.observation.shape}')
         
         # convert hidden num_envs to mini_batch x batch  (num_envs, feature_dim) -> (minibatch_dim, batch_dim, feature_dim)
-        reshaped_new_hidden_state = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), backward_hidden_state)
+        # reshaped_new_hidden_state = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), backward_hidden_state)
         # Shape now: (2, 128, 1024) <-- (num_minibatches, batch_size, hidden_dim)
         
         reshaped_new_hidden_state = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (num_minibatches ,unroll_length, batch_size, -1)), reshaped_new_hidden_state
+            lambda x: jnp.reshape(x, (num_minibatches * batch_size, unroll_length, -1)), backward_hidden_state
         )
+        
         # Shape now: (4, 20, 512, 128)
 
         # Update normalization params and normalize observations.
@@ -416,7 +431,7 @@ def train(
         )
         
         print(f'In training step, state.done has shape: {state.done.shape}')
-        print(f'In training step, the updated  reshaped hidden state is: {reshaped_new_hidden_state[1].shape}')
+        print(f'In training step, the updated reshaped hidden state is: {reshaped_new_hidden_state[1].shape}')
         
         # techniqually, whatever sgd hidden returns doesn't matter
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
@@ -424,7 +439,7 @@ def train(
             (training_state.optimizer_state, training_state.params, reshaped_new_hidden_state, key_sgd), # should pass in new_hidden_state
             (),
             length=num_updates_per_batch,
-        )
+        ) # no specific scan axis
 
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,

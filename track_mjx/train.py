@@ -46,7 +46,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -163,7 +163,7 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = wrappers.RenderRolloutWrapperTracking(env)
+    rollout_env = wrappers.EvalClipResetWrapper(env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

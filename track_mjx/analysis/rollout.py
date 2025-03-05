@@ -77,7 +77,7 @@ def create_rollout_generator(
         Callable: A generate_rollout function that can be called with configuration.
     """
     # Wrap the environment
-    rollout_env = wrappers.RenderRolloutWrapperTracking(environment)
+    rollout_env = wrappers.EvalClipResetWrapper(environment)
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)
@@ -146,12 +146,12 @@ def create_rollout_generator(
             "joint_rewards": jax.vmap(lambda s: s.metrics["joint_reward"])(
                 rollout_states
             ),
-            "summed_pos_distances": jax.vmap(lambda s: s.info["summed_pos_distance"])(
-                rollout_states
-            ),
-            "joint_distances": jax.vmap(lambda s: s.info["joint_distance"])(
-                rollout_states
-            ),
+            # "summed_pos_distances": jax.vmap(lambda s: s.info["summed_pos_distance"])(
+            #     rollout_states
+            # ),
+            # "joint_distances": jax.vmap(lambda s: s.info["joint_distance"])(
+            #     rollout_states
+            # ),
             "torso_heights": jax.vmap(
                 lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
             )(rollout_states),

@@ -101,9 +101,8 @@ def compute_gae(
 
 def compute_ppo_loss(
     params: PPONetworkParams,
-    hidden_state: jnp.ndarray,
     normalizer_params: Any,
-    data: types.Transition,
+    data_and_hidden: tuple[types.Transition, tuple[jnp.ndarray, jnp.ndarray]],
     rng: jnp.ndarray,
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
@@ -119,7 +118,6 @@ def compute_ppo_loss(
 
     Args:
       params: Network parameters,
-      hidden_state: hidden state of lstm
       normalizer_params: Parameters of the normalizer.
       data: Transition that with leading dimension [B, T]. extra fields required
         are ['state_extras']['truncation'] ['policy_extras']['raw_action']
@@ -143,7 +141,10 @@ def compute_ppo_loss(
     parametric_action_distribution = ppo_network.parametric_action_distribution
     policy_apply = ppo_network.policy_network.apply
     value_apply = ppo_network.value_network.apply
-
+    
+    data = data_and_hidden[0]
+    hidden_state = data_and_hidden[1]
+    
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
     print(f'In loss function, the data shape is {data.observation.shape}')

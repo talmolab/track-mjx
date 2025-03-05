@@ -309,14 +309,14 @@ def train(
         data: types.Transition,
         normalizer_params: running_statistics.RunningStatisticsState,
     ):   
-        optimizer_state, params, hidden_state, key = carry
+        optimizer_state, params, key = carry
         
         key, key_loss = jax.random.split(key)
         (_, metrics), params, optimizer_state = gradient_update_fn(
-            params, hidden_state, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
+            params, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
         )
 
-        return (optimizer_state, params, hidden_state, key), metrics
+        return (optimizer_state, params, key), metrics
 
     def sgd_step(
         carry,
@@ -333,14 +333,7 @@ def train(
             return x
         
         def convert_hidden(x: jnp.ndarray):
-            """
-            Reshapes hidden state from (2048, 128) → (4, 20, 512, 128),
-            extracts the last timestep (index -1) over unroll_length (20),
-            and averages over minibatches (dim=0).
-            """
             x = jnp.reshape(x, (num_minibatches, unroll_length, batch_size, -1))  # (4, 20, 512, 128)
-            x = x[:, -1,:,:]  # take the last time step over unroll_length → (4, 512, 128)
-            x = jnp.mean(x, axis=0)  # average over minibatches → (512, 128)
             return x
 
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
@@ -354,10 +347,10 @@ def train(
         print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
         print(f'In sgd step, shape of hidden after second reshape and into scanning is {converted_hidden_state[1].shape}')
         
-        (optimizer_state, params, new_hidden_state, _), metrics = jax.lax.scan(
+        (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
-            (optimizer_state, params, converted_hidden_state, key_grad),
-            shuffled_data, # scan this
+            (optimizer_state, params, key_grad),
+            (shuffled_data, converted_hidden_state), # scan this combo
             length=num_minibatches,
         )
         
@@ -422,8 +415,7 @@ def train(
         reshaped_new_hidden_state = jax.tree_util.tree_map(
             lambda x: jnp.reshape(x, (num_minibatches * batch_size, unroll_length, -1)), backward_hidden_state
         )
-        
-        # Shape now: (4, 20, 512, 128)
+        # Shape now: (2048, 20, 128)
 
         # Update normalization params and normalize observations.
         normalizer_params = running_statistics.update(
@@ -502,9 +494,6 @@ def train(
     
     # All init here, this policy_network is class of IntentionNetwork
     dummy_hidden_state = env_state.info["hidden_state"]
-    # dummy_hidden_state_squeeze = (jnp.squeeze(dummy_hidden_state[0], axis=0),
-    #                               jnp.squeeze(dummy_hidden_state[1], axis=0))
-    
     dummy_hidden_state_squeeze = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), dummy_hidden_state)
     
     # dummy_hidden_state_squeeze = nn.LSTMCell(features=128).initialize_carry(

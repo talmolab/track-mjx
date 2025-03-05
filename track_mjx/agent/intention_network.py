@@ -119,6 +119,7 @@ class IntentionNetwork(nn.Module):
                 {
                     "encoder": encoder_activations,
                     "decoder": decoder_activations,
+                    "decoder_inputs": concatenated,
                     "intention": z,
                 },
             )

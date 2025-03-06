@@ -78,7 +78,7 @@ def create_rollout_generator(
     """
     ref_traj_config = cfg["reference_config"]
     # Wrap the environment
-    rollout_env = wrappers.RenderRolloutWrapperTracking(environment)
+    rollout_env = wrappers.EvalClipResetWrapper(environment)
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)

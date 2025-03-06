@@ -34,6 +34,11 @@ dependencies = [
     "hydra-core",
     "h5py",
     "numba",
+    "scikit-learn",
+    "seaborn",
+    "matplotlib",
+    "pandas",
+    "numpy",
     ]
 
 dynamic = ["version", "readme"]

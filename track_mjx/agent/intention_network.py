@@ -104,49 +104,86 @@ class IntentionNetwork(nn.Module):
     def __call__(self, obs, key, get_activation: bool = False):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
-        
+
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(traj, get_activation=True)
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
-            action, decoder_activations = self.decoder(concatenated, get_activation=True)
-            return action, latent_mean, latent_logvar, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
+            action_param, decoder_activations = self.decoder(
+                concatenated, get_activation=True
+            )
+            return (
+                action_param,
+                latent_mean,
+                latent_logvar,
+                {
+                    "encoder": encoder_activations,
+                    "decoder": decoder_activations,
+                    "decoder_inputs": concatenated,
+                    "intention": z,
+                },
+            )
         else:
             latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            action = self.decoder(
+            action_param = self.decoder(
                 jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             )
-            return action, latent_mean, latent_logvar
+            return action_param, latent_mean, latent_logvar
+
+
+@dataclasses.dataclass
+class FeedForwardNetwork(networks.FeedForwardNetwork):
+    """
+    FeedForwardNetwork with intention module.
+    """
+
+    policy_module: IntentionNetwork
 
 
 def make_intention_policy(
-    param_size: int,
+    action_param_size: int,
     latent_size: int,
     total_obs_size: int,
     reference_obs_size: int,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
-) -> networks.FeedForwardNetwork:
-    """Creates an intention policy network."""
+) -> FeedForwardNetwork:
+    """
+    Create a policy network with intention module.
+
+    Args:
+        action_param_size (int): the parameter size of the action space, usually double of the action size to model both the mean and variance of the action distribution
+        latent_size (int): the size of the latent space
+        total_obs_size (int): the total size of observations
+        reference_obs_size (int): the size of reference observations
+        preprocess_observations_fn (types.PreprocessObservationFn, optional): function to preprocess observations. Defaults to types.identity_observation_preprocessor.
+        encoder_hidden_layer_sizes (Sequence[int], optional): sizes of encoder hidden layers. Defaults to (1024, 1024).
+        decoder_hidden_layer_sizes (Sequence[int], optional): sizes of decoder hidden layers. Defaults to (1024, 1024).
+
+    Returns:
+        networks.FeedForwardNetwork: the created policy network
+    """
 
     policy_module = IntentionNetwork(
         encoder_layers=list(encoder_hidden_layer_sizes),
-        decoder_layers=list(decoder_hidden_layer_sizes) + [param_size],
+        decoder_layers=list(decoder_hidden_layer_sizes)
+        + [action_param_size],  # add action size to the last layer
         reference_obs_size=reference_obs_size,
         latents=latent_size,
     )
 
     def apply(processor_params, policy_params, obs, key, get_activation: bool = False):
-        """Applies the policy network with observation normalizer."""
+        """Applies the policy network with observation normalizer, the output is the action distribution parameters."""
         obs = preprocess_observations_fn(obs, processor_params)
         return policy_module.apply(policy_params, obs=obs, key=key, get_activation=get_activation)
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)
 
-    return networks.FeedForwardNetwork(
+    return FeedForwardNetwork(
         init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
         apply=apply,
+        policy_module=policy_module,
     )

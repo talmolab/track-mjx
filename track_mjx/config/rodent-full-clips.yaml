@@ -58,18 +58,18 @@ train_setup:
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 20_000_000
+  eval_every: 50_000_000
   episode_length: 200
-  reset_every: 20_000_000
+  reset_every: 50_000_000
   train_config:
-    num_envs: 1024
-    num_timesteps: 10_000_000_000
+    num_envs: 2048
+    num_timesteps: 15_000_000_000
     batch_size: 512
     num_minibatches: 4
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2     
-    discounting: 0.95        
+    discounting: 0.95
     action_repeat: 1
     entropy_cost: 1e-2
     reward_scaling: 1

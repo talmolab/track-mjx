@@ -328,20 +328,18 @@ def train(
         key, key_perm, key_grad = jax.random.split(key, 3)
 
         def convert_data(x: jnp.ndarray):
-            x = jax.random.permutation(key_perm, x)
+            # x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
             return x
         
         def convert_hidden(x: jnp.ndarray):
-            x = jnp.reshape(x, (num_minibatches, unroll_length, batch_size, -1))  # (4, 20, 512, 128)
+            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])  # (4, 20, 512, 128)
             return x
 
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
         converted_hidden_state = jax.tree_util.tree_map(convert_hidden, hidden_state)
         
-        
         #TODO: remove hidden state completely here, normally is just same output as input
-        
         # Jax.lax.scan should scan through minibatches
         
         print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')

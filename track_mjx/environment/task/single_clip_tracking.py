@@ -82,6 +82,8 @@ class SingleClipTracking(PipelineEnv):
         ) / physics_steps_per_control_step
         print(f"env._steps_for_cur_frame: {self._steps_for_cur_frame}")
 
+        self._clip_length = clip_length
+        self._random_init_range = random_init_range
         self._mocap_hz = mocap_hz
         self._reward_config = reward_config
         self._reference_clip = reference_clip
@@ -97,17 +99,10 @@ class SingleClipTracking(PipelineEnv):
         Returns:
             State: The reset environment state.
         """
-        _, start_rng, rng = jax.random.split(rng, 3)
-
-        episode_length = (
-            clip_length - random_init_range - traj_length
-        ) * self._steps_for_cur_frame
-
-        frame_range = clip_length - episode_length - traj_length
-        start_frame = jax.random.randint(start_rng, (), 0, frame_range)
+        _, rng = jax.random.split(rng)
 
         info = {
-            "start_frame": start_frame,
+            "start_frame": 0,
             "prev_ctrl": jp.zeros((self.sys.nv,)),
         }
 

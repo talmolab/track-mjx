@@ -162,7 +162,10 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = wrappers.RenderRolloutWrapperTracking(env)
+    if type(env) == MultiClipTracking:
+        rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(env)
+    elif type(env) == SingleClipTracking:
+        rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

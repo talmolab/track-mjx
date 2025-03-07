@@ -26,6 +26,9 @@ from jax import numpy as jp
 from track_mjx.environment import wrappers
 from brax.envs.base import Env
 
+from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
+from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+
 
 def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):
     """Logs a table of values and its line plot to wandb.
@@ -257,7 +260,10 @@ def render_rollout(
     walker_config = cfg["walker_config"]
 
     # Wrap the env in the brax autoreset and episode wrappers
-    rollout_env = wrappers.RenderRolloutWrapperTracking(env)
+    if type(env) == MultiClipTracking:
+        rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(env)
+    elif type(env) == SingleClipTracking:
+        rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

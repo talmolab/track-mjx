@@ -80,17 +80,15 @@ def make_singleclip_data(traj_data_path):
         qvel = jp.array(data["qvel"][()])
         xpos = jp.array(data["xpos"][()])
         xquat = jp.array(data["xquat"][()])
-        return (
-            ReferenceClip(
-                position=qpos[:, :3],
-                quaternion=qpos[:, 3:7],
-                joints=qpos[:, 7:],
-                body_positions=xpos,
-                velocity=qvel[:, :3],
-                angular_velocity=qvel[:, 3:6],
-                joints_velocity=qvel[:, 6:],
-                body_quaternions=xquat,
-            ),
+        return ReferenceClip(
+            position=qpos[:, :3],
+            quaternion=qpos[:, 3:7],
+            joints=qpos[:, 7:],
+            body_positions=xpos,
+            velocity=qvel[:, :3],
+            angular_velocity=qvel[:, 3:6],
+            joints_velocity=qvel[:, 6:],
+            body_quaternions=xquat,
         )
 
 

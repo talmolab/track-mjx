@@ -125,11 +125,12 @@ class IntentionNetwork(nn.Module):
     decoder_layers: Sequence[int]
     reference_obs_size: int
     latents: int = 60
+    hidden_states: int = 128
 
     def setup(self):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
-        self.lstm_decoder = LSTMDecoder(layer_sizes=self.decoder_layers, hidden_dim=128) #TODO: hard codeed now, change it later
+        self.lstm_decoder = LSTMDecoder(layer_sizes=self.decoder_layers, hidden_dim=self.hidden_states)
 
     def __call__(self, obs, key, hidden_state, get_activation, use_lstm):
         _, encoder_rng = jax.random.split(key)
@@ -141,9 +142,11 @@ class IntentionNetwork(nn.Module):
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             
             if use_lstm:
+                print('Using LSTM + Activation')
                 action, new_hidden_state, decoder_activations = self.lstm_decoder(concatenated, hidden_state, get_activation=get_activation)
                 return action, latent_mean, latent_logvar, new_hidden_state, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
             else:
+                print('Using MLP + Activation')
                 action, decoder_activations = self.decoder(concatenated, get_activation=get_activation)
                 return action, latent_mean, latent_logvar, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
         else:
@@ -156,6 +159,7 @@ class IntentionNetwork(nn.Module):
                 return action, latent_mean, latent_logvar, new_hidden_state
             
             else:
+                print('Just MLP, no Activation')
                 action = self.decoder(
                     jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
                 )
@@ -165,6 +169,7 @@ class IntentionNetwork(nn.Module):
 def make_intention_policy(
     param_size: int,
     latent_size: int,
+    hidden_state_size: int,
     total_obs_size: int,
     reference_obs_size: int,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
@@ -180,12 +185,8 @@ def make_intention_policy(
         decoder_layers=list(decoder_hidden_layer_sizes) + [param_size],
         reference_obs_size=reference_obs_size,
         latents=latent_size,
+        hidden_states=hidden_state_size
     )
-
-    # def apply(processor_params, policy_params, obs, key, get_activation: bool = False):
-    #     """Applies the policy network with observation normalizer."""
-    #     obs = preprocess_observations_fn(obs, processor_params)
-    #     return policy_module.apply(policy_params, obs=obs, key=key, get_activation=get_activation)
     
     def apply(processor_params, policy_params, obs, key, hidden_state, get_activation, use_lstm):
         """Applies the policy network with observation normalizer."""
@@ -195,9 +196,6 @@ def make_intention_policy(
     # dummy variables here, actual pass in in training loops
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)
-    # dummy_hidden_state = nn.LSTMCell(features=128).initialize_carry(
-    #     jax.random.PRNGKey(0), (1,)
-    # )
     
     # lambda function here to pass in hidden from training loop
     return networks.FeedForwardNetwork(

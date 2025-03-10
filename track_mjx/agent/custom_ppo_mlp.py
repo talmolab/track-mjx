@@ -19,7 +19,7 @@ See: https://arxiv.org/pdf/1707.06347.pdf
 
 import functools
 import time
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union, Sequence
 
 from absl import logging
 from brax import base
@@ -39,6 +39,9 @@ from track_mjx.agent import custom_losses as ppo_losses
 from track_mjx.agent import custom_ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
+from brax.training.types import Metrics
+from brax.training.types import Policy
+from brax.training.types import Transition
 from brax.v1 import envs as envs_v1
 import flax
 import flax.struct
@@ -50,6 +53,8 @@ import orbax.checkpoint as ocp
 from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
+
+from flax import linen as nn
 
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -119,6 +124,8 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
+    get_activation: bool = True,
+    use_lstm: bool = True,
 ):
     """PPO training.
 
@@ -172,6 +179,9 @@ def train(
         to the checkpoint
       config_dict: a dictionary that contains the configuration for the training,
         will be saved to the orbax checkpoint alongside with the policy and training state
+      get_activation: boolean argument indicating for getting activations of all of
+        the networks
+      use_lstm: boolean argument for using an LSTM decoder
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -238,12 +248,14 @@ def train(
         wrap_for_training = custom_wrappers.wrap
     else:
         wrap_for_training = envs_v1.wrappers.wrap_for_training
-
+    
+    #TODO: make it work for both lstm and mlp
     env = wrap_for_training(
         environment,
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
+        use_lstm=use_lstm,
     )
 
     reset_fn = jax.jit(jax.vmap(env.reset))
@@ -254,16 +266,20 @@ def train(
     normalize = lambda x, y: x
     if normalize_observations:
         normalize = running_statistics.normalize
+    
+    # lstm and activation argument passed in here
     ppo_network = network_factory(
         env_state.obs.shape[-1],
         int(_unpmap(env_state.info["reference_obs_size"])[0]),
         env.action_size,
         preprocess_observations_fn=normalize,
+        get_activation=get_activation,
+        use_lstm=use_lstm,
     )
-    make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
+    make_policy = custom_ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
 
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True, get_activation=False, use_lstm=use_lstm,))
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -277,21 +293,25 @@ def train(
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
+        use_lstm=use_lstm, # add args here
     )
-
+    
+    # use brax gradient function now
     gradient_update_fn = gradients.gradient_update_fn(
         loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
-    )
-
+        ) # partial loss here, this would inherent parameters from loss_fn
+        
+    
     def minibatch_step(
         carry,
         data: types.Transition,
         normalizer_params: running_statistics.RunningStatisticsState,
-    ):
+    ):   
         optimizer_state, params, key = carry
+        
         key, key_loss = jax.random.split(key)
         (_, metrics), params, optimizer_state = gradient_update_fn(
-            params, normalizer_params, data, key_loss, optimizer_state=optimizer_state
+            params, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
         )
 
         return (optimizer_state, params, key), metrics
@@ -307,28 +327,33 @@ def train(
 
         def convert_data(x: jnp.ndarray):
             x = jax.random.permutation(key_perm, x)
-            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
+            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
             return x
-
+        
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
+        
+        # Jax.lax.scan should scan through minibatches
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, key_grad),
-            shuffled_data,
+            shuffled_data, # scan this one thing
             length=num_minibatches,
         )
+        
         return (optimizer_state, params, key), metrics
 
     def training_step(
         carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t
     ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey], Metrics]:
+        
         training_state, state, key = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
         policy = make_policy(
-            (training_state.normalizer_params, training_state.params.policy)
+            params=(training_state.normalizer_params, training_state.params.policy), get_activation=get_activation, use_lstm=use_lstm, # pass in here
         )
 
+        #TODO: make this embeded in custom_ppo
         def f(carry, unused_t):
             current_state, current_key = carry
             current_key, next_key = jax.random.split(current_key)
@@ -340,14 +365,17 @@ def train(
                 unroll_length,
                 extra_fields=("truncation",),
             )
+            
             return (next_state, next_key), data
-
+        
+        
         (state, _), data = jax.lax.scan(
             f,
             (state, key_generate_unroll),
             (),
             length=batch_size * num_minibatches // num_envs,
         )
+        
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(
@@ -361,13 +389,13 @@ def train(
             data.observation,
             pmap_axis_name=_PMAP_AXIS_NAME,
         )
-
+        
         (optimizer_state, params, _), metrics = jax.lax.scan(
-            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
+            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params), 
             (training_state.optimizer_state, training_state.params, key_sgd),
             (),
             length=num_updates_per_batch,
-        )
+        ) # no specific scan axis
 
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,
@@ -388,6 +416,7 @@ def train(
             (),
             length=num_training_steps_per_epoch,
         )
+        
         loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
@@ -423,11 +452,12 @@ def train(
             env_state,
             metrics,
         )  # pytype: disable=bad-return-type  # py311-upgrade
-
+    
     init_params = ppo_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key_policy),
+        policy=ppo_network.policy_network.init(key=key_policy, hidden_state=None), # policy network here is an function to be instantiated
         value=ppo_network.value_network.init(key_value),
     )
+    
     training_state = TrainingState(  # pytype: disable=wrong-arg-types  # jax-ndarray
         optimizer_state=optimizer.init(
             init_params
@@ -466,16 +496,20 @@ def train(
         v_randomization_fn = functools.partial(
             randomization_fn, rng=jax.random.split(eval_key, num_eval_envs)
         )
+        
     eval_env = wrap_for_training(
         eval_env,
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
     )
-
+    
     evaluator = acting.Evaluator(
         eval_env,
-        functools.partial(make_policy, deterministic=deterministic_eval),
+        functools.partial(make_policy,
+                          deterministic=deterministic_eval,
+                          get_activation=get_activation,
+                          use_lstm=use_lstm,),
         num_eval_envs=num_eval_envs,
         episode_length=episode_length,
         action_repeat=action_repeat,
@@ -546,7 +580,7 @@ def train(
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=it,
-                jit_logging_inference_fn=jit_logging_inference_fn,
+                jit_logging_inference_fn=jit_logging_inference_fn, # takes in jitted logging inference
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )

@@ -53,7 +53,7 @@ import orbax.checkpoint as ocp
 from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
-from track_mjx.agent import acting_lstm as acting
+from track_mjx.agent.lstm_utils import acting_lstm as acting
 # from track_mjx.agent import gradients_lstm as gradients
 
 from flax import linen as nn
@@ -258,6 +258,8 @@ def train(
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
+        use_lstm=use_lstm,
+        hidden_state_dim=config_dict['network_config']['hidden_state_size']
     )
 
     reset_fn = jax.jit(jax.vmap(env.reset))
@@ -326,18 +328,20 @@ def train(
     ):
         optimizer_state, params, hidden_state, key = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
-
-        def convert_data(x: jnp.ndarray):
-            # x = jax.random.permutation(key_perm, x)
-            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
+        
+        def convert_data(x: jnp.ndarray, perm: jnp.ndarray):
+            print(f'In SGD step converting datt/hidden, X shape is: {x.shape}')
+            x = x[perm] # (2048, 20, 128)
+            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
             return x
         
-        def convert_hidden(x: jnp.ndarray):
-            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])  # (4, 20, 512, 128)
-            return x
-
-        shuffled_data = jax.tree_util.tree_map(convert_data, data)
-        converted_hidden_state = jax.tree_util.tree_map(convert_hidden, hidden_state)
+        indices = jnp.arange(data.observation.shape[0])
+        perm = jax.random.permutation(key_perm, indices)
+        # jax.debug.print("Indicies: {}", indices)
+        # jax.debug.print("Perm: {}", perm)
+        
+        shuffled_data = jax.tree_util.tree_map(lambda x: convert_data(x, perm), data)
+        converted_hidden_state = jax.tree_util.tree_map(lambda x: convert_data(x, perm), hidden_state)
         
         #TODO: remove hidden state completely here, normally is just same output as input
         # Jax.lax.scan should scan through minibatches

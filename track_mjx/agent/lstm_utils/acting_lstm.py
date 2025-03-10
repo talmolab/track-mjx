@@ -29,7 +29,6 @@ import numpy as np
 import jax.numpy as jnp
 from flax import linen as nn
 
-# LSTM stuff
 State = Union[envs.State, envs_v1.State]
 Env = Union[envs.Env, envs_v1.Env, envs_v1.Wrapper]
 
@@ -38,15 +37,14 @@ def actor_step(
     env_state: State,
     policy: Policy,
     key: PRNGKey,
-    hidden_state: jnp.ndarray,
+    hidden_state: tuple[jnp.ndarray, jnp.ndarray],
     extra_fields: Sequence[str] = ()
-) -> Tuple[State, Transition, jnp.ndarray]:
+) -> tuple[State, Transition, jnp.ndarray]:
     """Collect data and update LSTM hidden state."""
     
     print(f'In actor step, state obs shape is: {env_state.obs.shape}')
     
-    actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state)  
-    # ensure policy now returns the updated LSTM hidden state
+    actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state) # ensure policy now returns the updated LSTM hidden state
     
     # print(f'In actor step, new action shape is: {actions.shape}')
     nstate = env.step(env_state, actions)
@@ -57,14 +55,11 @@ def actor_step(
     print(f'In actor step, passed in hidden state shape is: {hidden_state[1].shape}')
     
     done = nstate.done[:, None]  # get done flags (batch_size, num_envs)
-    # new_hidden_state = (
-    #     jnp.where(done, info_hidden[0], hidden_state[0]), 
-    #     jnp.where(done, info_hidden[1], hidden_state[1])
-    # )
     
-    # need to use new hidden state, just hidden state no update
+    # need to use new hidden state
     new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
-    num_resets = jnp.sum(done)
+    
+    # num_resets = jnp.sum(done)
     # jax.debug.print("Number of hidden states replaced: {}", num_resets)
     
     print(f'In actor step, updated hidden state after reset hidden shape: {new_hidden_state[0].shape}')
@@ -87,10 +82,10 @@ def generate_unroll(
     env_state: State,
     policy: Policy,
     key: PRNGKey,
-    hidden_state: jnp.ndarray,
+    hidden_state: tuple[jnp.ndarray, jnp.ndarray],
     unroll_length: int,
     extra_fields: Sequence[str] = ()
-) -> Tuple[State, Transition, jnp.ndarray]:
+) -> tuple[State, Transition, jnp.ndarray]:
     """Collect trajectories of given unroll_length while tracking LSTM state."""
 
     @jax.jit
@@ -139,8 +134,8 @@ class Evaluator:
         eval_env = envs.training.EvalWrapper(eval_env)
 
         def generate_eval_unroll(policy_params: PolicyParams,
-                                 hidden_state: jnp.ndarray,
-                                 key: PRNGKey) -> Tuple[State, Tuple[jnp.ndarray, jnp.ndarray]]:
+                                 hidden_state: tuple[jnp.ndarray, jnp.ndarray],
+                                 key: PRNGKey) -> tuple[State, tuple[jnp.ndarray, jnp.ndarray]]:
             reset_keys = jax.random.split(key, num_eval_envs)
             eval_first_state = eval_env.reset(reset_keys)
             
@@ -166,7 +161,7 @@ class Evaluator:
 
     def run_evaluation(self,
                        policy_params: PolicyParams,
-                       hidden_state: jnp.ndarray,
+                       hidden_state: tuple[jnp.ndarray, jnp.ndarray],
                        training_metrics: Metrics,
                        aggregate_episodes: bool = True) -> Metrics:
         """Run one epoch of evaluation with LSTM tracking."""

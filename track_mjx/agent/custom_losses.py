@@ -142,12 +142,17 @@ def compute_ppo_loss(
     policy_apply = ppo_network.policy_network.apply
     value_apply = ppo_network.value_network.apply
     
-    data = data_and_hidden[0]
-    hidden_state = data_and_hidden[1]
+    if use_lstm:
+      data = data_and_hidden[0]
+      hidden_state = data_and_hidden[1]
+      
+      # Put the time dimension first.
+      data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+      hidden_state = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), hidden_state)
     
-    # Put the time dimension first.
-    data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    hidden_state = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), hidden_state)
+    else:
+      data = data_and_hidden
+      data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
     
     print(f'In loss function, the data shape is {data.observation.shape}')
     

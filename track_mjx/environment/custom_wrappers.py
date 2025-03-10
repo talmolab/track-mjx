@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional
 
 from brax.base import System
 from brax.envs.base import Env, State, Wrapper
@@ -17,7 +17,9 @@ def wrap(
     env: Env,
     episode_length: int = 1000,
     action_repeat: int = 1,
-    randomization_fn: Optional[Callable[[System], Tuple[System, System]]] = None,
+    randomization_fn: Optional[Callable[[System], tuple[System, System]]] = None,
+    use_lstm: bool = True,
+    hidden_state_dim: int = 128,
 ) -> Wrapper:
     """Common wrapper pattern for all training agents.
 
@@ -27,6 +29,8 @@ def wrap(
       action_repeat: how many repeated actions to take per step
       randomization_fn: randomization function that produces a vectorized system
         and in_axes to vmap over
+      use_lstm: boolean argument for using lstm
+      hidden_state_dim: number of hidden states in lstm setting
 
     Returns:
       An environment that is wrapped with Episode and AutoReset wrappers.  If the
@@ -38,8 +42,12 @@ def wrap(
         env = VmapWrapper(env)
     else:
         env = DomainRandomizationVmapWrapper(env, randomization_fn)
-    env = LSTMAutoResetWrapperTracking(env, lstm_features=128)
-    # env = AutoResetWrapperTracking(env)
+    
+    if use_lstm:
+        env = LSTMAutoResetWrapperTracking(env, lstm_features=hidden_state_dim)
+    else:
+        env = AutoResetWrapperTracking(env)
+        
     return env
 
 
@@ -51,7 +59,7 @@ class LSTMAutoResetWrapperTracking(Wrapper):
         super().__init__(env)
         self.lstm_features = lstm_features
 
-    def initialize_hidden_state(self, rng: jax.Array, num_envs: int) -> Tuple[jp.ndarray, jp.ndarray]:
+    def initialize_hidden_state(self, rng: jax.Array, num_envs: int) -> tuple[jp.ndarray, jp.ndarray]:
         """Initializes LSTM hidden state (h_t, c_t) for each environment."""
         lstm_cell = nn.LSTMCell(features=self.lstm_features)
         return lstm_cell.initialize_carry(rng, (num_envs, self.lstm_features))  # shape: (num_envs, hidden_dim)

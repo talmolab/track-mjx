@@ -22,8 +22,8 @@ import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-# from track_mjx.agent import custom_ppo
-from track_mjx.agent import custom_ppo_lstm as custom_ppo # lstm training here
+from track_mjx.agent import custom_ppo_mlp
+from track_mjx.agent import custom_ppo_lstm
 import warnings
 from jax import numpy as jp
 
@@ -145,6 +145,11 @@ def main(cfg: DictConfig):
     ) * env._steps_for_cur_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
+    
+    if cfg.architecture == 'lstm':
+        custom_ppo = custom_ppo_lstm
+    elif cfg.architecture == 'mlp':
+        custom_ppo = custom_ppo_mlp
 
     train_fn = functools.partial(
         custom_ppo.train,
@@ -157,6 +162,8 @@ def main(cfg: DictConfig):
         kl_weight=cfg.network_config.kl_weight,
         network_factory=functools.partial(
             custom_ppo_networks.make_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            hidden_state_size=cfg.network_config.hidden_state_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
@@ -199,7 +206,7 @@ def main(cfg: DictConfig):
     make_inference_fn, params, _ = train_fn(
         environment=env,
         progress_fn=wandb_progress,
-        policy_params_fn=policy_params_fn,# fill in the rest in training
+        policy_params_fn=policy_params_fn, # fill in the rest in training
     )
 
 

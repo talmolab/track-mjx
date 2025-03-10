@@ -5,7 +5,7 @@ to proper places in the network in the case of the VAE (CoMic, Hasenclever 2020)
 """
 
 import dataclasses
-from typing import Any, Callable, Sequence, Tuple
+from typing import Any, Callable, Sequence, Tuple, Optional
 import warnings
 
 from brax.training import networks
@@ -46,7 +46,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
         def policy(
             observations: types.Observation,
             key_sample: PRNGKey,
-            hidden_state: jnp.ndarray,
+            hidden_state: Optional[tuple[jnp.ndarray, jnp.ndarray]] = None,
         ) -> Tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
@@ -166,6 +166,7 @@ def make_intention_ppo_networks(
     action_size: int,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     intention_latent_size: int = 60,
+    hidden_state_size: int = 128,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
@@ -179,6 +180,7 @@ def make_intention_ppo_networks(
     policy_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,
+        hidden_state_size=hidden_state_size,
         total_obs_size=observation_size,
         reference_obs_size=reference_obs_size,
         preprocess_observations_fn=preprocess_observations_fn,

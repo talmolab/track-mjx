@@ -16,7 +16,6 @@ from brax import envs
 from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
 
-from track_mjx.agent import custom_ppo
 from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent import custom_losses
 from brax.io import model
@@ -162,21 +161,27 @@ def rollout_logging_fn(
 
     ref_trak_config = cfg["reference_config"]
     env_config = cfg["env_config"]
-    num_envs =cfg['train_setup']['train_config']
+    train_config =cfg['train_setup']['train_config']
+    network_config = cfg["network_config"]
 
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
 
     state = jit_reset(reset_rng)
     
-    hidden_state = nn.LSTMCell(features=128).initialize_carry(
-        jax.random.PRNGKey(0), (num_envs,)
+    hidden_state = nn.LSTMCell(features=network_config['hidden_state_size']).initialize_carry(
+        jax.random.PRNGKey(0), (train_config['num_envs'],)
     )
 
     rollout = [state]
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        ctrl, extras, hidden_state = jit_logging_inference_fn(params, obs, act_rng, hidden_state)
+        
+        if train_config['use_lstm']:
+            ctrl, extras, hidden_state = jit_logging_inference_fn(params, obs, act_rng, hidden_state)
+        else:
+            ctrl, extras,  = jit_logging_inference_fn(params, obs, act_rng, None)
+            
         state = jit_step(state, ctrl)
         rollout.append(state)
 

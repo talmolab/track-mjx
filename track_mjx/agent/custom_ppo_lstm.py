@@ -330,7 +330,7 @@ def train(
         key, key_perm, key_grad = jax.random.split(key, 3)
         
         def convert_data(x: jnp.ndarray, perm: jnp.ndarray):
-            print(f'In SGD step converting datt/hidden, X shape is: {x.shape}')
+            # print(f'In SGD step converting datt/hidden, X shape is: {x.shape}')
             x = x[perm] # (2048, 20, 128)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
             return x
@@ -343,9 +343,7 @@ def train(
         shuffled_data = jax.tree_util.tree_map(lambda x: convert_data(x, perm), data)
         converted_hidden_state = jax.tree_util.tree_map(lambda x: convert_data(x, perm), hidden_state)
         
-        #TODO: remove hidden state completely here, normally is just same output as input
         # Jax.lax.scan should scan through minibatches
-        
         print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
         print(f'In sgd step, shape of hidden after second reshape and into scanning is {converted_hidden_state[1].shape}')
         
@@ -410,14 +408,9 @@ def train(
         
         print(f'In training step, data.observation shape after shaping is: {data.observation.shape}')
         
-        # convert hidden num_envs to mini_batch x batch  (num_envs, feature_dim) -> (minibatch_dim, batch_dim, feature_dim)
-        # reshaped_new_hidden_state = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), backward_hidden_state)
-        # Shape now: (2, 128, 1024) <-- (num_minibatches, batch_size, hidden_dim)
-        
         reshaped_new_hidden_state = jax.tree_util.tree_map(
             lambda x: jnp.reshape(x, (num_minibatches * batch_size, unroll_length, -1)), backward_hidden_state
-        )
-        # Shape now: (2048, 20, 128)
+        ) # Shape now: (2048, 20, 128)
 
         # Update normalization params and normalize observations.
         normalizer_params = running_statistics.update(

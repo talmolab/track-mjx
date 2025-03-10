@@ -68,9 +68,16 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             if deterministic:
                 # returning hidden_states here
                 if get_activation:
-                    return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}, hidden_states
+                    if use_lstm:
+                        return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}, hidden_states
+                    else:
+                        return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}
                 
-                return ppo_networks.parametric_action_distribution.mode(logits), {}, hidden_states
+                else:
+                    if use_lstm:
+                        return ppo_networks.parametric_action_distribution.mode(logits), {}, hidden_states
+                    else:
+                        return ppo_networks.parametric_action_distribution.mode(logits), {}
 
             # action sampling is happening here, according to distribution parameter logits
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
@@ -84,15 +91,26 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 raw_actions
             )
             
-            return postprocessed_actions, {
-                # "latent_mean": latent_mean,
-                # "latent_logvar": latent_logvar,
-                "log_prob": log_prob,
-                "raw_action": raw_actions,
-                "logits": logits,
-                "activations": activations,
-                "hidden_states": hidden_states,
-            }, hidden_state
+            if use_lstm:
+                return postprocessed_actions, {
+                    # "latent_mean": latent_mean,
+                    # "latent_logvar": latent_logvar,
+                    "log_prob": log_prob,
+                    "raw_action": raw_actions,
+                    "logits": logits,
+                    "activations": activations,
+                    "hidden_states": hidden_states,
+                }, hidden_state
+            else:
+                return postprocessed_actions, {
+                    # "latent_mean": latent_mean,
+                    # "latent_logvar": latent_logvar,
+                    "log_prob": log_prob,
+                    "raw_action": raw_actions,
+                    "logits": logits,
+                    "activations": activations,
+                }
+                
 
         return policy
 
@@ -137,7 +155,10 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
                 )
 
             if deterministic:
-                return ppo_networks.parametric_action_distribution.mode(logits), {}, hidden_states
+                if use_lstm:
+                    return ppo_networks.parametric_action_distribution.mode(logits), {}, hidden_states
+                else:
+                    return ppo_networks.parametric_action_distribution.mode(logits), {}
 
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
                 logits, key_sample
@@ -145,14 +166,23 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
             postprocessed_actions = parametric_action_distribution.postprocess(raw_actions)
 
-            return postprocessed_actions, {
-                # "latent_mean": latent_mean,
-                # "latent_logvar": latent_logvar,
-                "log_prob": log_prob,
-                "raw_action": raw_actions,
-                "logits": logits,
-                "hidden_states": hidden_states,
-            }, hidden_states
+            if use_lstm:
+                return postprocessed_actions, {
+                    # "latent_mean": latent_mean,
+                    # "latent_logvar": latent_logvar,
+                    "log_prob": log_prob,
+                    "raw_action": raw_actions,
+                    "logits": logits,
+                    "hidden_states": hidden_states,
+                }, hidden_states
+            else:
+                return postprocessed_actions, {
+                    # "latent_mean": latent_mean,
+                    # "latent_logvar": latent_logvar,
+                    "log_prob": log_prob,
+                    "raw_action": raw_actions,
+                    "logits": logits,
+                }
 
         return logging_policy
 

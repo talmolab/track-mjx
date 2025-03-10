@@ -164,7 +164,7 @@ def compute_ppo_loss(
         
     else:
       policy_logits, latent_mean, latent_logvar = policy_apply(
-        normalizer_params, params.policy, data.observation, policy_key
+      normalizer_params, params.policy, data.observation, policy_key, None, get_activation=False, use_lstm=use_lstm
       )
 
     baseline = value_apply(normalizer_params, params.value, data.observation)

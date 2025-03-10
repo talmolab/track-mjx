@@ -7,12 +7,12 @@
 		<texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
 		<material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
 		<material name="ghost_material" rgba="1 1 1 0.3" specular="0" shininess="0"/>
-		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Scapula_right_v3.stl"/>
-		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Humerus_right_v3.stl"/>
-		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Clavicle_right_v3.stl"/>
-		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Ulna_right_v3.stl"/>
-		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Radius_right_v3.stl"/>
-		<mesh file="/root/vast/joshua/stac-mjx/meshes/stl/Bone_Segments_Hand.stl"/>
+		<mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Scapula_right_v3.stl"/>
+		<mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Humerus_right_v3.stl"/>
+		<mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Clavicle_right_v3.stl"/>
+		<mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Ulna_right_v3.stl"/>
+		<mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Radius_right_v3.stl"/>
+		<mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Segments_Hand.stl"/>
 	</asset>
 	<worldbody>
 		<light directional="true"/>

@@ -56,7 +56,7 @@ def load_training_state(
 
 
 def load_checkpoint_for_eval(
-    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
+    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None
 ):
     """Load a checkpoint's config and policy. Creates an abstract state to define structure.
 
@@ -74,6 +74,7 @@ def load_checkpoint_for_eval(
         step = ckpt_mgr.latest_step()
 
     logging.info(f"Loading checkpoint from {checkpoint_path} at step {step}")
+    print(f"Loading checkpoint from {checkpoint_path} at step {step}")
 
     # First load the config
     cfg = OmegaConf.create(

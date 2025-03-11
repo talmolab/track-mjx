@@ -140,7 +140,6 @@ def rollout_logging_fn(
     jit_logging_inference_fn,
     params: custom_losses.PPONetworkParams,
     policy_params_fn_key: jax.random.PRNGKey,
-    hidden_state: Optional[tuple[jp.ndarray, jp.ndarray]],
 ) -> None:
     """Logs metrics and videos for a reinforcement learning training rollout.
 
@@ -158,7 +157,6 @@ def rollout_logging_fn(
         jit_logging_inference_fn: Jitted policy inference function.
         params: Parameters for the policy model.
         policy_params_fn_key: PRNG key.
-        hidden_state: passed in hidden_state from training
     """
 
     ref_trak_config = cfg["reference_config"]
@@ -170,18 +168,14 @@ def rollout_logging_fn(
 
     state = jit_reset(reset_rng)
     
-    # for one eavl rendering env
-    # hidden_state = nn.LSTMCell(features=network_config['hidden_state_size']).initialize_carry(
-    #     jax.random.PRNGKey(0), (train_config['num_envs'],)
-    # )
+    #for one eavl rendering env
+    hidden_state = nn.LSTMCell(features=network_config['hidden_state_size']).initialize_carry(
+        jax.random.PRNGKey(0), ()
+    )
     
-    print(f'In logging function, the parralel representation of hidden shape is: {hidden_state[0].shape}')
+    print(f'In rendering, hidden shape is {hidden_state[0].shape}')
     
-    hidden_state = jax.tree_util.tree_map(lambda x: jp.mean(x, axis=1), hidden_state)
-    hidden_state = jax.tree_util.tree_map(lambda x: x[0], hidden_state)
-    
-    print(f'In logging function, the avg representation of hidden shape is: {hidden_state[0].shape}')
-
+    #TODO: make this a scan actor_step function
     rollout = [state]
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
@@ -193,6 +187,13 @@ def rollout_logging_fn(
             ctrl, extras,  = jit_logging_inference_fn(params, obs, act_rng, None)
             
         state = jit_step(state, ctrl)
+        
+        if state.done:
+            # print('Done triggered, resetting hidden')
+            hidden_state = nn.LSTMCell(features=network_config['hidden_state_size']).initialize_carry(
+                jax.random.PRNGKey(0), ()
+                )
+            
         rollout.append(state)
 
     pos_rewards = [state.metrics["pos_reward"] for state in rollout]

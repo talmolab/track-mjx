@@ -134,13 +134,10 @@ class Evaluator:
         eval_env = envs.training.EvalWrapper(eval_env)
 
         def generate_eval_unroll(policy_params: PolicyParams,
-                                 hidden_state: tuple[jnp.ndarray, jnp.ndarray],
                                  key: PRNGKey) -> tuple[State, tuple[jnp.ndarray, jnp.ndarray]]:
             reset_keys = jax.random.split(key, num_eval_envs)
             eval_first_state = eval_env.reset(reset_keys)
             
-            
-            #TODO: Swapped out, clean later
             dummy_hidden_state = eval_first_state.info["hidden_state"]
             
             print(f'In evals, info hidden have shape: {dummy_hidden_state[0].shape}')
@@ -161,7 +158,6 @@ class Evaluator:
 
     def run_evaluation(self,
                        policy_params: PolicyParams,
-                       hidden_state: tuple[jnp.ndarray, jnp.ndarray],
                        training_metrics: Metrics,
                        aggregate_episodes: bool = True) -> Metrics:
         """Run one epoch of evaluation with LSTM tracking."""
@@ -169,9 +165,7 @@ class Evaluator:
 
         t = time.time()
         
-        print(f'In evals, passed in hidden have shape: {hidden_state[0].shape}')
-        
-        eval_state, hidden_state = self._generate_eval_unroll(policy_params, hidden_state, unroll_key)
+        eval_state, hidden_state = self._generate_eval_unroll(policy_params, unroll_key)
         
         eval_metrics = eval_state.info['eval_metrics']
         eval_metrics.active_episodes.block_until_ready()

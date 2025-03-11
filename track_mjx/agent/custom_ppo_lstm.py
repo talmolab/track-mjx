@@ -570,7 +570,6 @@ def train(
         )
         metrics = evaluator.run_evaluation(
             policy_param,
-            training_state.hidden_state,
             training_metrics={},
         )
         logging.info(metrics)
@@ -616,7 +615,6 @@ def train(
                 _unpmap(
                     (training_state.normalizer_params, training_state.params.policy)
                 ),
-                training_state.hidden_state,
                 training_metrics,
             )
             logging.info(metrics)
@@ -633,7 +631,6 @@ def train(
                 jit_logging_inference_fn=jit_logging_inference_fn, # takes in jitted logging inference
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
-                hidden_state=training_state.hidden_state,
             )
             # Save checkpoints
             if ckpt_mgr is not None:

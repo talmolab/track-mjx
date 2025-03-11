@@ -79,7 +79,7 @@ train_setup:
     seed: 0
     get_activation: True
     use_lstm: True
-    deterministic_eval: True
+    deterministic_eval: False
 
 logging_config:
   project_name: vnl_debug

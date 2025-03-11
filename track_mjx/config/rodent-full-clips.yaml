@@ -1,6 +1,6 @@
 data_path: data/transform_snips.h5
 walker_type: rodent
-architecture: mlp
+architecture: lstm
 
 env_config:
   env_name: rodent_multi_clip
@@ -59,7 +59,7 @@ train_setup:
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 1 #10_000_000
+  eval_every: 10_000_000
   episode_length: 200
   reset_every: 20_000_000
   train_config:
@@ -78,7 +78,8 @@ train_setup:
     unroll_length: 20
     seed: 0
     get_activation: True
-    use_lstm: False
+    use_lstm: True
+    deterministic_eval: True
 
 logging_config:
   project_name: vnl_debug

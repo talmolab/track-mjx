@@ -149,7 +149,7 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
                     *params,
                     observations,
                     key_network,
-                    hidden_state,
+                    hidden_state, # will not be used
                     get_activation=get_activation,
                     use_lstm=use_lstm,
                 )

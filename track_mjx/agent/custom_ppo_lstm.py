@@ -283,7 +283,7 @@ def train(
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
 
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True, get_activation=False, use_lstm=use_lstm,))
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=deterministic_eval, get_activation=False, use_lstm=use_lstm,))
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -331,7 +331,7 @@ def train(
         
         def convert_data(x: jnp.ndarray, perm: jnp.ndarray):
             # print(f'In SGD step converting datt/hidden, X shape is: {x.shape}')
-            x = x[perm] # (2048, 20, 128)
+            # x = x[perm] # (2048, 20, 128)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
             return x
         
@@ -491,10 +491,6 @@ def train(
     dummy_hidden_state = env_state.info["hidden_state"]
     dummy_hidden_state_squeeze = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), dummy_hidden_state)
     
-    # dummy_hidden_state_squeeze = nn.LSTMCell(features=128).initialize_carry(
-    #     jax.random.PRNGKey(0), (num_envs,)
-    # )
-    
     print(f'In training, the dummy hidden shape is: {dummy_hidden_state_squeeze[0].shape}')
     print(f'In training, the env obs shape is: {env_state.obs.shape}')
     
@@ -548,7 +544,11 @@ def train(
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
+        use_lstm=use_lstm,
+        hidden_state_dim=config_dict['network_config']['hidden_state_size']
     )
+    
+    print(f'Using deterministic_eval is {deterministic_eval}')
     
     evaluator = acting.Evaluator(
         eval_env,
@@ -624,6 +624,8 @@ def train(
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
+            
+            print(f'In Rendering eval, the hidden state is shape: {training_state.hidden_state[1].shape}')
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
@@ -631,6 +633,7 @@ def train(
                 jit_logging_inference_fn=jit_logging_inference_fn, # takes in jitted logging inference
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
+                hidden_state=training_state.hidden_state,
             )
             # Save checkpoints
             if ckpt_mgr is not None:

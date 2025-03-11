@@ -279,7 +279,7 @@ def train(
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
 
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True, get_activation=False, use_lstm=use_lstm,))
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=deterministic_eval, get_activation=False, use_lstm=use_lstm,))
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -502,6 +502,7 @@ def train(
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
+        use_lstm=use_lstm,
     )
     
     evaluator = acting.Evaluator(

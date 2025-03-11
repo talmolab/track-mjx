@@ -7,6 +7,8 @@ from omegaconf import DictConfig
 from pathlib import Path
 import hydra
 import logging
+from dataclasses import dataclass
+from typing import Literal
 
 
 @struct.dataclass
@@ -28,6 +30,35 @@ class ReferenceClip:
 
     # xquat
     body_quaternions: jp.ndarray = None
+    
+    
+@dataclass
+class ReferenceClipDataset:
+    """
+    Dataset containing ReferenceClip objects and metadata.
+    This is not a pure pytree
+    """
+    reference_clip: ReferenceClip  # ReferenceClip object
+    metadata: dict   # Metadata dictionary
+    split: Literal['train', 'validation', 'test', 'all']  # Split name
+    
+    def get_reference_clip(self) -> ReferenceClip:
+        """Returns the ReferenceClip object."""
+        return self.reference_clip
+    
+    def get_metadata(self) -> dict:
+        """Returns the metadata dictionary."""
+        return self.metadata
+    
+    def get_split(self) -> Literal['train', 'validation', 'test', 'all']:
+        """Returns the split name."""
+        return self.split
+
+    def generate_split(self, split: Literal['train', 'validation', 'test', 'all']):
+        """Generates a split of the dataset."""
+        
+    
+
 
 
 def load_configs(config_dir: Union[Path, str], config_name: str) -> DictConfig:

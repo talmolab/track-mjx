@@ -168,31 +168,28 @@ def rollout_logging_fn(
 
     state = jit_reset(reset_rng)
     
-    #for one eavl rendering env
-    hidden_state = nn.LSTMCell(features=network_config['hidden_state_size']).initialize_carry(
-        jax.random.PRNGKey(0), ()
-    )
+    #TODO: make this a scan actor_step function
+    
+    hidden_state =state.info["hidden_state"]
     
     print(f'In rendering, hidden shape is {hidden_state[0].shape}')
     
-    #TODO: make this a scan actor_step function
     rollout = [state]
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
         
+        if state.done:
+            # print('In rendering, reset hidden')
+            hidden_state = state.info["hidden_state"]
+        
         if train_config['use_lstm']:
+            print('Using LSTM in rendering')
             ctrl, extras, hidden_state = jit_logging_inference_fn(params, obs, act_rng, hidden_state)
         else:
             ctrl, extras,  = jit_logging_inference_fn(params, obs, act_rng, None)
             
         state = jit_step(state, ctrl)
-        
-        if state.done:
-            # print('Done triggered, resetting hidden')
-            hidden_state = nn.LSTMCell(features=network_config['hidden_state_size']).initialize_carry(
-                jax.random.PRNGKey(0), ()
-                )
             
         rollout.append(state)
 

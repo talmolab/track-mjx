@@ -283,7 +283,9 @@ def train(
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
 
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=deterministic_eval, get_activation=False, use_lstm=use_lstm,))
+    
+    # always true for rendering env
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True, get_activation=False, use_lstm=use_lstm,))
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -329,19 +331,15 @@ def train(
         optimizer_state, params, hidden_state, key = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
         
-        def convert_data(x: jnp.ndarray, perm: jnp.ndarray):
-            # print(f'In SGD step converting datt/hidden, X shape is: {x.shape}')
-            # x = x[perm] # (2048, 20, 128)
+        def convert_data_hidden(x: jnp.ndarray):
+            # print(f'In SGD step converting datt/hidden, X shape is: {x.shape}') 
+            # start with (2048, 20, 128)
+            # x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
             return x
         
-        indices = jnp.arange(data.observation.shape[0])
-        perm = jax.random.permutation(key_perm, indices)
-        # jax.debug.print("Indicies: {}", indices)
-        # jax.debug.print("Perm: {}", perm)
-        
-        shuffled_data = jax.tree_util.tree_map(lambda x: convert_data(x, perm), data)
-        converted_hidden_state = jax.tree_util.tree_map(lambda x: convert_data(x, perm), hidden_state)
+        shuffled_data = jax.tree_util.tree_map(convert_data_hidden, data)
+        converted_hidden_state = jax.tree_util.tree_map(convert_data_hidden, hidden_state)
         
         # Jax.lax.scan should scan through minibatches
         print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')

@@ -37,7 +37,6 @@ class OnnxController:
     def __init__(
         self,
         policy_path: str,
-        default_angles: np.ndarray,
         n_substeps: int,
         action_scale: float = 0.5,
         vel_scale_x: float = 1.5,
@@ -50,8 +49,6 @@ class OnnxController:
         )
 
         self._action_scale = action_scale
-        self._default_angles = default_angles
-        self._last_action = np.zeros_like(default_angles, dtype=np.float32)
 
         self._counter = 0
         self._n_substeps = n_substeps
@@ -74,9 +71,7 @@ class OnnxController:
         Returns:
             np.ndarray: _description_
         """
-        
         intention = np.random.normal(size=60)
-
         obs = np.concatenate(
             [
                 intention, data.qpos, data.qvel 
@@ -90,36 +85,47 @@ class OnnxController:
             obs = self.get_obs(model, data)
             onnx_input = {"obs": obs.reshape(1, -1)}
             onnx_pred = self._policy.run(self._output_names, onnx_input)[0][0]
-            self._last_action = onnx_pred.copy()
-            data.ctrl[:] = onnx_pred * self._action_scale + self._default_angles
+
+            data.ctrl[:] = onnx_pred[:38]
 
 
 def load_callback(model=None, data=None):
-  mujoco.set_mjcb_control(None)
+    mujoco.set_mjcb_control(None)
 
-  model = mujoco.MjModel.from_xml_path(str(_HERE / "assets" / "rodent.xml"))
-  data = mujoco.MjData(model)
+    model = mujoco.MjModel.from_xml_path(
+        str(
+            _HERE
+            / ".."
+            / "track_mjx"
+            / "environment"
+            / "walker"
+            / "assets"
+            / "rodent"
+            / "rodent.xml"
+        )
+    )
 
-  mujoco.mj_resetDataKeyframe(model, data, 0)
+    data = mujoco.MjData(model)
 
-  ctrl_dt = 0.02
-  sim_dt = 0.005
-  n_substeps = int(round(ctrl_dt / sim_dt))
-  model.opt.timestep = sim_dt
-  
-  policy = OnnxController(
-      policy_path=("rodent_decoder.onnx").as_posix(),
-      default_angles=np.array(model.keyframe("home").qpos[7:]),
-      n_substeps=n_substeps,
-      action_scale=0.5,
-      vel_scale_x=1.5,
-      vel_scale_y=0.8,
-      vel_scale_rot=2 * np.pi,
-  )
+    mujoco.mj_resetDataKeyframe(model, data, 0)
 
-  mujoco.set_mjcb_control(policy.get_control)
+    ctrl_dt = 0.01
+    sim_dt = 0.002
+    n_substeps = int(round(ctrl_dt / sim_dt))
+    model.opt.timestep = sim_dt
 
-  return model, data
+    policy = OnnxController(
+        policy_path=(_HERE / "decoder.onnx").as_posix(),
+        n_substeps=n_substeps,
+        action_scale=0.5,
+        vel_scale_x=1.5,
+        vel_scale_y=0.8,
+        vel_scale_rot=2 * np.pi,
+    )
+
+    mujoco.set_mjcb_control(policy.get_control)
+
+    return model, data
 
 
 if __name__ == "__main__":

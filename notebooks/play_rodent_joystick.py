@@ -37,6 +37,7 @@ class OnnxController:
     def __init__(
         self,
         policy_path: str,
+        intentions_path: str,  # store the intentions of each command
         n_substeps: int,
         action_scale: float = 0.5,
         vel_scale_x: float = 1.5,
@@ -48,9 +49,12 @@ class OnnxController:
             policy_path, providers=["CPUExecutionProvider"]
         )
 
+        self._intention = np.load(intentions_path)
+
         self._action_scale = action_scale
 
         self._counter = 0
+        self._gait_start_counter = 0
         self._n_substeps = n_substeps
 
         self._joystick = Gamepad(
@@ -72,6 +76,15 @@ class OnnxController:
             np.ndarray: _description_
         """
         intention = np.random.normal(size=60)
+        joystick_cmd = self._joystick.get_command()
+        if joystick_cmd[0] > 0.1:
+            self.start_intention = True
+            self._gait_start_counter = self._counter
+        if self._counter < self._gait_start_counter + len(self._intention):
+            intention = self._intention[self._counter - self._gait_start_counter]
+        else:
+            intention = np.zeros(60)
+            self.start_intention = False
         obs = np.concatenate(
             [
                 intention, data.qpos, data.qvel 

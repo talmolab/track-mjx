@@ -54,6 +54,7 @@ class OnnxController:
         self._action_scale = action_scale
 
         self._counter = 0
+        self._action_counter = 0
         self._gait_start_counter = 0
         self._n_substeps = n_substeps
 
@@ -76,15 +77,19 @@ class OnnxController:
             np.ndarray: _description_
         """
         intention = np.random.normal(size=60)
-        joystick_cmd = self._joystick.get_command()
-        if joystick_cmd[0] > 0.1:
-            self.start_intention = True
-            self._gait_start_counter = self._counter
-        if self._counter < self._gait_start_counter + len(self._intention):
-            intention = self._intention[self._counter - self._gait_start_counter]
-        else:
-            intention = np.zeros(60)
-            self.start_intention = False
+        # joystick_cmd = self._joystick.get_command()
+        # if joystick_cmd[0] > 0.1:
+        # self.start_intention = True
+        # self._gait_start_counter = self._counter
+        # if self._counter < self._gait_start_counter + len(self._intention):
+        if self._action_counter // 10 % self._intention.shape[0] == 0:
+            data.qpos = np.load("qposes_ref_0.npy")
+        intention = self._intention[
+            self._action_counter // 10 % self._intention.shape[0]
+        ]
+        # else:
+        #     intention = np.zeros(60)
+        #     self.start_intention = False
         obs = np.concatenate(
             [
                 intention, data.qpos, data.qvel 
@@ -98,8 +103,8 @@ class OnnxController:
             obs = self.get_obs(model, data)
             onnx_input = {"obs": obs.reshape(1, -1)}
             onnx_pred = self._policy.run(self._output_names, onnx_input)[0][0]
-
             data.ctrl[:] = onnx_pred[:38]
+            self._action_counter += 1
 
 
 def load_callback(model=None, data=None):
@@ -119,6 +124,8 @@ def load_callback(model=None, data=None):
     )
 
     data = mujoco.MjData(model)
+    # set initial pose
+    data.qpos = np.load("qposes_ref_0.npy")
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
 
@@ -126,10 +133,12 @@ def load_callback(model=None, data=None):
     sim_dt = 0.002
     n_substeps = int(round(ctrl_dt / sim_dt))
     model.opt.timestep = sim_dt
+    model.opt.iterations = 100
 
     policy = OnnxController(
         policy_path=(_HERE / "decoder.onnx").as_posix(),
-        n_substeps=n_substeps,
+        intentions_path=(_HERE / "walk_intention_whole_clip.npy").as_posix(),
+        n_substeps=1,
         action_scale=0.5,
         vel_scale_x=1.5,
         vel_scale_y=0.8,

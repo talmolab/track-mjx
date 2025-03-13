@@ -38,6 +38,7 @@ from track_mjx.environment.walker.mouse_arm import MouseArm
 import logging
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
+import glob
 
 FLAGS = flags.FLAGS
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -63,6 +64,7 @@ def main(cfg: DictConfig):
 
     # Generates a completely random UUID (version 4), take the first 8 characters
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+
     model_path = f"./{cfg.logging_config.model_path}/{cfg.env_config.walker_name}/{os.path.splitext(os.path.basename(cfg.data_path))[0]}_{run_id}"
     model_path = hydra.utils.to_absolute_path(model_path)
     logging.info(f"Model Checkpoint Path: {model_path}")
@@ -109,14 +111,31 @@ def main(cfg: DictConfig):
     import sys
 
     logging.info(f"Loading data: {cfg.data_path}")
-    data_path = hydra.utils.to_absolute_path(cfg.data_path)
+    data_paths = [p.strip() for p in cfg.data_path.split(",")]
+    file_list = []
+    for path_str in data_paths:
+        file_list.extend(glob.glob(hydra.utils.to_absolute_path(path_str)))
+
+    if not file_list:
+        raise FileNotFoundError(f"No files found matching any path in: {data_paths}")
+
     try:
-        reference_clip = load.make_multiclip_data(data_path)
+        if len(file_list) == 1:
+            reference_clip, clip_lengths = load.make_multiclip_data(file_list[0])
+        else:
+            reference_clip, clip_lengths = load.make_multiclip_data(file_list)
     except KeyError:
         logging.info(
             f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
         )
-        reference_clip = load.load_reference_clip_data(data_path)
+        reference_clip = load.load_reference_clip_data(
+            file_list[0] if len(file_list) == 1 else file_list
+        )
+        clip_lengths = [
+            int(reference_clip.body_positions.shape[1])
+        ] * reference_clip.body_positions.shape[0]
+
+    max_clip_length = max(clip_lengths)
 
     walker_map = {
         "mouse-arm": MouseArm,
@@ -125,7 +144,13 @@ def main(cfg: DictConfig):
     }
 
     walker_class = walker_map[cfg_dict["walker_type"]]
-    walker = walker_class(**walker_config)
+    walker = walker_class(
+        joint_names=walker_config["joint_names"],
+        body_names=walker_config["body_names"],
+        end_eff_names=walker_config["end_eff_names"],
+        torque_actuators=walker_config.get("torque_actuators", False),
+        rescale_factor=walker_config.get("rescale_factor", 1.0),
+    )
 
     reward_config = RewardConfig(**env_rewards)
 
@@ -135,18 +160,10 @@ def main(cfg: DictConfig):
         reference_clip=reference_clip,
         walker=walker,
         reward_config=reward_config,
+        clip_lengths=clip_lengths,
         **env_args,
         **traj_config,
     )
-
-    # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
-    episode_length = (
-        traj_config.clip_length
-        - traj_config.random_init_range
-        - traj_config.traj_length
-    ) * env._steps_for_cur_frame
-    print(f"episode_length {episode_length}")
-    logging.info(f"episode_length {episode_length}")
 
     train_fn = functools.partial(
         custom_ppo.train,
@@ -155,7 +172,6 @@ def main(cfg: DictConfig):
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
         ),
         num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
-        episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
         network_factory=functools.partial(
             custom_ppo_networks.make_intention_ppo_networks,
@@ -166,6 +182,7 @@ def main(cfg: DictConfig):
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
+        episode_length=max_clip_length,  # Use max clip length as episode length
     )
 
     wandb.init(

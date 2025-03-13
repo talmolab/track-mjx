@@ -19,6 +19,7 @@ See: https://arxiv.org/pdf/1707.06347.pdf
 
 import functools
 import time
+import os  # Added for path conversion
 from typing import Callable, Optional, Tuple, Union
 
 from absl import logging
@@ -497,7 +498,11 @@ def train(
         # Save checkpoints
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:
-            # new orbax API
+            checkpoint_path = config_dict.get("checkpoint_path")
+            if checkpoint_path is None:
+                checkpoint_path = os.path.abspath("./default_checkpoint")
+            elif not os.path.isabs(checkpoint_path):
+                checkpoint_path = os.path.abspath(checkpoint_path)
             ckpt_mgr.save(
                 step=0,
                 args=ocp.args.Composite(
@@ -552,6 +557,11 @@ def train(
             )
             # Save checkpoints
             if ckpt_mgr is not None:
+                checkpoint_path = config_dict.get("checkpoint_path")
+                if checkpoint_path is None:
+                    checkpoint_path = os.path.abspath("./default_checkpoint")
+                elif not os.path.isabs(checkpoint_path):
+                    checkpoint_path = os.path.abspath(checkpoint_path)
                 ckpt_mgr.save(
                     step=it,
                     args=ocp.args.Composite(

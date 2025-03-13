@@ -77,38 +77,64 @@ def make_singleclip_data(traj_data_path):
         )
 
 
-def make_multiclip_data(traj_data_path):
+def make_multiclip_data(traj_data_paths):
     """Creates ReferenceClip object with multiclip tracking data.
     Features have shape = (clips, frames, dims)
     """
-
     def reshape_frames(arr, clip_len):
         return jp.array(
             arr[()].reshape(arr.shape[0] // clip_len, clip_len, *arr.shape[1:])
         )
 
-    with h5py.File(traj_data_path, "r") as data:
-        # Read the config string as yaml in to dict
-        yaml_str = data["config"][()]
-        yaml_str = yaml_str.decode("utf-8")
-        config = yaml.safe_load(yaml_str)
-        clip_len = config["stac"]["n_frames_per_clip"]
+    def load_data_from_file(file_path):
+        with h5py.File(file_path, "r") as data:
+            # Read the config string as yaml in to dict
+            yaml_str = data["config"][()]
+            yaml_str = yaml_str.decode("utf-8")
+            config = yaml.safe_load(yaml_str)
+            clip_len = config["stac"]["n_frames_per_clip"]
 
-        # Reshape the data to (clips, frames, dims)
-        batch_qpos = reshape_frames(data["qpos"], clip_len)
-        batch_xpos = reshape_frames(data["xpos"], clip_len)
-        batch_qvel = reshape_frames(data["qvel"], clip_len)
-        batch_xquat = reshape_frames(data["xquat"], clip_len)
-        return ReferenceClip(
-            # position=batch_qpos[:, :, :3],
-            # quaternion=batch_qpos[:, :, 3:7],
-            joints=batch_qpos,
-            body_positions=batch_xpos,
-            # velocity=batch_qvel[:, :, :3],
-            # angular_velocity=batch_qvel[:, :, 3:6],
-            joints_velocity=batch_qvel,
-            body_quaternions=batch_xquat,
-        )
+            # Reshape the data to (clips, frames, dims)
+            batch_qpos = reshape_frames(data["qpos"], clip_len)
+            batch_xpos = reshape_frames(data["xpos"], clip_len)
+            batch_qvel = reshape_frames(data["qvel"], clip_len)
+            batch_xquat = reshape_frames(data["xquat"], clip_len)
+            return batch_qpos, batch_xpos, batch_qvel, batch_xquat, clip_len
+
+    def pad_to_max_length(arrays, max_length, axis=1):
+        padded_arrays = []
+        for array in arrays:
+            pad_width = [(0, 0)] * array.ndim
+            pad_width[axis] = (0, max_length - array.shape[axis])
+            # Ensure explicit JAX array creation
+            padded_arrays.append(jp.pad(jp.asarray(array), pad_width))
+        return padded_arrays
+
+    all_qpos, all_xpos, all_qvel, all_xquat, clip_lengths = [], [], [], [], []
+    for path in traj_data_paths:
+        batch_qpos, batch_xpos, batch_qvel, batch_xquat, clip_len = load_data_from_file(path)
+        all_qpos.append(batch_qpos)
+        all_xpos.append(batch_xpos)
+        all_qvel.append(batch_qvel)
+        all_xquat.append(batch_xquat)
+        clip_lengths.append(clip_len)
+
+    max_length = max(clip_lengths)
+    all_qpos = pad_to_max_length(all_qpos, max_length)
+    all_xpos = pad_to_max_length(all_xpos, max_length)
+    all_qvel = pad_to_max_length(all_qvel, max_length)
+    all_xquat = pad_to_max_length(all_xquat, max_length)
+
+    return ReferenceClip(
+        # position=jp.concatenate([batch[:, :, :3] for batch in all_qpos], axis=0),
+        # quaternion=jp.concatenate([batch[:, :, 3:7] for batch in all_qpos], axis=0),
+        joints=jp.concatenate(all_qpos, axis=0),
+        body_positions=jp.concatenate(all_xpos, axis=0),
+        # velocity=jp.concatenate([batch[:, :, :3] for batch in all_qvel], axis=0),
+        # angular_velocity=jp.concatenate([batch[:, :, 3:6] for batch in all_qvel], axis=0),
+        joints_velocity=jp.concatenate(all_qvel, axis=0),
+        body_quaternions=jp.concatenate(all_xquat, axis=0),
+    ), clip_lengths
 
 
 def load_reference_clip_data(

@@ -45,6 +45,7 @@ class MultiClipTracking(SingleClipTracking):
         clip_length: int = 250,
         random_init_range: int = 50,
         traj_length: int = 5,
+        clip_lengths: list[int] = None,
         **kwargs: Any,
     ):
         """Initializes the MultiTracking environment.
@@ -64,6 +65,7 @@ class MultiClipTracking(SingleClipTracking):
             clip_length: clip length of the tracking clips
             random_init_range: the initiated range
             traj_length: one trajectory length
+            clip_lengths: list of lengths for each clip
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         super().__init__(
@@ -85,6 +87,8 @@ class MultiClipTracking(SingleClipTracking):
         if reference_clip is not None:
             self._reference_clips = reference_clip
             self._n_clips = reference_clip.body_positions.shape[0]
+            # Convert clip_lengths to JAX array to allow proper indexing with traced integers
+            self._clip_lengths = jax.numpy.array(clip_lengths) if clip_lengths is not None else None
         else:
             print("No reference clip provided, in pure rendering mode.")
 
@@ -107,13 +111,58 @@ class MultiClipTracking(SingleClipTracking):
         info = {
             "clip_idx": clip_idx,
             "start_frame": start_frame,
-            # "summed_pos_distance": 0.0,
+            "clip_length": self._clip_lengths[clip_idx],
             "quat_distance": 0.0,
             "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),
+            "step": jp.array(0),  # Step counter initialization
         }
 
-        return self.reset_from_clip(rng, info, noise=True)
+        state = self.reset_from_clip(rng, info, noise=True)
+        # Make sure both clip_length AND step are preserved in state.info
+        state = state.replace(info={**state.info, "clip_length": info["clip_length"], "step": info["step"]})
+        return state
+
+    def step(self, state: State, action: jp.ndarray) -> State:
+        """
+        Steps the environment forward by one timestep.
+
+        Args:
+            state (State): The current state of the environment.
+            action (jp.ndarray): The action to take.
+
+        Returns:
+            State: The new state of the environment.
+        """
+        # First, ensure step exists and increment it
+        if "step" not in state.info:
+            state = state.replace(info={**state.info, "step": jp.array(0)})
+        
+        # Increment the step counter
+        state = state.replace(info={**state.info, "step": state.info.get("step", 0) + 1})
+        
+        # Call parent step method with updated state
+        state = super().step(state, action)
+        
+        clip_length = state.info.get("clip_length", 0)
+
+        # Handle NaNs or all-zero observations.
+        condition = jp.logical_or(jp.any(jp.isnan(state.obs)), jp.all(state.obs == 0))
+        state = jax.lax.cond(
+            condition,
+            lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
+            lambda st: st,
+            state,
+        )
+        
+        # Now safely check if step >= clip_length
+        state = jax.lax.cond(
+            jp.greater_equal(state.info.get("step", 0), clip_length),
+            lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
+            lambda st: st,
+            state,
+        )
+        return state
 
     def _get_reference_clip(self, info: dict[str, jp.ndarray]) -> ReferenceClip:
         """

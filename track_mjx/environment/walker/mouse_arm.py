@@ -16,8 +16,8 @@ from mujoco import mjx
 
 from track_mjx.environment.walker.base import BaseWalker
 
-_XML_PATH = "/root/vast/eric/track-mjx/track_mjx/environment/walker/assets/mouse_arm/arm_model_v3_torque.xml"
-_PAIR_XML_PATH = "/root/vast/eric/track-mjx/track_mjx/environment/walker/assets/mouse_arm/arm_model_v3_ghostpair.xml"
+_XML_PATH = "/root/vast/eric/track-mjx/track_mjx/environment/walker/assets/mouse_arm/akira_torque.xml"
+_PAIR_XML_PATH = "/root/vast/eric/track-mjx/track_mjx/environment/walker/assets/mouse_arm/akira_model_ghostpair.xml"
 
 
 class MouseArm(BaseWalker):
@@ -66,13 +66,9 @@ class MouseArm(BaseWalker):
         root = mjcf_dm.from_path(path)
 
         # Apply torque actuator modifications if needed
-        if torque_actuators:
-            pass
-            # for actuator in root.find_all("actuator"):
-            #     print(dir(actuator))
-            #     actuator.gainprm = [actuator.forcerange[1]]
-            #     del actuator.biastype
-            #     del actuator.biasprm
+        # if torque_actuators:
+        #     for actuator in root.find_all("actuator"):
+        #         actuator.gainprm = [actuator.forcerange[1]]
 
         # Rescale the entire model
         # rescale.rescale_subtree(root, rescale_factor, rescale_factor)

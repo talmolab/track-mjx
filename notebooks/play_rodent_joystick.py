@@ -82,10 +82,8 @@ class OnnxController:
         # self.start_intention = True
         # self._gait_start_counter = self._counter
         # if self._counter < self._gait_start_counter + len(self._intention):
-        if self._action_counter // 10 % self._intention.shape[0] == 0:
-            data.qpos = np.load("qposes_ref_0.npy")
         intention = self._intention[
-            self._action_counter // 10 % self._intention.shape[0]
+            self._action_counter // 200 % self._intention.shape[0]
         ]
         # else:
         #     intention = np.zeros(60)
@@ -134,11 +132,12 @@ def load_callback(model=None, data=None):
     n_substeps = int(round(ctrl_dt / sim_dt))
     model.opt.timestep = sim_dt
     model.opt.iterations = 100
+    model.opt.ls_iterations = 20
 
     policy = OnnxController(
         policy_path=(_HERE / "decoder.onnx").as_posix(),
         intentions_path=(_HERE / "walk_intention_whole_clip.npy").as_posix(),
-        n_substeps=1,
+        n_substeps=10,
         action_scale=0.5,
         vel_scale_x=1.5,
         vel_scale_y=0.8,

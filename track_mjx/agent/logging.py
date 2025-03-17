@@ -189,6 +189,7 @@ def rollout_logging_fn(
     joint_rewards = [state.metrics["joint_reward"] for state in rollout]
     # summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
     joint_distances = [state.info["joint_distance"] for state in rollout]
+    jerk_costs = [state.info.get("jerk_cost", 0) for state in rollout]
     # torso_heights = [
     #     state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
     # ]
@@ -233,6 +234,13 @@ def rollout_logging_fn(
         list(enumerate(joint_distances)),
         title="joint_distances for each rollout frame",
     )
+    # Added logging for jerk_cost metric (assumed to be stored in state.info under "jerk_cost")
+    log_metric_to_wandb(
+        "jerk_costs",
+        list(enumerate(jerk_costs)),
+        title="jerk_cost for each rollout frame",
+    )
+
     # log_metric_to_wandb(
     #     "torso_heights",
     #     list(enumerate(torso_heights)),
@@ -254,7 +262,7 @@ def rollout_logging_fn(
 
     with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
         for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-            mj_data.qpos = np.append(qpos1, qpos2)  
+            mj_data.qpos = np.append(qpos1, qpos2)
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(
                 mj_data, camera=env_config.render_camera_name, scene_option=scene_option
@@ -309,11 +317,11 @@ def render_rollout(
         obs = state.obs
         ctrl, extras = jit_inference_fn(obs, act_rng)
 
-        #print(f"Step {i}, ctrl: {ctrl}")
+        # print(f"Step {i}, ctrl: {ctrl}")
 
         state = jit_step(state, ctrl)  # Step environment
 
-        #print(f"Step {i}, qpos: {state.pipeline_state.qpos}")
+        # print(f"Step {i}, qpos: {state.pipeline_state.qpos}")
 
     # might include those reward term in the visual rendering
     # pos_rewards = [state.metrics["pos_reward"] for state in rollout]

@@ -34,6 +34,7 @@ class RewardConfig:
     bodypos_reward_exp_scale: float
     endeff_reward_exp_scale: float
     # penalty_pos_distance_scale: jp.ndarray
+    jerk_cost_weight: float
 
     # def __post_init__(self):
     #     if isinstance(self.penalty_pos_distance_scale, list) or isinstance(
@@ -239,6 +240,22 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
+def huber_loss(x: jp.ndarray, delta: float = 0.1) -> jp.ndarray:
+    abs_x = jp.abs(x)
+    quadratic = 0.5 * (x**2)
+    linear = delta * (abs_x - 0.5 * delta)
+    return jp.where(abs_x <= delta, quadratic, linear)
+
+
+def compute_jerk_cost(
+    qacc: jp.ndarray, prev_qacc: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Robust jerk cost using a Huber loss on joint acceleration differences."""
+    jerk = qacc - prev_qacc
+    robust_cost = jp.sum(huber_loss(jerk, delta=0.1))
+    return weight * robust_cost
+
+
 def compute_health_penalty(
     torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
 ) -> jp.ndarray:
@@ -371,6 +388,11 @@ def compute_tracking_rewards(
         action, info["prev_ctrl"], reward_config.ctrl_diff_cost_weight
     )
 
+    # Use a default zero array if "prev_qacc" is missing
+    prev_qacc = info.get("prev_qacc", jp.zeros_like(data.qacc))
+    jerk_cost = compute_jerk_cost(data.qacc, prev_qacc, reward_config.jerk_cost_weight)
+    info["prev_qacc"] = data.qacc
+
     # xpos = data.xpos
     # torso_z = walker.get_torso_position(xpos)[2]
     # fall = compute_health_penalty(torso_z, reward_config.healthy_z_range)
@@ -388,18 +410,22 @@ def compute_tracking_rewards(
     # info["summed_pos_distance"] = summed_pos_distance
     # info["quat_distance"] = quat_distance
 
+    total_reward = (
+        joint_reward
+        + bodypos_reward
+        + endeff_reward
+        + ctrl_cost
+        - ctrl_diff_cost
+        - jerk_cost
+    )
+
+    # Ensure we return a 7-tuple
     return (
-        # pos_reward,
-        # quat_reward,
         joint_reward,
-        # angvel_reward,
         bodypos_reward,
         endeff_reward,
         ctrl_cost,
         ctrl_diff_cost,
-        # too_far,
-        # bad_pose,
-        # bad_quat,
-        # fall,
+        jerk_cost,
         info,
     )

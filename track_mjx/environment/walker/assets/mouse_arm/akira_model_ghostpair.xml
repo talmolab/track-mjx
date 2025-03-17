@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <mujoco model="mouse_ghostpair">
-    <option timestep="0.001" solver="CG" iterations="20" ls_iterations="20"></option>
+    <option timestep="0.0005" gravity="0 0 -9.81" solver="CG" iterations="20" ls_iterations="20"></option>
     <size njmax="1000" nconmax="400" nkey="1" nuser_jnt="1"/>
     <asset>
         <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="0.6 0.8 1" width="256" height="1536"/>
@@ -28,12 +28,12 @@
                     <body name="humerus" pos="0 0.0007 -0.0002" euler="-15 0 0">
                         <inertial pos="-0.0005 0.0003 -0.004" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
                         <geom type="mesh" mesh="Bone_Humerus_right_v3" pos="0 0 0" contype="1" conaffinity="0"/>
-                        <joint name="sh_elv" type="hinge" pos="0 0 0" axis="0 1 0" damping="0.0001" range="-70 0" limited="true"/>
-                        <joint name="sh_extension" type="hinge" pos="0 0 0" axis="0 0 1" damping="0.0001" range="-70 40" limited="true"/>
-                        <joint name="sh_rotation" type="hinge" pos="0 0 0" axis="1 0 0" damping="0.0001" range="-25 89" limited="true"/>
+                        <joint name="sh_elv" type="hinge" pos="0 0 0" axis="0 1 0" stiffness="0.03" damping="0.005" range="-70 0" limited="true"/>
+                        <joint name="sh_extension" type="hinge" pos="0 0 0" axis="0 0 1" stiffness="0.03" damping="0.005" range="-70 40" limited="true"/>
+                        <joint name="sh_rotation" type="hinge" pos="0 0 0" axis="1 0 0" stiffness="0.03" damping="0.005" range="-25 89" limited="true"/>
                         <body name="ulna" pos="-0.0005 0.0003 -0.0068" euler="-15 0 0">
                             <geom type="mesh" mesh="Bone_Ulna_right_v3" pos="0 0 0" contype="1" conaffinity="0"/>
-                            <joint name="elbow_joint" type="hinge" pos="0 0 0" axis="1 0 0" stiffness="0.001" damping="0.0001" range="-80 90" limited="true"/>
+                            <joint name="elbow_joint" type="hinge" pos="0 0 0" axis="1 0 0" stiffness="0.03" damping="0.005" range="-80 90" limited="true"/>
                             <inertial pos="-0.0009 0.004 0.0005" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
                             <body name="elbow" pos="0 0 0" euler="0 0 0">
                                 <geom name="elbow_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
@@ -58,12 +58,12 @@
                         <body name="humerus_ghost" pos="0 0.0007 -0.0002" euler="-15 0 0">
                             <inertial pos="-0.0005 0.0003 -0.004" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
                             <geom name="humerus_ghost_geom" type="mesh" mesh="Bone_Humerus_right_v3" pos="0 0 0" contype="1" conaffinity="0" material="ghost_material"/>
-                            <joint name="sh_elv_ghost" type="hinge" pos="0 0 0" axis="0 1 0" damping="0.0001" range="-70 0" limited="true"/>
-                            <joint name="sh_extension_ghost" type="hinge" pos="0 0 0" axis="0 0 1" damping="0.0001" range="-70 40" limited="true"/>
-                            <joint name="sh_rotation_ghost" type="hinge" pos="0 0 0" axis="1 0 0" damping="0.0001" range="-25 89" limited="true"/>
+                            <joint name="sh_elv_ghost" type="hinge" pos="0 0 0" axis="0 1 0" stiffness="0.03" damping="0.005"  range="-70 0" limited="true"/>
+                            <joint name="sh_extension_ghost" type="hinge" pos="0 0 0" axis="0 0 1" stiffness="0.03" damping="0.005"  range="-70 40" limited="true"/>
+                            <joint name="sh_rotation_ghost" type="hinge" pos="0 0 0" axis="1 0 0" stiffness="0.03" damping="0.005"  range="-25 89" limited="true"/>
                             <body name="ulna_ghost" pos="-0.0005 0.0003 -0.0068" euler="-15 0 0">
                                 <geom name="ulna_ghost_geom" type="mesh" mesh="Bone_Ulna_right_v3" pos="0 0 0" contype="1" conaffinity="0" material="ghost_material"/>
-                                <joint name="elbow_joint_ghost" type="hinge" pos="0 0 0" axis="1 0 0" stiffness="0.001" damping="0.0001" range="-80 90" limited="true"/>
+                                <joint name="elbow_joint_ghost" type="hinge" pos="0 0 0" axis="1 0 0" stiffness="0.03" damping="0.005"  range="-80 90" limited="true"/>
                                 <inertial pos="-0.0009 0.004 0.0005" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
                                 <body name="elbow_ghost" pos="0 0 0" euler="0 0 0">
                                     <geom name="elbow_marker_ghost" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
@@ -82,10 +82,10 @@
         </body>
     </worldbody>
     <actuator>
-        <motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-1 1" forcerange="-.1 .1"/>
-        <motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-1 1" forcerange="-.1 .1"/>
-        <motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-1 1" forcerange="-.1 .1"/>
-        <motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-1 1" forcerange="-.1 .1"/>
+        <motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
+        <motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
+        <motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-.1 .2" forcerange="-.1 .1"/>
+        <motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
     </actuator>
     <sensor>
         <actuatorfrc name="sh_elv_act_force" actuator="sh_elv_act"/>

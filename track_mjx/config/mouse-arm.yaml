@@ -10,22 +10,23 @@ env_config:
 
   env_args:
     solver: "cg"
-    iterations: 6
-    ls_iterations: 6
+    iterations: 20
+    ls_iterations: 20
     physics_steps_per_control_step: 5
-    reset_noise_scale: 1e-3
-    mj_model_timestep: 0.001
+    reset_noise_scale: 1e-5
+    mj_model_timestep: 0.0005
     mocap_hz: 200
 
   reward_weights:
-    ctrl_cost_weight: 0.01
-    ctrl_diff_cost_weight: 0.01
-    joint_reward_weight: 20.0
+    ctrl_cost_weight: 1.0
+    ctrl_diff_cost_weight: 1.0
+    joint_reward_weight: 8.0
     bodypos_reward_weight: 0.0
     endeff_reward_weight: 0.0
-    joint_reward_exp_scale: 10.0
+    joint_reward_exp_scale: 4.0
     bodypos_reward_exp_scale: 0.0
     endeff_reward_exp_scale: 0.0
+    jerk_cost_weight: 1e-4
 
 reference_config:
   clip_length: 100
@@ -46,7 +47,7 @@ train_setup:
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 100_000
+  eval_every: 200_000
   episode_length: 100
   reset_every: 100_000
   train_config:
@@ -59,7 +60,7 @@ train_setup:
     clipping_epsilon: 0.2     
     discounting: 0.95        
     action_repeat: 1
-    entropy_cost: .05
+    entropy_cost: 2.0
     reward_scaling: 1
     normalize_observations: True
     unroll_length: 20

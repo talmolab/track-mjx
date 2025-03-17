@@ -204,11 +204,7 @@ class SingleClipTracking(PipelineEnv):
             "endeff_reward": zero,
             "reward_ctrlcost": zero,
             "ctrl_diff_cost": zero,
-            # "too_far": zero,
-            # "bad_pose": zero,
-            # "bad_quat": zero,
-            # "fall": zero,
-            # "nan": zero,
+            "jerk_cost": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -243,10 +239,7 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
-            # too_far,
-            # bad_pose,
-            # bad_quat,
-            # fall,
+            jerk_cost,  # newly returned from compute_tracking_rewards
             info,
         ) = compute_tracking_rewards(
             data=data,
@@ -262,13 +255,11 @@ class SingleClipTracking(PipelineEnv):
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
         reward = (
             joint_reward
-            # + pos_reward
-            # + quat_reward
-            # + angvel_reward
             + bodypos_reward
             + endeff_reward
             - ctrl_cost
             - ctrl_diff_cost
+            - jerk_cost
         )
 
         # Raise done flag if terminating
@@ -294,11 +285,7 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward=endeff_reward,
             reward_ctrlcost=-ctrl_cost,
             ctrl_diff_cost=ctrl_diff_cost,
-            # too_far=too_far,
-            # bad_pose=bad_pose,
-            # bad_quat=bad_quat,
-            # fall=fall,
-            # nan=nan,
+            jerk_cost=jerk_cost,  # <-- Added jerk_cost metric here
         )
 
         return state.replace(

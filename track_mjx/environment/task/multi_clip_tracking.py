@@ -88,7 +88,9 @@ class MultiClipTracking(SingleClipTracking):
             self._reference_clips = reference_clip
             self._n_clips = reference_clip.body_positions.shape[0]
             # Convert clip_lengths to JAX array to allow proper indexing with traced integers
-            self._clip_lengths = jax.numpy.array(clip_lengths) if clip_lengths is not None else None
+            self._clip_lengths = (
+                jax.numpy.array(clip_lengths) if clip_lengths is not None else None
+            )
         else:
             print("No reference clip provided, in pure rendering mode.")
 
@@ -115,12 +117,20 @@ class MultiClipTracking(SingleClipTracking):
             "quat_distance": 0.0,
             "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),
+            "prev_prev_ctrl": jp.zeros((self.sys.nu,)),
+            "prev_qacc": jp.zeros((self.sys.nv,)),  # Added to preserve carry structure
             "step": jp.array(0),  # Step counter initialization
         }
 
         state = self.reset_from_clip(rng, info, noise=True)
         # Make sure both clip_length AND step are preserved in state.info
-        state = state.replace(info={**state.info, "clip_length": info["clip_length"], "step": info["step"]})
+        state = state.replace(
+            info={
+                **state.info,
+                "clip_length": info["clip_length"],
+                "step": info["step"],
+            }
+        )
         return state
 
     def step(self, state: State, action: jp.ndarray) -> State:
@@ -137,13 +147,15 @@ class MultiClipTracking(SingleClipTracking):
         # First, ensure step exists and increment it
         if "step" not in state.info:
             state = state.replace(info={**state.info, "step": jp.array(0)})
-        
+
         # Increment the step counter
-        state = state.replace(info={**state.info, "step": state.info.get("step", 0) + 1})
-        
+        state = state.replace(
+            info={**state.info, "step": state.info.get("step", 0) + 1}
+        )
+
         # Call parent step method with updated state
         state = super().step(state, action)
-        
+
         clip_length = state.info.get("clip_length", 0)
 
         # Handle NaNs or all-zero observations.
@@ -154,7 +166,7 @@ class MultiClipTracking(SingleClipTracking):
             lambda st: st,
             state,
         )
-        
+
         # Now safely check if step >= clip_length
         state = jax.lax.cond(
             jp.greater_equal(state.info.get("step", 0), clip_length),
@@ -162,6 +174,14 @@ class MultiClipTracking(SingleClipTracking):
             lambda st: st,
             state,
         )
+
+        new_info = {
+            **state.info,
+            "prev_prev_ctrl": state.info["prev_ctrl"],
+            "prev_ctrl": action,
+        }
+        state = state.replace(info=new_info)
+
         return state
 
     def _get_reference_clip(self, info: dict[str, jp.ndarray]) -> ReferenceClip:

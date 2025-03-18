@@ -46,6 +46,7 @@ class MultiClipTracking(SingleClipTracking):
         random_init_range: int = 50,
         traj_length: int = 5,
         clip_lengths: list[int] = None,
+        termination_joint_distance_threshold: float = 0.4,
         **kwargs: Any,
     ):
         """Initializes the MultiTracking environment.
@@ -66,6 +67,7 @@ class MultiClipTracking(SingleClipTracking):
             random_init_range: the initiated range
             traj_length: one trajectory length
             clip_lengths: list of lengths for each clip
+            termination_joint_distance_threshold: Threshold for early termination based on joint distance.
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
         super().__init__(
@@ -93,6 +95,10 @@ class MultiClipTracking(SingleClipTracking):
             )
         else:
             print("No reference clip provided, in pure rendering mode.")
+
+        self._termination_threshold = (
+            termination_joint_distance_threshold  # STORE THE THRESHOLD
+        )
 
     def reset(self, rng: jp.ndarray, clip_idx: int | None = None) -> State:
         """
@@ -170,6 +176,14 @@ class MultiClipTracking(SingleClipTracking):
         # Now safely check if step >= clip_length
         state = jax.lax.cond(
             jp.greater_equal(state.info.get("step", 0), clip_length),
+            lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
+            lambda st: st,
+            state,
+        )
+
+        # NEW: Early termination based on joint distance threshold
+        state = jax.lax.cond(
+            state.info["joint_distance"] > self._termination_threshold,
             lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
             lambda st: st,
             state,

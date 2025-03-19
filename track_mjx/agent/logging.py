@@ -179,12 +179,7 @@ def rollout_logging_fn(
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
         
-        if state.done:
-            # print('In rendering, reset hidden')
-            hidden_state = state.info["hidden_state"]
-        
         if train_config['use_lstm']:
-            print('Using LSTM in rendering')
             ctrl, extras, hidden_state = jit_logging_inference_fn(params, obs, act_rng, hidden_state)
         else:
             ctrl, extras,  = jit_logging_inference_fn(params, obs, act_rng, None)
@@ -281,6 +276,22 @@ def rollout_logging_fn(
             video.append_data(pixels)
 
     wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")})
+    
+    # eval_metrics = rollout[-1].info['eval_metrics']
+    # eval_metrics.active_episodes.block_until_ready()
+    # metrics = {}
+    # for fn in [np.mean, np.std]:
+    #     suffix = '_std' if fn == np.std else ''
+    #     metrics.update(
+    #         {
+    #             f'eval/episode_{name}{suffix}': (
+    #                 fn(value)
+    #             )
+    #             for name, value in eval_metrics.episode_metrics.items()
+    #         }
+    #     )
+    # metrics['eval/avg_episode_length'] = np.mean(eval_metrics.episode_steps)
+    # wandb.log(metrics)
 
 
 def render_rollout(

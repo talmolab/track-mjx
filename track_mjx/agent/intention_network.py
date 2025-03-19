@@ -94,21 +94,32 @@ class LSTMDecoder(nn.Module):
     def __call__(self, x, hidden_state, get_activation: bool = False):
         activations = {}
 
-        # LSTM layer
+        # LSTM layer, returned (new_c, new_h), new_h if call cirectly
         lstm = nn.LSTMCell(features=self.hidden_dim, name="lstm")
-        new_hidden_state, x = lstm(hidden_state, x)
-
-        for i, hidden_size in enumerate(self.layer_sizes):
-            x = nn.Dense(
-                hidden_size, name=f"hidden_{i}", kernel_init=self.kernel_init, use_bias=self.bias
-            )(x)
-            x = self.activation(x)
-            x = nn.LayerNorm()(x)
-            if get_activation:
-                activations[f"layer_{i}"] = x
+        variables = lstm.init(jax.random.key(2), hidden_state, x)
+        new_hidden_state, x = lstm.apply(variables, hidden_state, x)
+        # new_hidden_state, x = lstm(hidden_state, x)
+        
+        print(f'X shape after LSTM is{x.shape}')
+    
+        # for i, hidden_size in enumerate(self.layer_sizes):
+        #     x = nn.Dense(
+        #         hidden_size, name=f"hidden_{i}", kernel_init=self.kernel_init, use_bias=self.bias
+        #     )(x)
+        #     x = self.activation(x)
+        #     x = nn.LayerNorm()(x)
+            
+        #     print(f'X shape after LSTM + MLP is{x.shape}')
+            
+        #     if get_activation:
+        #         activations[f"layer_{i}"] = x
+        
+        # Flax does not allow control the output size independently of the hidden state size.
+        x = nn.Dense(self.layer_sizes[-1], name="lstm_projection")(x)
         
         if get_activation:
             return x, new_hidden_state, activations
+        
         return x, new_hidden_state
 
 

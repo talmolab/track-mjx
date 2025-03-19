@@ -308,6 +308,7 @@ def train(
         ) # partial loss here, this would inherent parameters from loss_fn
         
     
+    #TODO: chaneg naging of data
     def minibatch_step(
         carry,
         data: types.Transition,
@@ -621,7 +622,7 @@ def train(
                 (training_state.normalizer_params, training_state.params.policy)
             )
             
-            print(f'In Rendering eval, the hidden state is shape: {training_state.hidden_state[1].shape}')
+            # print(f'In Rendering eval, the hidden state is shape: {training_state.hidden_state[1].shape}')
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(

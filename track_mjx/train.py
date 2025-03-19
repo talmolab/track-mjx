@@ -185,7 +185,10 @@ def main(cfg: DictConfig):
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
-
+        
+    # rollout_env = envs.training.EpisodeWrapper(env, 500, 1)
+    # rollout_env = envs.training.EvalWrapper(rollout_env)
+    # rollout_env = custom_wrappers.LSTMRolloutAutoResetWrapperTracking(rollout_env)
     rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
 
     # define the jit reset/step functions

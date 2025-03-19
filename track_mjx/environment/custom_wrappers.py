@@ -120,36 +120,108 @@ class LSTMAutoResetWrapperTracking(Wrapper):
         return state.replace(pipeline_state=pipeline_state, obs=obs)
     
 
-# class RenderRolloutWrapperTracking(Wrapper):
-#     """Always resets to the first frame of the clips for complete rollouts."""
+class LSTMRolloutAutoResetWrapperTracking(Wrapper):
+    """Handles both rendering resets and auto-resetting for multiple envs, tracking LSTM hidden states."""
 
-#     def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
-#         """
-#         Resets the environment to an initial state.
+    def __init__(self, env, lstm_features: int = 128):
+        """Initialize the wrapper.
+        
+        Args:
+            env: The environment to wrap.
+            lstm_features (int): The size of the LSTM hidden state.
+        """
+        super().__init__(env)
+        self.lstm_features = lstm_features
 
-#         Args:
-#             rng (jax.Array): Random key for reproducibility.
-#             clip_idx (int | None, optional): clip index to reset to. if None, randomly choose the clip . Defaults to None.
+    def initialize_hidden_state(self, rng: jax.Array) -> tuple[jp.ndarray, jp.ndarray]:
+        """Initializes LSTM hidden states for the environment."""
+        lstm_cell = nn.LSTMCell(features=self.lstm_features)
+        return lstm_cell.initialize_carry(rng, ())
 
-#         Returns:
-#             State: The initial state of the environment.
-#         """
-#         _, clip_rng, rng = jax.random.split(rng, 3)
-#         if clip_idx is None:
-#             clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
-#         info = {
-#             "clip_idx": clip_idx,
-#             "start_frame": 0,
-#             "summed_pos_distance": 0.0,
-#             "quat_distance": 0.0,
-#             "joint_distance": 0.0,
-#             "prev_ctrl": jp.zeros((self.sys.nu,)),
-#         }
+    def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
+        """
+        Resets the environment and initializes LSTM hidden states.
+        If `clip_idx` is provided, resets to a specific clip.
+        """
+        _, clip_rng, rng = jax.random.split(rng, 3)
 
-#         return self.reset_from_clip(rng, info)
+        if clip_idx is None:
+            clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)
+            
+        # ensure step exist, does not overlap
+        state = self.env.reset(rng)
+        state.info["clip_idx"] = clip_idx
+        state.info["start_frame"] = 0
+        state.info["summed_pos_distance"] = 0.0
+        state.info["quat_distance"] = 0.0
+        state.info["joint_distance"] = 0.0
+        state.info["prev_ctrl"] = jp.zeros((self.sys.nu,))
+        state.info["first_pipeline_state"] = state.pipeline_state
+        state.info["first_obs"] = state.obs
+        state.info["first_prev_ctrl"] = state.info["prev_ctrl"]
+
+        hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
+        state.info["hidden_state"] = hidden_state
+
+        # print(f"Resetting to clip index: {clip_idx}, hidden state shape: {hidden_state[0].shape}")
+
+        return self.reset_from_clip(rng, state.info)
+
+    def step(self, state: State, action: jax.Array) -> State:
+        """Steps the environment while handling resets when needed."""
+        
+        if "steps" in state.info:
+            steps = state.info["steps"]
+            steps = jp.where(state.done, jp.zeros_like(steps), steps)
+            state.info.update(steps=steps)
+
+        state = state.replace(done=jp.zeros_like(state.done))
+        state = self.env.step(state, action)
+
+        def where_done(x, y):
+            """Reset data for environments that are done."""
+            done = state.done
+            if done.shape:
+                done = jp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # type: ignore
+            return jp.where(done, x, y)
+
+        # reset pipeline state, observation, and hidden state
+        pipeline_state = jax.tree.map(
+            where_done, state.info["first_pipeline_state"], state.pipeline_state
+        )
+        obs = where_done(state.info["first_obs"], state.obs)
+        state.info["prev_ctrl"] = where_done(
+            state.info["first_prev_ctrl"],
+            state.info["prev_ctrl"])
+
+        new_hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
+        hidden_state = jax.tree_map(
+            lambda x, y: where_done(x, y),
+            new_hidden_state,
+            state.info.get("hidden_state", new_hidden_state),
+        )
+        state.info["hidden_state"] = hidden_state
+
+        return state.replace(pipeline_state=pipeline_state, obs=obs)
+
 
 class RenderRolloutWrapperTracking(Wrapper):
-    """Always resets to the first frame of the clips for complete rollouts, with LSTM hidden states."""
+    """Always resets to the first frame of the clips for complete rollouts."""
+    
+    def __init__(self, env, lstm_features: int = 128):
+        """Initialize the wrapper.
+        
+        Args:
+            env: The environment to wrap.
+            lstm_features (int): The size of the LSTM hidden state.
+        """
+        super().__init__(env)
+        self.lstm_features = lstm_features
+    
+    def initialize_hidden_state(self, rng: jax.Array) -> tuple[jp.ndarray, jp.ndarray]:
+        """Initializes LSTM hidden states for the environment."""
+        lstm_cell = nn.LSTMCell(features=self.lstm_features)
+        return lstm_cell.initialize_carry(rng, ())
 
     def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
         """
@@ -157,16 +229,15 @@ class RenderRolloutWrapperTracking(Wrapper):
 
         Args:
             rng (jax.Array): Random key for reproducibility.
-            clip_idx (int | None, optional): clip index to reset to. If None, randomly choose a clip.
+            clip_idx (int | None, optional): clip index to reset to. if None, randomly choose the clip . Defaults to None.
 
         Returns:
             State: The initial state of the environment.
         """
         _, clip_rng, rng = jax.random.split(rng, 3)
-
         if clip_idx is None:
             clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
-
+        
         info = {
             "clip_idx": clip_idx,
             "start_frame": 0,
@@ -175,12 +246,11 @@ class RenderRolloutWrapperTracking(Wrapper):
             "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),
         }
-
-        hidden_state = nn.LSTMCell(features=128).initialize_carry(jax.random.PRNGKey(0), ())
+        
+        hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
         info["hidden_state"] = hidden_state
 
-        state = self.reset_from_clip(rng, info)
-        return state
+        return self.reset_from_clip(rng, info)
 
 
 # Single clip

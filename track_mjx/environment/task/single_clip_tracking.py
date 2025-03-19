@@ -2,6 +2,7 @@
 
 import jax
 from jax import numpy as jp
+from jax.flatten_util import ravel_pytree
 
 from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf as mjcf_brax
@@ -89,6 +90,7 @@ class SingleClipTracking(PipelineEnv):
         self._reference_clip = reference_clip
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
+        self._mjx_model = mjx.put_model(self.sys.mj_model)
 
     def reset(self, rng: jp.ndarray) -> State:
         """Resets the environment to an initial state.
@@ -123,10 +125,11 @@ class SingleClipTracking(PipelineEnv):
         """
         _, rng1, rng2 = jax.random.split(rng, 3)
 
-        # Get reference clip and select the start frame
+        # Get starting reference frame
         reference_frame = jax.tree.map(
             lambda x: x[info["start_frame"]], self._get_reference_clip(info)
         )
+        info["reference_frame"] = reference_frame
 
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
 
@@ -155,6 +158,7 @@ class SingleClipTracking(PipelineEnv):
             rng1, (self.sys.nq,), minval=low, maxval=hi
         )
 
+        # TODO set the qvel from the reference
         qvel = jp.where(
             noise,
             jax.random.uniform(rng1, (self.sys.nv,), minval=low, maxval=hi),
@@ -209,10 +213,12 @@ class SingleClipTracking(PipelineEnv):
         data = self.pipeline_step(data0, action)
         info = state.info.copy()
 
-        # Gets reference clip and indexes to current frame
-        reference_clip = jax.tree.map(
+        # Gets current reference frame
+        reference_frame = jax.tree.map(
             lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
+
+        info["reference_frame"] = reference_frame
 
         # reward calculation
         (
@@ -234,7 +240,7 @@ class SingleClipTracking(PipelineEnv):
             quat_distance,
         ) = compute_tracking_rewards(
             data=data,
-            reference_clip=reference_clip,
+            reference_frame=reference_frame,
             walker=self.walker,
             action=action,
             info=info,
@@ -262,8 +268,6 @@ class SingleClipTracking(PipelineEnv):
         reward = jp.nan_to_num(reward)
         obs = jp.nan_to_num(obs)
 
-        from jax.flatten_util import ravel_pytree
-
         flattened_vals, _ = ravel_pytree(data)
         num_nans = jp.sum(jp.isnan(flattened_vals))
         nan = jp.where(num_nans > 0, 1.0, 0.0)
@@ -277,7 +281,7 @@ class SingleClipTracking(PipelineEnv):
             bodypos_reward=bodypos_reward,
             endeff_reward=endeff_reward,
             ctrl_cost=-ctrl_cost,
-            ctrl_diff_cost=ctrl_diff_cost,
+            ctrl_diff_cost=-ctrl_diff_cost,
             too_far=too_far,
             bad_pose=bad_pose,
             bad_quat=bad_quat,

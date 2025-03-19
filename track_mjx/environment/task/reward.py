@@ -294,7 +294,7 @@ def compute_penalty_terms(
 
 def compute_tracking_rewards(
     data: MjData,
-    reference_clip: ReferenceClip,
+    reference_frame: ReferenceClip,
     walker: BaseWalker,
     action: jp.ndarray,
     info: dict[str, jp.ndarray],
@@ -315,7 +315,7 @@ def compute_tracking_rewards(
     """
 
     pos_array = data.qpos[:3]
-    reference_clip_pos = reference_clip.position
+    reference_clip_pos = reference_frame.position
     pos_reward, pos_distance = compute_pos_reward(
         pos_array,
         reference_clip_pos,
@@ -324,7 +324,7 @@ def compute_tracking_rewards(
     )
 
     quat_array = data.qpos[3:7]
-    reference_clip_quat = reference_clip.quaternion
+    reference_clip_quat = reference_frame.quaternion
     quat_reward, quat_distance = compute_quat_reward(
         quat_array,
         reference_clip_quat,
@@ -333,7 +333,7 @@ def compute_tracking_rewards(
     )
 
     joint_array = data.qpos[7:]
-    reference_clip_joint = reference_clip.joints
+    reference_clip_joint = reference_frame.joints
     joint_reward, joint_distance = compute_joint_reward(
         joint_array,
         reference_clip_joint,
@@ -342,7 +342,7 @@ def compute_tracking_rewards(
     )
 
     angvel_array = data.qvel[3:6]
-    reference_clip_angvel = reference_clip.angular_velocity
+    reference_clip_angvel = reference_frame.angular_velocity
     angvel_reward = compute_angvel_reward(
         angvel_array,
         reference_clip_angvel,
@@ -351,7 +351,7 @@ def compute_tracking_rewards(
     )
 
     bodypos_array = walker.get_body_positions(data.xpos)
-    reference_clip_bodypos = reference_clip.body_positions[walker.body_idxs]
+    reference_clip_bodypos = reference_frame.body_positions[walker.body_idxs]
     bodypos_reward = compute_bodypos_reward(
         bodypos_array,
         reference_clip_bodypos,
@@ -360,7 +360,7 @@ def compute_tracking_rewards(
     )
 
     endeff_array = walker.get_end_effector_positions(data.xpos)
-    reference_clip_endeff = reference_clip.body_positions[walker.endeff_idxs]
+    reference_clip_endeff = reference_frame.body_positions[walker.endeff_idxs]
     endeff_reward = compute_endeff_reward(
         endeff_array,
         reference_clip_endeff,

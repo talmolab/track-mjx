@@ -133,7 +133,7 @@ class IntentionNetwork(nn.Module):
         else:
             latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            action = self.decoder(
+            action, _ = self.decoder(
                 jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             )
             return action, latent_mean, latent_logvar

@@ -194,6 +194,7 @@ class SingleClipTracking(PipelineEnv):
             "joint_distance": zero,
             "summed_pos_distance": zero,
             "quat_distance": zero,
+            "done": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -290,6 +291,7 @@ class SingleClipTracking(PipelineEnv):
             joint_distance=joint_distance,
             summed_pos_distance=summed_pos_distance,
             quat_distance=quat_distance,
+            done=done,
         )
 
         return state.replace(

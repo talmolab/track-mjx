@@ -130,7 +130,7 @@ def make_abstract_policy(cfg: OmegaConf, seed: int = 1):
 
 
 def load_inference_fn(
-    cfg, policy_params, deterministic: bool = True, get_activation: bool = True
+    cfg, policy_params, deterministic: bool = True, get_activation: bool = False
 ) -> Callable:
     """
     Create a ppo policy inference function from a checkpoint.

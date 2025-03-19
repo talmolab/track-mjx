@@ -206,8 +206,10 @@ class AutoAlignWrapperTracking(Wrapper):
             where_done, aligned_pipeline_state, state.pipeline_state
         )
 
-        obs = jax.vmap(self._get_obs)(pipeline_state, state.info)
-
+        reference_obs, proprioceptive_obs = jax.vmap(self._get_obs)(
+            pipeline_state, state.info
+        )
+        obs = jnp.concatenate([reference_obs, proprioceptive_obs], axis=-1)
         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
 

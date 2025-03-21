@@ -57,6 +57,7 @@ def agg_backend_context(func):
 def render_from_saved_rollout(
     rollout: dict,
     walker_type: str = "mouse-arm",
+    max_frames: int = None,  # New parameter to control video trim length
 ) -> list:
     """
     Render a rollout from saved qposes.
@@ -139,6 +140,9 @@ def render_from_saved_rollout(
         )
         pixels = renderer.render()
         frames.append(pixels)
+    # Trim the frames if max_frames is set
+    if max_frames is not None:
+        frames = frames[:max_frames]
     return frames
 
 

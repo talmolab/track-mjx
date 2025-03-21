@@ -269,9 +269,16 @@ def rollout_logging_fn(
     info_array = [state.info for state in rollout]
     with imageio.get_writer(video_path, fps=desired_fps) as video:
         for idx, (qpos1, qpos2) in enumerate(zip(qposes_rollout, qposes_ref)):
-            # If a reset is detected (i.e. current step is lower than previous), stop rendering.
-            if idx > 0 and info_array[idx]["step"] < info_array[idx - 1]["step"]:
-                break
+            if idx > 0:
+                # Compute RMS difference between current and previous qpos
+                angle_diff = np.sqrt(
+                    np.mean(np.square(qpos1 - qposes_rollout[idx - 1]))
+                )
+                if angle_diff > 0.5:
+                    print(
+                        f"Reset detected (RMS diff {angle_diff:.3f} > 0.5) at frame {idx}"
+                    )
+                    break
             # Downsample: write frame only every "downsample_rate" frames
             if idx % downsample_rate != 0:
                 continue

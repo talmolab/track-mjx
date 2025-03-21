@@ -231,6 +231,7 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
+            energy_cost,
             too_far,
             bad_pose,
             bad_quat,
@@ -260,6 +261,7 @@ class SingleClipTracking(PipelineEnv):
             + endeff_reward
             - ctrl_cost
             - ctrl_diff_cost
+            - energy_cost
         )
 
         # Raise done flag if terminating
@@ -283,6 +285,7 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward=endeff_reward,
             ctrl_cost=-ctrl_cost,
             ctrl_diff_cost=-ctrl_diff_cost,
+            energy_cost=-energy_cost,
             too_far=too_far,
             bad_pose=bad_pose,
             bad_quat=bad_quat,

@@ -22,6 +22,7 @@ class RewardConfig:
     bad_quat_dist: float
     ctrl_cost_weight: float
     ctrl_diff_cost_weight: float
+    energy_cost_weight: float
     pos_reward_weight: float
     quat_reward_weight: float
     joint_reward_weight: float
@@ -241,6 +242,21 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
+def compute_energy_cost(
+    qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Penalize energy consumption.
+
+    Args:
+        qvel: Current velocity data.
+        qfrc_actuator: Current actuator force data.
+
+    Returns:
+        jp.ndarray: Weighted energy cost.
+    """
+    return weight * jp.sum(jp.abs(qvel[6:]) * jp.abs(qfrc_actuator[6:]))
+
+
 def compute_health_penalty(
     torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
 ) -> jp.ndarray:
@@ -373,6 +389,10 @@ def compute_tracking_rewards(
         action, info["prev_ctrl"], reward_config.ctrl_diff_cost_weight
     )
 
+    energy_cost = compute_energy_cost(
+        data.qvel, data.qfrc_actuator, reward_config.energy_cost_weight
+    )
+
     torso_z = walker.get_torso_position(data.xpos)[2]
     fall = compute_health_penalty(torso_z, reward_config.healthy_z_range)
     too_far, bad_pose, bad_quat, summed_pos_distance = compute_penalty_terms(
@@ -394,6 +414,7 @@ def compute_tracking_rewards(
         endeff_reward,
         ctrl_cost,
         ctrl_diff_cost,
+        energy_cost,
         too_far,
         bad_pose,
         bad_quat,

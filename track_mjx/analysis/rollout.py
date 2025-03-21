@@ -140,10 +140,6 @@ def create_rollout_generator(
                 lambda s: s.metrics[rollout_metric]
             )(rollout_states)
 
-            # "torso_heights": jax.vmap(
-            #     lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
-            # )(rollout_states),
-
         # Reference and rollout qposes
         ref_traj = rollout_env._get_reference_clip(init_state.info)
         qposes_ref = jnp.repeat(

@@ -109,7 +109,6 @@ def train(
     reward_scaling: float = 1.0,
     clipping_epsilon: float = 0.3,
     gae_lambda: float = 0.95,
-    deterministic_eval: bool = False,
     network_factory: types.NetworkFactory[
         custom_ppo_networks.PPOImitationNetworks
     ] = custom_ppo_networks.make_intention_ppo_networks,
@@ -158,7 +157,6 @@ def train(
       reward_scaling: float scaling for reward
       clipping_epsilon: clipping epsilon for PPO loss
       gae_lambda: General advantage estimation lambda
-      deterministic_eval: whether to run the eval with a deterministic policy
       network_factory: function that generates networks for policy and value
         functions
       progress_fn: a user-defined callback function for reporting/plotting metrics
@@ -263,8 +261,10 @@ def train(
     )
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
 
-    make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+    make_logging_policy_with_activation, make_logging_policy_without_activation = (
+        custom_ppo_networks.make_logging_inference_fn(ppo_network)
+    )
+    jit_logging_policy_with_activation = jax.jit(make_logging_policy_with_activation)
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -476,7 +476,7 @@ def train(
 
     evaluator = acting.Evaluator(
         eval_env,
-        functools.partial(make_policy, deterministic=deterministic_eval),
+        make_policy,
         num_eval_envs=num_eval_envs,
         episode_length=episode_length,
         action_repeat=action_repeat,
@@ -551,7 +551,8 @@ def train(
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=it,
-                jit_logging_inference_fn=jit_logging_inference_fn,
+                jit_policy_with_activation=jit_logging_policy_with_activation,
+                jit_policy_without_activation=jit_logging_policy_with_activation,  # Just use the same one for both
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )

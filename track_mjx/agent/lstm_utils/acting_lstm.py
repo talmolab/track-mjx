@@ -47,20 +47,21 @@ def actor_step(
     actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state) # ensure policy now returns the updated LSTM hidden state
     
     # print(f'In actor step, new action shape is: {actions.shape}')
-    env_state.info['hidden_state'] = new_hidden_state
-    info_hidden_state = env_state.info['hidden_state']
+    # env_state.info['hidden_state'] = new_hidden_state
+    info_hidden = env_state.info['hidden_state']
     
-    print(f'In actor step, passed in hidden state shape is: {hidden_state[1].shape}, original hidden state shape from info is: {info_hidden_state[1].shape}')
+    print(f'In actor step, passed in hidden state shape is: {hidden_state[1].shape}, original hidden state shape from info is: {info_hidden[1].shape}')
     print(f'In actor step, hidden state giving to info shape is: {new_hidden_state[1].shape}')
     
     nstate = env.step(env_state, actions)
     state_extras = {x: nstate.info[x] for x in extra_fields}
-    new_hidden_state = nstate.info['hidden_state']
     
-    # done = nstate.done[:, None]  # get done flags (batch_size, num_envs)
+    # new_hidden_state = nstate.info['hidden_state']
+    
+    done = nstate.done[:, None]  # get done flags (batch_size, num_envs)
     
     # need to use new hidden state
-    # new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
+    new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
     
     # num_resets = jnp.sum(done)
     # jax.debug.print("Number of hidden states replaced: {}", num_resets)
@@ -75,7 +76,8 @@ def actor_step(
         next_observation=nstate.obs,
         extras={
             'policy_extras': policy_extras,
-            'state_extras': state_extras
+            'state_extras': state_extras,
+            'hidden_state': new_hidden_state
         }
     ), new_hidden_state
     

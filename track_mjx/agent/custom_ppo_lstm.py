@@ -284,8 +284,8 @@ def train(
 
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
     
-    # always true for rendering env
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True, get_activation=False, use_lstm=use_lstm,))
+    # always true for rendering env, try with False for now
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=False, get_activation=False, use_lstm=use_lstm,))
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -332,24 +332,38 @@ def train(
         optimizer_state, params, hidden_state, key = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
         
-        def convert_data_hidden(x: jnp.ndarray):
+        def convert_data(x: jnp.ndarray):
             # print(f'In SGD step converting datt/hidden, X shape is: {x.shape}') 
             # start with (2048, 20, 128)
-            # x = jax.random.permutation(key_perm, x)
+            x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
             return x
         
-        shuffled_data = jax.tree_util.tree_map(convert_data_hidden, data)
-        converted_hidden_state = jax.tree_util.tree_map(convert_data_hidden, hidden_state)
+        shuffled_data = jax.tree_util.tree_map(convert_data, data)
+        # converted_hidden_state = jax.tree_util.tree_map(convert_data_hidden, hidden_state)
+        
+        # def convert_data(x: jnp.ndarray, perm: jnp.ndarray):
+        #     x = x[perm] # (2048, 20, 128)
+        #     x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
+        #     return x
+        
+        # indices = jnp.arange(data.observation.shape[0])
+        # perm = jax.random.permutation(key_perm, indices)
+        
+        # # jax.debug.print("Indicies: {}", indices)
+        # # jax.debug.print("Perm: {}", perm)
+        
+        # shuffled_data = jax.tree_util.tree_map(lambda x: convert_data(x, perm), data)
+        # converted_hidden_state = jax.tree_util.tree_map(lambda x: convert_data(x, perm), hidden_state)
         
         # Jax.lax.scan should scan through minibatches
         print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
-        print(f'In sgd step, shape of hidden after second reshape and into scanning is {converted_hidden_state[1].shape}')
+        # print(f'In sgd step, shape of hidden after second reshape and into scanning is {converted_hidden_state[1].shape}')
         
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, key_grad),
-            (shuffled_data, converted_hidden_state), # scan this combo
+            shuffled_data, # single data pass, no hidden combo, hidden in it
             length=num_minibatches,
         )
         
@@ -386,6 +400,7 @@ def train(
             return (next_state, next_key, forward_hidden_state), (data, backward_hidden_state)
         
         
+        # backward_hidden_state not used
         (state, _, forward_hidden_state), (data, backward_hidden_state) = jax.lax.scan(
             f,
             (state, key_generate_unroll, training_state.hidden_state),

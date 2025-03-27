@@ -59,15 +59,15 @@ train_setup:
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 10_000_000
+  eval_every: 1 #10_000_000
   episode_length: 200
   reset_every: 20_000_000
   train_config:
     num_envs: 1024
     num_timesteps: 10_000_000_000
-    batch_size: 1024 #512
-    num_minibatches: 1 #4
-    num_updates_per_batch: 1 #4
+    batch_size: 512
+    num_minibatches: 4
+    num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2     
     discounting: 0.95        
@@ -79,7 +79,7 @@ train_setup:
     seed: 0
     get_activation: True
     use_lstm: True
-    deterministic_eval: True
+    deterministic_eval: False
 
 logging_config:
   project_name: vnl_debug

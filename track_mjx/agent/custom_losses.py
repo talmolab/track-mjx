@@ -102,7 +102,7 @@ def compute_gae(
 def compute_ppo_loss(
     params: PPONetworkParams,
     normalizer_params: Any,
-    data_and_hidden: tuple[types.Transition, tuple[jnp.ndarray, jnp.ndarray]],
+    data: types.Transition,
     rng: jnp.ndarray,
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
@@ -142,19 +142,13 @@ def compute_ppo_loss(
     policy_apply = ppo_network.policy_network.apply
     value_apply = ppo_network.value_network.apply
     
-    if use_lstm:
-      data = data_and_hidden[0]
-      hidden_state = data_and_hidden[1]
-      
-      # Put the time dimension first.
-      data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-      hidden_state = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), hidden_state)
+    # Put the time dimension first.
+    data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
     
-    else:
-      data = data_and_hidden
-      data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+    hidden_state = data.extras['hidden_state']
     
     print(f'In loss function, the data shape is {data.observation.shape}')
+    print(f'In loss function, the data hidden shape is {hidden_state.shape}')
     
     if use_lstm:
       policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(

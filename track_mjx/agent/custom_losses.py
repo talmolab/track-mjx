@@ -148,7 +148,7 @@ def compute_ppo_loss(
     hidden_state = data.extras['hidden_state']
     
     print(f'In loss function, the data shape is {data.observation.shape}')
-    print(f'In loss function, the data hidden shape is {hidden_state.shape}')
+    print(f'In loss function, the data hidden shape is {hidden_state[1].shape}')
     
     if use_lstm:
       policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(

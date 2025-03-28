@@ -284,8 +284,8 @@ def train(
 
     make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
     
-    # always true for rendering env, try with False for now
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=False, get_activation=False, use_lstm=use_lstm,))
+    # always true for rendering env
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True, get_activation=False, use_lstm=use_lstm,))
 
     optimizer = optax.adam(learning_rate=learning_rate)
 

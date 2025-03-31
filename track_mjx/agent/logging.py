@@ -182,7 +182,7 @@ def rollout_logging_fn(
         # hidden does get updated and is initiated correctly
         if train_config['use_lstm']:
             ctrl, extras, hidden_state = jit_logging_inference_fn(params, obs, act_rng, hidden_state)
-            print(f'In Inference rendering, LSTM hiden is: {hidden_state}')
+            # print(f'In Inference rendering, LSTM hiden is: {hidden_state}')
         else:
             ctrl, extras,  = jit_logging_inference_fn(params, obs, act_rng, None)
             

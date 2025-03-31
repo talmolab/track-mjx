@@ -46,6 +46,9 @@ def actor_step(
     
     actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state) # ensure policy now returns the updated LSTM hidden state
     
+    diff = jnp.linalg.norm(new_hidden_state[0] - hidden_state[0])
+    jax.debug.print("[DEBUG] Hidden state h diff from prev to new: {}", diff)
+    
     # print(f'In actor step, new action shape is: {actions.shape}')
     # env_state.info['hidden_state'] = new_hidden_state
     info_hidden = env_state.info['hidden_state']
@@ -60,8 +63,20 @@ def actor_step(
     
     done = nstate.done[:, None]  # get done flags (batch_size, num_envs)
     
+    #DEBUG
+    h_before, c_before = new_hidden_state
+    
     # need to use new hidden state
     new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
+    
+    #DEBUG
+    h_after, c_after = new_hidden_state
+    h_changed = jnp.any(h_before != h_after, axis=1)
+    c_changed = jnp.any(c_before != c_after, axis=1)
+    num_h_reset = jnp.sum(h_changed)
+    num_c_reset = jnp.sum(c_changed)
+    jax.debug.print("[DEBUG] Hidden state reset count (h): {}", num_h_reset)
+    jax.debug.print("[DEBUG] Hidden state reset count (c): {}", num_c_reset)
     
     # num_resets = jnp.sum(done)
     # jax.debug.print("Number of hidden states replaced: {}", num_resets)

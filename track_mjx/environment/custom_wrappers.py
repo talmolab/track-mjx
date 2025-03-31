@@ -160,7 +160,7 @@ class LSTMRolloutAutoResetWrapperTracking(Wrapper):
         state.info["first_obs"] = state.obs
         state.info["first_prev_ctrl"] = state.info["prev_ctrl"]
 
-        hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
+        hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0)) # detrnminestic return
         state.info["hidden_state"] = hidden_state
 
         # print(f"Resetting to clip index: {clip_idx}, hidden state shape: {hidden_state[0].shape}")
@@ -194,13 +194,13 @@ class LSTMRolloutAutoResetWrapperTracking(Wrapper):
             state.info["first_prev_ctrl"],
             state.info["prev_ctrl"])
 
-        new_hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
-        hidden_state = jax.tree_map(
-            lambda x, y: where_done(x, y),
-            new_hidden_state,
-            state.info.get("hidden_state", new_hidden_state),
-        )
-        state.info["hidden_state"] = hidden_state
+        # new_hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
+        # hidden_state = jax.tree_map(
+        #     lambda x, y: where_done(x, y),
+        #     new_hidden_state,
+        #     state.info.get("hidden_state", new_hidden_state),
+        # )
+        # state.info["hidden_state"] = hidden_state
 
         return state.replace(pipeline_state=pipeline_state, obs=obs)
 

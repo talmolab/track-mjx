@@ -35,6 +35,7 @@ class RewardConfig:
     endeff_reward_exp_scale: float
     # penalty_pos_distance_scale: jp.ndarray
     jerk_cost_weight: float
+    energy_cost: float
 
     # def __post_init__(self):
     #     if isinstance(self.penalty_pos_distance_scale, list) or isinstance(
@@ -207,6 +208,18 @@ def compute_endeff_reward(
         * jp.sum((endeff_array - reference_clip_endeff).flatten() ** 2)
     )
     return weighted_endeff_reward
+
+
+def compute_energy_cost(
+    qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Compute energy consumption cost."""
+    # Scale the values to prevent extremely large costs
+    # Apply a softplus or similar function to make gradients smoother
+    energy = jp.sum(jp.abs(qvel) * jp.abs(qfrc_actuator))
+    # Clip the energy to a reasonable range to prevent extreme penalties
+    energy = jp.minimum(energy, 100.0)  # Prevent excessive penalties
+    return weight * energy
 
 
 def compute_ctrl_cost(action: jp.ndarray, weight: float) -> jp.ndarray:
@@ -393,6 +406,11 @@ def compute_tracking_rewards(
     jerk_cost = compute_jerk_cost(data.qacc, prev_qacc, reward_config.jerk_cost_weight)
     info["prev_qacc"] = data.qacc
 
+    # Add energy cost calculation
+    energy_cost = compute_energy_cost(
+        data.qvel, data.qfrc_actuator, reward_config.energy_cost
+    )
+
     # xpos = data.xpos
     # torso_z = walker.get_torso_position(xpos)[2]
     # fall = compute_health_penalty(torso_z, reward_config.healthy_z_range)
@@ -414,12 +432,13 @@ def compute_tracking_rewards(
         joint_reward
         + bodypos_reward
         + endeff_reward
-        + ctrl_cost
+        - ctrl_cost
         - ctrl_diff_cost
         - jerk_cost
+        - energy_cost
     )
 
-    # Ensure we return a 7-tuple
+    # Ensure we return an 8-tuple (added energy_cost)
     return (
         joint_reward,
         bodypos_reward,
@@ -427,5 +446,6 @@ def compute_tracking_rewards(
         ctrl_cost,
         ctrl_diff_cost,
         jerk_cost,
+        energy_cost,  # Add energy_cost to the return tuple
         info,
     )

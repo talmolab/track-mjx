@@ -106,6 +106,32 @@ class AutoResetWrapperTracking(Wrapper):
         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
 
+class EvalClipResetWrapper(Wrapper):
+    """Always resets to the first frame of the clips for complete rollouts."""
+
+    def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
+        """
+        Resets the environment to an initial state.
+
+        Args:
+            rng (jax.Array): Random key for reproducibility.
+            clip_idx (int | None, optional): clip index to reset to. if None, randomly choose the clip . Defaults to None.
+
+        Returns:
+            State: The initial state of the environment.
+        """
+        _, clip_rng, rng = jax.random.split(rng, 3)
+        if clip_idx is None:
+            clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
+        info = {
+            "clip_idx": clip_idx,
+            "start_frame": 0,
+            "prev_ctrl": jp.zeros((self.sys.nu,)),
+        }
+
+        return self.reset_from_clip(rng, info)
+
+
 class EvalClipWrapperTracking(Wrapper):
     """Always resets to 0, at a specific clip"""
 

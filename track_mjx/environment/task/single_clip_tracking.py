@@ -202,9 +202,10 @@ class SingleClipTracking(PipelineEnv):
             # "angvel_reward": zero,
             "bodypos_reward": zero,
             "endeff_reward": zero,
-            "reward_ctrlcost": zero,
+            "ctrl_cost": zero,
             "ctrl_diff_cost": zero,
             "jerk_cost": zero,
+            "energy_cost": zero,  # Make sure energy_cost is included here
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -239,7 +240,8 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
-            jerk_cost,  # newly returned from compute_tracking_rewards
+            jerk_cost,
+            energy_cost,  # Add the energy_cost unpacking here
             info,
         ) = compute_tracking_rewards(
             data=data,
@@ -260,6 +262,7 @@ class SingleClipTracking(PipelineEnv):
             - ctrl_cost
             - ctrl_diff_cost
             - jerk_cost
+            - energy_cost
         )
 
         # Raise done flag if terminating
@@ -283,9 +286,10 @@ class SingleClipTracking(PipelineEnv):
             # angvel_reward=angvel_reward,
             bodypos_reward=bodypos_reward,
             endeff_reward=endeff_reward,
-            reward_ctrlcost=-ctrl_cost,
+            ctrl_cost=ctrl_cost,  # Store as a cost (positive value, lower is better)
             ctrl_diff_cost=ctrl_diff_cost,
-            jerk_cost=jerk_cost,  # <-- Added jerk_cost metric here
+            jerk_cost=jerk_cost,
+            energy_cost=energy_cost,
         )
 
         return state.replace(

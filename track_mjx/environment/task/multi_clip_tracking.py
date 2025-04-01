@@ -38,8 +38,8 @@ class MultiClipTracking(SingleClipTracking):
         physics_steps_per_control_step: int,
         reset_noise_scale: float,
         solver: str = "cg",
-        iterations: int = 20,
-        ls_iterations: int = 20,
+        iterations: int = 6,  # Update from 20 to 6
+        ls_iterations: int = 6,  # Update from 20 to 6
         mj_model_timestep: float = 0.002,
         mocap_hz: int = 50,
         clip_length: int = 250,
@@ -70,6 +70,7 @@ class MultiClipTracking(SingleClipTracking):
             termination_joint_distance_threshold: Threshold for early termination based on joint distance.
             **kwargs: Additional arguments for the PipelineEnv initialization.
         """
+        # action_std_clip = kwargs.pop("action_std_clip", None)
         super().__init__(
             None,
             walker,
@@ -86,6 +87,7 @@ class MultiClipTracking(SingleClipTracking):
             traj_length,
             **kwargs,
         )
+        # self._action_std_clip = action_std_clip  # store action std clip value
         if reference_clip is not None:
             self._reference_clips = reference_clip
             self._n_clips = reference_clip.body_positions.shape[0]
@@ -129,6 +131,12 @@ class MultiClipTracking(SingleClipTracking):
         }
 
         state = self.reset_from_clip(rng, info, noise=True)
+
+        # Ensure energy_cost is present in metrics if it might be missing
+        if "energy_cost" not in state.metrics:
+            metrics = {**state.metrics, "energy_cost": jp.array(0.0)}
+            state = state.replace(metrics=metrics)
+
         # Make sure both clip_length AND step are preserved in state.info
         state = state.replace(
             info={
@@ -140,19 +148,18 @@ class MultiClipTracking(SingleClipTracking):
         return state
 
     def step(self, state: State, action: jp.ndarray) -> State:
-        """
-        Steps the environment forward by one timestep.
+        """Steps the environment forward by one timestep."""
+        # Remove the ineffective action scaling - we're handling this at the network level
 
-        Args:
-            state (State): The current state of the environment.
-            action (jp.ndarray): The action to take.
-
-        Returns:
-            State: The new state of the environment.
-        """
         # First, ensure step exists and increment it
         if "step" not in state.info:
             state = state.replace(info={**state.info, "step": jp.array(0)})
+
+        # Get the clip_length before we increment the step counter
+        clip_length = state.info.get("clip_length")
+        if (clip_length is None) and ("clip_idx" in state.info):
+            clip_length = self._clip_lengths[state.info["clip_idx"]]
+            state = state.replace(info={**state.info, "clip_length": clip_length})
 
         # Increment the step counter
         state = state.replace(
@@ -162,7 +169,7 @@ class MultiClipTracking(SingleClipTracking):
         # Call parent step method with updated state
         state = super().step(state, action)
 
-        clip_length = state.info.get("clip_length", 0)
+        # Rest of the method remains unchanged
 
         # Handle NaNs or all-zero observations.
         condition = jp.logical_or(jp.any(jp.isnan(state.obs)), jp.all(state.obs == 0))

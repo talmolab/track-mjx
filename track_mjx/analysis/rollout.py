@@ -25,6 +25,8 @@ from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_losses as ppo_losses
+from track_mjx.io import load
+import h5py
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -64,11 +66,38 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     walker_config = cfg_dict["walker_config"]
     traj_config = cfg_dict["reference_config"]
 
+    if isinstance(env_args["reset_noise_scale"], str):
+        env_args["reset_noise_scale"] = float(env_args["reset_noise_scale"])
+
     # TODO(Scott): move this to track_mjx.io module
     input_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
     logging.info(f"Loading data: {input_data_path}")
-    with open(input_data_path, "rb") as file:
-        reference_clip = pickle.load(file)
+
+    # with open(input_data_path, "rb") as file:
+    #     reference_clip = pickle.load(file)
+
+    # Split the data path to handle multiple files
+    file_paths = input_data_path.split(",")
+    print(f"Using first file path: {file_paths[0]}")
+
+    # Just pass the path strings directly - don't open the files yourself
+    reference_clip, clip_lengths = load.make_multiclip_data([file_paths[0]])
+
+    # Ensure clip_lengths are integers not strings
+    clip_lengths = jnp.array(clip_lengths, dtype=jnp.int32)
+    print(f"Loaded reference clip with {clip_lengths[0]} frames")
+
+    # Set up walker
+    walker_config = cfg_dict["walker_config"]
+    print(f"Joint names: {walker_config['joint_names']}")
+    walker = MouseArm(**walker_config)
+
+    # Show important values for debugging
+    env_args = cfg_dict["env_config"]["env_args"]
+    print(
+        f"env._steps_for_cur_frame: {env_args.get('physics_steps_per_control_step', '?')}"
+    )
+
     walker_map = {
         "mouse-arm": MouseArm,
         "rodent": Rodent,
@@ -86,17 +115,19 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
         # pos_reward_weight=env_rewards.pos_reward_weight,
         # quat_reward_weight=env_rewards.quat_reward_weight,
         joint_reward_weight=env_rewards.joint_reward_weight,
-        angvel_reward_weight=env_rewards.angvel_reward_weight,
+        # angvel_reward_weight=env_rewards.angvel_reward_weight,
         bodypos_reward_weight=env_rewards.bodypos_reward_weight,
         endeff_reward_weight=env_rewards.endeff_reward_weight,
         # healthy_z_range=env_rewards.healthy_z_range,
         # pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
         # quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
         joint_reward_exp_scale=env_rewards.joint_reward_exp_scale,
-        angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
+        # angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
         bodypos_reward_exp_scale=env_rewards.bodypos_reward_exp_scale,
         endeff_reward_exp_scale=env_rewards.endeff_reward_exp_scale,
         # penalty_pos_distance_scale=jnp.array(env_rewards.penalty_pos_distance_scale),
+        jerk_cost_weight=env_rewards.jerk_cost_weight,
+        energy_cost=env_rewards.energy_cost,
     )
     # Automatically match dict keys and func needs
     env = envs.get_environment(
@@ -104,6 +135,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
         reference_clip=reference_clip,
         walker=walker,
         reward_config=reward_config,
+        clip_lengths=clip_lengths,
         **env_args,
         **traj_config,
     )
@@ -233,16 +265,16 @@ def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callab
 
         jax.tree_util.tree_map(print_param_summary, policy)
 
-    # Build and jit the inference function
+    # Build and jit the inference function - Use DETERMINISTIC mode to reduce shakiness
     jit_inference_fn = jax.jit(
         make_policy(policy, deterministic=True, get_activation=True)
     )
 
-    # Optional: test a quick inference on a known observation
+    # Simple validation that inference function works
     test_state = rollout_env.reset(jax.random.PRNGKey(0))
     test_obs = test_state.obs
-    ctrl, activations = jit_inference_fn(test_obs, jax.random.PRNGKey(42))
-    print("Test control output from inference function:", ctrl)
+    ctrl, _ = jit_inference_fn(test_obs, jax.random.PRNGKey(42))
+
     if jnp.any(jnp.isnan(ctrl)):
         raise ValueError("Inference function returned NaN control values!")
 
@@ -297,7 +329,6 @@ def create_rollout_generator(
             state, act_rng = carry
             act_rng, new_rng = jax.random.split(act_rng)
             ctrl, extras = jit_inference_fn(state.obs, act_rng)
-            jax.debug.print("Control: {x}", x=ctrl)
             next_state = jit_step(state, ctrl)
             if jnp.any(jnp.isnan(next_state.pipeline_state.qpos)):
                 raise ValueError("qpos became NaN after stepping the environment!")
@@ -340,6 +371,9 @@ def create_rollout_generator(
             #     rollout_states
             # ),
             "joint_distances": jax.vmap(lambda s: s.info["joint_distance"])(
+                rollout_states
+            ),
+            "energy_costs": jax.vmap(lambda s: s.metrics["energy_cost"])(
                 rollout_states
             ),
             # "torso_heights": jax.vmap(

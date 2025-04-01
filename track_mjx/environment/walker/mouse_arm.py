@@ -93,3 +93,17 @@ class MouseArm(BaseWalker):
                 for end_eff in self._end_eff_names
             ]
         )
+
+        # Set torso index (assuming first body is torso/reference)
+        self._torso_idx = self._body_idxs[0] if len(self._body_idxs) > 0 else 0
+
+        # Storage for previous action to enable smooth action transitions
+        self._prev_action = None
+
+    def update_prev_action(self, action):
+        """Store the current action for the next observation.
+
+        Args:
+            action: Current action to store
+        """
+        self._prev_action = action

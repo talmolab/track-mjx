@@ -90,7 +90,7 @@ def render_from_saved_rollout(
                 / "walker"
                 / "assets"
                 / "mouse_arm"
-                / "arm_model_v3_ghostpair.xml"
+                / "akira_model_ghostpair.xml"
             ).resolve()
         )
     elif walker_type == "fly":
@@ -120,13 +120,13 @@ def render_from_saved_rollout(
         "cg": mujoco.mjtSolver.mjSOL_CG,
         "newton": mujoco.mjtSolver.mjSOL_NEWTON,
     }["cg"]
-    mj_model.opt.iterations = 20
-    mj_model.opt.ls_iterations = 20
+    mj_model.opt.iterations = 6  # Update from 20 to 6
+    mj_model.opt.ls_iterations = 6  # Update from 20 to 6
     mj_data = mujoco.MjData(mj_model)
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=480, width=640)
+    renderer = mujoco.Renderer(mj_model, height=1080, width=1920)
     frames = []
     print("MuJoCo Rendering...")
     for qpos1, qpos2 in tqdm(

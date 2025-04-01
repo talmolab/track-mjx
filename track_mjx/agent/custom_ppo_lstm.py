@@ -415,9 +415,7 @@ def train(
         
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        data = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
-        )
+        data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data)
         assert data.discount.shape[1:] == (unroll_length,)
         
         print(f'In training step, data.observation shape after shaping is: {data.observation.shape}')

@@ -145,7 +145,7 @@ def compute_ppo_loss(
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
     
-    hidden_state = data.extras['hidden_state']
+    hidden_state = (data.extras['hidden_state'], data.extras['cell_state'])
     
     print(f'In loss function, the data shape is {data.observation.shape}')
     print(f'In loss function, the data hidden shape is {hidden_state[1].shape}')

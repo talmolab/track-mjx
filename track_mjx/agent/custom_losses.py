@@ -185,8 +185,7 @@ def compute_ppo_loss(
       (final_h, final_c), (policy_logits, latent_mean, latent_logvar) = jax.lax.scan(
           scan_policy_fn,
           hidden_state, # carry only hidden state
-          data.observation, # scan over 20 in (20, 512, data_dim)
-          1 - data.discount, # discount is opposite to done
+          (data.observation, 1 - data.discount) # scan over 20 in (20, 512, data_dim) & discount is opposite to done
       )
       
       # should be independent acros loss update not used anymore

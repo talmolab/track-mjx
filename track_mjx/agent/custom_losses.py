@@ -145,16 +145,55 @@ def compute_ppo_loss(
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
     
-    hidden_state = (data.extras['hidden_state'], data.extras['cell_state'])
+    hidden_state = (data.extras['hidden_state'][0], data.extras['cell_state'][0]) # take in first hidden again to unroll
+    hidden_state = jax.tree_map(jax.lax.stop_gradient, hidden_state)
     
     print(f'In loss function, the data shape is {data.observation.shape}')
     print(f'In loss function, the data hidden shape is {hidden_state[1].shape}')
     
     if use_lstm:
-      policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(
-      normalizer_params, params.policy, data.observation, policy_key, hidden_state, get_activation=False, use_lstm=use_lstm
+      # policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(
+      # normalizer_params, params.policy, data.observation, policy_key, hidden_state, get_activation=False, use_lstm=use_lstm
+      # )
+      
+      def scan_policy_fn(carry, inputs):
+          """
+          carry: (h, c) hidden state for LSTM
+          x_t: observations at time t with shape [B, obs_dim]
+          """
+          (h, c) = carry
+          x_t, done_t = inputs
+          
+          done_mask = done_t.reshape((-1, 1))
+          h = jnp.where(done_mask, jnp.zeros_like(h), h)
+          c = jnp.where(done_mask, jnp.zeros_like(c), c)
+
+          logits_t, latent_mean_t, latent_logvar_t, new_hidden_state = policy_apply(
+              normalizer_params,
+              params.policy, 
+              x_t, # obs for time t
+              rng,
+              (h, c),
+              get_activation=False,
+              use_lstm=True,
+          )
+          (new_h, new_c) = new_hidden_state
+
+          # accumulate some fields for the entire sequence
+          return (new_h, new_c), (logits_t, latent_mean_t, latent_logvar_t)
+
+      (final_h, final_c), (policy_logits, latent_mean, latent_logvar) = jax.lax.scan(
+          scan_policy_fn,
+          hidden_state, # carry only hidden state
+          data.observation, # scan over 20 in (20, 512, data_dim)
+          1 - data.discount, # discount is opposite to done
       )
+      
+      # should be independent acros loss update not used anymore
+      new_hidden_state = jax.tree_map(jax.lax.stop_gradient, (final_h, final_c))
+        
       print(f'In loss function, the new hidden shape is {new_hidden_state[0].shape}')
+      print(f'In loss function, the logit shape is {policy_logits.shape}')
         
     else:
       policy_logits, latent_mean, latent_logvar = policy_apply(

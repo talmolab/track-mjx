@@ -9,8 +9,8 @@ import sys
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
 )
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )
@@ -118,7 +118,18 @@ def main(cfg: DictConfig):
         **env_args,
         **traj_config,
     )
-
+    
+    eval_data_path = "/n/holylabs/LABS/olveczky_lab/Users/charleszhang/stac-mjx/transform_coltrane_2021_07_28_1.h5"
+    eval_reference_clip = load.load_data(eval_data_path)
+    eval_reference_clip = jax.tree.map(lambda x: x[:100], eval_reference_clip)
+    eval_env = envs.get_environment(
+        env_name=cfg.env_config.env_name,
+        reference_clip=eval_reference_clip,
+        walker=walker,
+        reward_config=reward_config,
+        **env_args,
+        **traj_config,
+    )
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     episode_length = (
         traj_config.clip_length
@@ -189,6 +200,7 @@ def main(cfg: DictConfig):
         environment=env,
         progress_fn=wandb_progress,
         policy_params_fn=policy_params_fn,
+        eval_env=eval_env,
     )
 
 

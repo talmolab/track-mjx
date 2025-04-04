@@ -75,7 +75,7 @@ def wrap(
 class RenderRolloutWrapperMulticlipTracking(Wrapper):
     """Always resets to the first frame of the clips for complete rollouts."""
 
-    def reset(self, rng: jax.Array, clip_idx: int) -> State:
+    def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
         """
         Resets the environment to an initial state.
 

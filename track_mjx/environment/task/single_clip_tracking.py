@@ -152,7 +152,7 @@ class SingleClipTracking(PipelineEnv):
                 reference_frame.quaternion,
                 reference_frame.joints,
             ),
-            axis=0,
+            axis=-1,
         )
         qpos = new_qpos + jax.random.uniform(
             rng1, (self.sys.nq,), minval=low, maxval=hi
@@ -176,7 +176,7 @@ class SingleClipTracking(PipelineEnv):
 
         reward, done, zero = jp.zeros(3)
 
-        # TODO: Set up a metrics dataclass
+        # TODO: Get this list from somewhere else
         metrics = {
             "pos_reward": zero,
             "quat_reward": zero,
@@ -186,6 +186,7 @@ class SingleClipTracking(PipelineEnv):
             "endeff_reward": zero,
             "ctrl_cost": zero,
             "ctrl_diff_cost": zero,
+            "energy_cost": zero,
             "too_far": zero,
             "bad_pose": zero,
             "bad_quat": zero,

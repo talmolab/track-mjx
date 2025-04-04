@@ -84,12 +84,12 @@ class MultiClipTracking(SingleClipTracking):
         """
         _, start_rng, clip_rng, rng = jax.random.split(rng, 4)
 
-        start_frame = jax.random.randint(start_rng, (), 0, 44)
+        # start_frame = jax.random.randint(start_rng, (), 0, 44)
         if clip_idx is None:
             clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
         info = {
             "clip_idx": clip_idx,
-            "start_frame": start_frame,
+            "start_frame": 0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),
         }
 

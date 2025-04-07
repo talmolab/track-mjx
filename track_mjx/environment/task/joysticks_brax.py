@@ -28,10 +28,12 @@ from etils import epath
 from track_mjx.agent.intention_network import Decoder
 from track_mjx.agent.checkpointing import load_checkpoint_for_eval
 
+from brax.envs.base import PipelineEnv, State
 from brax.training import distribution
 from brax.training.acme import running_statistics
 
-from mujoco_playground._src import collision
+from brax.io import mjcf as mjcf_brax
+
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src.locomotion.go1 import go1_constants as consts
 
@@ -125,7 +127,7 @@ FEET_SITES = [
     "sole_R",
 ]
 
-class RodentJoystick(mjx_env.MjxEnv):
+class RodentJoystick(PipelineEnv):
     """Track a joystick command."""
 
     def __init__(
@@ -134,36 +136,39 @@ class RodentJoystick(mjx_env.MjxEnv):
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
         evaluator=False,
     ):
-        super().__init__(
-            config=config,
-            config_overrides=config_overrides,
-        )
+        
+        
+        self._config = config.lock()
+        if config_overrides:
+            self._config.update_from_flattened_dict(config_overrides)
+
+        self._ctrl_dt = config.ctrl_dt
+        self._sim_dt = config.sim_dt
         self._evaluator = evaluator
 
         self._mj_model = mujoco.MjModel.from_xml_string(
             epath.Path(xml_path).read_text()
         )
         self._mj_model.opt.timestep = self._config.sim_dt
+        
+        sys = mjcf_brax.load_model(self._mj_model)
 
-        # Increase offscreen framebuffer size to render at higher resolutions.
-        self._mj_model.vis.global_.offwidth = 3840
-        self._mj_model.vis.global_.offheight = 2160
+        super().__init__(sys, n_frames=5, backend="mjx", debug=False)
 
-        self._mjx_model = mjx.put_model(self._mj_model)
         self._xml_path = xml_path
 
         self._post_init()
         self._has_decoder = False
-        if self._config.decoder_transfer:
-            self._embed_decoder()
-            self._has_decoder = True
+        # if self._config.decoder_transfer:
+        #     self._embed_decoder()
+        #     self._has_decoder = True
 
     def _post_init(self) -> None:
         self._init_q = jp.array(self._mj_model.keyframe("stand").qpos)
         self._default_pose = jp.array(self._mj_model.keyframe("stand").qpos[7:])
 
         # Note: First joint is freejoint.
-        self._lowers, self._uppers = self.mj_model.jnt_range[1:].T
+        self._lowers, self._uppers = self._mj_model.jnt_range[1:].T
         self._soft_lowers = self._lowers * self._config.soft_joint_pos_limit_factor
         self._soft_uppers = self._uppers * self._config.soft_joint_pos_limit_factor
 
@@ -181,44 +186,44 @@ class RodentJoystick(mjx_env.MjxEnv):
         self._cmd_a = jp.array(self._config.command_config.a)
         self._cmd_b = jp.array(self._config.command_config.b)
 
-    def _embed_decoder(self) -> None:
-        """
-        Embeds the lower level decoder into the environment, to transfer
-        the knowledge of the motor controller. This will change the action size
-        of the environment from the action of the biomechanical model to
-        intention size .
-        """
+    # def _embed_decoder(self) -> None:
+    #     """
+    #     Embeds the lower level decoder into the environment, to transfer
+    #     the knowledge of the motor controller. This will change the action size
+    #     of the environment from the action of the biomechanical model to
+    #     intention size .
+    #     """
 
-        ckpt = load_checkpoint_for_eval(self._config.decoder_config.decoder_path)
-        self._decoder_config = ckpt["cfg"]
-        network_config = ckpt["cfg"]["network_config"]
-        ref_obs_size = network_config["reference_obs_size"]
+    #     ckpt = load_checkpoint_for_eval(self._config.decoder_config.decoder_path)
+    #     self._decoder_config = ckpt["cfg"]
+    #     network_config = ckpt["cfg"]["network_config"]
+    #     ref_obs_size = network_config["reference_obs_size"]
 
-        # TODO: add more input validation based on the loaded config
-        self._decoder = Decoder(
-            layer_sizes=self._config.decoder_config.layer_sizes
-            + [network_config["action_size"] * 2]
-        )
+    #     # TODO: add more input validation based on the loaded config
+    #     self._decoder = Decoder(
+    #         layer_sizes=self._config.decoder_config.layer_sizes
+    #         + [network_config["action_size"] * 2]
+    #     )
 
-        self._normalizer = running_statistics.normalize
-        # load the normalizer parameters
-        normalizer_param = ckpt["policy"][0]
-        # index through the normalizer for only the ego observation
-        self._normalizer_param = running_statistics.NestedMeanStd(
-            normalizer_param.mean[ref_obs_size:], normalizer_param.std[ref_obs_size:]
-        )
+    #     self._normalizer = running_statistics.normalize
+    #     # load the normalizer parameters
+    #     normalizer_param = ckpt["policy"][0]
+    #     # index through the normalizer for only the ego observation
+    #     self._normalizer_param = running_statistics.NestedMeanStd(
+    #         normalizer_param.mean[ref_obs_size:], normalizer_param.std[ref_obs_size:]
+    #     )
 
-        # load the decoder parameters
-        decoder_raw = ckpt["policy"][1]["params"]["decoder"]
-        self.decoder_param = {"params": decoder_raw}
-        # initialize the action distribution
-        self._action_distribution = distribution.NormalTanhDistribution(
-            event_size=network_config["action_size"]
-        )
+    #     # load the decoder parameters
+    #     decoder_raw = ckpt["policy"][1]["params"]["decoder"]
+    #     self.decoder_param = {"params": decoder_raw}
+    #     # initialize the action distribution
+    #     self._action_distribution = distribution.NormalTanhDistribution(
+    #         event_size=network_config["action_size"]
+    #     )
 
-    def reset(self, rng: jax.Array) -> mjx_env.State:
+    def reset(self, rng: jax.Array) -> State:
         qpos = self._init_q
-        qvel = jp.zeros(self.mjx_model.nv)
+        qvel = jp.zeros(self.sys.nv)
 
         # x=+U(-0.5, 0.5), y=+U(-0.5, 0.5), yaw=U(-3.14, 3.14).
         rng, key = jax.random.split(rng)
@@ -234,12 +239,12 @@ class RodentJoystick(mjx_env.MjxEnv):
         rng, key = jax.random.split(rng)
         qvel = qvel.at[0:6].set(jax.random.uniform(key, (6,), minval=-0.5, maxval=0.5))
 
-        data = mjx_env.init(self.mjx_model, qpos=qpos, qvel=qvel)
+        data = self.pipeline_init(qpos, qvel)
 
 
         rng, key1, key2 = jax.random.split(rng, 3)
         time_until_next_cmd = jax.random.exponential(key1) * 5.0
-        steps_until_next_cmd = jp.round(time_until_next_cmd / self.dt).astype(jp.int32)
+        steps_until_next_cmd = jp.round(time_until_next_cmd / self._ctrl_dt).astype(jp.int32)
         cmd = jax.random.uniform(
             key2, shape=(3,), minval=-self._cmd_a, maxval=self._cmd_a
         )
@@ -248,9 +253,8 @@ class RodentJoystick(mjx_env.MjxEnv):
             "rng": rng,
             "command": cmd,
             "steps_until_next_cmd": steps_until_next_cmd,
-            "last_act": jp.zeros(self.mjx_model.nu),
-            "last_last_act": jp.zeros(self.mjx_model.nu),
-            "swing_peak": jp.zeros(4),
+            "last_act": jp.zeros(self.sys.nu),
+            "last_last_act": jp.zeros(self.sys.nu),
             "steps_since_last_pert": 0,
             "pert_steps": 0,
             "pert_dir": jp.zeros(3),
@@ -259,11 +263,10 @@ class RodentJoystick(mjx_env.MjxEnv):
         metrics = {}
         for k in self._config.reward_config.scales.keys():
             metrics[f"reward/{k}"] = jp.zeros(())
-        metrics["swing_peak"] = jp.zeros(())
 
         obs = self._get_obs(data, info)
         reward, done = jp.zeros(2)
-        return mjx_env.State(data, obs, reward, done, metrics, info)
+        return State(data, obs, reward, done, metrics, info)
 
     # def _reset_if_outside_bounds(self, state: mjx_env.State) -> mjx_env.State:
     #   qpos = state.data.qpos
@@ -273,23 +276,23 @@ class RodentJoystick(mjx_env.MjxEnv):
     #   state = state.replace(data=state.data.replace(qpos=qpos))
     #   return state
 
-    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
-        if self._has_decoder:
-            normalized_ego_obs = self._normalizer(
-                self._get_ego_obs(state.data), self._normalizer_param
-            )
-            # now the actions become the intentions
-            decoder_input = jp.concatenate([action, normalized_ego_obs])
-            action_param = self._decoder.apply(self.decoder_param, decoder_input)
-            if self._evaluator:
-                # use deterministic action for evaluation
-                action = self._action_distribution.mode(action_param)
-            else:
-                action = self._action_distribution.sample(
-                    action_param, seed=state.info["rng"]
-                )
+    def step(self, state: State, action: jax.Array) -> State:
+        # if self._has_decoder:
+        #     normalized_ego_obs = self._normalizer(
+        #         self._get_ego_obs(state.data), self._normalizer_param
+        #     )
+        #     # now the actions become the intentions
+        #     decoder_input = jp.concatenate([action, normalized_ego_obs])
+        #     action_param = self._decoder.apply(self.decoder_param, decoder_input)
+        #     if self._evaluator:
+        #         # use deterministic action for evaluation
+        #         action = self._action_distribution.mode(action_param)
+        #     else:
+        #         action = self._action_distribution.sample(
+        #             action_param, seed=state.info["rng"]
+        #         )
 
-        data = mjx_env.step(self.mjx_model, state.data, action, self.n_substeps)
+        data = self.pipeline_step(state.pipeline_state, action)
 
         obs = self._get_obs(data, state.info)
         done = self._get_termination(data)
@@ -304,7 +307,7 @@ class RodentJoystick(mjx_env.MjxEnv):
         rewards = {
             k: v * self._config.reward_config.scales[k] for k, v in rewards.items()
         }
-        reward = jp.clip(sum(rewards.values()) * self.dt, 0.0, 10000.0)
+        reward = jp.clip(sum(rewards.values()) * self._ctrl_dt, 0.0, 10000.0)
 
         state.info["last_last_act"] = state.info["last_act"]
         state.info["last_act"] = action
@@ -317,20 +320,20 @@ class RodentJoystick(mjx_env.MjxEnv):
         )
         state.info["steps_until_next_cmd"] = jp.where(
             done | (state.info["steps_until_next_cmd"] <= 0),
-            jp.round(jax.random.exponential(key2) * 5.0 / self.dt).astype(jp.int32),
+            jp.round(jax.random.exponential(key2) * 5.0 / self._ctrl_dt).astype(jp.int32),
             state.info["steps_until_next_cmd"],
         )
         for k, v in rewards.items():
             state.metrics[f"reward/{k}"] = v
         done = done.astype(reward.dtype)
-        state = state.replace(data=data, obs=obs, reward=reward, done=done)
+        state = state.replace(pipeline_state=data, obs=obs, reward=reward, done=done)
         return state
 
     def _get_termination(self, data: mjx.Data) -> jax.Array:
         fall_termination = self.get_upvector(data)[-1] < 0.0
         return fall_termination
 
-    def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> Dict[str, jax.Array]:
+    def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> jax.Array:
         gyro = self.get_gyro(data)
         info["rng"], noise_rng = jax.random.split(info["rng"])
         noisy_gyro = (
@@ -395,11 +398,8 @@ class RodentJoystick(mjx_env.MjxEnv):
         )
 
         # The state contains the noisy measurements and privileged state (unnoisy).
-        return {
-            "state": state,
-            "privileged_state": privileged_state,
-        }
-
+        return state
+    
     def _get_ego_obs(self, data: mjx.Data) -> jax.Array:
         """
         Args:
@@ -547,18 +547,8 @@ class RodentJoystick(mjx_env.MjxEnv):
     @property
     def xml_path(self) -> str:
         return self._xml_path
-
-    @property
-    def action_size(self) -> int:
-        if self._config.decoder_transfer:
-            # if decoder transfer is enabled, the action size is the intention size
-            return self._config.decoder_config.intention_size
-        return self._mjx_model.nu
-
+    
     @property
     def mj_model(self) -> mujoco.MjModel:
         return self._mj_model
 
-    @property
-    def mjx_model(self) -> mjx.Model:
-        return self._mjx_model

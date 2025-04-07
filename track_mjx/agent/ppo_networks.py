@@ -61,12 +61,16 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 )
             if deterministic:
                 if get_activation:
-                    return ppo_networks.parametric_action_distribution.mode(logits), {
+                    return jnp.array(
+                        ppo_networks.parametric_action_distribution.mode(logits)
+                    ), {
                         "activations": activations,
                         "latent_mean": latent_mean,
                         "latent_logvar": latent_logvar,
                     }
-                return ppo_networks.parametric_action_distribution.mode(logits), {
+                return jnp.array(
+                    ppo_networks.parametric_action_distribution.mode(logits)
+                ), {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
@@ -83,7 +87,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 raw_actions
             )
 
-            return postprocessed_actions, {
+            return jnp.array(postprocessed_actions), {
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
                 "log_prob": log_prob,
@@ -119,7 +123,9 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
 
             if deterministic:
-                return ppo_networks.parametric_action_distribution.mode(logits), {
+                return jnp.array(
+                    ppo_networks.parametric_action_distribution.mode(logits)
+                ), {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
@@ -135,7 +141,7 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             postprocessed_actions = parametric_action_distribution.postprocess(
                 raw_actions
             )
-            return postprocessed_actions, {
+            return jnp.array(postprocessed_actions), {
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
                 "log_prob": log_prob,
@@ -179,6 +185,108 @@ def make_intention_ppo_networks(
     )
 
     return PPOImitationNetworks(
+        policy_network=policy_network,
+        value_network=value_network,
+        parametric_action_distribution=parametric_action_distribution,
+    )
+
+
+@flax.struct.dataclass
+class PPONetworks:
+    policy_network: networks.FeedForwardNetwork
+    value_network: networks.FeedForwardNetwork
+    parametric_action_distribution: distribution.ParametricDistribution
+    
+    
+def make_mlp_inference_fn(ppo_networks: PPOImitationNetworks):
+    """Creates params and inference function for the PPO agent."""
+
+    def make_policy(
+        params: types.PolicyParams,
+        deterministic: bool = False,
+        get_activation: bool = False,
+    ) -> types.Policy:
+        policy_network = ppo_networks.policy_network
+        # can modify this to provide stochastic action + noise
+        parametric_action_distribution = ppo_networks.parametric_action_distribution
+
+        def policy(
+            observations: types.Observation,
+            key_sample: PRNGKey,
+        ) -> Tuple[types.Action, types.Extra]:
+            key_sample, key_network = jax.random.split(key_sample)
+            activations = None
+            if get_activation:
+                logits = policy_network.apply(
+                    *params, observations, key_network, get_activation=True
+                )
+                # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
+            else:
+                logits = policy_network.apply(
+                    *params, observations
+                )
+            if deterministic:
+                if get_activation:
+                    return jnp.array(ppo_networks.parametric_action_distribution.mode(logits)), {
+                        "activations": activations,
+                    }
+                return jnp.array(ppo_networks.parametric_action_distribution.mode(logits)), {}
+
+            # action sampling is happening here, according to distribution parameter logits
+            raw_actions = parametric_action_distribution.sample_no_postprocessing(
+                logits, key_sample
+            )
+
+            # probability of selection specific action, actions with higher reward should have higher probability
+            log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
+
+            postprocessed_actions = parametric_action_distribution.postprocess(
+                raw_actions
+            )
+
+            return jnp.array(postprocessed_actions), {
+                "log_prob": log_prob,
+                "raw_action": raw_actions,
+                "logits": logits,
+                "activations": activations,
+            }
+
+        return policy
+
+    return make_policy
+
+
+def make_mlp_ppo_networks(
+    observation_size: int,
+    action_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    policy_hidden_layer_sizes: Sequence[int] = (256,) * 4,
+    value_hidden_layer_sizes: Sequence[int] = (256,) * 5,
+    activation: networks.ActivationFn = nn.swish,
+    policy_obs_key: str = "state",
+    value_obs_key: str = "state",
+) -> PPONetworks:
+    """Make PPO networks with preprocessor."""
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+    policy_network = networks.make_policy_network(
+        parametric_action_distribution.param_size,
+        observation_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=policy_hidden_layer_sizes,
+        activation=activation,
+        obs_key=policy_obs_key,
+    )
+    value_network = networks.make_value_network(
+        observation_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=value_hidden_layer_sizes,
+        activation=activation,
+        obs_key=value_obs_key,
+    )
+
+    return PPONetworks(
         policy_network=policy_network,
         value_network=value_network,
         parametric_action_distribution=parametric_action_distribution,

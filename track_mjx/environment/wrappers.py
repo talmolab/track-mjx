@@ -14,7 +14,7 @@ from mujoco import mjx
 
 def wrap(
     env: Env,
-    episode_length: int = 1000,
+    episode_length: int = 250,
     action_repeat: int = 1,
     randomization_fn: Optional[Callable[[System], Tuple[System, System]]] = None,
 ) -> Wrapper:
@@ -37,7 +37,7 @@ def wrap(
         env = VmapWrapper(env)
     else:
         env = DomainRandomizationVmapWrapper(env, randomization_fn)
-    env = AutoResetWrapperTracking(env)
+    # env = AutoResetWrapperTracking(env)
     return env
 
 

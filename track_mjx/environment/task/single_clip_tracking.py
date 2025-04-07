@@ -334,25 +334,27 @@ class SingleClipTracking(PipelineEnv):
         ref_traj = self._get_reference_trajectory(info, data)
 
         # walker methods to compute the necessary distances and differences
-        track_pos_local = self.walker.compute_local_track_positions(
-            ref_traj.position, data.qpos
-        )
-        quat_dist = self.walker.compute_quat_distances(ref_traj.quaternion, data.qpos)
-        joint_dist = self.walker.compute_local_joint_distances(
-            ref_traj.joints, data.qpos
-        )
+        # track_pos_local = self.walker.compute_local_track_positions(
+        #     ref_traj.position, data.qpos
+        # )
+        # quat_dist = self.walker.compute_quat_distances(ref_traj.quaternion, data.qpos)
+        # # joint_dist = self.walker.compute_local_joint_distances(
+        # #     ref_traj.joints, data.qpos
+        # # )
         body_pos_dist_local = self.walker.compute_local_body_positions(
             ref_traj.body_positions, data.xpos, data.qpos
         )
 
         reference_obs = jp.concatenate(
             [
-                track_pos_local,
-                quat_dist,
-                joint_dist,
+                # track_pos_local,
+                # quat_dist,
+                # joint_dist, # TODO: Remove after debugging
                 body_pos_dist_local,
             ]
         )
+        
+        # jax.debug.print("reference_obs.shape: {}", reference_obs.shape)
 
         # jax.debug.print("track_pos_local: {}", track_pos_local)
         # jax.debug.print("quat_dist: {}", quat_dist)

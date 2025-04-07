@@ -79,6 +79,9 @@ Repository = "https://github.com/talmolab/track-mjx"
 [tool.setuptools.packages.find]
 exclude = ["site"]
 
+[tool.setuptools.package-data]
+"*" = ["/track_mjx/environment/walker/assets/rodent/*"]
+
 [tool.black]
 line-length = 88
 

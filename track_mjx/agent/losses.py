@@ -115,24 +115,27 @@ def compute_ppo_loss(
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
     kl_schedule: Callable | None = None,
+    network_type: str = "intention",
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Computes PPO loss.
 
     Args:
-      params: Network parameters,
-      normalizer_params: Parameters of the normalizer.
-      data: Transition that with leading dimension [B, T]. extra fields required
-        are ['state_extras']['truncation'] ['policy_extras']['raw_action']
-          ['policy_extras']['log_prob']
-      rng: Random key
-      ppo_network: PPO networks.
-      entropy_cost: entropy cost.
-      discounting: discounting,
-      reward_scaling: reward multiplier.
-      gae_lambda: General advantage estimation lambda.
-      clipping_epsilon: Policy loss clipping epsilon
-      normalize_advantage: whether to normalize advantage estimate
-
+        params: Network parameters,
+        normalizer_params: Parameters of the normalizer.
+        data: Transition that with leading dimension [B, T]. extra fields required
+            are ['state_extras']['truncation'] ['policy_extras']['raw_action']
+            ['policy_extras']['log_prob']
+        rng: Random key
+        ppo_network: PPO networks.
+        entropy_cost: entropy cost.
+        discounting: discounting,
+        reward_scaling: reward multiplier.
+        gae_lambda: General advantage estimation lambda.
+        clipping_epsilon: Policy loss clipping epsilon
+        normalize_advantage: whether to normalize advantage estimate
+        kl_schedule: KL schedule.
+        network_type: Type of network, either "intention" or "mlp". only the "intention"
+            network supports kl loss and kl_schedule
     Returns:
       A tuple (loss, metrics)
     """
@@ -144,9 +147,26 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits, latent_mean, latent_logvar = policy_apply(
-        normalizer_params, params.policy, data.observation, policy_key
-    )
+    if network_type == "intention":
+        policy_logits, latent_mean, latent_logvar = policy_apply(
+            normalizer_params, params.policy, data.observation, policy_key
+        )
+        # KL Divergence for latent layer
+        if kl_schedule is not None:
+            kl_weight = kl_schedule(step)
+        
+        kl_latent_loss = kl_weight * (
+            -0.5
+            * jnp.mean(1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar))
+        )
+    elif network_type == "mlp":
+        policy_logits = policy_apply(
+            normalizer_params, params.policy, data.observation
+        )
+        kl_latent_loss = jnp.array(0.0)
+        kl_weight = jnp.array(0.0)
+    else:
+        raise ValueError(f"Unknown network type: {network_type}")
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 
@@ -193,16 +213,8 @@ def compute_ppo_loss(
     )
     entropy_loss = entropy_cost * -entropy
 
-    # KL Divergence for latent layer
-    if kl_schedule is not None:
-        kl_weight = kl_schedule(step)
-
-    kl_latent_loss = kl_weight * (
-        -0.5
-        * jnp.mean(1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar))
-    )
-
-    total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss
+    total_loss = policy_loss + v_loss + entropy_loss
+    
     return total_loss, {
         "total_loss": total_loss,
         "policy_loss": policy_loss,

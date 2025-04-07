@@ -6,13 +6,34 @@ import os
 import sys
 
 # set default env variable if not set
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
-    "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
-)
+# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
+#     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
+# )
+
+# limit to 1 GPU
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Use only GPU 0
+
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 os.environ["XLA_FLAGS"] = (
-    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
+    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
+)
+
+os.environ["JAX_COMPILATION_CACHE_DIR"] = "/tmp/jax_cache"
+
+# os.environ["JAX_LOG_COMPILES"] = "1"
+
+# # (Optional) For more detailed logging
+# os.environ["JAX_LOG_COMPILES_VERBOSE"] = "1"
+
+import jax
+ 
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+jax.config.update(
+    "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
 )
 
 import hydra
@@ -31,6 +52,7 @@ import logging
 from track_mjx.io import load
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+from track_mjx.environment.task.joysticks_brax import RodentJoystick
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
@@ -46,7 +68,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-joystick")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -59,6 +81,7 @@ def main(cfg: DictConfig):
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
+    envs.register_environment("rodent_joystick", RodentJoystick)
 
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
@@ -71,7 +94,7 @@ def main(cfg: DictConfig):
     )
 
     # Load the checkpoint's config
-    if cfg.train_setup["checkpoint_to_restore"] is not None:
+    if cfg.train_setup["checkpoint_to_restore"] is not None and False: # TODO: Only load decoder
         # TODO: We set the restored config's checkpoint_to_restore to itself
         # Because that restored config is used from now on. This is a hack.
         checkpoint_to_restore = cfg.train_setup["checkpoint_to_restore"]
@@ -106,27 +129,45 @@ def main(cfg: DictConfig):
 
     logging.info(f"Loading data: {cfg.data_path}")
     reference_clip = load.load_data(cfg.data_path)
+    
+    if cfg.env_config["env_name"] == "rodent_joystick":
+        env = envs.get_environment("rodent_joystick")
+        episode_length = cfg.train_setup.episode_length
+        network_factory = functools.partial(
+            ppo_networks.make_mlp_ppo_networks,
+            policy_hidden_layer_sizes=tuple(cfg.network_config.policy_hidden_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        )
+    else:
+        walker = _WALKERS[cfg_dict["walker_type"]](**walker_config)
+        reward_config = RewardConfig(**env_rewards)
 
-    walker = _WALKERS[cfg_dict["walker_type"]](**walker_config)
-    reward_config = RewardConfig(**env_rewards)
+        env = envs.get_environment(
+            env_name=cfg.env_config.env_name,
+            reference_clip=reference_clip,
+            walker=walker,
+            reward_config=reward_config,
+            **env_args,
+            **traj_config,
+        )
 
-    env = envs.get_environment(
-        env_name=cfg.env_config.env_name,
-        reference_clip=reference_clip,
-        walker=walker,
-        reward_config=reward_config,
-        **env_args,
-        **traj_config,
-    )
-
-    # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
-    episode_length = (
-        traj_config.clip_length
-        - traj_config.random_init_range
-        - traj_config.traj_length
-    ) * env._steps_for_cur_frame
-    print(f"episode_length {episode_length}")
-    logging.info(f"episode_length {episode_length}")
+        # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
+        episode_length = (
+            traj_config.clip_length
+            - traj_config.random_init_range
+            - traj_config.traj_length
+        ) * env._steps_for_cur_frame
+        print(f"episode_length {episode_length}")
+        logging.info(f"episode_length {episode_length}")
+        
+        # network factory
+        network_factory = functools.partial(
+            ppo_networks.make_intention_ppo_networks,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            intention_latent_size=cfg.network_config.intention_size,
+        )
 
     train_fn = functools.partial(
         ppo.train,
@@ -137,13 +178,7 @@ def main(cfg: DictConfig):
         num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
-        network_factory=functools.partial(
-            ppo_networks.make_intention_ppo_networks,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-            intention_latent_size=cfg.network_config.intention_size,
-        ),
+        network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
@@ -161,26 +196,30 @@ def main(cfg: DictConfig):
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
-        wandb.log(metrics, commit=False)
+        wandb.log(metrics, commit=True)
 
-    rollout_env = wrappers.EvalClipResetWrapper(env)
-
-    # define the jit reset/step functions
-    jit_reset = jax.jit(rollout_env.reset)
-    jit_step = jax.jit(rollout_env.step)
-    renderer, mj_model, mj_data, scene_option = make_rollout_renderer(rollout_env, cfg)
-    policy_params_fn = functools.partial(
-        rollout_logging_fn,
-        rollout_env,
-        jit_reset,
-        jit_step,
-        cfg,
-        checkpoint_path,
-        renderer,
-        mj_model,
-        mj_data,
-        scene_option,
-    )
+    if cfg.env_config["env_name"] == "rodent_joystick":
+        # no rendering support
+        rollout_env = RodentJoystick(evaluator=True)
+        policy_params_fn = None
+    else:
+        rollout_env = wrappers.EvalClipResetWrapper(env)
+        # define the jit reset/step functions
+        jit_reset = jax.jit(rollout_env.reset)
+        jit_step = jax.jit(rollout_env.step)
+        renderer, mj_model, mj_data, scene_option = make_rollout_renderer(rollout_env, cfg)
+        policy_params_fn = functools.partial(
+            rollout_logging_fn,
+            rollout_env,
+            jit_reset,
+            jit_step,
+            cfg,
+            checkpoint_path,
+            renderer,
+            mj_model,
+            mj_data,
+            scene_option,
+        )
 
     make_inference_fn, params, _ = train_fn(
         environment=env,

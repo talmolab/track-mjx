@@ -332,23 +332,23 @@ def compute_tracking_rewards(
         reward_config.quat_reward_exp_scale,
     )
 
-    joint_array = data.qpos[7:]
-    reference_clip_joint = reference_clip.joints
-    joint_reward, joint_distance = compute_joint_reward(
-        joint_array,
-        reference_clip_joint,
-        reward_config.joint_reward_weight,
-        reward_config.joint_reward_exp_scale,
-    )
+    # joint_array = data.qpos[7:]
+    # reference_clip_joint = reference_clip.joints
+    # joint_reward, joint_distance = compute_joint_reward(
+    #     joint_array,
+    #     reference_clip_joint,
+    #     reward_config.joint_reward_weight,
+    #     reward_config.joint_reward_exp_scale,
+    # )
 
-    angvel_array = data.qvel[3:6]
-    reference_clip_angvel = reference_clip.angular_velocity
-    angvel_reward = compute_angvel_reward(
-        angvel_array,
-        reference_clip_angvel,
-        reward_config.angvel_reward_weight,
-        reward_config.angvel_reward_exp_scale,
-    )
+    # angvel_array = data.qvel[3:6]
+    # reference_clip_angvel = reference_clip.angular_velocity
+    # angvel_reward = compute_angvel_reward(
+    #     angvel_array,
+    #     reference_clip_angvel,
+    #     reward_config.angvel_reward_weight,
+    #     reward_config.angvel_reward_exp_scale,
+    # )
 
     bodypos_array = walker.get_body_positions(data.xpos)
     reference_clip_bodypos = reference_clip.body_positions[walker.body_idxs]
@@ -359,14 +359,14 @@ def compute_tracking_rewards(
         reward_config.bodypos_reward_exp_scale,
     )
 
-    endeff_array = walker.get_end_effector_positions(data.xpos)
-    reference_clip_endeff = reference_clip.body_positions[walker.endeff_idxs]
-    endeff_reward = compute_endeff_reward(
-        endeff_array,
-        reference_clip_endeff,
-        reward_config.endeff_reward_weight,
-        reward_config.endeff_reward_exp_scale,
-    )
+    # endeff_array = walker.get_end_effector_positions(data.xpos)
+    # reference_clip_endeff = reference_clip.body_positions[walker.endeff_idxs]
+    # endeff_reward = compute_endeff_reward(
+    #     endeff_array,
+    #     reference_clip_endeff,
+    #     reward_config.endeff_reward_weight,
+    #     reward_config.endeff_reward_exp_scale,
+    # )
 
     ctrl_cost = compute_ctrl_cost(action, reward_config.ctrl_cost_weight)
     ctrl_diff_cost = compute_ctrl_diff_cost(
@@ -375,31 +375,31 @@ def compute_tracking_rewards(
 
     torso_z = walker.get_torso_position(data.xpos)[2]
     fall = compute_health_penalty(torso_z, reward_config.healthy_z_range)
-    too_far, bad_pose, bad_quat, summed_pos_distance = compute_penalty_terms(
-        pos_distance,
-        joint_distance,
-        quat_distance,
-        reward_config.too_far_dist,
-        reward_config.bad_pose_dist,
-        reward_config.bad_quat_dist,
-        reward_config.penalty_pos_distance_scale,
-    )
+    # too_far, bad_pose, bad_quat, summed_pos_distance = compute_penalty_terms(
+    #     pos_distance,
+    #     joint_distance,
+    #     quat_distance,
+    #     reward_config.too_far_dist,
+    #     reward_config.bad_pose_dist,
+    #     reward_config.bad_quat_dist,
+    #     reward_config.penalty_pos_distance_scale,
+    # )
 
     return (
         pos_reward,
         quat_reward,
-        joint_reward,
-        angvel_reward,
+        0.0,
+        0.0,
         bodypos_reward,
-        endeff_reward,
+        0.0,
         ctrl_cost,
         ctrl_diff_cost,
-        too_far,
-        bad_pose,
-        bad_quat,
+        0.0,
+        0.0,
+        0.0,
         fall,
         info,
-        joint_distance,
-        summed_pos_distance,
+        0.0,
+        0.0,
         quat_distance,
     )

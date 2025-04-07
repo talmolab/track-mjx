@@ -9,8 +9,8 @@ import sys
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
 )
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
 )

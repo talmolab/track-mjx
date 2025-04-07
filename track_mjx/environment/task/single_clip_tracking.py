@@ -15,6 +15,7 @@ from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.environment.task.reward import RewardConfig
 
+from jax.flatten_util import ravel_pytree
 
 class SingleClipTracking(PipelineEnv):
     """Single clip walker tracking using Brax PiepelineEnv backend, agonist of the walker"""
@@ -195,6 +196,8 @@ class SingleClipTracking(PipelineEnv):
             "joint_distance": zero,
             "summed_pos_distance": zero,
             "quat_distance": zero,
+            "energy_cost": zero,
+            "done": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -215,7 +218,7 @@ class SingleClipTracking(PipelineEnv):
         info = state.info.copy()
 
         # Gets reference clip and indexes to current frame
-        reference_clip = jax.tree.map(
+        reference_frame = jax.tree.map(
             lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
 
@@ -229,17 +232,17 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
+            energy_cost,
             too_far,
             bad_pose,
             bad_quat,
             fall,
-            info,
             joint_distance,
             summed_pos_distance,
             quat_distance,
         ) = compute_tracking_rewards(
             data=data,
-            reference_clip=reference_clip,
+            reference_frame=reference_frame,
             walker=self.walker,
             action=action,
             info=info,
@@ -258,6 +261,7 @@ class SingleClipTracking(PipelineEnv):
             + endeff_reward
             - ctrl_cost
             - ctrl_diff_cost
+            - energy_cost
         )
 
         # Raise done flag if terminating
@@ -266,8 +270,6 @@ class SingleClipTracking(PipelineEnv):
         # Handle nans during sim by resetting env
         reward = jp.nan_to_num(reward)
         obs = jp.nan_to_num(obs)
-
-        from jax.flatten_util import ravel_pytree
 
         flattened_vals, _ = ravel_pytree(data)
         num_nans = jp.sum(jp.isnan(flattened_vals))
@@ -283,6 +285,8 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward=endeff_reward,
             ctrl_cost=-ctrl_cost,
             ctrl_diff_cost=ctrl_diff_cost,
+            energy_cost=-energy_cost,
+            done=done,
             too_far=too_far,
             bad_pose=bad_pose,
             bad_quat=bad_quat,
@@ -291,6 +295,7 @@ class SingleClipTracking(PipelineEnv):
             joint_distance=joint_distance,
             summed_pos_distance=summed_pos_distance,
             quat_distance=quat_distance,
+            
         )
 
         return state.replace(

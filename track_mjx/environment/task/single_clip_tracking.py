@@ -18,7 +18,7 @@ from track_mjx.environment.task.reward import RewardConfig
 from jax.flatten_util import ravel_pytree
 
 class SingleClipTracking(PipelineEnv):
-    """Single clip walker tracking using Brax PiepelineEnv backend, agonist of the walker"""
+    """Tracking task for a continuous reference clip."""
 
     def __init__(
         self,
@@ -188,6 +188,8 @@ class SingleClipTracking(PipelineEnv):
             "endeff_reward": zero,
             "ctrl_cost": zero,
             "ctrl_diff_cost": zero,
+            "energy_cost": zero,
+            "done": zero,
             "too_far": zero,
             "bad_pose": zero,
             "bad_quat": zero,
@@ -196,8 +198,6 @@ class SingleClipTracking(PipelineEnv):
             "joint_distance": zero,
             "summed_pos_distance": zero,
             "quat_distance": zero,
-            "energy_cost": zero,
-            "done": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -284,7 +284,7 @@ class SingleClipTracking(PipelineEnv):
             bodypos_reward=bodypos_reward,
             endeff_reward=endeff_reward,
             ctrl_cost=-ctrl_cost,
-            ctrl_diff_cost=ctrl_diff_cost,
+            ctrl_diff_cost=-ctrl_diff_cost,
             energy_cost=-energy_cost,
             done=done,
             too_far=too_far,

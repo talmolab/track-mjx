@@ -203,14 +203,10 @@ def rollout_logging_fn(
             list(enumerate([state.metrics[rollout_metric] for state in rollout])),
             title=f"{rollout_metric} for each rollout frame",
         )
-    # torso_heights = [
-    #     state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
-    # ]
 
     # Render the walker with the reference expert demonstration trajectory
     qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
     ref_traj = env._get_reference_clip(rollout[0].info)
-    print(f"clip_id:{rollout[0].info}")
     qposes_ref = np.repeat(
         np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
         env._steps_for_cur_frame,
@@ -291,7 +287,6 @@ def render_rollout(
     # Render the walker with the reference expert demonstration trajectory
     qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
     ref_traj = rollout_env._get_reference_clip(rollout[0].info)
-    print(f"clip_id:{rollout[0].info}")
     qposes_ref = np.repeat(
         np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
         env._steps_for_cur_frame,

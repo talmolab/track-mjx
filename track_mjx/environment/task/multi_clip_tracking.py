@@ -11,7 +11,7 @@ from track_mjx.environment.task.reward import RewardConfig
 
 
 class MultiClipTracking(SingleClipTracking):
-    """Multi clip walker tracking using SingleTracking env, agonist of the walker"""
+    """Overrides reset function and reference clip retrieval to handle multiple clips."""
 
     def __init__(
         self,

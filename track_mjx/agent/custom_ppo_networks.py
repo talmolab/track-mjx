@@ -63,7 +63,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 if use_lstm:
                     logits, _, _, new_hidden_state = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)
                 else:
-                    logits, _, _ = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)
+                    logits, _, _, = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)
             
             if deterministic:
                 # returning hidden_state here

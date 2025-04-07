@@ -388,7 +388,7 @@ def train(
             next_state, data, forward_hidden_state, backward_hidden_state = acting.generate_unroll(
                 env,
                 current_state,
-                policy, # has  hidden states
+                policy, # has hidden states
                 current_key,
                 hidden_state,
                 unroll_length,

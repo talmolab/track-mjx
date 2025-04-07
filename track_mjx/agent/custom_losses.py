@@ -162,7 +162,7 @@ def compute_ppo_loss(
           x_t: observations at time t with shape [B, obs_dim]
           """
           (h, c) = carry
-          x_t, done_t = inputs
+          x_t, done_t, data_extras = inputs
           
           done_mask = done_t.reshape((-1, 1))
           h = jnp.where(done_mask, jnp.zeros_like(h), h)
@@ -180,17 +180,39 @@ def compute_ppo_loss(
           (new_h, new_c) = new_hidden_state
 
           # accumulate some fields for the entire sequence
-          return (new_h, new_c), (logits_t, latent_mean_t, latent_logvar_t)
-
-      (final_h, final_c), (policy_logits, latent_mean, latent_logvar) = jax.lax.scan(
+          return (new_h, new_c), (logits_t, latent_mean_t, latent_logvar_t, new_h, new_c) # unroll then roll
+      
+      (final_h, final_c), (policy_logits, latent_mean, latent_logvar, stack_h, stack_c) = jax.lax.scan(
           scan_policy_fn,
           hidden_state, # carry only hidden state
-          (data.observation, 1 - data.discount) # scan over 20 in (20, 512, data_dim) & discount is opposite to done
+          (data.observation, 1 - data.discount, data.extras) # scan over 20 in (20, 512, data_dim) & discount is opposite to done
       )
       
-      # should be independent acros loss update not used anymore
+      diffs_h = jnp.linalg.norm(stack_h - data.extras["hidden_state"], axis=(1, 2)) # length 20
+      diffs_c = jnp.linalg.norm(stack_c - data.extras["cell_state"], axis=(1, 2))
+      
+      jax.debug.print("0, 10, 20 diffs_h: {}, {}, {}", diffs_h[0], diffs_h[10], diffs_h[-1])
+      jax.debug.print("0, 10, 20 diffs_c: {}, {}, {}", diffs_c[0], diffs_c[10], diffs_c[-1])
+      
+      # should be independent across loss update not used anymore
       new_hidden_state = jax.tree_map(jax.lax.stop_gradient, (final_h, final_c))
-        
+      
+      # np.testing.assert_allclose(
+      #   new_hidden_state[0][-1], data.extras["hidden_state"][-1], atol=1e-7, rtol=1e-5,
+      #   err_msg="new_hidden_state vs. data.extras['hidden_state'] differ!"
+      # )
+      # np.testing.assert_allclose(
+      #     new_hidden_state[1][-1], data.extras["cell_state"][-1], atol=1e-7, rtol=1e-5,
+      #     err_msg="new_hidden_state vs. data.extras['cell_state'] differ!"
+      # )
+      
+      # asserting last time step hidden states, new_hidden_state is the last step already
+      # diff = jnp.linalg.norm(new_hidden_state[0] - data.extras["hidden_state"][-1])
+      # jax.debug.print("Hidden state diff: {}", diff)
+      
+      # diff = jnp.linalg.norm(new_hidden_state[1] - data.extras["cell_state"][-1])
+      # jax.debug.print("Cell state diff: {}", diff)
+      
       print(f'In loss function, the new hidden shape is {new_hidden_state[0].shape}')
       print(f'In loss function, the logit shape is {policy_logits.shape}')
         

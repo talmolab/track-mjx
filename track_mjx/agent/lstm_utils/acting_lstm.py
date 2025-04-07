@@ -45,6 +45,7 @@ def actor_step(
     print(f'In actor step, state obs shape is: {env_state.obs.shape}')
     
     actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state) # ensure policy now returns the updated LSTM hidden state
+    # jax.debug.print("[DEBUG] policy_extras is : {}", policy_extras)
     
     diff = jnp.linalg.norm(new_hidden_state[0] - hidden_state[0])
     # jax.debug.print("[DEBUG] Hidden state h diff from prev to new: {}", diff)

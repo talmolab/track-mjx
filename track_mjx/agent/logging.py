@@ -231,6 +231,54 @@ def rollout_logging_fn(
             video.append_data(pixels)
 
     wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")})
+    
+
+def rollout_logging_fn_joysticks(
+    env,
+    jit_reset,
+    jit_step,
+    cfg: DictConfig,
+    current_step: int,  # all args above this one are passed in by functools.partial
+    jit_logging_inference_fn,
+    params: losses.PPONetworkParams,
+    policy_params_fn_key: jax.random.PRNGKey,
+) -> None:
+    """Logs metrics and videos for a reinforcement learning training rollout.
+
+    Args:
+        env: An instance of the base PipelineEnv envrionment.
+        jit_reset: Jitted env reset function.
+        jit_step: Jitted env step function.
+        cfg: Configuration dictionary for the environment and agent.
+        model_path: The path to save the model parameters and videos.
+        renderer: A mujoco.Renderer object.
+        mj_model: A mujoco.Model object for rendering.
+        mj_data: A mujoco.Data object for rendering.
+        scene_option: A mujoco.MjvOption object for rendering.
+        current_step: The number of training steps completed.
+        jit_logging_inference_fn: Jitted policy inference function.
+        params: Parameters for the policy model.
+        policy_params_fn_key: PRNG key.
+    """
+
+    ref_trak_config = cfg["reference_config"]
+
+    _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
+
+    state = jit_reset(reset_rng)
+
+    rollout = [state]
+    latent_means = []
+    latent_logvars = []
+    for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
+        _, act_rng = jax.random.split(act_rng)
+        obs = state.obs
+        ctrl, extras = jit_logging_inference_fn(params, obs, act_rng)
+        latent_means.append(extras["latent_mean"])
+        latent_logvars.append(extras["latent_logvar"])
+        state = jit_step(state, ctrl)
+        rollout.append(state)
+
 
 
 def render_rollout(

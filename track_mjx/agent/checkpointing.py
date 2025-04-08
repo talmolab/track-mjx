@@ -34,7 +34,7 @@ def load_training_state(
     checkpoint_path: str,
     abstract_training_state,
     step_prefix: str = "PPONetwork",
-    step: int = None,
+    step: int | None = None,
 ) -> ppo.TrainingState:
     """Load the training state from checkpoint, given an arbitrary reference training state."""
     mgr_options = ocp.CheckpointManagerOptions(
@@ -54,6 +54,21 @@ def load_training_state(
             ),
         )["train_state"]
 
+
+def load_decoder_param(checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None):
+    """
+    Load the decoder parameters from a checkpoint.
+
+    Args:
+        checkpoint_path (str): path to the checkpoint.
+        step_prefix (str, optional): _description_. Defaults to "PPONetwork".
+        step (int | None, optional): _description_. Defaults to None.
+
+    Returns:
+        _type_: raw decoder parameters.
+    """
+    ckpt = load_checkpoint_for_eval(checkpoint_path, step_prefix, step)
+    return ckpt["policy"][1]["params"]["decoder"]
 
 def load_checkpoint_for_eval(
     checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None

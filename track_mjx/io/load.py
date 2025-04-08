@@ -16,47 +16,24 @@ class ReferenceClip:
     """Immutable dataclass defining the trajectory features used in the tracking task."""
 
     # qpos
-    position: jp.ndarray = None
-    quaternion: jp.ndarray = None
-    joints: jp.ndarray = None
+    position: jp.ndarray 
+    quaternion: jp.ndarray
+    joints: jp.ndarray
 
     # xpos
-    body_positions: jp.ndarray = None
+    body_positions: jp.ndarray
 
     # velocity (inferred)
-    velocity: jp.ndarray = None
-    angular_velocity: jp.ndarray = None
-    joints_velocity: jp.ndarray = None
+    velocity: jp.ndarray
+    angular_velocity: jp.ndarray
+    joints_velocity: jp.ndarray
 
     # xquat
-    body_quaternions: jp.ndarray = None
+    body_quaternions: jp.ndarray
     
-    
-@dataclass
-class ReferenceClipDataset:
-    """
-    Dataset containing ReferenceClip objects and metadata.
-    This is not a pure pytree
-    """
-    reference_clip: ReferenceClip  # ReferenceClip object
-    metadata: dict   # Metadata dictionary
-    split: Literal['train', 'validation', 'test', 'all']  # Split name
-    
-    def get_reference_clip(self) -> ReferenceClip:
-        """Returns the ReferenceClip object."""
-        return self.reference_clip
-    
-    def get_metadata(self) -> dict:
-        """Returns the metadata dictionary."""
-        return self.metadata
-    
-    def get_split(self) -> Literal['train', 'validation', 'test', 'all']:
-        """Returns the split name."""
-        return self.split
-
-    def generate_split(self, split: Literal['train', 'validation', 'test', 'all']):
-        """Generates a split of the dataset."""
-        
+    # clip_idx based on the original clip order. Used to recover the metadata
+    # for the original clip.
+    clip_idx: jp.ndarray | None = None
     
 
 

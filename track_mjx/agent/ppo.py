@@ -40,6 +40,7 @@ from track_mjx.agent import losses, ppo_networks
 from track_mjx.environment import wrappers
 
 import flax
+from flax import traverse_util
 import flax.struct
 import jax
 import jax.numpy as jnp
@@ -64,6 +65,7 @@ class TrainingState:
 
 
 from track_mjx.agent import checkpointing
+from track_mjx.agent.checkpointing import load_decoder_param
 
 
 def _unpmap(v):
@@ -79,6 +81,75 @@ def _strip_weak_type(tree):
 
     return jax.tree_util.tree_map(f, tree)
 
+
+def create_policy_module_mask(
+    ppo_params: losses.PPONetworkParams, freeze_submodule_name: str
+):
+    # Flatten the policy params
+    flat_policy = traverse_util.flatten_dict(ppo_params.policy)
+
+    # Create a mask dict for policy params
+    policy_mask = {}
+    for param_path in flat_policy:
+        # param_path is a tuple like ('Dense_0', 'kernel')
+        if freeze_submodule_name in param_path:
+            policy_mask[param_path] = False  # Freeze this submodule
+        else:
+            policy_mask[param_path] = True  # Train other modules
+
+    # Unflatten policy mask
+    policy_mask = traverse_util.unflatten_dict(policy_mask)
+
+    # The value network stays fully trainable here:
+    value_mask = jax.tree_util.tree_map(lambda _: True, ppo_params.value)
+
+    # Reconstruct the PPONetworkParams mask
+    return losses.PPONetworkParams(policy=policy_mask, value=value_mask)
+
+
+
+# TODO: Move this to a separate file
+def run_evaluation(
+    self,
+    policy_params,
+    training_metrics: Metrics,
+    aggregate_episodes: bool = True,
+    data_split: str = ""
+) -> Metrics:
+    """Run one epoch of evaluation."""
+    self._key, unroll_key = jax.random.split(self._key)
+
+    t = time.time()
+    eval_state = self._generate_eval_unroll(policy_params, unroll_key)
+    eval_metrics = eval_state.info["eval_metrics"]
+    eval_metrics.active_episodes.block_until_ready()
+    epoch_eval_time = time.time() - t
+    metrics = {}
+    prefix = f"{data_split}/" if data_split != "" else ""
+    for fn in [np.mean, np.std]:
+        suffix = "_std" if fn == np.std else ""
+        metrics.update(
+            {
+                f"eval/{prefix}episode_{name}{suffix}": (
+                    fn(value) if aggregate_episodes else value
+                )
+                for name, value in eval_metrics.episode_metrics.items()
+            }
+        )
+    metrics[f"eval/{prefix}avg_episode_length"] = np.mean(eval_metrics.episode_steps)
+    metrics[f"eval/{prefix}epoch_eval_time"] = epoch_eval_time
+    metrics[f"eval/{prefix}sps"] = self._steps_per_unroll / epoch_eval_time
+    self._eval_walltime = self._eval_walltime + epoch_eval_time
+    metrics = {
+        f"eval/{prefix}walltime": self._eval_walltime,
+        **training_metrics,
+        **metrics,
+    }
+
+    return metrics  # pytype: disable=bad-return-type  # jax-ndarray
+
+# Monkey patch the run_evaluation method to include data_split
+acting.Evaluator.run_evaluation = run_evaluation
 
 # TODO: Pass in a loss-specific config instead of throwing them all in individually.
 def train(
@@ -114,6 +185,7 @@ def train(
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
     eval_env: Optional[envs.Env] = None,
+    eval_env_test_set: Optional[envs.Env] = None,
     policy_params_fn: Callable[..., None] = lambda *args: None,
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]

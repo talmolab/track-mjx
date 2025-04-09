@@ -93,6 +93,8 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             
             # jax.debug.print("[DEBUG] Hidden state is: {}", hidden_state[0])
             
+            # postprocessed_actions = ppo_networks.parametric_action_distribution.mode(logits)
+            
             if use_lstm:
                 return postprocessed_actions, {
                     # "latent_mean": latent_mean,

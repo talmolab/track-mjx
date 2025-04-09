@@ -85,7 +85,7 @@ def actor_step(
     # print(f'In actor step, updated hidden state after reset hidden shape: {new_hidden_state[0].shape}')
 
     return nstate, Transition(  
-        observation=env_state.obs,
+        observation=env_state.obs, # start with first obs, nstate as next obs will feed in and update next iter
         action=actions,
         reward=nstate.reward,
         discount=1 - nstate.done,

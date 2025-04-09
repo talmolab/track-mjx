@@ -82,6 +82,7 @@ class Decoder(nn.Module):
             return x, activations
         return x
 
+#TODO: make LSTM special class
 class LSTMDecoder(nn.Module):
     """LSTM-based decoder for sequential action generation."""
     layer_sizes: Sequence[int]
@@ -157,7 +158,7 @@ class IntentionNetwork(nn.Module):
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(traj, get_activation=get_activation)
             # z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            z=latent_mean
+            z = latent_mean
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             
             if use_lstm:
@@ -171,7 +172,7 @@ class IntentionNetwork(nn.Module):
         else:
             latent_mean, latent_logvar = self.encoder(traj, get_activation=get_activation)
             # z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            z=latent_mean
+            z = latent_mean
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             
             if use_lstm:

@@ -425,22 +425,28 @@ def train(
         # ) # Shape now: (2048, 20, 128)
 
         # Update normalization params and normalize observations.
-        normalizer_params = running_statistics.update(
-            training_state.normalizer_params,
-            data.observation,
-            pmap_axis_name=_PMAP_AXIS_NAME,
-        )
+        # normalizer_params = running_statistics.update(
+        #     training_state.normalizer_params,
+        #     data.observation,
+        #     pmap_axis_name=_PMAP_AXIS_NAME,
+        # )
         
         print(f'In training step, state.done has shape: {state.done.shape}')
         # print(f'In training step, the updated reshaped hidden state is: {reshaped_new_hidden_state[1].shape}')
         
         # techniqually, whatever sgd hidden returns doesn't matter
         (optimizer_state, params, _), metrics = jax.lax.scan(
-            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params), 
+            functools.partial(sgd_step, data=data, normalizer_params=training_state.normalizer_params), 
             (training_state.optimizer_state, training_state.params, key_sgd), # should pass in new_hidden_state
             (),
             length=num_updates_per_batch,
         ) # no specific scan axis
+        
+        normalizer_params = running_statistics.update(
+            training_state.normalizer_params,
+            data.observation,
+            pmap_axis_name=_PMAP_AXIS_NAME,
+        )
 
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,

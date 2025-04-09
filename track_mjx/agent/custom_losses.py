@@ -26,6 +26,8 @@ import flax
 import jax
 import jax.numpy as jnp
 
+from flax import linen as nn
+
 
 @flax.struct.dataclass
 class PPONetworkParams:
@@ -148,6 +150,8 @@ def compute_ppo_loss(
     hidden_state = (data.extras['hidden_state'][0], data.extras['cell_state'][0]) # take in first hidden again to unroll
     hidden_state = jax.tree_map(jax.lax.stop_gradient, hidden_state)
     
+    jax.debug.print("[DEBUG SHAPE]: {}", hidden_state[0].shape)
+    
     print(f'In loss function, the data shape is {data.observation.shape}')
     print(f'In loss function, the data hidden shape is {hidden_state[1].shape}')
     
@@ -162,25 +166,33 @@ def compute_ppo_loss(
           x_t: observations at time t with shape [B, obs_dim]
           """
           (h, c) = carry
-          x_t, done_t, data_extras = inputs
+          x_t, next_done, data_extras = inputs
           
-          done_mask = done_t.reshape((-1, 1))
-          h = jnp.where(done_mask, jnp.zeros_like(h), h)
-          c = jnp.where(done_mask, jnp.zeros_like(c), c)
+          # h, c = data_extras["hidden_state"], data_extras["cell_state"]
 
           logits_t, latent_mean_t, latent_logvar_t, new_hidden_state = policy_apply(
               normalizer_params,
               params.policy, 
               x_t, # obs for time t
-              rng,
+              policy_key,
               (h, c),
               get_activation=False,
               use_lstm=True,
           )
           (new_h, new_c) = new_hidden_state
+          done_mask = next_done[:, None]
+          # h = jnp.where(done_mask, jnp.zeros_like(h), h)
+          # c = jnp.where(done_mask, jnp.zeros_like(c), c)
+          batch_size = h.shape[0]
+          lstm_cell = nn.LSTMCell(features=h.shape[1])
+          reset_h, reset_c = lstm_cell.initialize_carry(jax.random.PRNGKey(0), (batch_size, h.shape[1]))
+          new_h = jnp.where(done_mask, reset_h, new_h)
+          new_c = jnp.where(done_mask, reset_c, new_c)
+          
+          # logits_t = parametric_action_distribution.mode(logits_t)
 
           # accumulate some fields for the entire sequence
-          return (new_h, new_c), (logits_t, latent_mean_t, latent_logvar_t, new_h, new_c) # unroll then roll
+          return (new_h, new_c), (logits_t, latent_mean_t, latent_logvar_t, h, c) # store input to stack up
       
       (final_h, final_c), (policy_logits, latent_mean, latent_logvar, stack_h, stack_c) = jax.lax.scan(
           scan_policy_fn,
@@ -188,18 +200,18 @@ def compute_ppo_loss(
           (data.observation, 1 - data.discount, data.extras) # scan over 20 in (20, 512, data_dim) & discount is opposite to done
       )
       
-      stack_h_full = jnp.concatenate([hidden_state[0][None, :, :], stack_h[:-1]], axis=0)
-      stack_c_full = jnp.concatenate([hidden_state[1][None, :, :], stack_c[:-1]], axis=0)
+      # stack_h_full = jnp.concatenate([hidden_state[0][None, :, :], stack_h[:-1]], axis=0)
+      # stack_c_full = jnp.concatenate([hidden_state[1][None, :, :], stack_c[:-1]], axis=0)
       
-      diffs_h = jnp.linalg.norm(stack_h_full - data.extras["hidden_state"], axis=(1, 2)) # length 20, stack_h need to consider first h
-      diffs_c = jnp.linalg.norm(stack_c_full - data.extras["cell_state"], axis=(1, 2))
-      diff_ctrl = jnp.linalg.norm(policy_logits - data.extras["policy_extras"]['logits'], axis=(1, 2))
+      jax.debug.print("[DEBUG SHAPE]: {}", stack_c.shape)
       
-      print(stack_c_full.shape)
+      diffs_h = jnp.linalg.norm(stack_h - data.extras["hidden_state"], axis=(1, 2)) # length 20, stack_h need to consider first h
+      diffs_c = jnp.linalg.norm(stack_c - data.extras["cell_state"], axis=(1, 2))
+      diff_logits = jnp.linalg.norm(policy_logits - data.extras["policy_extras"]['logits'], axis=(1, 2))
       
-      jax.debug.print("0, 10, 20 diffs_h: {}, {}, {}", diffs_h[0], diffs_h[10], diffs_h[-1])
-      jax.debug.print("0, 10, 20 diffs_c: {}, {}, {}", diffs_c[0], diffs_c[10], diffs_c[-1])
-      jax.debug.print("0, 10, 20 diff_ctrl: {}, {}, {}", diff_ctrl[0], diff_ctrl[10], diff_ctrl[-1])
+      jax.debug.print("0, -1 diffs_h: {}, {}", diffs_h[0], diffs_h[-1])
+      jax.debug.print("0, -1 diffs_c: {}, {}", diffs_c[0], diffs_c[-1])
+      jax.debug.print("0, -1 diff_logits: {}, {}", diff_logits[0], diff_logits[-1])
       
       jax.debug.print("[DEBUG] CHECK : {}", data.extras["hidden_state"][0][0][0])
       

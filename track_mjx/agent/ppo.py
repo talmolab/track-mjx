@@ -108,7 +108,6 @@ def create_policy_module_mask(
 
 
 
-# TODO: Move this to a separate file
 def run_evaluation(
     self,
     policy_params,
@@ -570,6 +569,23 @@ def train(
         action_repeat=action_repeat,
         key=eval_key,
     )
+    evaluator_test_set = None
+    if eval_env_test_set is not None:
+        key_env, key_env_test_set = jax.random.split(key_env, 2)
+        eval_env_test_set = wrap_for_training(
+            eval_env_test_set,
+            episode_length=episode_length,
+            action_repeat=action_repeat,
+            randomization_fn=v_randomization_fn,
+        )
+        evaluator_test_set = acting.Evaluator(
+            eval_env_test_set,
+            functools.partial(make_policy, deterministic=deterministic_eval),
+            num_eval_envs=num_eval_envs,
+            episode_length=episode_length,
+            action_repeat=action_repeat,
+            key=key_env_test_set,
+        )
 
     # Logic to restore iteration count from checkpoint
     start_it = 0
@@ -590,6 +606,13 @@ def train(
             policy_param,
             training_metrics={},
         )
+        if evaluator_test_set is not None:
+            # run evaluation on hold out test set
+            metrics = evaluator_test_set.run_evaluation(
+                policy_param,
+                training_metrics=metrics,
+                data_split="test_set",
+            )
         logging.info(metrics)
         progress_fn(start_it, metrics)
         # Save checkpoints
@@ -635,6 +658,15 @@ def train(
                     (training_state.normalizer_params, training_state.params.policy)
                 ),
                 training_metrics,
+            )
+            if evaluator_test_set is not None:
+                # run evaluation on hold out test set
+                metrics = evaluator_test_set.run_evaluation(
+                _unpmap(
+                    (training_state.normalizer_params, training_state.params.policy)
+                ),
+                metrics,
+                data_split="test_set",
             )
             logging.info(metrics)
             progress_fn(current_step, metrics)

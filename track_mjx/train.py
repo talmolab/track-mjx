@@ -11,7 +11,7 @@ import sys
 # )
 
 # limit to 1 GPU
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Use only GPU 0
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # Use only GPU 0
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
@@ -28,7 +28,7 @@ os.environ["JAX_COMPILATION_CACHE_DIR"] = "/tmp/jax_cache"
 # os.environ["JAX_LOG_COMPILES_VERBOSE"] = "1"
 
 import jax
- 
+
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
@@ -49,6 +49,7 @@ import warnings
 from pathlib import Path
 from datetime import datetime
 import logging
+import json
 
 from track_mjx.io import load
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
@@ -68,7 +69,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-sample-efficiency")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -127,14 +128,46 @@ def main(cfg: DictConfig):
     traj_config = cfg["reference_config"]
 
     logging.info(f"Loading data: {cfg.data_path}")
-    reference_clip = load.load_data(cfg.data_path)
 
     walker = _WALKERS[cfg_dict["walker_type"]](**walker_config)
     reward_config = RewardConfig(**env_rewards)
 
+    # setup test set evaluator
+    if cfg.train_setup["train_test_split_info"] is not None:
+        all_clips = load.load_data(cfg.data_path)
+        # load the train/test split data from the disk
+        with open(cfg.train_setup["train_test_split_info"], "r") as f:
+            split_info = json.load(f)
+        test_idx = split_info["test"]
+        if cfg.train_setup["train_subset_ratio"] is None:
+            train_idx = split_info["train"]
+        else:
+            train_idx = split_info["train_subset"][
+                f"{cfg.train_setup['train_subset_ratio']:.2f}"
+            ]
+        logging.info(f"train/test split info: {len(test_idx)=}, {len(train_idx)=}")
+        test_clips = load.select_clips(all_clips, test_idx)
+        train_clips = load.select_clips(all_clips, train_idx)
+        
+        logging.info(f"{train_clips.position.shape=}, {train_clips.quaternion.shape=}")
+
+        test_env = envs.get_environment(
+            env_name=cfg.env_config.env_name,
+            reference_clip=test_clips,
+            walker=walker,
+            reward_config=reward_config,
+            **env_args,
+            **traj_config,
+        )
+    else:
+        # eval with the train set
+        train_clips = load.load_data(cfg.data_path)
+        logging.info(f"{train_clips.position.shape=}, {train_clips.quaternion.shape=}")
+        test_env = None
+
     env = envs.get_environment(
         env_name=cfg.env_config.env_name,
-        reference_clip=reference_clip,
+        reference_clip=train_clips,
         walker=walker,
         reward_config=reward_config,
         **env_args,
@@ -170,6 +203,7 @@ def main(cfg: DictConfig):
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
         use_kl_schedule=cfg.network_config.kl_schedule,
+        eval_env_test_set=test_env,
     )
 
     run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"

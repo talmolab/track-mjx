@@ -203,17 +203,17 @@ def compute_ppo_loss(
       # stack_h_full = jnp.concatenate([hidden_state[0][None, :, :], stack_h[:-1]], axis=0)
       # stack_c_full = jnp.concatenate([hidden_state[1][None, :, :], stack_c[:-1]], axis=0)
       
-      jax.debug.print("[DEBUG SHAPE]: {}", stack_c.shape)
+      # jax.debug.print("[DEBUG SHAPE]: {}", stack_c.shape)
       
-      diffs_h = jnp.linalg.norm(stack_h - data.extras["hidden_state"], axis=(1, 2)) # length 20, stack_h need to consider first h
-      diffs_c = jnp.linalg.norm(stack_c - data.extras["cell_state"], axis=(1, 2))
-      diff_logits = jnp.linalg.norm(policy_logits - data.extras["policy_extras"]['logits'], axis=(1, 2))
+      # diffs_h = jnp.linalg.norm(stack_h - data.extras["hidden_state"], axis=(1, 2)) # length 20, stack_h need to consider first h
+      # diffs_c = jnp.linalg.norm(stack_c - data.extras["cell_state"], axis=(1, 2))
+      # diff_logits = jnp.linalg.norm(policy_logits - data.extras["policy_extras"]['logits'], axis=(1, 2))
       
-      jax.debug.print("0, -1 diffs_h: {}, {}", diffs_h[0], diffs_h[-1])
-      jax.debug.print("0, -1 diffs_c: {}, {}", diffs_c[0], diffs_c[-1])
-      jax.debug.print("0, -1 diff_logits: {}, {}", diff_logits[0], diff_logits[-1])
+      # jax.debug.print("0, -1 diffs_h: {}, {}", diffs_h[0], diffs_h[-1])
+      # jax.debug.print("0, -1 diffs_c: {}, {}", diffs_c[0], diffs_c[-1])
+      # jax.debug.print("0, -1 diff_logits: {}, {}", diff_logits[0], diff_logits[-1])
       
-      jax.debug.print("[DEBUG] CHECK : {}", data.extras["hidden_state"][0][0][0])
+      # jax.debug.print("[DEBUG] CHECK : {}", data.extras["hidden_state"][0][0][0])
       
       # should be independent across loss update not used anymore
       new_hidden_state = jax.tree_map(jax.lax.stop_gradient, (final_h, final_c))

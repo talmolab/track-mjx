@@ -156,9 +156,6 @@ def compute_ppo_loss(
     print(f'In loss function, the data hidden shape is {hidden_state[1].shape}')
     
     if use_lstm:
-      # policy_logits, latent_mean, latent_logvar, new_hidden_state = policy_apply(
-      # normalizer_params, params.policy, data.observation, policy_key, hidden_state, get_activation=False, use_lstm=use_lstm
-      # )
       
       def scan_policy_fn(carry, inputs):
           """
@@ -181,15 +178,11 @@ def compute_ppo_loss(
           )
           (new_h, new_c) = new_hidden_state
           done_mask = next_done[:, None]
-          # h = jnp.where(done_mask, jnp.zeros_like(h), h)
-          # c = jnp.where(done_mask, jnp.zeros_like(c), c)
           batch_size = h.shape[0]
           lstm_cell = nn.LSTMCell(features=h.shape[1])
           reset_h, reset_c = lstm_cell.initialize_carry(jax.random.PRNGKey(0), (batch_size, h.shape[1]))
           new_h = jnp.where(done_mask, reset_h, new_h)
           new_c = jnp.where(done_mask, reset_c, new_c)
-          
-          # logits_t = parametric_action_distribution.mode(logits_t)
 
           # accumulate some fields for the entire sequence
           return (new_h, new_c), (logits_t, latent_mean_t, latent_logvar_t, h, c) # store input to stack up
@@ -200,11 +193,6 @@ def compute_ppo_loss(
           (data.observation, 1 - data.discount, data.extras) # scan over 20 in (20, 512, data_dim) & discount is opposite to done
       )
       
-      # stack_h_full = jnp.concatenate([hidden_state[0][None, :, :], stack_h[:-1]], axis=0)
-      # stack_c_full = jnp.concatenate([hidden_state[1][None, :, :], stack_c[:-1]], axis=0)
-      
-      # jax.debug.print("[DEBUG SHAPE]: {}", stack_c.shape)
-      
       # diffs_h = jnp.linalg.norm(stack_h - data.extras["hidden_state"], axis=(1, 2)) # length 20, stack_h need to consider first h
       # diffs_c = jnp.linalg.norm(stack_c - data.extras["cell_state"], axis=(1, 2))
       # diff_logits = jnp.linalg.norm(policy_logits - data.extras["policy_extras"]['logits'], axis=(1, 2))
@@ -213,26 +201,8 @@ def compute_ppo_loss(
       # jax.debug.print("0, -1 diffs_c: {}, {}", diffs_c[0], diffs_c[-1])
       # jax.debug.print("0, -1 diff_logits: {}, {}", diff_logits[0], diff_logits[-1])
       
-      # jax.debug.print("[DEBUG] CHECK : {}", data.extras["hidden_state"][0][0][0])
-      
       # should be independent across loss update not used anymore
       new_hidden_state = jax.tree_map(jax.lax.stop_gradient, (final_h, final_c))
-      
-      # np.testing.assert_allclose(
-      #   new_hidden_state[0][-1], data.extras["hidden_state"][-1], atol=1e-7, rtol=1e-5,
-      #   err_msg="new_hidden_state vs. data.extras['hidden_state'] differ!"
-      # )
-      # np.testing.assert_allclose(
-      #     new_hidden_state[1][-1], data.extras["cell_state"][-1], atol=1e-7, rtol=1e-5,
-      #     err_msg="new_hidden_state vs. data.extras['cell_state'] differ!"
-      # )
-      
-      # asserting last time step hidden states, new_hidden_state is the last step already
-      # diff = jnp.linalg.norm(new_hidden_state[0] - data.extras["hidden_state"][-1])
-      # jax.debug.print("Hidden state diff: {}", diff)
-      
-      # diff = jnp.linalg.norm(new_hidden_state[1] - data.extras["cell_state"][-1])
-      # jax.debug.print("Cell state diff: {}", diff)
       
       print(f'In loss function, the new hidden shape is {new_hidden_state[0].shape}')
       print(f'In loss function, the logit shape is {policy_logits.shape}')

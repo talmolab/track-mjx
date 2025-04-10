@@ -45,13 +45,11 @@ def actor_step(
     print(f'In actor step, state obs shape is: {env_state.obs.shape}')
     
     actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state) # ensure policy now returns the updated LSTM hidden state
-    # jax.debug.print("[DEBUG] policy_extras is : {}", policy_extras)
     
-    diff = jnp.linalg.norm(new_hidden_state[0] - hidden_state[0])
+    # diff = jnp.linalg.norm(new_hidden_state[0] - hidden_state[0])
     # jax.debug.print("[DEBUG] Hidden state h diff from prev to new: {}", diff)
     
     # print(f'In actor step, new action shape is: {actions.shape}')
-    # env_state.info['hidden_state'] = new_hidden_state
     info_hidden = env_state.info['hidden_state']
     
     print(f'In actor step, passed in hidden state shape is: {hidden_state[1].shape}, original hidden state shape from info is: {info_hidden[1].shape}')
@@ -59,18 +57,13 @@ def actor_step(
     
     nstate = env.step(env_state, actions)
     state_extras = {x: nstate.info[x] for x in extra_fields}
+    done = nstate.done[:, None]  # done flags (batch_size, num_envs)
     
-    # new_hidden_state = nstate.info['hidden_state']
-    
-    done = nstate.done[:, None]  # get done flags (batch_size, num_envs)
-    
-    #DEBUG
     # h_before, c_before = new_hidden_state
     
     # need to use new hidden state
     new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
     
-    #DEBUG
     # h_after, c_after = new_hidden_state
     # h_changed = jnp.any(h_before != h_after, axis=1)
     # c_changed = jnp.any(c_before != c_after, axis=1)
@@ -93,8 +86,8 @@ def actor_step(
         extras={
             'policy_extras': policy_extras,
             'state_extras': state_extras,
-            'hidden_state': hidden_state[0], #new_hidden_state[0], lag one, else first hidden_state lost
-            'cell_state': hidden_state[1] #new_hidden_state[1]
+            'hidden_state': hidden_state[0], #lag one, else first hidden_state lost
+            'cell_state': hidden_state[1]
         }
     ), new_hidden_state # use for forward
     
@@ -120,18 +113,18 @@ def generate_unroll(
         )  # updated hidden state
         
         # both here and in forward, provide 20 here
-        # return the final hidden in carry for carry alignment (forward), return stacked hidden in extra field for backward
-        return (nstate, next_key, new_hidden_state), (transition, new_hidden_state)
+        # return the final hidden in carry for carry alignment (forward), return stacked hidden in transition extra field
+        return (nstate, next_key, new_hidden_state), transition
 
     # carry shape need to match, so out hidden would not have unroll length if in carry
-    (final_state, _, forward_hidden_state), (data, backward_hidden_state) = jax.lax.scan(
+    (final_state, _, forward_hidden_state), data = jax.lax.scan(
         f, (env_state, key, hidden_state), (), length=unroll_length
     )
     
     print(f'In generate unroll, the forward hidden shape is: {forward_hidden_state[0].shape}')
-    print(f'In generate unroll, the backward hidden shape is: {backward_hidden_state[0].shape}')
+    # print(f'In generate unroll, the backward hidden shape is: {backward_hidden_state[0].shape}')
     
-    return final_state, data, forward_hidden_state, backward_hidden_state
+    return final_state, data, forward_hidden_state
 
 class Evaluator:
     """Class to run evaluations with LSTM state handling."""

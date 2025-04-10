@@ -385,7 +385,7 @@ def train(
         def f(carry, unused_t):
             current_state, current_key, hidden_state = carry
             current_key, next_key = jax.random.split(current_key)
-            next_state, data, forward_hidden_state, backward_hidden_state = acting.generate_unroll(
+            next_state, data, forward_hidden_state = acting.generate_unroll(
                 env,
                 current_state,
                 policy, # has hidden states
@@ -396,12 +396,11 @@ def train(
             )
             
             # both here and in actor_step, provide 4 here
-            # return the final hidden in carry for carry alignment (forward), return stacked hidden in extra field for backward
-            return (next_state, next_key, forward_hidden_state), (data, backward_hidden_state)
+            # return the final hidden in carry for carry alignment (forward), return stacked hidden in transtion extra field
+            return (next_state, next_key, forward_hidden_state), data
         
         
-        # backward_hidden_state not used
-        (state, _, forward_hidden_state), (data, backward_hidden_state) = jax.lax.scan(
+        (state, _, forward_hidden_state), data = jax.lax.scan(
             f,
             (state, key_generate_unroll, training_state.hidden_state), # forward hidden state
             (),
@@ -410,7 +409,7 @@ def train(
         
         print(f'In training step, passed into forward hidden shape is: {training_state.hidden_state[0].shape}')
         print(f'In training step, new unstack hidden (forward) shape is: {forward_hidden_state[0].shape}')
-        print(f'In training step, new stacked (backward) hidden shape is: {backward_hidden_state[0].shape}')
+        # print(f'In training step, new stacked (backward) hidden shape is: {backward_hidden_state[0].shape}')
         print(f'In training step, data.observation shape is: {data.observation.shape}')
         
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
@@ -419,24 +418,18 @@ def train(
         assert data.discount.shape[1:] == (unroll_length,)
         
         print(f'In training step, data.observation shape after shaping is: {data.observation.shape}')
-        
-        # reshaped_new_hidden_state = jax.tree_util.tree_map(
-        #     lambda x: jnp.reshape(x, (num_minibatches * batch_size, unroll_length, -1)), backward_hidden_state
-        # ) # Shape now: (2048, 20, 128)
 
         # Update normalization params and normalize observations.
-        # normalizer_params = running_statistics.update(
-        #     training_state.normalizer_params,
-        #     data.observation,
-        #     pmap_axis_name=_PMAP_AXIS_NAME,
-        # )
+        normalizer_params = running_statistics.update(
+            training_state.normalizer_params,
+            data.observation,
+            pmap_axis_name=_PMAP_AXIS_NAME,
+        )
         
-        normalizer_params = training_state.normalizer_params
-        
+        # normalizer_params = training_state.normalizer_params
         print(f'In training step, state.done has shape: {state.done.shape}')
-        # print(f'In training step, the updated reshaped hidden state is: {reshaped_new_hidden_state[1].shape}')
         
-        # techniqually, whatever sgd hidden returns doesn't matter
+        # Final sgd hidden_state returns doesn't matter
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params), 
             (training_state.optimizer_state, training_state.params, key_sgd), # should pass in new_hidden_state
@@ -444,11 +437,11 @@ def train(
             length=num_updates_per_batch,
         ) # no specific scan axis
         
-        normalizer_params = running_statistics.update(
-            training_state.normalizer_params,
-            data.observation,
-            pmap_axis_name=_PMAP_AXIS_NAME,
-        )
+        # normalizer_params = running_statistics.update(
+        #     training_state.normalizer_params,
+        #     data.observation,
+        #     pmap_axis_name=_PMAP_AXIS_NAME,
+        # )
 
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,

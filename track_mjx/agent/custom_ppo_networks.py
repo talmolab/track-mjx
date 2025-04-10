@@ -58,7 +58,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                     logits, _, _, new_hidden_state, activations = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)
                 else:
                     logits, _, _, activations = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)
-                # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
+                    # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
                 if use_lstm:
                     logits, _, _, new_hidden_state = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)

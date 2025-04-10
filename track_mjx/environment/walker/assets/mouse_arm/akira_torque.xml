@@ -20,6 +20,7 @@
 	<!--This stuff can all be left alone-->
 	<worldbody>
 		<light directional="true"/>
+		<geom name="target" type="sphere" size="0.001" pos="0 0 0" contype="1" conaffinity="0" rgba=".6 .3 .3 .3"/>
 		<body name="ground" euler="0 0 0">
 			<camera name="my_camera" pos="0.04 .004 0.037" fovy="20" quat="0.6532815 0.2705981 0.2705981 0.6532815"/>
 			<camera name="close_profile" pos="0.04 .004 0.037" fovy="20" quat="0.6532815 0.2705981 0.2705981 0.6532815"/>
@@ -37,7 +38,7 @@
 					<!--SOB Humerus-->
 					<body name="humerus" pos="0 0.0007 -0.0002" euler="-15 0 0">						
 						<!-- Glenohumeral (aka shoulder) Joint-->					
-						<inertial pos="-0.0005 0.0003 -0.004" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
+						<inertial pos="-0.0005 0.0003 -0.004" mass="0.0001258" diaginertia="3e-7 3e-7 3e-7"/>
 												<!--Mesh Geom-->
 						<geom type="mesh" mesh="Bone_Humerus_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
 
@@ -65,7 +66,7 @@
 									<geom type="mesh" mesh="Bone_Radius_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
 									<body name="wrist_body" pos="-0.002 0.0065 0.0005" euler="0 0 0">
 										<geom name="wrist_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8" />
-										<!-- <geom name="wrist_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8" /> -->
+										<geom name="finger_tip" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8" />
 										<geom type="mesh" mesh="Bone_Segments_Hand_fixed" pos="0 0 0"/>					
 										<inertial pos="-0.0048 0.0019 0.012" mass=" 0.00071" diaginertia="7e-08 7e-08 7e-08"/>
 										</body>
@@ -79,10 +80,10 @@
 		</body>
 	</worldbody>
 	<actuator>
-		<motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
-		<motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
-		<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
-		<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-.05 .05" forcerange="-.1 .1"/>
+		<motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
+		<motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
+		<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
+		<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-.05 .05" forcerange="-.01 .01"/>
 	</actuator>
 	<sensor>
         <actuatorfrc name="sh_elv_act_force" actuator="sh_elv_act"/>

@@ -1,0 +1,107 @@
+# This is a task-based RL config, not requiring reference clips
+data_path: "/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach26_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach0_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach14_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach15_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach17_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach19_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach24_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach26_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach32_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach33_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach35_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach39_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach40_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach7_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach42_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach8_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-5_2023-07-18_15-59-17_lightOff_tone_on_reach1_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-5_2023-07-18_15-59-17_lightOff_tone_on_reach5_ik.h5" #all 42 "/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach0_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach1_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach2_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach3_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach4_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach5_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach6_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach7_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach8_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach9_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach10_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach11_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach12_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach13_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach14_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach15_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach16_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach17_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach18_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach19_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach20_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach21_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach22_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach23_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach24_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach25_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach26_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach27_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach28_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach29_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach30_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach31_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach32_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach33_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach34_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach35_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach36_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach37_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach38_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach39_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach40_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach41_ik.h5,/root/vast/eric/stac-mjx/reaches_A36-1_2023-07-18_16-54-01_lightOff_tone_on_reach42_ik.h5"
+walker_type: mouse-arm
+
+env_config:
+  env_name: mouse_reach_rl
+  task_name: reach
+  walker_name: mouse_arm
+  render_camera_name: close_profile
+  render_fps: 200
+
+  env_args:
+    solver: "cg"
+    iterations: 6
+    ls_iterations: 6
+    physics_steps_per_control_step: 1
+    reset_noise_scale: 1e-5
+    mj_model_timestep: 0.001
+    mocap_hz: 200
+    termination_joint_distance_threshold: 0.13
+    reward_scale: 2.0  
+    target_size: 0.002
+    margin: 0.006
+
+  reward_weights:
+    ctrl_cost_weight: 0.1
+    ctrl_diff_cost_weight: 0.1
+    joint_reward_weight: 0.0
+    bodypos_reward_weight: 0.0
+    endeff_reward_weight: 0.0
+    joint_reward_exp_scale: 0.0
+    bodypos_reward_exp_scale: 0.0
+    endeff_reward_exp_scale: 0.0
+    jerk_cost_weight: 0.0
+    energy_cost: 0.01
+
+reference_config:
+  clip_length: 150
+  random_init_range: 5
+  traj_length: 5
+  margin: .008
+
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [512,512,512]
+  decoder_layer_sizes: [512,512,512]
+  critic_layer_sizes: [512,512,512]
+  intention_size: 3
+  kl_weight: 1e-5  
+  normalize_observations: True
+
+train_setup:
+  agent_name: mouse_arm
+  run_name: imitation_debug
+  checkpoint_to_restore:
+  checkpoint_max_to_keep: 
+  checkpoint_keep_period: 
+  eval_every: 1_000_000
+  episode_length: 600
+  reset_every: 1_000_000
+  deterministic_eval: true
+  train_config:
+    num_envs: 1024
+    num_timesteps: 10_000_000_000
+    batch_size: 512
+    num_minibatches: 4
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2     
+    discounting: 0.97        
+    action_repeat: 1
+    entropy_cost: 0.01
+    reward_scaling: 1.5
+    normalize_observations: True
+    unroll_length: 20
+    seed: 0
+
+logging_config:
+  project_name: vnl_debug
+  clip_id: -1
+  model_path: model_checkpoints
+  algo_name: ppo
+  debug_mode: false  # Set to true only when debugging
+  profiling:
+    enabled: false
+    max_trace_events: 1000000
+
+walker_config:
+  torque_actuators: True
+  rescale_factor: 1.0
+  joint_names:
+    - sh_elv
+    - sh_extension
+    - sh_rotation
+    - elbow_joint
+  body_names:
+    - world
+    - ground
+    - clavicle
+    - scapula
+    - humerus
+    - ulna
+    - elbow
+    - radius
+    - wrist_body
+  end_eff_names:
+    - wrist_body

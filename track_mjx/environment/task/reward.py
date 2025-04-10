@@ -1,6 +1,7 @@
 """All reward calculation and reward calculation helper functions"""
 
 from jax import numpy as jp
+import jax
 import numpy as np
 from typing import Union
 from omegaconf import ListConfig
@@ -9,6 +10,25 @@ from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
 from mujoco import MjData
 
 from flax import struct
+
+
+@struct.dataclass
+class TaskRewardConfig:
+    """Configuration for task-based RL reward computation."""
+
+    # Reaching task parameters
+    reward_scale: float
+    target_size: float
+    termination_distance: float
+    margin: float
+
+    # Control cost parameters (optional)
+    ctrl_cost_weight: float = 0.0
+    ctrl_diff_cost_weight: float = 0.0
+
+    # Energy and smoothness (optional)
+    energy_cost_weight: float = 0.0
+    jerk_cost_weight: float = 0.0
 
 
 @struct.dataclass
@@ -214,10 +234,7 @@ def compute_energy_cost(
     qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
 ) -> jp.ndarray:
     """Compute energy consumption cost."""
-    # Scale the values to prevent extremely large costs
-    # Apply a softplus or similar function to make gradients smoother
     energy = jp.sum(jp.abs(qvel) * jp.abs(qfrc_actuator))
-    # Clip the energy to a reasonable range to prevent extreme penalties
     energy = jp.minimum(energy, 100.0)  # Prevent excessive penalties
     return weight * energy
 
@@ -253,13 +270,6 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
-def huber_loss(x: jp.ndarray, delta: float = 0.1) -> jp.ndarray:
-    abs_x = jp.abs(x)
-    quadratic = 0.5 * (x**2)
-    linear = delta * (abs_x - 0.5 * delta)
-    return jp.where(abs_x <= delta, quadratic, linear)
-
-
 def compute_jerk_cost(
     qacc: jp.ndarray, prev_qacc: jp.ndarray, weight: float
 ) -> jp.ndarray:
@@ -267,6 +277,43 @@ def compute_jerk_cost(
     jerk = qacc - prev_qacc
     robust_cost = jp.sum(huber_loss(jerk, delta=0.1))
     return weight * robust_cost
+
+
+@jax.jit
+def compute_energy_cost_jit(
+    qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Energy consumption cost - jitted version."""
+    return compute_energy_cost(qvel, qfrc_actuator, weight)
+
+
+@jax.jit
+def compute_ctrl_cost_jit(action: jp.ndarray, weight: float) -> jp.ndarray:
+    """Control cost of action - jitted version."""
+    return compute_ctrl_cost(action, weight)
+
+
+@jax.jit
+def compute_ctrl_diff_cost_jit(
+    action: jp.ndarray, prev_action: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Control difference cost - jitted version."""
+    return compute_ctrl_diff_cost(action, prev_action, weight)
+
+
+@jax.jit
+def compute_jerk_cost_jit(
+    qacc: jp.ndarray, prev_qacc: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Robust jerk cost - jitted version."""
+    return compute_jerk_cost(qacc, prev_qacc, weight)
+
+
+def huber_loss(x: jp.ndarray, delta: float = 0.1) -> jp.ndarray:
+    abs_x = jp.abs(x)
+    quadratic = 0.5 * (x**2)
+    linear = delta * (abs_x - 0.5 * delta)
+    return jp.where(abs_x <= delta, quadratic, linear)
 
 
 def compute_health_penalty(
@@ -396,18 +443,20 @@ def compute_tracking_rewards(
         reward_config.endeff_reward_exp_scale,
     )
 
-    ctrl_cost = compute_ctrl_cost(action, reward_config.ctrl_cost_weight)
-    ctrl_diff_cost = compute_ctrl_diff_cost(
+    ctrl_cost = compute_ctrl_cost_jit(action, reward_config.ctrl_cost_weight)
+    ctrl_diff_cost = compute_ctrl_diff_cost_jit(
         action, info["prev_ctrl"], reward_config.ctrl_diff_cost_weight
     )
 
     # Use a default zero array if "prev_qacc" is missing
     prev_qacc = info.get("prev_qacc", jp.zeros_like(data.qacc))
-    jerk_cost = compute_jerk_cost(data.qacc, prev_qacc, reward_config.jerk_cost_weight)
+    jerk_cost = compute_jerk_cost_jit(
+        data.qacc, prev_qacc, reward_config.jerk_cost_weight
+    )
     info["prev_qacc"] = data.qacc
 
     # Add energy cost calculation
-    energy_cost = compute_energy_cost(
+    energy_cost = compute_energy_cost_jit(
         data.qvel, data.qfrc_actuator, reward_config.energy_cost
     )
 

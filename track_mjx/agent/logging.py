@@ -62,17 +62,30 @@ def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
 
 def make_rollout_renderer(env, cfg):
     walker_config = cfg["walker_config"]
-    pair_render_xml_path = env.walker._pair_rendering_xml_path
-    _XML_PATH = (
-        Path(__file__).resolve().parent.parent
-        / "environment"
-        / "walker"
-        / pair_render_xml_path
-    )
+
+    # Use the regular model for RL tasks, ghost pair for imitation
+    if cfg.env_config.env_name == "mouse_reach_rl":
+        # Use single arm model for RL
+        xml_path = (
+            Path(__file__).resolve().parent.parent
+            / "environment"
+            / "walker"
+            / "assets"
+            / "mouse_arm"
+            / "akira_torque.xml"  # Use the regular model, not the ghost pair
+        )
+    else:
+        # Use ghost pair for imitation learning
+        pair_render_xml_path = env.walker._pair_rendering_xml_path
+        xml_path = (
+            Path(__file__).resolve().parent.parent
+            / "environment"
+            / "walker"
+            / pair_render_xml_path
+        )
 
     if cfg.env_config.walker_name == "rodent":
-        # TODO: Make this ghost rendering walker agonist
-        root = mjcf_dm.from_path(_XML_PATH)
+        root = mjcf_dm.from_path(xml_path)
         rescale.rescale_subtree(
             root,
             walker_config.rescale_factor / 0.8,
@@ -82,13 +95,26 @@ def make_rollout_renderer(env, cfg):
         mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
 
     elif cfg.env_config.walker_name == "mouse_arm":
-        # TODO: Make this ghost rendering walker agonist
-        root = mjcf_dm.from_path(_XML_PATH)
+        # Load the appropriate XML
+        root = mjcf_dm.from_path(str(xml_path))
         mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+
+        # For RL tasks, make target more visible
+        if cfg.env_config.env_name == "mouse_reach_rl":
+            for i in range(mj_model.ngeom):
+                if mj_model.geom(i).name == "target":
+                    # Make target larger and more visible
+                    mj_model.geom(i).size[0] = 0.005  # Larger size
+                    mj_model.geom(i).rgba = [
+                        1.0,
+                        0.2,
+                        0.2,
+                        0.8,
+                    ]  # Bright red, more opaque
 
     elif cfg.env_config.walker_name == "fly":
         spec = mujoco.MjSpec()
-        spec = spec.from_file(str(_XML_PATH))
+        spec = spec.from_file(str(xml_path))
 
         # in training scaled by this amount as well
         for geom in spec.geoms:
@@ -121,8 +147,11 @@ def make_rollout_renderer(env, cfg):
     # visual mujoco rendering
     scene_option = mujoco.MjvOption()
     scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
-    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
-    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
+
+    # For RL tasks, enable visualization flags to help see what's happening
+    if cfg.env_config.env_name == "mouse_reach_rl":
+        scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
+        scene_option.flags[mujoco.mjtVisFlag.mjVIS_JOINT] = True
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)

@@ -29,15 +29,17 @@ from jax import numpy as jp
 from datetime import datetime
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+from track_mjx.environment.task.mouse_reach_RL import MouseReachTask
 from track_mjx.io import load
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent import custom_ppo_networks
 from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
+from track_mjx.agent.rl_logging import rl_rollout_logging_fn
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.mouse_arm import MouseArm
 import logging
 from track_mjx.environment.walker.fly import Fly
-from track_mjx.environment.task.reward import RewardConfig
+from track_mjx.environment.task.reward import RewardConfig, TaskRewardConfig
 import glob
 
 FLAGS = flags.FLAGS
@@ -58,6 +60,7 @@ def main(cfg: DictConfig):
     envs.register_environment("mouse_arm_multi_clip", MultiClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
+    envs.register_environment("mouse_reach_rl", MouseReachTask)
 
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
@@ -119,23 +122,33 @@ def main(cfg: DictConfig):
     if not file_list:
         raise FileNotFoundError(f"No files found matching any path in: {data_paths}")
 
-    try:
-        if len(file_list) == 1:
-            reference_clip, clip_lengths = load.make_multiclip_data(file_list[0])
-        else:
-            reference_clip, clip_lengths = load.make_multiclip_data(file_list)
-    except KeyError:
-        logging.info(
-            f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
-        )
-        reference_clip = load.load_reference_clip_data(
-            file_list[0] if len(file_list) == 1 else file_list
-        )
-        clip_lengths = [
-            int(reference_clip.body_positions.shape[1])
-        ] * reference_clip.body_positions.shape[0]
+    # In train.py, around line 112 where reference_clip is loaded
+    if cfg.env_config.env_name == "mouse_reach_rl":
+        # Task-based RL doesn't need reference clips
+        reference_clip = None
+        clip_lengths = None
+        max_clip_length = (
+            cfg.train_setup.episode_length
+        )  # Use episode_length from config
+    else:
+        # Original code for loading reference clips
+        try:
+            if len(file_list) == 1:
+                reference_clip, clip_lengths = load.make_multiclip_data(file_list[0])
+            else:
+                reference_clip, clip_lengths = load.make_multiclip_data(file_list)
+        except KeyError:
+            logging.info(
+                f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
+            )
+            reference_clip = load.load_reference_clip_data(
+                file_list[0] if len(file_list) == 1 else file_list
+            )
+            clip_lengths = [
+                int(reference_clip.body_positions.shape[1])
+            ] * reference_clip.body_positions.shape[0]
 
-    max_clip_length = max(clip_lengths)
+        max_clip_length = max(clip_lengths)
 
     walker_map = {
         "mouse-arm": MouseArm,
@@ -152,18 +165,55 @@ def main(cfg: DictConfig):
         rescale_factor=walker_config.get("rescale_factor", 1.0),
     )
 
-    reward_config = RewardConfig(**env_rewards)
+    # Around line 156-158 where RewardConfig is created
+    if cfg.env_config.env_name == "mouse_reach_rl":
+        task_specific_args = cfg.env_config.get("task_args", {})
+        # Only include env_args keys supported by PipelineEnv
+        env_args_filtered = {
+            k: v
+            for k, v in env_args.items()
+            if k
+            in [
+                "solver",
+                "iterations",
+                "ls_iterations",
+                "physics_steps_per_control_step",
+                "mj_model_timestep",
+                "reset_noise_scale",
+            ]
+        }
+        combined_args = {**env_args_filtered, **task_specific_args}
+        task_reward_config = TaskRewardConfig(
+            reward_scale=combined_args.get("reward_scale", 1.0),
+            target_size=combined_args.get("target_size", 0.003),
+            termination_distance=combined_args.get("termination_distance", 0.005),
+            margin=combined_args.get("margin", 0.008),
+            ctrl_cost_weight=env_rewards.get("ctrl_cost_weight", 0.0),
+            ctrl_diff_cost_weight=env_rewards.get("ctrl_diff_cost_weight", 0.0),
+            energy_cost_weight=env_rewards.get("energy_cost", 0.0),
+            jerk_cost_weight=env_rewards.get("jerk_cost_weight", 0.0),
+        )
+        env = envs.get_environment(
+            env_name=cfg.env_config.env_name,
+            walker=walker,
+            reward_config=task_reward_config,
+            **combined_args,
+        )
+    else:
+        reward_config = RewardConfig(**env_rewards)
 
-    # Automatically match dict keys and func needs
-    env = envs.get_environment(
-        env_name=cfg.env_config.env_name,
-        reference_clip=reference_clip,
-        walker=walker,
-        reward_config=reward_config,
-        clip_lengths=clip_lengths,
-        **env_args,
-        **traj_config,
-    )
+    # Around line 158 where the environment is created
+    if cfg.env_config.env_name != "mouse_reach_rl":
+        # Original code for creating imitation learning environments
+        env = envs.get_environment(
+            env_name=cfg.env_config.env_name,
+            reference_clip=reference_clip,
+            walker=walker,
+            reward_config=reward_config,
+            clip_lengths=clip_lengths,
+            **env_args,
+            **traj_config,
+        )
 
     train_fn = functools.partial(
         custom_ppo.train,
@@ -203,18 +253,33 @@ def main(cfg: DictConfig):
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
     renderer, mj_model, mj_data, scene_option = make_rollout_renderer(rollout_env, cfg)
-    policy_params_fn = functools.partial(
-        rollout_logging_fn,
-        rollout_env,
-        jit_reset,
-        jit_step,
-        cfg,
-        model_path,
-        renderer,
-        mj_model,
-        mj_data,
-        scene_option,
-    )
+
+    if cfg.env_config.env_name == "mouse_reach_rl":
+        policy_params_fn = functools.partial(
+            rl_rollout_logging_fn,  # Use RL-specific logging
+            rollout_env,
+            jit_reset,
+            jit_step,
+            cfg,
+            model_path,
+            renderer,
+            mj_model,
+            mj_data,
+            scene_option,
+        )
+    else:
+        policy_params_fn = functools.partial(
+            rollout_logging_fn,  # Use imitation learning logging
+            rollout_env,
+            jit_reset,
+            jit_step,
+            cfg,
+            model_path,
+            renderer,
+            mj_model,
+            mj_data,
+            scene_option,
+        )
 
     make_inference_fn, params, _ = train_fn(
         environment=env,

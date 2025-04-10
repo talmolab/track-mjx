@@ -82,7 +82,7 @@ class MultiClipTracking(SingleClipTracking):
         Returns:
             State: The initial state of the environment.
         """
-        _, start_rng, clip_rng, rng = jax.random.split(rng, 4)
+        _, start_rng, clip_rng = jax.random.split(rng, 3)
 
         start_frame = jax.random.randint(start_rng, (), 0, 44)
         if clip_idx is None:

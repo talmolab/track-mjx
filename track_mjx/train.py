@@ -49,6 +49,11 @@ _WALKERS = {
 @hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
+    
+    # TEMP
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    # TEMP
+    
     try:
         n_devices = jax.device_count(backend="gpu")
         logging.info(f"Using {n_devices} GPUs")
@@ -163,7 +168,7 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = wrappers.RenderRolloutWrapperTracking(env)
+    rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

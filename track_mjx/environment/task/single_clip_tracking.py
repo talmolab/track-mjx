@@ -67,13 +67,11 @@ class SingleClipTracking(PipelineEnv):
         mj_model.opt.iterations = iterations
         mj_model.opt.ls_iterations = ls_iterations
         mj_model.opt.timestep = mj_model_timestep
-
         mj_model.opt.jacobian = 0
 
         sys = mjcf_brax.load_model(mj_model)
 
-        # TODO why use kwargs when we can just use the variables directly?
-        kwargs["n_frames"] = kwargs.get("n_frames", physics_steps_per_control_step)
+        kwargs["n_frames"] = physics_steps_per_control_step
         kwargs["backend"] = "mjx"
 
         super().__init__(sys, **kwargs)
@@ -81,13 +79,13 @@ class SingleClipTracking(PipelineEnv):
         self._steps_for_cur_frame = (
             1.0 / (mocap_hz * mj_model.opt.timestep)
         ) / physics_steps_per_control_step
-        print(f"env._steps_for_cur_frame: {self._steps_for_cur_frame}")
 
         self._mocap_hz = mocap_hz
         self._reward_config = reward_config
         self._reference_clip = reference_clip
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
+        self._mjx_model = mjx.put_model(self.sys.mj_model)
 
     def reset(self, rng: jp.ndarray) -> State:
         """Resets the environment to an initial state.
@@ -133,7 +131,9 @@ class SingleClipTracking(PipelineEnv):
         reference_frame = jax.tree.map(
             lambda x: x[info["start_frame"]], self._get_reference_clip(info)
         )
-
+        
+        info["reference_frame"] = reference_frame
+        
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
 
         # # Add pos

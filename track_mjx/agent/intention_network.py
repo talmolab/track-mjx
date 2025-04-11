@@ -80,7 +80,7 @@ class Decoder(nn.Module):
                     activations[f"layer_{i}"] = x
         if get_activation:
             return x, activations
-        return x
+        return x, {}
 
 
 def reparameterize(rng, mean, logvar):
@@ -114,7 +114,7 @@ class IntentionNetwork(nn.Module):
         else:
             latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            action = self.decoder(
+            action, _ = self.decoder(
                 jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             )
             return action, latent_mean, latent_logvar
@@ -144,6 +144,38 @@ def make_intention_policy(
         return policy_module.apply(policy_params, obs=obs, key=key, get_activation=get_activation)
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))
+    dummy_key = jax.random.PRNGKey(0)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
+        apply=apply,
+    )
+
+
+
+def make_decoder_policy(
+    param_size: int,
+    decoder_obs_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+) -> Decoder:
+    """Creates an encoder policy network."""
+
+    policy_module = Decoder(
+        layer_sizes=list(decoder_hidden_layer_sizes) + [param_size],
+    )
+
+    def apply(processor_params, policy_params, obs):
+        temp_obs = obs
+        obs = preprocess_observations_fn(
+            obs[..., -processor_params.mean.shape[-1] :], processor_params
+        )
+        obs = jnp.concatenate(
+            [temp_obs[..., : -processor_params.mean.shape[-1]], obs], axis=-1
+        )
+        return policy_module.apply(policy_params, x=obs)
+
+    dummy_total_obs = jnp.zeros((1, decoder_obs_size))
     dummy_key = jax.random.PRNGKey(0)
 
     return networks.FeedForwardNetwork(

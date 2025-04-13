@@ -91,10 +91,6 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 raw_actions
             )
             
-            # jax.debug.print("[DEBUG] Hidden state is: {}", hidden_state[0])
-            
-            # postprocessed_actions = ppo_networks.parametric_action_distribution.mode(logits)
-            
             if use_lstm:
                 return postprocessed_actions, {
                     # "latent_mean": latent_mean,
@@ -103,7 +99,6 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                     "raw_action": raw_actions,
                     "logits": logits,
                     "activations": activations,
-                    # "hidden_state": hidden_state, # one step lag, in policy extras
                 }, new_hidden_state
             else:
                 return postprocessed_actions, {

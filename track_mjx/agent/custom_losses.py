@@ -150,7 +150,7 @@ def compute_ppo_loss(
     hidden_state = (data.extras['hidden_state'][0], data.extras['cell_state'][0]) # take in first hidden again to unroll
     hidden_state = jax.tree_map(jax.lax.stop_gradient, hidden_state)
     
-    jax.debug.print("[DEBUG SHAPE]: {}", hidden_state[0].shape)
+    # jax.debug.print("[DEBUG SHAPE]: {}", hidden_state[0].shape)
     
     print(f'In loss function, the data shape is {data.observation.shape}')
     print(f'In loss function, the data hidden shape is {hidden_state[1].shape}')

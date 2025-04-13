@@ -161,8 +161,8 @@ class IntentionNetwork(nn.Module):
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             
             if use_lstm:
-                z = latent_mean
-                concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+                # z = latent_mean
+                # concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
                 print('Using LSTM + Activation')
                 action, new_hidden_state, decoder_activations = self.lstm_decoder(concatenated, hidden_state, get_activation=get_activation)
                 return action, latent_mean, latent_logvar, new_hidden_state, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
@@ -176,8 +176,8 @@ class IntentionNetwork(nn.Module):
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             
             if use_lstm:
-                z = latent_mean
-                concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+                # z = latent_mean
+                # concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
                 print('Just LSTM, no Activation')
                 action, new_hidden_state = self.lstm_decoder(concatenated, hidden_state)
                 return action, latent_mean, latent_logvar, new_hidden_state

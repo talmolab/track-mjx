@@ -333,32 +333,15 @@ def train(
         key, key_perm, key_grad = jax.random.split(key, 3)
         
         def convert_data(x: jnp.ndarray):
-            # print(f'In SGD step converting datt/hidden, X shape is: {x.shape}') 
             # start with (2048, 20, 128)
             x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
             return x
         
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
-        # converted_hidden_state = jax.tree_util.tree_map(convert_data_hidden, hidden_state)
-        
-        # def convert_data(x: jnp.ndarray, perm: jnp.ndarray):
-        #     x = x[perm] # (2048, 20, 128)
-        #     x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
-        #     return x
-        
-        # indices = jnp.arange(data.observation.shape[0])
-        # perm = jax.random.permutation(key_perm, indices)
-        
-        # # jax.debug.print("Indicies: {}", indices)
-        # # jax.debug.print("Perm: {}", perm)
-        
-        # shuffled_data = jax.tree_util.tree_map(lambda x: convert_data(x, perm), data)
-        # converted_hidden_state = jax.tree_util.tree_map(lambda x: convert_data(x, perm), hidden_state)
         
         # Jax.lax.scan should scan through minibatches
         print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
-        # print(f'In sgd step, shape of hidden after second reshape and into scanning is {converted_hidden_state[1].shape}')
         
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
@@ -409,7 +392,6 @@ def train(
         
         print(f'In training step, passed into forward hidden shape is: {training_state.hidden_state[0].shape}')
         print(f'In training step, new unstack hidden (forward) shape is: {forward_hidden_state[0].shape}')
-        # print(f'In training step, new stacked (backward) hidden shape is: {backward_hidden_state[0].shape}')
         print(f'In training step, data.observation shape is: {data.observation.shape}')
         
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
@@ -637,7 +619,6 @@ def train(
                 (training_state.normalizer_params, training_state.params.policy)
             )
             
-            # print(f'In Rendering eval, the hidden state is shape: {training_state.hidden_state[1].shape}')
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(

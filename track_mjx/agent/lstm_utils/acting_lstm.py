@@ -48,8 +48,7 @@ def actor_step(
     
     # diff = jnp.linalg.norm(new_hidden_state[0] - hidden_state[0])
     # jax.debug.print("[DEBUG] Hidden state h diff from prev to new: {}", diff)
-    
-    # print(f'In actor step, new action shape is: {actions.shape}')
+
     info_hidden = env_state.info['hidden_state']
     
     print(f'In actor step, passed in hidden state shape is: {hidden_state[1].shape}, original hidden state shape from info is: {info_hidden[1].shape}')
@@ -61,7 +60,6 @@ def actor_step(
     
     # h_before, c_before = new_hidden_state
     
-    # need to use new hidden state
     new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
     
     # h_after, c_after = new_hidden_state
@@ -71,11 +69,8 @@ def actor_step(
     # num_c_reset = jnp.sum(c_changed)
     # jax.debug.print("[DEBUG] Hidden state reset count (h): {}", num_h_reset)
     # jax.debug.print("[DEBUG] Hidden state reset count (c): {}", num_c_reset)
-    
     # num_resets = jnp.sum(done)
     # jax.debug.print("Number of hidden states replaced: {}", num_resets)
-    
-    # print(f'In actor step, updated hidden state after reset hidden shape: {new_hidden_state[0].shape}')
 
     return nstate, Transition(  
         observation=env_state.obs, # start with first obs, nstate as next obs will feed in and update next iter
@@ -158,7 +153,7 @@ class Evaluator:
             print(f'In evals, info hidden have shape: {dummy_hidden_state[0].shape}')
             
             # unstack one here
-            final_state, _, final_hidden_state, _ = generate_unroll(
+            final_state, _, final_hidden_state = generate_unroll(
                 eval_env,
                 eval_first_state,
                 eval_policy_fn(policy_params),

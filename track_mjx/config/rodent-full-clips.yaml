@@ -75,7 +75,7 @@ train_setup:
     entropy_cost: 1e-2
     reward_scaling: 1
     normalize_observations: True
-    unroll_length: 35 #2
+    unroll_length: 20 #2
     seed: 0
     get_activation: True
     use_lstm: True

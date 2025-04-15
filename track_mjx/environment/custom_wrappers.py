@@ -20,6 +20,7 @@ def wrap(
     randomization_fn: Optional[Callable[[System], tuple[System, System]]] = None,
     use_lstm: bool = True,
     hidden_state_dim: int = 128,
+    hidden_layer_num: int = 2,
 ) -> Wrapper:
     """Common wrapper pattern for all training agents.
 
@@ -44,7 +45,7 @@ def wrap(
         env = DomainRandomizationVmapWrapper(env, randomization_fn)
     
     if use_lstm:
-        env = LSTMAutoResetWrapperTracking(env, lstm_features=hidden_state_dim)
+        env = LSTMAutoResetWrapperTracking(env, lstm_features=hidden_state_dim, hidden_layer_num=hidden_layer_num)
     else:
         env = AutoResetWrapperTracking(env)
         
@@ -54,15 +55,28 @@ def wrap(
 class LSTMAutoResetWrapperTracking(Wrapper):
     """Automatically resets Brax envs that are done and tracks LSTM hidden states."""
 
-    def __init__(self, env: Env, lstm_features: int = 128):
+    def __init__(self, env: Env, lstm_features: int = 128, hidden_layer_num: int = 2):
         """Initializes the wrapper with LSTM tracking."""
         super().__init__(env)
         self.lstm_features = lstm_features
+        self.hidden_layer_num = hidden_layer_num
 
     def initialize_hidden_state(self, rng: jax.Array, num_envs: int) -> tuple[jp.ndarray, jp.ndarray]:
         """Initializes LSTM hidden state (h_t, c_t) for each environment."""
-        lstm_cell = nn.LSTMCell(features=self.lstm_features)
-        return lstm_cell.initialize_carry(rng, (num_envs, self.lstm_features))  # shape: (num_envs, hidden_dim)
+        # lstm_cell = nn.LSTMCell(features=self.lstm_features)
+        # return lstm_cell.initialize_carry(rng, (num_envs, self.lstm_features))  # shape: (num_envs, hidden_dim)
+        
+        def init_single_layer_state(layer_idx):
+            # layer_rng = jax.random.fold_in(rng, layer_idx)
+            layer_rng = rng
+            carry = lstm_cell.initialize_carry(layer_rng, (num_envs,))
+            return carry
+
+        carries = [init_single_layer_state(i) for i in range(self.num_layers)]
+        c_list, h_list = zip(*carries)
+        
+        return jnp.stack(h_list), jnp.stack(c_list)
+
 
     def reset(self, rng: jax.Array) -> State:
         """Resets the environment and reinitializes LSTM hidden states."""

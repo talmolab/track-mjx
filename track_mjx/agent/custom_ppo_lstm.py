@@ -259,7 +259,8 @@ def train(
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
         use_lstm=use_lstm,
-        hidden_state_dim=config_dict['network_config']['hidden_state_size']
+        hidden_state_dim=config_dict['network_config']['hidden_state_size'],
+        hidden_layer_num=config_dict['network_config']['hidden_layer_num'],
     )
 
     reset_fn = jax.jit(jax.vmap(env.reset))

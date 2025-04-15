@@ -98,7 +98,7 @@ class LSTMDecoder(nn.Module):
         h, c = hidden_state
 
         h_new, c_new = [], []
-        for layer_idx in range(self.num_layers):
+        for layer_idx in range(self.hidden_layer_num):
             
             # LSTM layer, returned (new_c, new_h), new_h if call cirectly, no need to init + carry in nn.compact
             # c_t is the memory h_t is the hidden layers, same in NN or in LSTM, so need to connect another fully connected out
@@ -129,7 +129,7 @@ class LSTMDecoder(nn.Module):
         # return x, new_hidden_state
         
         if get_activation:
-            # no hidden is stored as 128 x num_hidden_layers rather than 128
+            # no hidden is stored as (128 x 128 * num_hidden_layers) rather than 128
             return x, (jnp.stack(h_new), jnp.stack(c_new)), activations
         return x, (jnp.stack(h_new), jnp.stack(c_new))
 

@@ -61,6 +61,7 @@ def actor_step(
     # h_before, c_before = new_hidden_state
     
     new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
+    new_hidden_state = jax.tree_map(jax.lax.stop_gradient, new_hidden_state)
     
     # h_after, c_after = new_hidden_state
     # h_changed = jnp.any(h_before != h_after, axis=1)
@@ -81,7 +82,7 @@ def actor_step(
         extras={
             'policy_extras': policy_extras,
             'state_extras': state_extras,
-            'hidden_state': hidden_state[0], #lag one, else first hidden_state lost
+            'hidden_state': hidden_state[0], # lag one, else first hidden_state lost
             'cell_state': hidden_state[1]
         }
     ), new_hidden_state # use for forward

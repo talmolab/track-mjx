@@ -87,6 +87,7 @@ class LSTMDecoder(nn.Module):
     """LSTM-based decoder for sequential action generation."""
     layer_sizes: Sequence[int]
     hidden_dim: int = 128
+    hidden_layer_num: int = 2
     activation: networks.ActivationFn = nn.relu
     kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform()
     bias: bool = True
@@ -94,41 +95,43 @@ class LSTMDecoder(nn.Module):
     @nn.compact
     def __call__(self, x, hidden_state, get_activation: bool = False):
         activations = {}
+        h, c = hidden_state
 
-        # LSTM layer, returned (new_c, new_h), new_h if call cirectly, no need to init + carry in nn.compact
-        # c_t is the memory h_t is the hidden layers, same in NN or in LSTM, so need to connect another fully connected out
-        lstm = nn.LSTMCell(features=self.hidden_dim, 
-                           name="lstm",
-                           kernel_init=self.kernel_init)
-        
-        new_hidden_state, x = lstm(hidden_state, x)
-        
-        print(f'X shape after LSTM is{x.shape}')
-    
-        # for i, hidden_size in enumerate(self.layer_sizes):
-        #     x = nn.Dense(
-        #         hidden_size, name=f"hidden_{i}", kernel_init=self.kernel_init, use_bias=self.bias
-        #     )(x)
-        #     x = self.activation(x)
-        #     x = nn.LayerNorm()(x)
+        h_new, c_new = [], []
+        for layer_idx in range(self.num_layers):
             
-        #     print(f'X shape after LSTM + MLP is{x.shape}')
-            
-        #     if get_activation:
-        #         activations[f"layer_{i}"] = x
-        
+            # LSTM layer, returned (new_c, new_h), new_h if call cirectly, no need to init + carry in nn.compact
+            # c_t is the memory h_t is the hidden layers, same in NN or in LSTM, so need to connect another fully connected out
+            lstm = nn.LSTMCell(features=self.hidden_dim, name=f"lstm_{layer_idx}", kernel_init=self.kernel_init)
+
+            # Apply the layer
+            h_i, c_i = h[layer_idx], c[layer_idx]
+            (new_c_i, new_h_i), x = lstm((c_i, h_i), x)
+
+            h_new.append(new_h_i)
+            c_new.append(new_c_i)
+
         # Flax does not allow control the output size independently of the hidden state size.
-        x = nn.Dense(self.layer_sizes[-1],
-                     name="lstm_projection",
-                     kernel_init=self.kernel_init,
-                     use_bias=self.bias)(x)
-        
+        x = nn.Dense(self.layer_sizes[-1], name="lstm_projection", kernel_init=self.kernel_init, use_bias=self.bias)(x)
         activations["lstm_projection"] = x
+       
+        # lstm = nn.LSTMCell(features=self.hidden_dim, 
+        #                    name="lstm",
+        #                    kernel_init=self.kernel_init)
+        # new_hidden_state, x = lstm(hidden_state, x)
+        # x = nn.Dense(self.layer_sizes[-1],
+        #              name="lstm_projection",
+        #              kernel_init=self.kernel_init,
+        #              use_bias=self.bias)(x)
+        # activations["lstm_projection"] = x
+        # if get_activation:
+        #     return x, new_hidden_state, activations
+        # return x, new_hidden_state
         
         if get_activation:
-            return x, new_hidden_state, activations
-        
-        return x, new_hidden_state
+            # no hidden is stored as 128 x num_hidden_layers rather than 128
+            return x, (jnp.stack(h_new), jnp.stack(c_new)), activations
+        return x, (jnp.stack(h_new), jnp.stack(c_new))
 
 
 def reparameterize(rng, mean, logvar):
@@ -145,11 +148,12 @@ class IntentionNetwork(nn.Module):
     reference_obs_size: int
     latents: int = 60
     hidden_states: int = 128
+    hidden_layer_num: int = 2
 
     def setup(self):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
-        self.lstm_decoder = LSTMDecoder(layer_sizes=self.decoder_layers, hidden_dim=self.hidden_states)
+        self.lstm_decoder = LSTMDecoder(layer_sizes=self.decoder_layers, hidden_dim=self.hidden_states, hidden_layer_num=self.hidden_layer_num)
 
     def __call__(self, obs, key, hidden_state, get_activation, use_lstm):
         _, encoder_rng = jax.random.split(key)
@@ -192,6 +196,7 @@ def make_intention_policy(
     param_size: int,
     latent_size: int,
     hidden_state_size: int,
+    hidden_layer_num: int,
     total_obs_size: int,
     reference_obs_size: int,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
@@ -207,7 +212,8 @@ def make_intention_policy(
         decoder_layers=list(decoder_hidden_layer_sizes) + [param_size],
         reference_obs_size=reference_obs_size,
         latents=latent_size,
-        hidden_states=hidden_state_size
+        hidden_states=hidden_state_size,
+        hidden_layer_num=hidden_layer_num,
     )
     
     def apply(processor_params, policy_params, obs, key, hidden_state, get_activation, use_lstm):

@@ -148,7 +148,7 @@ def compute_ppo_loss(
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
     
     hidden_state = (data.extras['hidden_state'][0], data.extras['cell_state'][0]) # take in first hidden again to unroll
-    hidden_state = jax.tree_map(jax.lax.stop_gradient, hidden_state)
+    # hidden_state = jax.tree_map(jax.lax.stop_gradient, hidden_state)
     
     # jax.debug.print("[DEBUG SHAPE]: {}", hidden_state[0].shape)
     

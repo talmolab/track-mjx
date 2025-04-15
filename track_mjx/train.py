@@ -166,6 +166,7 @@ def main(cfg: DictConfig):
             custom_ppo_networks.make_intention_ppo_networks,
             intention_latent_size=cfg.network_config.intention_size,
             hidden_state_size=cfg.network_config.hidden_state_size,
+            hidden_layer_num=cfg.network_config.hidden_layer_num,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),

@@ -51,6 +51,7 @@ network_config:
   critic_layer_sizes: [512,512,512]
   intention_size: 60
   hidden_state_size: 128
+  hidden_layer_num: 2
   kl_weight: 1e-4
 
 train_setup:
@@ -59,7 +60,7 @@ train_setup:
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 10_000_000
+  eval_every: 1 #10_000_000
   episode_length: 200
   reset_every: 20_000_000
   train_config:

@@ -689,7 +689,7 @@ def train(
                 )
 
     total_steps = current_step
-    assert total_steps >= num_timesteps
+    assert total_steps >= num_timesteps / 1e3 # to make the steps in thousands
 
     # If there was no mistakes the training_state should still be identical on all
     # devices.

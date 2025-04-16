@@ -11,7 +11,7 @@ import sys
 # )
 
 # limit to 1 GPU
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # Use only GPU 0
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # visible GPU masks
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
@@ -20,7 +20,6 @@ os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
 )
 
-os.environ["JAX_COMPILATION_CACHE_DIR"] = "/tmp/jax_cache"
 
 # os.environ["JAX_LOG_COMPILES"] = "1"
 
@@ -28,15 +27,6 @@ os.environ["JAX_COMPILATION_CACHE_DIR"] = "/tmp/jax_cache"
 # os.environ["JAX_LOG_COMPILES_VERBOSE"] = "1"
 
 import jax
-
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-jax.config.update(
-    "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
-)
-
-
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import functools
@@ -206,13 +196,15 @@ def main(cfg: DictConfig):
         eval_env_test_set=test_env,
     )
 
-    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    # run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    run_id = f"R-SE-{cfg.train_setup.train_subset_ratio:.2f}_exp3_80test_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
-        notes=f"clip_id: {cfg.logging_config.clip_id}",
+        notes=f"",
         id=run_id,
         resume="allow",
+        group=cfg.logging_config.group_name,
     )
 
     def wandb_progress(num_steps, metrics):

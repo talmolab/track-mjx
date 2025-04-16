@@ -35,6 +35,7 @@ class RewardConfig:
     endeff_reward_exp_scale: float
     # penalty_pos_distance_scale: jp.ndarray
     jerk_cost_weight: float
+    energy_cost_weight: float = 0.001  # Added with default value
 
     # def __post_init__(self):
     #     if isinstance(self.penalty_pos_distance_scale, list) or isinstance(
@@ -256,6 +257,26 @@ def compute_jerk_cost(
     return weight * robust_cost
 
 
+def compute_energy_cost(
+    qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Compute energy consumption cost.
+
+    Args:
+        qvel: Joint velocities.
+        qfrc_actuator: Actuator forces.
+        weight: Weight for the energy cost.
+
+    Returns:
+        jp.ndarray: Weighted energy cost.
+    """
+    # Energy is the sum of the product of absolute joint velocities and actuator forces
+    energy = jp.sum(jp.abs(qvel) * jp.abs(qfrc_actuator))
+    # Clip the energy to a reasonable range to prevent extreme penalties
+    energy = jp.minimum(energy, 100.0)  # Prevent excessive penalties
+    return weight * energy
+
+
 def compute_health_penalty(
     torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
 ) -> jp.ndarray:
@@ -392,6 +413,14 @@ def compute_tracking_rewards(
     prev_qacc = info.get("prev_qacc", jp.zeros_like(data.qacc))
     jerk_cost = compute_jerk_cost(data.qacc, prev_qacc, reward_config.jerk_cost_weight)
     info["prev_qacc"] = data.qacc
+
+    # Calculate energy cost
+    energy_cost = compute_energy_cost(
+        data.qvel, data.qfrc_actuator, reward_config.energy_cost_weight
+    )
+
+    # Store energy cost in info dictionary for logging
+    info["energy_cost"] = energy_cost
 
     # xpos = data.xpos
     # torso_z = walker.get_torso_position(xpos)[2]

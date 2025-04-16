@@ -6,15 +6,15 @@ env_config:
   task_name: imitation
   walker_name: mouse_arm
   render_camera_name: close_profile
-  render_fps: 5
+  render_fps: 200
 
   env_args:
     solver: "cg"
-    iterations: 20
-    ls_iterations: 20
-    physics_steps_per_control_step: 5
+    iterations: 6
+    ls_iterations: 6
+    physics_steps_per_control_step: 1
     reset_noise_scale: 1e-5
-    mj_model_timestep: 0.0005
+    mj_model_timestep: 0.001
     mocap_hz: 200
 
   reward_weights:
@@ -26,7 +26,8 @@ env_config:
     joint_reward_exp_scale: 4.0
     bodypos_reward_exp_scale: 0.0
     endeff_reward_exp_scale: 0.0
-    jerk_cost_weight: 1e-4
+    jerk_cost_weight: 0.0
+    energy_cost_weight: 0.001  # Added energy cost weight
 
 reference_config:
   clip_length: 100
@@ -47,21 +48,21 @@ train_setup:
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 200_000
+  eval_every: 10_000_000
   episode_length: 100
-  reset_every: 100_000
+  reset_every: 10_000_000
   train_config:
-    num_envs: 256
+    num_envs: 2048
     num_timesteps: 10_000_000_000
-    batch_size: 256
+    batch_size: 512
     num_minibatches: 4
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2     
     discounting: 0.95        
     action_repeat: 1
-    entropy_cost: 2.0
-    reward_scaling: 1
+    entropy_cost: 0.001
+    reward_scaling: 1.0
     normalize_observations: True
     unroll_length: 20
     seed: 0

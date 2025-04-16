@@ -42,6 +42,15 @@ def log_metric_to_wandb(metric_name: str, data: jp.ndarray, title: str = ""):
         # If data is two lists, use them directly
         frames, values = data
 
+    # Convert JAX arrays to Python primitives
+    def convert_to_primitive(x):
+        if isinstance(x, (jp.ndarray, np.ndarray)) and x.size == 1:
+            return x.item()  # Convert single-element arrays to Python primitives
+        return x
+
+    frames = [convert_to_primitive(x) for x in frames]
+    values = [convert_to_primitive(x) for x in values]
+
     table = wandb.Table(
         data=[[x, y] for x, y in zip(frames, values)],
         columns=["frame", metric_name],
@@ -192,6 +201,9 @@ def rollout_logging_fn(
     # summed_pos_distances = [state.info["summed_pos_distance"] for state in rollout]
     joint_distances = [state.info["joint_distance"] for state in rollout]
     jerk_costs = [state.info.get("jerk_cost", 0) for state in rollout]
+    energy_costs = [
+        state.info.get("energy_cost", 0) for state in rollout
+    ]  # Add energy cost logging
     # torso_heights = [
     #     state.pipeline_state.xpos[env.walker._torso_idx][2] for state in rollout
     # ]
@@ -241,6 +253,13 @@ def rollout_logging_fn(
         "jerk_costs",
         list(enumerate(jerk_costs)),
         title="jerk_cost for each rollout frame",
+    )
+
+    # Added logging for energy_cost metric
+    log_metric_to_wandb(
+        "energy_costs",
+        list(enumerate(energy_costs)),
+        title="energy_cost for each rollout frame",
     )
 
     # log_metric_to_wandb(

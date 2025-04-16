@@ -126,6 +126,8 @@ class MultiClipTracking(SingleClipTracking):
             "prev_prev_ctrl": jp.zeros((self.sys.nu,)),
             "prev_qacc": jp.zeros((self.sys.nv,)),  # Added to preserve carry structure
             "step": jp.array(0),  # Step counter initialization
+            "energy_cost": jp.array(0.0),  # Initialize energy_cost field
+            "step": jp.array(0),
         }
 
         state = self.reset_from_clip(rng, info, noise=True)

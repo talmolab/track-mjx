@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <mujoco model="mouse">
-	<option integrator="RK4" timestep="0.001" gravity="0 0 -9.81" solver="CG" iterations="30" ls_iterations="30"></option>
+	<option integrator="RK4" timestep="0.001" gravity="0 0 -9.81" solver="CG" iterations="6" ls_iterations="6"></option>
 	<default>
-	<joint limited="true" solreflimit="0.01 1" solimplimit="0.99 0.9999 0" armature="4e-06" damping="0.003" stiffness="0.003"/>
+	<joint limited="true" solreflimit="0.01 1" solimplimit="0.99 0.9999 0" armature="4e-06" damping="0.001" stiffness="0.001"/>
 	</default>
 	<size njmax="1000" nconmax="400" nkey="1" nuser_jnt="1"/>
 	<asset>
@@ -81,19 +81,19 @@
 		</body>
 	</worldbody>
 	<actuator>
-		<motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
-		<motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
-		<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
-		<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
+		<motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
+		<motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
+		<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
+		<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
 	</actuator>
-	<sensor>
-		<actuatorfrc name="sh_elv_act_force" actuator="sh_elv_act"/>
+	<!-- <sensor> -->
+		<!-- <actuatorfrc name="sh_elv_act_force" actuator="sh_elv_act"/>
 		<actuatorfrc name="sh_extension_act_force" actuator="sh_extension_act"/>
 		<actuatorfrc name="sh_rotation_act_force" actuator="sh_rotation_act"/>
-		<actuatorfrc name="elbow_act_force" actuator="elbow_act"/>
+		<actuatorfrc name="elbow_act_force" actuator="elbow_act"/> -->
 		<!-- <jointpos name="elbow_angle" joint="elbow"/>
 		<jointpos name="sh_rotation_angle" joint="sh_rotation"/>
 		<jointpos name="sh_elv_angle" joint="sh_elv"/>
 		<jointpos name="sh_extension_angle" joint="sh_extension"/> -->
-	</sensor>
+	<!-- </sensor> -->
 </mujoco>

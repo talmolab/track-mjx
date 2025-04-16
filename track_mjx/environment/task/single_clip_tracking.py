@@ -128,6 +128,8 @@ class SingleClipTracking(PipelineEnv):
             "quat_distance": 0.0,
             "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nv,)),
+            "prev_qacc": jp.zeros((self.sys.nv,)),  # Make sure prev_qacc is initialized
+            "energy_cost": jp.array(0.0),  # Initialize energy_cost
         }
 
         return self.reset_from_clip(rng, info, noise=True)
@@ -205,8 +207,8 @@ class SingleClipTracking(PipelineEnv):
             "reward_ctrlcost": zero,
             "ctrl_diff_cost": zero,
             "jerk_cost": zero,
+            "energy_cost": zero,  # Add energy_cost to initial metrics
         }
-
         return State(data, obs, reward, done, metrics, info)
 
     def step(self, state: State, action: jp.ndarray) -> State:
@@ -239,7 +241,7 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
-            jerk_cost,  # newly returned from compute_tracking_rewards
+            jerk_cost,
             info,
         ) = compute_tracking_rewards(
             data=data,
@@ -249,6 +251,9 @@ class SingleClipTracking(PipelineEnv):
             info=info,
             reward_config=self._reward_config,
         )
+
+        # Get energy cost from info
+        energy_cost = info.get("energy_cost", jp.array(0.0))
 
         info["prev_ctrl"] = action
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
@@ -260,6 +265,7 @@ class SingleClipTracking(PipelineEnv):
             - ctrl_cost
             - ctrl_diff_cost
             - jerk_cost
+            - energy_cost  # Subtract energy cost from total reward
         )
 
         # Raise done flag if terminating
@@ -268,7 +274,6 @@ class SingleClipTracking(PipelineEnv):
         # Handle nans during sim by resetting env
         reward = jp.nan_to_num(reward)
         obs = jp.nan_to_num(obs)
-
         from jax.flatten_util import ravel_pytree
 
         flattened_vals, _ = ravel_pytree(data)
@@ -285,7 +290,8 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward=endeff_reward,
             reward_ctrlcost=-ctrl_cost,
             ctrl_diff_cost=ctrl_diff_cost,
-            jerk_cost=jerk_cost,  # <-- Added jerk_cost metric here
+            jerk_cost=jerk_cost,
+            energy_cost=energy_cost,  # Log energy cost in metrics
         )
 
         return state.replace(
@@ -303,9 +309,7 @@ class SingleClipTracking(PipelineEnv):
         def f(x):
             if len(x.shape) != 1:
                 return jax.lax.dynamic_slice_in_dim(
-                    x,
-                    self._get_cur_frame(info, data) + 1,
-                    self._ref_len,
+                    x, self._get_cur_frame(info, data) + 1, self._ref_len
                 )
             return jp.array([])
 
@@ -325,7 +329,6 @@ class SingleClipTracking(PipelineEnv):
                 - `reference_obs`: Reference trajectory-based observation.
                 - `proprioceptive_obs`: Observations of the agent's internal state (position and velocity).
         """
-
         ref_traj = self._get_reference_trajectory(info, data)
 
         # walker methods to compute the necessary distances and differences

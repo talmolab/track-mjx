@@ -42,7 +42,8 @@ def actor_step(
 ) -> tuple[State, Transition, jnp.ndarray]:
     """Collect data and update LSTM hidden state."""
     
-    print(f'In actor step, state obs shape is: {env_state.obs.shape}')
+    print(f'[DEBUG] In actor step, before stepping state_obs shape is: {env_state.obs.shape}')
+    print(f'[DEBUG] In actor step, passed in hidden state shape is: {hidden_state[1].shape}')
     
     actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state) # ensure policy now returns the updated LSTM hidden state
     
@@ -51,12 +52,13 @@ def actor_step(
 
     info_hidden = env_state.info['hidden_state']
     
-    print(f'In actor step, passed in hidden state shape is: {hidden_state[1].shape}, original hidden state shape from info is: {info_hidden[1].shape}')
-    print(f'In actor step, hidden state giving to info shape is: {new_hidden_state[1].shape}')
+    print(f'[DEBUG] In actor step, new hidden state from policy is: {new_hidden_state[1].shape}')
+    print(f'[DEBUG] In actor step, original hidden state shape from info is: {info_hidden[1].shape}')
     
     nstate = env.step(env_state, actions)
     state_extras = {x: nstate.info[x] for x in extra_fields}
     done = nstate.done[:, None]  # done flags (batch_size, num_envs)
+    done = done.reshape((done.shape[0], 1, 1))  # (128, 1, 1)
     
     # h_before, c_before = new_hidden_state
     
@@ -117,7 +119,7 @@ def generate_unroll(
         f, (env_state, key, hidden_state), (), length=unroll_length
     )
     
-    print(f'In generate unroll, the forward hidden shape is: {forward_hidden_state[0].shape}')
+    print(f'[DEBUG] In generate unroll, the forward hidden shape is: {forward_hidden_state[0].shape}')
     # print(f'In generate unroll, the backward hidden shape is: {backward_hidden_state[0].shape}')
     
     return final_state, data, forward_hidden_state
@@ -151,7 +153,7 @@ class Evaluator:
             
             dummy_hidden_state = eval_first_state.info["hidden_state"]
             
-            print(f'In evals, info hidden have shape: {dummy_hidden_state[0].shape}')
+            print(f'[DEBUG] In evals, info hidden have shape: {dummy_hidden_state[0].shape}')
             
             # unstack one here
             final_state, _, final_hidden_state = generate_unroll(

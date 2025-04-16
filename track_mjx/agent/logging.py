@@ -170,9 +170,9 @@ def rollout_logging_fn(
     
     #TODO: make this a scan actor_step function
     
-    hidden_state =state.info["hidden_state"]
+    hidden_state = state.info["hidden_state"]
     
-    print(f'In rendering, hidden shape is {hidden_state[0].shape}')
+    print(f'[DEBUG] In rendering_logging_fn, hidden shape is {hidden_state[0].shape}')
     
     rollout = [state]
     for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
@@ -185,7 +185,11 @@ def rollout_logging_fn(
             # print(f'In Inference rendering, LSTM hiden is: {hidden_state}')
         else:
             ctrl, extras,  = jit_logging_inference_fn(params, obs, act_rng, None)
-            
+        
+        print(f'[DEBUG] In rendering_logging_fn, before reshape ctrl shape is {ctrl.shape}')
+        ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
+        print(f'[DEBUG] In rendering_logging_fn, after reshape ctrl shape is {ctrl.shape}')
+        
         state = jit_step(state, ctrl)
             
         rollout.append(state)

@@ -96,6 +96,7 @@ class LSTMDecoder(nn.Module):
     def __call__(self, x, hidden_state, get_activation: bool = False):
         activations = {}
         h, c = hidden_state
+        
 
         h_new, c_new = [], []
         for layer_idx in range(self.hidden_layer_num):
@@ -103,15 +104,20 @@ class LSTMDecoder(nn.Module):
             # LSTM layer, returned (new_c, new_h), new_h if call cirectly, no need to init + carry in nn.compact
             # c_t is the memory h_t is the hidden layers, same in NN or in LSTM, so need to connect another fully connected out
             lstm = nn.LSTMCell(features=self.hidden_dim, name=f"lstm_{layer_idx}", kernel_init=self.kernel_init)
-
-            # Apply the layer
-            h_i, c_i = h[layer_idx], c[layer_idx]
+            
+            # h_i = h[layer_idx, :]
+            # c_i = c[layer_idx, :]
+                
+            # if h.ndim != 1:
+            h_i = h[:, layer_idx, :]
+            c_i = c[:, layer_idx, :]
+                
             (new_c_i, new_h_i), x = lstm((c_i, h_i), x)
 
             h_new.append(new_h_i)
             c_new.append(new_c_i)
 
-        # Flax does not allow control the output size independently of the hidden state size.
+        # flax does not allow control the output size independently of the hidden state size.
         x = nn.Dense(self.layer_sizes[-1], name="lstm_projection", kernel_init=self.kernel_init, use_bias=self.bias)(x)
         activations["lstm_projection"] = x
        
@@ -128,10 +134,15 @@ class LSTMDecoder(nn.Module):
         #     return x, new_hidden_state, activations
         # return x, new_hidden_state
         
+        stacke_h_new = jnp.stack(h_new, axis=1)
+        stacke_c_new = jnp.stack(c_new, axis=1)
+        
+        print(f'[DEBUG] In intention_network LSTM decoder, the hidden shape is {stacke_h_new.shape}')
+        
         if get_activation:
-            # no hidden is stored as (128 x 128 * num_hidden_layers) rather than 128
-            return x, (jnp.stack(h_new), jnp.stack(c_new)), activations
-        return x, (jnp.stack(h_new), jnp.stack(c_new))
+            # no hidden is stored as (num_hidden_layers, 128) rather than 128
+            return x, (stacke_h_new, stacke_c_new), activations
+        return x, (stacke_h_new, stacke_c_new)
 
 
 def reparameterize(rng, mean, logvar):
@@ -165,13 +176,13 @@ class IntentionNetwork(nn.Module):
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             
             if use_lstm:
-                # z = latent_mean
-                # concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
-                print('Using LSTM + Activation')
+                z = latent_mean
+                concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+                print('[DEBUG] In intention_network using LSTM + Activation')
                 action, new_hidden_state, decoder_activations = self.lstm_decoder(concatenated, hidden_state, get_activation=get_activation)
                 return action, latent_mean, latent_logvar, new_hidden_state, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
             else:
-                print('Using MLP + Activation')
+                print('[DEBUG] In intention_network using MLP + Activation')
                 action, decoder_activations = self.decoder(concatenated, get_activation=get_activation)
                 return action, latent_mean, latent_logvar, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
         else:
@@ -180,14 +191,14 @@ class IntentionNetwork(nn.Module):
             concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             
             if use_lstm:
-                # z = latent_mean
-                # concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
-                print('Just LSTM, no Activation')
+                z = latent_mean
+                concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+                print('[DEBUG] In intention_network using just LSTM, no Activation')
                 action, new_hidden_state = self.lstm_decoder(concatenated, hidden_state)
                 return action, latent_mean, latent_logvar, new_hidden_state
             
             else:
-                print('Just MLP, no Activation')
+                print('[DEBUG] In intention_network using just MLP, no Activation')
                 action = self.decoder(concatenated)
                 return action, latent_mean, latent_logvar
 

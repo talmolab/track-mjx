@@ -147,15 +147,14 @@ def compute_ppo_loss(
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
     
-    hidden_state = (data.extras['hidden_state'][0], data.extras['cell_state'][0]) # take in first hidden again to unroll
-    # hidden_state = jax.tree_map(jax.lax.stop_gradient, hidden_state)
-    
-    # jax.debug.print("[DEBUG SHAPE]: {}", hidden_state[0].shape)
-    
-    print(f'In loss function, the data shape is {data.observation.shape}')
-    print(f'In loss function, the data hidden shape is {hidden_state[1].shape}')
-    
     if use_lstm:
+      hidden_state = (data.extras['hidden_state'][0], data.extras['cell_state'][0]) # take in first hidden again to unroll
+      # hidden_state = jax.tree_map(jax.lax.stop_gradient, hidden_state)
+      
+      # jax.debug.print("[DEBUG SHAPE]: {}", hidden_state[0].shape)
+      
+      print(f'[DEBUG] In loss function, the data shape is {data.observation.shape}')
+      print(f'[DEBUG] In loss function, the data hidden shape is {hidden_state[1].shape}')
       
       def scan_policy_fn(carry, inputs):
           """
@@ -178,9 +177,16 @@ def compute_ppo_loss(
           )
           (new_h, new_c) = new_hidden_state
           done_mask = next_done[:, None]
-          batch_size = h.shape[0]
-          lstm_cell = nn.LSTMCell(features=h.shape[1])
-          reset_h, reset_c = lstm_cell.initialize_carry(jax.random.PRNGKey(0), (batch_size, h.shape[1]))
+          done_mask = done_mask.reshape((done_mask.shape[0], 1, 1))
+          
+          # batch_size = h.shape[0]
+          # lstm_cell = nn.LSTMCell(features=h.shape[1])
+          # reset_h, reset_c = lstm_cell.initialize_carry(jax.random.PRNGKey(0), (batch_size, h.shape[1]))
+          # new_h = jnp.where(done_mask, reset_h, new_h)
+          # new_c = jnp.where(done_mask, reset_c, new_c)
+
+          reset_h = jnp.zeros_like(h)
+          reset_c = jnp.zeros_like(c)
           new_h = jnp.where(done_mask, reset_h, new_h)
           new_c = jnp.where(done_mask, reset_c, new_c)
 
@@ -204,8 +210,8 @@ def compute_ppo_loss(
       # should be independent across loss update not used anymore
       new_hidden_state = jax.tree_map(jax.lax.stop_gradient, (final_h, final_c))
       
-      print(f'In loss function, the new hidden shape is {new_hidden_state[0].shape}')
-      print(f'In loss function, the logit shape is {policy_logits.shape}')
+      print(f'[DEBUG] In loss function, the new hidden shape is {new_hidden_state[0].shape}')
+      print(f'[DEBUG] In loss function, the logit shape is {policy_logits.shape}')
         
     else:
       policy_logits, latent_mean, latent_logvar = policy_apply(

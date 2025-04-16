@@ -54,7 +54,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             # here determines if use hidden states
             if get_activation:
                 if use_lstm:
-                    print('Using Activation + LSTM')
+                    print('[DEBUG] In custom_ppo_network using LSTM + Activation')
                     logits, _, _, new_hidden_state, activations = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)
                 else:
                     logits, _, _, activations = policy_network.apply(*params, observations, key_network, hidden_state, get_activation=get_activation, use_lstm=use_lstm)

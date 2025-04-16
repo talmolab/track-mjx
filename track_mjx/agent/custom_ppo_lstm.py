@@ -342,7 +342,7 @@ def train(
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
         
         # Jax.lax.scan should scan through minibatches
-        print(f'In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
+        print(f'[DEBUG] In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
         
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
@@ -391,16 +391,16 @@ def train(
             length=batch_size * num_minibatches // num_envs,
         )
         
-        print(f'In training step, passed into forward hidden shape is: {training_state.hidden_state[0].shape}')
-        print(f'In training step, new unstack hidden (forward) shape is: {forward_hidden_state[0].shape}')
-        print(f'In training step, data.observation shape is: {data.observation.shape}')
+        print(f'[DEBUG] In training step, passed into forward hidden shape is: {training_state.hidden_state[0].shape}')
+        print(f'[DEBUG] In training step, new unstack hidden (forward) shape is: {forward_hidden_state[0].shape}')
+        print(f'[DEBUG] In training step, data.observation shape is: {data.observation.shape}')
         
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data)
         assert data.discount.shape[1:] == (unroll_length,)
         
-        print(f'In training step, data.observation shape after shaping is: {data.observation.shape}')
+        print(f'[DEBUG] In training step, data.observation shape after shaping is: {data.observation.shape}')
 
         # Update normalization params and normalize observations.
         normalizer_params = running_statistics.update(
@@ -410,7 +410,7 @@ def train(
         )
         
         # normalizer_params = training_state.normalizer_params
-        print(f'In training step, state.done has shape: {state.done.shape}')
+        print(f'[DEBUG] In training step, state.done has shape: {state.done.shape}')
         
         # Final sgd hidden_state returns doesn't matter
         (optimizer_state, params, _), metrics = jax.lax.scan(
@@ -488,8 +488,8 @@ def train(
     dummy_hidden_state = env_state.info["hidden_state"]
     dummy_hidden_state_squeeze = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), dummy_hidden_state)
     
-    print(f'In training, the dummy hidden shape is: {dummy_hidden_state_squeeze[0].shape}')
-    print(f'In training, the env obs shape is: {env_state.obs.shape}')
+    print(f'[DEBUG] In training, the dummy hidden shape is: {dummy_hidden_state_squeeze[0].shape}')
+    print(f'[DEBUG] In training, the env obs shape is: {env_state.obs.shape}')
     
     init_params = ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key=key_policy, hidden_state=dummy_hidden_state_squeeze), # policy network here is an function to be instantiated
@@ -545,7 +545,7 @@ def train(
         hidden_state_dim=config_dict['network_config']['hidden_state_size']
     )
     
-    print(f'Using deterministic_eval is {deterministic_eval}')
+    print(f'[DEBUG] Using deterministic_eval is {deterministic_eval}')
     
     evaluator = acting.Evaluator(
         eval_env,

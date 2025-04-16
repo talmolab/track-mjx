@@ -190,7 +190,9 @@ def main(cfg: DictConfig):
     # rollout_env = envs.training.EpisodeWrapper(env, 500, 1)
     # rollout_env = envs.training.EvalWrapper(rollout_env)
     # rollout_env = custom_wrappers.LSTMRolloutAutoResetWrapperTracking(rollout_env)
-    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env)
+    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env=env,
+                                                               lstm_features=cfg.network_config.hidden_state_size,
+                                                               hidden_layer_num=cfg.network_config.hidden_layer_num)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

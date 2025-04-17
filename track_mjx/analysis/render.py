@@ -520,6 +520,41 @@ def render_with_global_and_local_pca_progression(
     return concat_frames
 
 
+def plot_homology(fly_activations, rodent_activations, layer_idx, sample_size=500):
+    '''
+    Plotting the homology of data, trying to find topological informations
+    - H0 (Number of connected components, i.e clusters), this detects distinct activation states
+    - H1 (Number of loops), this identifies cyclic behaviors (e.g., locomotion)
+    - H2 (Number of voids), this finds higher-order structure (e.g., transitions between states, transient loops (from stopping to turning))
+    '''
+    scaler = StandardScaler()
+    pca = PCA(n_components=10)
+    fly_sampled = subsample_data(fly_activations[layer_idx], sample_size=sample_size)
+    fly_scaled = scaler.fit_transform(fly_sampled)
+    fly_reduced = pca.fit_transform(fly_scaled)
+
+    rodent_sampled = subsample_data(rodent_activations[layer_idx], sample_size=sample_size)
+    rodent_scaled = scaler.fit_transform(rodent_sampled)
+    rodent_reduced = pca.fit_transform(rodent_scaled)
+    print(f"Explained variance (Fly): {np.sum(pca.explained_variance_ratio_):.4f}")
+    print(f"Explained variance (Rodent): {np.sum(pca.explained_variance_ratio_):.4f}")
+
+    fly_diagrams = ripser(fly_reduced, maxdim=2)['dgms']
+    rodent_diagrams = ripser(rodent_reduced, maxdim=2)['dgms']
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    plot_diagrams(fly_diagrams, ax=axes[0])
+    axes[0].set_title(f"Fly - Persistence Diagram for {layer_idx[0]} - {layer_idx[1]}")
+
+    plot_diagrams(rodent_diagrams, ax=axes[1])
+    axes[1].set_title(f"Rodent - Persistence Diagram for {layer_idx[0]} - {layer_idx[1]}")
+
+    plt.show()
+
+
+# -----------------------------------Gait Analysis-----------------------------------
+
 def compute_joint_torques(model, data, qpos, qvel, qacc, valid_joint_indices):
     """
     Computes joint torques using MuJoCo's inverse dynamics, keeping only `-0` (non-ghost) joints.
@@ -868,50 +903,4 @@ def plot_peak_force_gait(peak_force_ctrl, end_eff_indices, leg_labels, dt, times
     axes[1].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
 
     plt.tight_layout()
-    plt.show()
-
-
-def estimate_intrinsic_dim(X, n_jobs=-1, sample_size=500):
-    """intrinsic dimensionality using MLE and using parallelized LOF"""
-    X_sample = subsample_data(X, sample_size)
-    lof = LocalOutlierFactor(n_neighbors=10, metric='euclidean', n_jobs=n_jobs)
-    return -lof.fit(X_sample).negative_outlier_factor_.mean()
-
-
-def fast_isomap(X, n_components=2, n_neighbors=15, sample_size=500):
-    """geodesic distances using Isomap on a subsample of the dataset for efficiency"""
-    X_sample = subsample_data(X, sample_size)
-    return Isomap(n_components=n_components, n_neighbors=n_neighbors).fit_transform(X_sample)
-
-    
-def plot_homology(fly_activations, rodent_activations, layer_idx, sample_size=500):
-    '''
-    Plotting the homology of data, trying to find topological informations
-    - H0 (Number of connected components, i.e clusters), this detects distinct activation states
-    - H1 (Number of loops), this identifies cyclic behaviors (e.g., locomotion)
-    - H2 (Number of voids), this finds higher-order structure (e.g., transitions between states, transient loops (from stopping to turning))
-    '''
-    scaler = StandardScaler()
-    pca = PCA(n_components=10)
-    fly_sampled = subsample_data(fly_activations[layer_idx], sample_size=sample_size)
-    fly_scaled = scaler.fit_transform(fly_sampled)
-    fly_reduced = pca.fit_transform(fly_scaled)
-
-    rodent_sampled = subsample_data(rodent_activations[layer_idx], sample_size=sample_size)
-    rodent_scaled = scaler.fit_transform(rodent_sampled)
-    rodent_reduced = pca.fit_transform(rodent_scaled)
-    print(f"Explained variance (Fly): {np.sum(pca.explained_variance_ratio_):.4f}")
-    print(f"Explained variance (Rodent): {np.sum(pca.explained_variance_ratio_):.4f}")
-
-    fly_diagrams = ripser(fly_reduced, maxdim=2)['dgms']
-    rodent_diagrams = ripser(rodent_reduced, maxdim=2)['dgms']
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-    plot_diagrams(fly_diagrams, ax=axes[0])
-    axes[0].set_title(f"Fly - Persistence Diagram for {layer_idx[0]} - {layer_idx[1]}")
-
-    plot_diagrams(rodent_diagrams, ax=axes[1])
-    axes[1].set_title(f"Rodent - Persistence Diagram for {layer_idx[0]} - {layer_idx[1]}")
-
     plt.show()

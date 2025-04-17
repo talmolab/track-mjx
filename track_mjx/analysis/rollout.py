@@ -27,6 +27,7 @@ from track_mjx.agent import custom_losses as ppo_losses
 
 from omegaconf import DictConfig, OmegaConf
 
+import sys
 
 def restore_config(checkpoint_path: str) -> DictConfig:
     """
@@ -66,6 +67,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     input_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
     logging.info(f"Loading data: {input_data_path}")
     with open(input_data_path, "rb") as file:
+        sys.modules["preprocessing"] = preprocessing
         reference_clip = pickle.load(file)
     walker_map = {
         "rodent": Rodent,

@@ -16,18 +16,19 @@ env_config:
     reset_noise_scale: 1e-5
     mj_model_timestep: 0.001
     mocap_hz: 200
+    termination_joint_distance_threshold: 0.13
 
   reward_weights:
-    ctrl_cost_weight: 1.0
-    ctrl_diff_cost_weight: 1.0
+    ctrl_cost_weight: 0.2
+    ctrl_diff_cost_weight: 0.2
     joint_reward_weight: 8.0
     bodypos_reward_weight: 0.0
     endeff_reward_weight: 0.0
-    joint_reward_exp_scale: 4.0
+    joint_reward_exp_scale: 1.0
     bodypos_reward_exp_scale: 0.0
     endeff_reward_exp_scale: 0.0
     jerk_cost_weight: 0.0
-    energy_cost_weight: 0.001  # Added energy cost weight
+    energy_cost_weight: 0.1  # Added energy cost weight
 
 reference_config:
   clip_length: 100
@@ -61,7 +62,7 @@ train_setup:
     clipping_epsilon: 0.2     
     discounting: 0.95        
     action_repeat: 1
-    entropy_cost: 0.001
+    entropy_cost: 0.01
     reward_scaling: 1.0
     normalize_observations: True
     unroll_length: 20

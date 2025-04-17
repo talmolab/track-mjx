@@ -190,6 +190,13 @@ class MultiClipTracking(SingleClipTracking):
             lambda st: st,
             state,
         )
+        # NEW: Early termination when reaching end of reference clip
+        state = jax.lax.cond(
+            state.info["step"] >= state.info["clip_length"],
+            lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
+            lambda st: st,
+            state,
+        )
 
         new_info = {
             **state.info,

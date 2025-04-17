@@ -130,6 +130,7 @@ class SingleClipTracking(PipelineEnv):
             "prev_ctrl": jp.zeros((self.sys.nv,)),
             "prev_qacc": jp.zeros((self.sys.nv,)),  # Make sure prev_qacc is initialized
             "energy_cost": jp.array(0.0),  # Initialize energy_cost
+            "step": jp.array(0),  # initialize step counter
         }
 
         return self.reset_from_clip(rng, info, noise=True)
@@ -225,6 +226,9 @@ class SingleClipTracking(PipelineEnv):
         data0 = state.pipeline_state
         data = self.pipeline_step(data0, action)
         info = state.info.copy()
+        # increment step counter
+        step = info.get("step", 0) + 1
+        info["step"] = step
 
         # Gets reference clip and indexes to current frame
         reference_clip = jax.tree.map(

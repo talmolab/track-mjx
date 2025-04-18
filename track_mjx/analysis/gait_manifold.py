@@ -8,19 +8,53 @@ from scipy.stats import gaussian_kde
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from scipy.stats import pearsonr
+from scipy.ndimage import gaussian_filter1d
+
+import ripser
+from persim import plot_diagrams
+import gudhi as gd
+from gudhi.representations import Landscape, Silhouette, PersistenceImage
+import umap
+from scipy.stats import pearsonr, spearmanr
+from sklearn.cluster import KMeans
+from sklearn.neighbors import NearestNeighbors
+from joblib import Parallel, delayed
 
 
-def identify_feet_indices(species):
-    """
-    Return indices of bodies that represent feet for different species
-    Replace with your actual feet indices
-    """
-    if species == 'rodent':
-        return [12, 13, 16, 17, 60, 61, 65, 66] 
-    elif species == 'fly':
-        return [30, 34, 38, 42, 46, 50]
+def plot_peak_force_gait(peak_force_ctrl, leg_labels, dt, timesteps_per_clip, color, title_prefix, contact_threshold=None, already_binarized=False):
+    fig, axes = plt.subplots(2, 1, figsize=(6, 6), gridspec_kw={'height_ratios': [1, 3]})
+
+    time_axis = np.linspace(0, timesteps_per_clip * dt, timesteps_per_clip)
+
+    if already_binarized:
+        phase_clip = peak_force_ctrl.astype(int)
+        total_force = np.sum(phase_clip, axis=1)
     else:
-        raise ValueError("Unknown species")
+        smoothed_forces = peak_force_ctrl
+        total_force = np.sum(smoothed_forces, axis=1)
+        phase_clip = (np.abs(smoothed_forces) > contact_threshold).astype(int)
+
+    axes[0].plot(time_axis, total_force, color=color, linewidth=1)
+    axes[0].set_ylabel("Total Force (N)")
+    axes[0].set_xticks([])
+    axes[0].set_xlim(0, time_axis[-1])
+    axes[0].set_title(f"{title_prefix}")
+
+    im = axes[1].imshow(phase_clip.T, cmap="gray_r", aspect="auto", interpolation="nearest")
+    axes[1].set_yticks(np.arange(len(leg_labels)))
+    axes[1].set_yticklabels(leg_labels)
+    axes[1].set_xlabel("Time (s)")
+    axes[1].set_xticks(np.linspace(0, timesteps_per_clip - 1, 6))
+    axes[1].set_xticklabels(np.round(np.linspace(0, timesteps_per_clip * dt, 6), 2))
+
+    legend_patches = [
+        plt.Line2D([0], [0], color="black", lw=4, label="Swing"),
+        plt.Line2D([0], [0], color="white", lw=4, label="Stance")
+    ]
+    axes[1].legend(handles=legend_patches, loc="upper right", frameon=True, edgecolor="black")
+
+    plt.tight_layout()
+    plt.show()
 
 
 def create_time_windows(intentions, window_size=31, stride=1):
@@ -1002,13 +1036,12 @@ def compute_phase_using_hilbert(intentions, fps=30):
     }
 
 
-def estimate_gait_metrics(cfrc, feet_indices, center_frames, window_size=31, fps=30):
+def estimate_gait_metrics(cfrc, center_frames, window_size=31, fps=30):
     """
     Extract gait metrics from force data using methods from the paper
     
     Parameters:
     - cfrc: Array of shape (n_clips, n_frames, n_bodies, 6) containing force data
-    - feet_indices: Indices of bodies representing feet
     - center_frames: Center frame indices for each window
     - window_size: Size of time windows
     - fps: Frames per second
@@ -1040,18 +1073,16 @@ def estimate_gait_metrics(cfrc, feet_indices, center_frames, window_size=31, fps
             clip_idx, clip_frame = frame_mapping[center_frame]
             
             clip_data = cfrc[clip_idx]
+            feet_forces = clip_data
             
             half_window = window_size // 2
             if clip_frame >= half_window and clip_frame < clip_data.shape[0] - half_window:
                 try:
-                    # extract vertical forces for feet
-                    feet_forces = clip_data[:, feet_indices, 2]  # z-component
-                    
-                    # detect contacts (threshold force indicating stance)
+                    # threshold force indicating stance
                     contact_threshold = 0.1
                     contacts = feet_forces > contact_threshold
                     
-                    # Get number of feet in stance at center frame
+                    # get number of feet in stance at center frame
                     feet_in_stance.append(np.sum(contacts[clip_frame]))
                     
                     # calculate duty factor (as in the paper)
@@ -1110,8 +1141,8 @@ def estimate_gait_metrics(cfrc, feet_indices, center_frames, window_size=31, fps
                         swing_durations.append(0.05)
                         duty_factors.append(0.67)
                     
-                    # asymmetry
-                    n_feet = len(feet_indices)
+                    # asymmetry findings
+                    n_feet = len(feet_forces)
                     if n_feet >= 2:
                         mid_idx = n_feet // 2
                         left_contacts = contacts[clip_frame, :mid_idx]
@@ -1121,8 +1152,7 @@ def estimate_gait_metrics(cfrc, feet_indices, center_frames, window_size=31, fps
                     else:
                         asymmetry_values.append(0)
                     
-                    # phase and frequency using Hilbert transform as in the paper
-                    # use the mean vertical force across all feet
+                    # phase and frequency using Hilbert transform as in the paper & use the mean vertical force across all feet
                     mean_force = np.mean(feet_forces, axis=1)
                     
                     # window around center frame
@@ -1136,7 +1166,7 @@ def estimate_gait_metrics(cfrc, feet_indices, center_frames, window_size=31, fps
                         try:
                             filtered_force = filtfilt(b, a, window_force)
                             
-                            # Hilbert transform
+                            # hilbert transform
                             analytic_signal = hilbert(filtered_force)
                             
                             # phase at center
@@ -1185,13 +1215,13 @@ def estimate_gait_metrics(cfrc, feet_indices, center_frames, window_size=31, fps
 
 
 
-def process_manifold_gait(int_data, jf_rodent, species='rodent', window_size=31, stride=1, n_samples=10000):
+def process_manifold_gait(int_data, jf_array, window_size=31, stride=1, n_samples=10000):
     """
     Main function matching the paper's methodology
     
     Parameters:
     - int_data: Intention data array
-    - jf_rodent: Force data array
+    - jf_array: Force data array
     - species: Species for feet indices
     - window_size: Size of time windows
     - stride: Step size between windows
@@ -1202,7 +1232,6 @@ def process_manifold_gait(int_data, jf_rodent, species='rodent', window_size=31,
     """
     print(f"Processing data with paper methods, window_size={window_size}")
     
-    feet_indices = identify_feet_indices(species)
     windows, center_frames = create_time_windows(int_data, window_size, stride)
     
     # sample diverse windows using PCA and clustering
@@ -1213,7 +1242,7 @@ def process_manifold_gait(int_data, jf_rodent, species='rodent', window_size=31,
     
     # extract gait metrics
     gait_metrics = estimate_gait_metrics(
-        jf_rodent, feet_indices, sampled_center_frames, window_size
+        jf_array, sampled_center_frames, window_size
     )
     
     valid_indices = np.where(np.isin(sampled_center_frames, gait_metrics['valid_center_frames']))[0]
@@ -1258,4 +1287,471 @@ def process_manifold_gait(int_data, jf_rodent, species='rodent', window_size=31,
         'gait_metrics': gait_metrics,
         'trajectory_indices': trajectory_indices,
         'cluster_labels': cluster_labels
+    }
+
+
+def subsample_for_tda(embedded, max_points):
+    if len(embedded) <= max_points:
+        return embedded
+    
+    indices = np.random.choice(len(embedded), max_points, replace=False)
+    return embedded[indices]
+
+
+def compute_persistence_diagrams(embedded, max_dim=2):
+    print("Computing persistence diagrams...")
+    
+    diagrams = ripser.ripser(
+        embedded, 
+        maxdim=max_dim,
+        thresh=np.inf,
+        coeff=2,
+        do_cocycles=False,
+    )['dgms']
+    
+    H0 = diagrams[0]
+    H1 = diagrams[1]
+    
+    H2 = None
+    if max_dim >= 2 and len(diagrams) > 2:
+        H2 = diagrams[2]
+    
+    H1_persistence = H1[:, 1] - H1[:, 0]
+    
+    H1_sorted_idx = np.argsort(-H1_persistence)
+    H1_sorted = H1[H1_sorted_idx]
+    H1_sorted_persistence = H1_persistence[H1_sorted_idx]
+    
+    H1_stats = {
+        'mean': np.mean(H1_persistence),
+        'median': np.median(H1_persistence),
+        'max': np.max(H1_persistence),
+        'top_5': H1_sorted_persistence[:min(5, len(H1_sorted_persistence))]
+    }
+    
+    results = {
+        'diagrams': diagrams,
+        'H0': H0,
+        'H1': H1,
+        'H2': H2,
+        'H1_persistence': H1_persistence,
+        'H1_sorted': H1_sorted,
+        'H1_stats': H1_stats
+    }
+    
+    return results
+
+
+def compute_approximate_persistence(embedded, max_dim=2, n_landmarks=200):
+    if len(embedded) > n_landmarks:
+        landmark_indices = np.random.choice(len(embedded), n_landmarks, replace=False)
+        landmarks = embedded[landmark_indices]
+    else:
+        landmarks = embedded
+    
+    witness_complex = gd.EuclideanWitnessComplex()
+    simplex_tree = witness_complex.create_simplex_tree(
+        points=landmarks,
+        witnesses=embedded,
+        max_alpha_square=float('inf'),
+        limit_dimension=max_dim+1
+    )
+    
+    simplex_tree.compute_persistence()
+    
+    persistence = simplex_tree.persistence_intervals_in_dimension
+    diagrams = [persistence(i) for i in range(max_dim+1)]
+    
+    results = {
+        'diagrams': diagrams,
+        'H0': diagrams[0],
+        'H1': diagrams[1] if len(diagrams) > 1 else np.array([]),
+        'H2': diagrams[2] if len(diagrams) > 2 else None
+    }
+    
+    if len(results['H1']) > 0:
+        H1_persistence = results['H1'][:, 1] - results['H1'][:, 0]
+        results['H1_persistence'] = H1_persistence
+        
+        H1_sorted_idx = np.argsort(-H1_persistence)
+        results['H1_sorted'] = results['H1'][H1_sorted_idx]
+        results['H1_stats'] = {
+            'mean': np.mean(H1_persistence),
+            'median': np.median(H1_persistence),
+            'max': np.max(H1_persistence) if len(H1_persistence) > 0 else 0,
+            'top_5': H1_persistence[H1_sorted_idx[:min(5, len(H1_persistence))]] if len(H1_persistence) > 0 else []
+        }
+    else:
+        results['H1_persistence'] = np.array([])
+        results['H1_sorted'] = np.array([])
+        results['H1_stats'] = {
+            'mean': 0, 'median': 0, 'max': 0, 'top_5': []
+        }
+    
+    return results
+
+
+def extract_persistent_features(diagrams, threshold=0.1):
+    H1 = diagrams['H1']
+    H1_persistence = diagrams['H1_persistence']
+    
+    persistent_H1_idx = np.where(H1_persistence > threshold)[0]
+    persistent_H1 = H1[persistent_H1_idx]
+    
+    persistent_H2 = None
+    if diagrams['H2'] is not None:
+        H2 = diagrams['H2']
+        H2_persistence = H2[:, 1] - H2[:, 0]
+        persistent_H2_idx = np.where(H2_persistence > threshold)[0]
+        persistent_H2 = H2[persistent_H2_idx] if len(persistent_H2_idx) > 0 else None
+    
+    return {
+        'H1': persistent_H1,
+        'H2': persistent_H2,
+        'H1_idx': persistent_H1_idx
+    }
+    
+def landmark_subsample(points, n_landmarks=300):
+    if len(points) <= n_landmarks:
+        return points
+    indices = np.random.choice(len(points), n_landmarks, replace=False)
+    return points[indices]
+
+
+def compute_topological_features(embedded, max_dim=1, n_landmarks=20, max_edge_length=0.5):
+    embedded_landmarks = landmark_subsample(embedded, n_landmarks=n_landmarks)
+    
+    rips_complex = gd.RipsComplex(points=embedded_landmarks, max_edge_length=max_edge_length)
+    simplex_tree = rips_complex.create_simplex_tree(max_dimension=max_dim+1)
+    simplex_tree.compute_persistence()
+    
+    persistence = simplex_tree.persistence_intervals_in_dimension
+    diagram = [persistence(i) for i in range(max_dim+1)]
+    
+    landscape = Landscape(resolution=20)
+    silhouette = Silhouette(resolution=20)
+    persistence_image = PersistenceImage(resolution=[10,10])
+    
+    if len(diagram[1]) > 0:
+        landscape_features = landscape.fit_transform([diagram[1]])
+        silhouette_features = silhouette.fit_transform([diagram[1]])
+        pi_features = persistence_image.fit_transform([diagram[1]])
+    else:
+        landscape_features = np.zeros((1, 20))
+        silhouette_features = np.zeros((1, 20))
+        pi_features = np.zeros((1, 100))
+    
+    return {
+        'diagram': diagram,
+        'landscape': landscape_features,
+        'silhouette': silhouette_features,
+        'persistence_image': pi_features
+    }
+
+
+def parallel_compute_topological_features(embedded, max_dim=2, n_jobs=-1):
+    chunk_size = len(embedded) // (n_jobs * 2)
+    chunk_size = max(100, chunk_size)
+    chunks = [embedded[i:i+chunk_size] for i in range(0, len(embedded), chunk_size)]
+    
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(compute_topological_features)(chunk, max_dim) 
+        for chunk in chunks
+    )
+    
+    combined = {
+        'landscape': np.vstack([r['landscape'] for r in results]),
+        'silhouette': np.vstack([r['silhouette'] for r in results]),
+        'persistence_image': np.vstack([r['persistence_image'] for r in results])
+    }
+    
+    return combined
+
+
+def visualize_persistence_diagrams(diagrams, title="Persistence Diagrams"):
+    plt.figure(figsize=(12, 8))
+    plot_diagrams(diagrams['diagrams'], show=False)
+    plt.title(title, fontsize=16)
+    plt.tight_layout()
+    plt.show()
+
+
+def identify_topological_regions(embedded, diagrams, persistent_features, gait_metrics):
+    phases = gait_metrics['phases']
+    frequencies = gait_metrics['frequencies']
+    duty_factor = gait_metrics['duty_factor']
+    
+    persistent_H1 = persistent_features['H1']
+    
+    regions = []
+    correlations = {}
+    
+    if len(persistent_H1) == 0:
+        print("No persistent H1 features found")
+        return None
+    
+    for i, feature in enumerate(persistent_H1):
+        birth, death = feature
+        
+        midpoint = (birth + death) / 2
+        distances = np.abs(np.linalg.norm(embedded, axis=1) - midpoint)
+        
+        tolerance = (death - birth) * 0.2
+        near_loop = distances < tolerance
+        
+        regions.append(near_loop)
+        
+        if np.sum(near_loop) > 5:
+            phase_corr, p_phase = pearsonr(phases[near_loop], distances[near_loop])
+            freq_corr, p_freq = pearsonr(frequencies[near_loop], distances[near_loop]) 
+            duty_corr, p_duty = pearsonr(duty_factor[near_loop], distances[near_loop])
+            
+            correlations[f'loop_{i}'] = {
+                'phase': (phase_corr, p_phase),
+                'frequency': (freq_corr, p_freq),
+                'duty_factor': (duty_corr, p_duty),
+                'size': np.sum(near_loop),
+                'birth': birth,
+                'death': death,
+                'persistence': death - birth
+            }
+    
+    return {
+        'regions': regions,
+        'correlations': correlations
+    }
+
+
+def visualize_topological_correlations(tda_results, gait_metrics, embedded):
+    if 'correlations' not in tda_results or len(tda_results['correlations']) == 0:
+        print("No correlations to visualize")
+        return
+    
+    correlations = tda_results['correlations']
+    regions = tda_results['regions']
+    
+    fig = plt.figure(figsize=(20, 15))
+    
+    ax1 = fig.add_subplot(231, projection='3d')
+    ax1.scatter(
+        embedded[:, 0],
+        embedded[:, 1],
+        embedded[:, 2],
+        c='lightgray',
+        alpha=0.3,
+        s=5
+    )
+    
+    colors = plt.cm.tab10.colors
+    for i, region in enumerate(regions):
+        if i < len(correlations):
+            ax1.scatter(
+                embedded[region, 0],
+                embedded[region, 1],
+                embedded[region, 2],
+                c=[colors[i % len(colors)]],
+                alpha=0.6,
+                s=10,
+                label=f"Loop {i}"
+            )
+    
+    ax1.set_title("Topological Regions on Manifold", fontsize=14)
+    ax1.legend()
+    
+    ax2 = fig.add_subplot(232)
+    
+    loop_ids = list(correlations.keys())
+    gait_params = ['phase', 'frequency', 'duty_factor']
+    
+    corr_matrix = np.zeros((len(loop_ids), len(gait_params)))
+    
+    for i, loop_id in enumerate(loop_ids):
+        for j, param in enumerate(gait_params):
+            corr_matrix[i, j] = correlations[loop_id][param][0]
+    
+    im = ax2.imshow(corr_matrix, cmap='coolwarm', vmin=-1, vmax=1)
+    ax2.set_xticks(np.arange(len(gait_params)))
+    ax2.set_yticks(np.arange(len(loop_ids)))
+    ax2.set_xticklabels(gait_params)
+    ax2.set_yticklabels(loop_ids)
+    plt.colorbar(im, ax=ax2, label="Correlation")
+    
+    for i in range(len(loop_ids)):
+        for j in range(len(gait_params)):
+            text = ax2.text(j, i, f"{corr_matrix[i, j]:.2f}",
+                          ha="center", va="center", color="black")
+    
+    ax2.set_title("Correlation: Topological Features vs Gait Parameters", fontsize=14)
+    
+    ax3 = fig.add_subplot(233)
+    
+    persistence_values = [correlations[loop_id]['persistence'] for loop_id in loop_ids]
+    duty_corr_values = [abs(correlations[loop_id]['duty_factor'][0]) for loop_id in loop_ids]
+    phase_corr_values = [abs(correlations[loop_id]['phase'][0]) for loop_id in loop_ids]
+    freq_corr_values = [abs(correlations[loop_id]['frequency'][0]) for loop_id in loop_ids]
+    
+    ax3.scatter(persistence_values, duty_corr_values, label='Duty Factor', alpha=0.7, s=100)
+    ax3.scatter(persistence_values, phase_corr_values, label='Phase', alpha=0.7, s=100)
+    ax3.scatter(persistence_values, freq_corr_values, label='Frequency', alpha=0.7, s=100)
+    
+    ax3.set_xlabel('Persistence')
+    ax3.set_ylabel('Absolute Correlation')
+    ax3.set_title('Feature Persistence vs. Parameter Correlation', fontsize=14)
+    ax3.legend()
+    ax3.grid(True, linestyle='--', alpha=0.7)
+    
+    ax4 = fig.add_subplot(234)
+    
+    sizes = [correlations[loop_id]['size'] for loop_id in loop_ids]
+    
+    bars = ax4.bar(loop_ids, sizes, color=[colors[i % len(colors)] for i in range(len(loop_ids))])
+    
+    ax4.set_xlabel('Topological Feature')
+    ax4.set_ylabel('Number of Points')
+    ax4.set_title('Size of Topological Regions', fontsize=14)
+    
+    max_region_idx = np.argmax(sizes)
+    max_region_id = loop_ids[max_region_idx]
+    max_region = regions[max_region_idx]
+    
+    ax5 = fig.add_subplot(235)
+    
+    frequencies = gait_metrics['frequencies']
+    duty_factor = gait_metrics['duty_factor']
+    
+    ax5.hist(duty_factor[max_region], alpha=0.7, label='Duty Factor')
+    ax5.hist(frequencies[max_region], alpha=0.7, label='Frequency')
+    
+    ax5.set_xlabel('Parameter Value')
+    ax5.set_ylabel('Count')
+    ax5.set_title(f'Parameter Distribution in {max_region_id}', fontsize=14)
+    ax5.legend()
+    
+    ax6 = fig.add_subplot(236, projection='polar')
+    
+    for i, region in enumerate(regions):
+        if np.sum(region) > 5:
+            hist, bins = np.histogram(
+                gait_metrics['phases'][region], 
+                bins=16, 
+                range=(-np.pi, np.pi)
+            )
+            width = (bins[1] - bins[0])
+            ax6.bar(
+                bins[:-1], 
+                hist/np.sum(hist), 
+                width=width, 
+                alpha=0.5,
+                label=f"Loop {i}",
+                color=colors[i % len(colors)]
+            )
+    
+    ax6.set_title('Phase Distribution by Topological Region', fontsize=14)
+    ax6.legend(loc='upper right')
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def cluster_based_on_topology(embedded, tda_features):
+    landscape_features = tda_features['landscape']
+    
+    if landscape_features.shape[0] == 1:
+        point_features = np.tile(landscape_features[0], (len(embedded), 1))
+    else:
+        point_features = landscape_features
+    
+    combined_features = np.hstack([
+        StandardScaler().fit_transform(embedded),
+        StandardScaler().fit_transform(point_features)
+    ])
+    
+    n_clusters = min(5, len(embedded) // 100)
+    n_clusters = max(2, n_clusters)
+    
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(combined_features)
+    
+    return labels
+
+
+def manifold_with_tda_optimized(results, max_points):
+    print("Starting TDA analysis with optimizations...")
+    embedded = results['embedded']
+    gait_metrics = results['gait_metrics']
+    
+    min_size = min(len(embedded), len(gait_metrics['phases']))
+    embedded = embedded[:min_size]
+    
+    for key in gait_metrics:
+        if isinstance(gait_metrics[key], np.ndarray) and len(gait_metrics[key]) > min_size:
+            gait_metrics[key] = gait_metrics[key][:min_size]
+    
+    print(f"Subsampling from {len(embedded)} points...")
+    subsampled_embedded = subsample_for_tda(embedded, max_points=max_points)
+    print(f"Subsampled to {len(subsampled_embedded)} points")
+    
+    print("Computing persistence diagrams...")
+    diagrams = compute_persistence_diagrams(
+        subsampled_embedded, 
+        max_dim=2
+    )
+    
+    visualize_persistence_diagrams(diagrams, "Persistence Diagrams (Optimized)")
+    
+    diameter = np.max(np.linalg.norm(subsampled_embedded, axis=1))
+    threshold = diameter * 0.2
+    persistent_features = extract_persistent_features(diagrams, threshold)
+    
+    tda_features = compute_topological_features(subsampled_embedded)
+    
+    if len(subsampled_embedded) < len(embedded):
+        nn = NearestNeighbors(n_neighbors=1).fit(subsampled_embedded)
+        _, indices = nn.kneighbors(embedded)
+        indices = indices.flatten()
+    
+    tda_results = identify_topological_regions(
+        subsampled_embedded, diagrams, persistent_features, 
+        {k: v[:len(subsampled_embedded)] if isinstance(v, np.ndarray) else v 
+         for k, v in gait_metrics.items()}
+    )
+    
+    if tda_results:
+        visualize_topological_correlations(tda_results, 
+            {k: v[:len(subsampled_embedded)] if isinstance(v, np.ndarray) else v 
+             for k, v in gait_metrics.items()},
+            subsampled_embedded
+        )
+    
+    full_tda_features = {
+        'landscape': np.tile(tda_features['landscape'][0], (len(embedded), 1))
+        if tda_features['landscape'].shape[0] == 1 else tda_features['landscape']
+    }
+    
+    topo_clusters = cluster_based_on_topology(embedded, full_tda_features)
+    
+    plt.figure(figsize=(10, 8))
+    ax = plt.subplot(111, projection='3d')
+    scatter = ax.scatter(
+        embedded[:, 0],
+        embedded[:, 1],
+        embedded[:, 2],
+        c=topo_clusters,
+        cmap='tab10',
+        alpha=0.6,
+        s=5
+    )
+    ax.set_title("Manifold Clusters Based on Topology", fontsize=14)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_zlabel("UMAP 3")
+    plt.tight_layout()
+    plt.show()
+    
+    return {
+        'diagrams': diagrams,
+        'persistent_features': persistent_features,
+        'tda_features': tda_features,
+        'tda_results': tda_results,
+        'topo_clusters': topo_clusters
     }

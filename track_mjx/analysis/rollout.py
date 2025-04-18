@@ -252,12 +252,13 @@ def create_rollout_generator(
             next_state = jit_step(state, ctrl)
             
             joint_forces = next_state.pipeline_state.cfrc_ext
+            sensor_readings = next_state.pipeline_state.sensordata
             
-            return (next_state, new_rng), (next_state, ctrl, extras["activations"], joint_forces)
+            return (next_state, new_rng), (next_state, ctrl, extras["activations"], joint_forces, sensor_readings)
 
         # Run rollout
         init_carry = (init_state, jax.random.PRNGKey(0))
-        (final_state, _), (states, ctrls, activations, joint_forces) = jax.lax.scan(
+        (final_state, _), (states, ctrls, activations, joint_forces, sensor_readings) = jax.lax.scan(
             _step_fn, init_carry, None, length=num_steps
         )
 
@@ -319,6 +320,7 @@ def create_rollout_generator(
             "qposes_ref": qposes_ref,
             "qposes_rollout": qposes_rollout,
             "joint_forces": joint_forces,
+            "sensor_readings": sensor_readings,
             "info": jax.vmap(lambda s: s.info)(rollout_states),
         }
 

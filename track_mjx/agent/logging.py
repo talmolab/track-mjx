@@ -257,7 +257,7 @@ def render_rollout(
     walker_config = cfg["walker_config"]
 
     # Wrap the env in the brax autoreset and episode wrappers
-    rollout_env = wrappers.RenderRolloutWrapperTracking(env)
+    rollout_env = wrappers.EvalClipResetWrapper(env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

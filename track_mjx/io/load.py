@@ -1,12 +1,15 @@
 from typing import Union
 import h5py
 from jax import numpy as jp
+import numpy as np
 from flax import struct
 import yaml
 from omegaconf import DictConfig
 from pathlib import Path
 import hydra
 import logging
+from dataclasses import dataclass
+from typing import Literal
 
 
 @struct.dataclass
@@ -14,20 +17,24 @@ class ReferenceClip:
     """Immutable dataclass defining the trajectory features used in the tracking task."""
 
     # qpos
-    position: jp.ndarray = None
-    quaternion: jp.ndarray = None
-    joints: jp.ndarray = None
+    position: jp.ndarray 
+    quaternion: jp.ndarray
+    joints: jp.ndarray
 
     # xpos
-    body_positions: jp.ndarray = None
+    body_positions: jp.ndarray
 
     # velocity (inferred)
-    velocity: jp.ndarray = None
-    angular_velocity: jp.ndarray = None
-    joints_velocity: jp.ndarray = None
+    velocity: jp.ndarray
+    angular_velocity: jp.ndarray
+    joints_velocity: jp.ndarray
 
     # xquat
-    body_quaternions: jp.ndarray = None
+    body_quaternions: jp.ndarray
+    
+    # clip_idx based on the original clip order. Used to recover the metadata
+    # for the original clip.
+    clip_idx: jp.ndarray | None = None
 
 
 def load_configs(config_dir: Union[Path, str], config_name: str) -> DictConfig:
@@ -173,3 +180,41 @@ def load_reference_clip_data(
         raise FileNotFoundError(f"File not found: {filepath}")
     except OSError as e:  # Catch more specific HDF5-related errors
         raise OSError(f"Error reading HDF5 file: {filepath} - {e}")
+
+
+def sub_sample_training_set(train_idx: np.ndarray, train_ratio: float = 0.1):
+    """
+    Given the indices of the training clips, this function randomly samples a subset
+    of the training clips based on the provided ratio without replacement.
+
+    Args:
+        train_idx (np.ndarray): Array of indices for the training clips.
+        train_ratio (float, optional): Ratio of the training clips to sample. Defaults to 0.1.
+    """
+    sample_size = int(len(train_idx) * train_ratio)
+    sampled_idx = np.random.choice(train_idx, size=sample_size, replace=False)
+    sampled_idx.sort()
+    return sampled_idx
+
+
+def select_clips(
+    clips: ReferenceClip,
+    indices: np.ndarray,
+) -> ReferenceClip:
+    """
+    Selects clips from the ReferenceClip object based on the provided indices.
+    The function returns a new ReferenceClip object containing only the selected clips.
+    """
+    indices = np.array(indices)
+    selected_clips = ReferenceClip(
+        position=clips.position[indices],
+        quaternion=clips.quaternion[indices],
+        joints=clips.joints[indices],
+        body_positions=clips.body_positions[indices],
+        velocity=clips.velocity[indices],
+        angular_velocity=clips.angular_velocity[indices],
+        joints_velocity=clips.joints_velocity[indices],
+        body_quaternions=clips.body_quaternions[indices],
+        clip_idx=jp.array(indices[:, np.newaxis]),
+    )
+    return selected_clips

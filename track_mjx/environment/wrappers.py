@@ -41,7 +41,7 @@ def wrap(
     return env
 
 
-class RenderRolloutWrapperTracking(Wrapper):
+class EvalClipResetWrapper(Wrapper):
     """Always resets to the first frame of the clips for complete rollouts."""
 
     def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:

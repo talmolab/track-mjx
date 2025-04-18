@@ -6,15 +6,27 @@ import os
 import sys
 
 # set default env variable if not set
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
-    "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
-)
+# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
+#     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
+# )
+
+# limit to 1 GPU
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # visible GPU masks
+
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 os.environ["XLA_FLAGS"] = (
-    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True "
+    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
 )
 
+
+# os.environ["JAX_LOG_COMPILES"] = "1"
+
+# # (Optional) For more detailed logging
+# os.environ["JAX_LOG_COMPILES_VERBOSE"] = "1"
+
+import jax
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import functools
@@ -27,6 +39,7 @@ import warnings
 from pathlib import Path
 from datetime import datetime
 import logging
+import json
 
 from track_mjx.io import load
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
@@ -46,7 +59,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-two-clips")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-sample-efficiency")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -105,14 +118,46 @@ def main(cfg: DictConfig):
     traj_config = cfg["reference_config"]
 
     logging.info(f"Loading data: {cfg.data_path}")
-    reference_clip = load.load_data(cfg.data_path)
 
     walker = _WALKERS[cfg_dict["walker_type"]](**walker_config)
     reward_config = RewardConfig(**env_rewards)
 
+    # setup test set evaluator
+    if cfg.train_setup["train_test_split_info"] is not None:
+        all_clips = load.load_data(cfg.data_path)
+        # load the train/test split data from the disk
+        with open(cfg.train_setup["train_test_split_info"], "r") as f:
+            split_info = json.load(f)
+        test_idx = split_info["test"]
+        if cfg.train_setup["train_subset_ratio"] is None:
+            train_idx = split_info["train"]
+        else:
+            train_idx = split_info["train_subset"][
+                f"{cfg.train_setup['train_subset_ratio']:.2f}"
+            ]
+        logging.info(f"train/test split info: {len(test_idx)=}, {len(train_idx)=}")
+        test_clips = load.select_clips(all_clips, test_idx)
+        train_clips = load.select_clips(all_clips, train_idx)
+        
+        logging.info(f"{train_clips.position.shape=}, {train_clips.quaternion.shape=}")
+
+        test_env = envs.get_environment(
+            env_name=cfg.env_config.env_name,
+            reference_clip=test_clips,
+            walker=walker,
+            reward_config=reward_config,
+            **env_args,
+            **traj_config,
+        )
+    else:
+        # eval with the train set
+        train_clips = load.load_data(cfg.data_path)
+        logging.info(f"{train_clips.position.shape=}, {train_clips.quaternion.shape=}")
+        test_env = None
+
     env = envs.get_environment(
         env_name=cfg.env_config.env_name,
-        reference_clip=reference_clip,
+        reference_clip=train_clips,
         walker=walker,
         reward_config=reward_config,
         **env_args,
@@ -148,22 +193,25 @@ def main(cfg: DictConfig):
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
         use_kl_schedule=cfg.network_config.kl_schedule,
+        eval_env_test_set=test_env,
     )
 
-    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    # run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    run_id = f"R-SE-{cfg.train_setup.train_subset_ratio:.2f}_exp3_80test_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
-        notes=f"clip_id: {cfg.logging_config.clip_id}",
+        notes=f"",
         id=run_id,
         resume="allow",
+        group=cfg.logging_config.group_name,
     )
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = wrappers.RenderRolloutWrapperTracking(env)
+    rollout_env = wrappers.EvalClipResetWrapper(env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

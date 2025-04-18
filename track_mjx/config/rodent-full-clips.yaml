@@ -51,7 +51,7 @@ network_config:
   critic_layer_sizes: [512,512,512]
   intention_size: 60
   hidden_state_size: 128
-  hidden_layer_num: 1
+  hidden_layer_num: 3
   kl_weight: 1e-4
 
 train_setup:

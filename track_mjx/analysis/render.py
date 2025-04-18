@@ -54,7 +54,7 @@ def agg_backend_context(func):
     return wrapper
 
 
-def render_from_saved_rollout(
+def render_rollout(
     cfg,
     rollout: dict,
 ) -> list:
@@ -94,7 +94,7 @@ def render_from_saved_rollout(
         )
     else:
         raise ValueError(f"Unsupported walker type: {cfg.walker_type}")
-    # TODO: Make this ghost rendering walker agonist
+    # TODO: Make this ghost rendering walker agnostic
     root = mjcf_dm.from_path(pair_render_xml_path)
     rescale.rescale_subtree(
         root,

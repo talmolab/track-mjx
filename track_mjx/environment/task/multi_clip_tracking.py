@@ -127,16 +127,17 @@ class MultiClipTracking(SingleClipTracking):
             "prev_qacc": jp.zeros((self.sys.nv,)),  # Added to preserve carry structure
             "step": jp.array(0),  # Step counter initialization
             "energy_cost": jp.array(0.0),  # Initialize energy_cost field
-            "step": jp.array(0),
         }
 
         state = self.reset_from_clip(rng, info, noise=True)
-        # Make sure both clip_length AND step are preserved in state.info
+
+        # Make sure clip_length is ALWAYS preserved in state.info
         state = state.replace(
             info={
                 **state.info,
                 "clip_length": info["clip_length"],
                 "step": info["step"],
+                "clip_idx": info["clip_idx"],  # Ensure clip_idx is preserved too
             }
         )
         return state
@@ -156,15 +157,27 @@ class MultiClipTracking(SingleClipTracking):
         if "step" not in state.info:
             state = state.replace(info={**state.info, "step": jp.array(0)})
 
+        # Get the clip_length before we increment the step counter
+        clip_length = state.info.get("clip_length")
+        if (clip_length is None) and ("clip_idx" in state.info):
+            # If clip_length is missing but we have clip_idx, get it from _clip_lengths
+            clip_length = self._clip_lengths[state.info["clip_idx"]]
+            state = state.replace(info={**state.info, "clip_length": clip_length})
+        elif clip_length is None:
+            # Fallback to default if both are missing (shouldn't happen but just in case)
+            clip_length = jp.array(250)  # Default fallback
+            state = state.replace(info={**state.info, "clip_length": clip_length})
+
         # Increment the step counter
         state = state.replace(
             info={**state.info, "step": state.info.get("step", 0) + 1}
         )
 
-        # Call parent step method with updated state
-        state = super().step(state, action)
+        # ADDED: Clip action values to match XML ctrlrange [-0.1, 0.1]
+        clipped_action = jp.clip(action, -0.1, 0.1)
 
-        clip_length = state.info.get("clip_length", 0)
+        # Call parent step method with updated state and clipped action
+        state = super().step(state, clipped_action)
 
         # Handle NaNs or all-zero observations.
         condition = jp.logical_or(jp.any(jp.isnan(state.obs)), jp.all(state.obs == 0))
@@ -177,7 +190,9 @@ class MultiClipTracking(SingleClipTracking):
 
         # Now safely check if step >= clip_length
         state = jax.lax.cond(
-            jp.greater_equal(state.info.get("step", 0), clip_length),
+            jp.greater_equal(
+                state.info.get("step", 0), state.info.get("clip_length", jp.array(250))
+            ),
             lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
             lambda st: st,
             state,
@@ -190,18 +205,13 @@ class MultiClipTracking(SingleClipTracking):
             lambda st: st,
             state,
         )
-        # NEW: Early termination when reaching end of reference clip
-        state = jax.lax.cond(
-            state.info["step"] >= state.info["clip_length"],
-            lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
-            lambda st: st,
-            state,
-        )
 
         new_info = {
             **state.info,
             "prev_prev_ctrl": state.info["prev_ctrl"],
             "prev_ctrl": action,
+            # Always ensure clip_length is in the info dictionary
+            "clip_length": state.info.get("clip_length", clip_length),
         }
         state = state.replace(info=new_info)
 

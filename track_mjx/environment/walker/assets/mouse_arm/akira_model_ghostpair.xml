@@ -85,10 +85,10 @@
         </body>
     </worldbody>
     <actuator>
-        <motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
-		<motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
-		<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
-		<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.01 .01"/>
+        <motor name="sh_elv_act" joint="sh_elv" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
+		<motor name="sh_extension_act" joint="sh_extension" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
+		<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
+		<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
     </actuator>
     <!-- <sensor>
         <actuatorfrc name="sh_elv_act_force" actuator="sh_elv_act"/>

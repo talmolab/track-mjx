@@ -11,14 +11,13 @@ from scipy.stats import pearsonr
 from scipy.ndimage import gaussian_filter1d
 
 import ripser
-from persim import plot_diagrams
+from persim import plot_diagrams, wasserstein
 import gudhi as gd
 from gudhi.representations import Landscape, Silhouette, PersistenceImage
 import umap
 from scipy.stats import pearsonr, spearmanr
 from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
-from joblib import Parallel, delayed
 
 
 def plot_peak_force_gait(peak_force_ctrl, leg_labels, dt, timesteps_per_clip, color, title_prefix, contact_threshold=None, already_binarized=False):
@@ -1232,6 +1231,9 @@ def process_manifold_gait(int_data, jf_array, window_size=31, stride=1, n_sample
     """
     print(f"Processing data with paper methods, window_size={window_size}")
     
+    jf_array_reshape = jf_array.reshape(-1, 4)
+    combined_intentions = np.hstack([int_data, jf_array_reshape])
+    
     windows, center_frames = create_time_windows(int_data, window_size, stride)
     
     # sample diverse windows using PCA and clustering
@@ -1299,104 +1301,96 @@ def subsample_for_tda(embedded, max_points):
 
 
 def compute_persistence_diagrams(embedded, max_dim=2):
-    print("Computing persistence diagrams...")
+    if len(embedded) < 2:
+        empty_result = {
+            'diagrams': [np.array([]), np.array([])],
+            'H0': np.array([]),
+            'H1': np.array([]),
+            'H2': None,
+            'H1_persistence': np.array([]),
+            'H1_sorted': np.array([]),
+            'H1_stats': {
+                'mean': 0,
+                'median': 0,
+                'max': 0,
+                'top_5': np.array([])
+            }
+        }
+        return empty_result
     
-    diagrams = ripser.ripser(
-        embedded, 
-        maxdim=max_dim,
-        thresh=np.inf,
-        coeff=2,
-        do_cocycles=False,
-    )['dgms']
-    
-    H0 = diagrams[0]
-    H1 = diagrams[1]
-    
-    H2 = None
-    if max_dim >= 2 and len(diagrams) > 2:
-        H2 = diagrams[2]
-    
-    H1_persistence = H1[:, 1] - H1[:, 0]
-    
-    H1_sorted_idx = np.argsort(-H1_persistence)
-    H1_sorted = H1[H1_sorted_idx]
-    H1_sorted_persistence = H1_persistence[H1_sorted_idx]
-    
-    H1_stats = {
-        'mean': np.mean(H1_persistence),
-        'median': np.median(H1_persistence),
-        'max': np.max(H1_persistence),
-        'top_5': H1_sorted_persistence[:min(5, len(H1_sorted_persistence))]
-    }
-    
-    results = {
-        'diagrams': diagrams,
-        'H0': H0,
-        'H1': H1,
-        'H2': H2,
-        'H1_persistence': H1_persistence,
-        'H1_sorted': H1_sorted,
-        'H1_stats': H1_stats
-    }
-    
-    return results
-
-
-def compute_approximate_persistence(embedded, max_dim=2, n_landmarks=200):
-    if len(embedded) > n_landmarks:
-        landmark_indices = np.random.choice(len(embedded), n_landmarks, replace=False)
-        landmarks = embedded[landmark_indices]
-    else:
-        landmarks = embedded
-    
-    witness_complex = gd.EuclideanWitnessComplex()
-    simplex_tree = witness_complex.create_simplex_tree(
-        points=landmarks,
-        witnesses=embedded,
-        max_alpha_square=float('inf'),
-        limit_dimension=max_dim+1
-    )
-    
-    simplex_tree.compute_persistence()
-    
-    persistence = simplex_tree.persistence_intervals_in_dimension
-    diagrams = [persistence(i) for i in range(max_dim+1)]
-    
-    results = {
-        'diagrams': diagrams,
-        'H0': diagrams[0],
-        'H1': diagrams[1] if len(diagrams) > 1 else np.array([]),
-        'H2': diagrams[2] if len(diagrams) > 2 else None
-    }
-    
-    if len(results['H1']) > 0:
-        H1_persistence = results['H1'][:, 1] - results['H1'][:, 0]
-        results['H1_persistence'] = H1_persistence
+    try:
+        diagrams = ripser.ripser(
+            embedded, 
+            maxdim=max_dim,
+            thresh=np.inf,
+            coeff=2,
+            do_cocycles=False,
+        )['dgms']
         
-        H1_sorted_idx = np.argsort(-H1_persistence)
-        results['H1_sorted'] = results['H1'][H1_sorted_idx]
-        results['H1_stats'] = {
-            'mean': np.mean(H1_persistence),
-            'median': np.median(H1_persistence),
-            'max': np.max(H1_persistence) if len(H1_persistence) > 0 else 0,
-            'top_5': H1_persistence[H1_sorted_idx[:min(5, len(H1_persistence))]] if len(H1_persistence) > 0 else []
+        H0 = diagrams[0]
+        H1 = diagrams[1] if len(diagrams) > 1 else np.array([])
+        
+        H2 = None
+        if max_dim >= 2 and len(diagrams) > 2:
+            H2 = diagrams[2]
+        
+        if len(H1) > 0:
+            H1_persistence = H1[:, 1] - H1[:, 0]
+            H1_sorted_idx = np.argsort(-H1_persistence)
+            H1_sorted = H1[H1_sorted_idx]
+            H1_sorted_persistence = H1_persistence[H1_sorted_idx]
+            
+            H1_stats = {
+                'mean': np.mean(H1_persistence),
+                'median': np.median(H1_persistence),
+                'max': np.max(H1_persistence),
+                'top_5': H1_sorted_persistence[:min(5, len(H1_sorted_persistence))]
+            }
+        else:
+            H1_persistence = np.array([])
+            H1_sorted = np.array([])
+            H1_stats = {
+                'mean': 0,
+                'median': 0,
+                'max': 0,
+                'top_5': np.array([])
+            }
+        
+        results = {
+            'diagrams': diagrams,
+            'H0': H0,
+            'H1': H1,
+            'H2': H2,
+            'H1_persistence': H1_persistence,
+            'H1_sorted': H1_sorted,
+            'H1_stats': H1_stats
         }
-    else:
-        results['H1_persistence'] = np.array([])
-        results['H1_sorted'] = np.array([])
-        results['H1_stats'] = {
-            'mean': 0, 'median': 0, 'max': 0, 'top_5': []
+        
+        return results
+    except Exception as e:
+        empty_result = {
+            'diagrams': [np.array([]), np.array([])],
+            'H0': np.array([]),
+            'H1': np.array([]),
+            'H2': None,
+            'H1_persistence': np.array([]),
+            'H1_sorted': np.array([]),
+            'H1_stats': {
+                'mean': 0,
+                'median': 0,
+                'max': 0,
+                'top_5': np.array([])
+            }
         }
-    
-    return results
+        return empty_result
 
 
 def extract_persistent_features(diagrams, threshold=0.1):
     H1 = diagrams['H1']
     H1_persistence = diagrams['H1_persistence']
     
-    persistent_H1_idx = np.where(H1_persistence > threshold)[0]
-    persistent_H1 = H1[persistent_H1_idx]
+    persistent_H1_idx = np.where(H1_persistence > threshold)[0] if len(H1_persistence) > 0 else np.array([])
+    persistent_H1 = H1[persistent_H1_idx] if len(persistent_H1_idx) > 0 else np.array([])
     
     persistent_H2 = None
     if diagrams['H2'] is not None:
@@ -1410,7 +1404,8 @@ def extract_persistent_features(diagrams, threshold=0.1):
         'H2': persistent_H2,
         'H1_idx': persistent_H1_idx
     }
-    
+
+
 def landmark_subsample(points, n_landmarks=300):
     if len(points) <= n_landmarks:
         return points
@@ -1419,76 +1414,172 @@ def landmark_subsample(points, n_landmarks=300):
 
 
 def compute_topological_features(embedded, max_dim=1, n_landmarks=20, max_edge_length=0.5):
+    if len(embedded) < 2:
+        return {
+            'diagram': [np.array([])],
+            'landscape': np.zeros((1, 20)),
+            'silhouette': np.zeros((1, 20)),
+            'persistence_image': np.zeros((1, 100))
+        }
+    
     embedded_landmarks = landmark_subsample(embedded, n_landmarks=n_landmarks)
     
-    rips_complex = gd.RipsComplex(points=embedded_landmarks, max_edge_length=max_edge_length)
-    simplex_tree = rips_complex.create_simplex_tree(max_dimension=max_dim+1)
-    simplex_tree.compute_persistence()
-    
-    persistence = simplex_tree.persistence_intervals_in_dimension
-    diagram = [persistence(i) for i in range(max_dim+1)]
-    
-    landscape = Landscape(resolution=20)
-    silhouette = Silhouette(resolution=20)
-    persistence_image = PersistenceImage(resolution=[10,10])
-    
-    if len(diagram[1]) > 0:
-        landscape_features = landscape.fit_transform([diagram[1]])
-        silhouette_features = silhouette.fit_transform([diagram[1]])
-        pi_features = persistence_image.fit_transform([diagram[1]])
-    else:
-        landscape_features = np.zeros((1, 20))
-        silhouette_features = np.zeros((1, 20))
-        pi_features = np.zeros((1, 100))
-    
-    return {
-        'diagram': diagram,
-        'landscape': landscape_features,
-        'silhouette': silhouette_features,
-        'persistence_image': pi_features
-    }
+    try:
+        # we use Gudhi for persistence computation
+        rips_complex = gd.RipsComplex(points=embedded_landmarks, max_edge_length=max_edge_length)
+        simplex_tree = rips_complex.create_simplex_tree(max_dimension=max_dim+1)
+        simplex_tree.compute_persistence()
+        
+        persistence = simplex_tree.persistence_intervals_in_dimension
+        diagram = [persistence(i) for i in range(max_dim+1)]
+        
+        # manual implementation of landscape computation
+        if len(diagram) > 1 and len(diagram[1]) > 0:
+            # manual landscape computation for H1
+            h1_diagram = diagram[1]
+            resolution = 20
+            landscape_features = compute_landscape_features(h1_diagram, resolution=resolution)
+            
+            # manual silhouette computation for H1
+            silhouette_features = compute_silhouette_features(h1_diagram, resolution=resolution)
+            
+            # manual persistence image computation
+            pi_features = compute_persistence_image_features(h1_diagram, resolution=(10, 10))
+        else:
+            landscape_features = np.zeros((1, 20))
+            silhouette_features = np.zeros((1, 20))
+            pi_features = np.zeros((1, 100))
+        
+        return {
+            'diagram': diagram,
+            'landscape': landscape_features,
+            'silhouette': silhouette_features,
+            'persistence_image': pi_features
+        }
+    except Exception as e:
+        return {
+            'diagram': [np.array([])],
+            'landscape': np.zeros((1, 20)),
+            'silhouette': np.zeros((1, 20)),
+            'persistence_image': np.zeros((1, 100))
+        }
 
 
-def parallel_compute_topological_features(embedded, max_dim=2, n_jobs=-1):
-    chunk_size = len(embedded) // (n_jobs * 2)
-    chunk_size = max(100, chunk_size)
-    chunks = [embedded[i:i+chunk_size] for i in range(0, len(embedded), chunk_size)]
+def compute_landscape_features(diagram, resolution=20, num_landscapes=5):
+    """Compute persistence landscape features manually."""
+    if len(diagram) == 0:
+        return np.zeros((1, resolution))
     
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(compute_topological_features)(chunk, max_dim) 
-        for chunk in chunks
-    )
+    # get persistence pairs (birth, death)
+    persistence_pairs = diagram
     
-    combined = {
-        'landscape': np.vstack([r['landscape'] for r in results]),
-        'silhouette': np.vstack([r['silhouette'] for r in results]),
-        'persistence_image': np.vstack([r['persistence_image'] for r in results])
-    }
+    grid = np.linspace(0, 1, resolution)
     
-    return combined
+    landscapes = np.zeros((num_landscapes, resolution))
+    
+    for i, x in enumerate(grid):
+        # compute all function values at this grid point
+        values = []
+        for birth, death in persistence_pairs:
+            if birth <= x <= death:
+                values.append(min(x - birth, death - x))
+            else:
+                values.append(0)
+        
+        values.sort(reverse=True)
+        
+        # assign to landscapes
+        for k in range(min(num_landscapes, len(values))):
+            landscapes[k, i] = values[k]
+    
+    landscape_features = landscapes.reshape(1, -1)
+    
+    if landscape_features.shape[1] != resolution:
+        pad_size = resolution - (landscape_features.shape[1] % resolution)
+        landscape_features = np.pad(landscape_features, ((0, 0), (0, pad_size)), 'constant')
+        landscape_features = landscape_features[:, :resolution]
+    
+    return landscape_features
 
 
-def visualize_persistence_diagrams(diagrams, title="Persistence Diagrams"):
-    plt.figure(figsize=(12, 8))
-    plot_diagrams(diagrams['diagrams'], show=False)
-    plt.title(title, fontsize=16)
-    plt.tight_layout()
-    plt.show()
+def compute_silhouette_features(diagram, resolution=20, weight=lambda x: 1):
+    """Compute persistence silhouette features manually."""
+    if len(diagram) == 0:
+        return np.zeros((1, resolution))
+    
+    # Get persistence pairs (birth, death)
+    persistence_pairs = diagram
+    
+    # Compute persistence values
+    persistences = np.array([death - birth for birth, death in persistence_pairs])
+    
+    # Define the grid
+    grid = np.linspace(0, 1, resolution)
+    
+    # Initialize silhouette
+    silhouette = np.zeros(resolution)
+    
+    # For each grid point
+    for i, x in enumerate(grid):
+        # Compute the silhouette value at this grid point
+        val = 0
+        total_weight = 0
+        
+        for j, (birth, death) in enumerate(persistence_pairs):
+            if birth <= x <= death:
+                w = weight(persistences[j])
+                val += w * (min(x - birth, death - x) / persistences[j])
+                total_weight += w
+        
+        if total_weight > 0:
+            silhouette[i] = val / total_weight
+    
+    return silhouette.reshape(1, -1)
+
+def compute_persistence_image_features(diagram, resolution=(10, 10), spread=0.1):
+    """Compute persistence image features manually."""
+    if len(diagram) == 0:
+        return np.zeros((1, resolution[0] * resolution[1]))
+    
+    # persistence pairs (birth, death)
+    persistence_pairs = diagram
+    
+    # convert to persistence-birth coordinates
+    pers_birth = np.array([(death - birth, birth) for birth, death in persistence_pairs])
+    
+    x_grid = np.linspace(0, 1, resolution[0])
+    y_grid = np.linspace(0, 1, resolution[1])
+    
+    image = np.zeros((resolution[0], resolution[1]))
+    
+    for i, x in enumerate(x_grid):
+        for j, y in enumerate(y_grid):
+            val = 0
+            
+            for pers, birth in pers_birth:
+                # Gaussian kernel
+                val += pers * np.exp(-((x - pers)**2 + (y - birth)**2) / (2 * spread**2))
+            
+            image[i, j] = val
+    
+    return image.reshape(1, -1)
 
 
 def identify_topological_regions(embedded, diagrams, persistent_features, gait_metrics):
-    phases = gait_metrics['phases']
-    frequencies = gait_metrics['frequencies']
-    duty_factor = gait_metrics['duty_factor']
+    phases = gait_metrics.get('phases', np.array([]))
+    frequencies = gait_metrics.get('frequencies', np.array([]))
+    duty_factor = gait_metrics.get('duty_factor', np.array([]))
     
     persistent_H1 = persistent_features['H1']
     
+    if len(persistent_H1) == 0 or len(embedded) == 0:
+        return {
+            'regions': [],
+            'correlations': {}
+        }
+    
     regions = []
     correlations = {}
-    
-    if len(persistent_H1) == 0:
-        print("No persistent H1 features found")
-        return None
     
     for i, feature in enumerate(persistent_H1):
         birth, death = feature
@@ -1502,9 +1593,20 @@ def identify_topological_regions(embedded, diagrams, persistent_features, gait_m
         regions.append(near_loop)
         
         if np.sum(near_loop) > 5:
-            phase_corr, p_phase = pearsonr(phases[near_loop], distances[near_loop])
-            freq_corr, p_freq = pearsonr(frequencies[near_loop], distances[near_loop]) 
-            duty_corr, p_duty = pearsonr(duty_factor[near_loop], distances[near_loop])
+            if len(phases) > 0 and len(phases) >= np.sum(near_loop):
+                phase_corr, p_phase = pearsonr(phases[near_loop], distances[near_loop])
+            else:
+                phase_corr, p_phase = 0, 1
+                
+            if len(frequencies) > 0 and len(frequencies) >= np.sum(near_loop):
+                freq_corr, p_freq = pearsonr(frequencies[near_loop], distances[near_loop])
+            else:
+                freq_corr, p_freq = 0, 1
+                
+            if len(duty_factor) > 0 and len(duty_factor) >= np.sum(near_loop):
+                duty_corr, p_duty = pearsonr(duty_factor[near_loop], distances[near_loop])
+            else:
+                duty_corr, p_duty = 0, 1
             
             correlations[f'loop_{i}'] = {
                 'phase': (phase_corr, p_phase),
@@ -1522,9 +1624,23 @@ def identify_topological_regions(embedded, diagrams, persistent_features, gait_m
     }
 
 
+def visualize_persistence_diagrams(diagrams, title="Persistence Diagrams"):
+    plt.figure(figsize=(12, 8))
+    try:
+        plot_diagrams(diagrams['diagrams'], show=False)
+        plt.title(title, fontsize=16)
+        plt.tight_layout()
+        plt.show()
+    except Exception as e:
+        plt.text(0.5, 0.5, "Error plotting diagrams", ha='center', va='center')
+        plt.title(title, fontsize=16)
+        plt.tight_layout()
+        plt.show()
+
+
 def visualize_topological_correlations(tda_results, gait_metrics, embedded):
-    if 'correlations' not in tda_results or len(tda_results['correlations']) == 0:
-        print("No correlations to visualize")
+    if 'correlations' not in tda_results or len(tda_results['correlations']) == 0 or len(embedded) == 0:
+        print("No correlations to visualize or empty embedded data")
         return
     
     correlations = tda_results['correlations']
@@ -1536,7 +1652,7 @@ def visualize_topological_correlations(tda_results, gait_metrics, embedded):
     ax1.scatter(
         embedded[:, 0],
         embedded[:, 1],
-        embedded[:, 2],
+        embedded[:, 2] if embedded.shape[1] > 2 else np.zeros(len(embedded)),
         c='lightgray',
         alpha=0.3,
         s=5
@@ -1544,11 +1660,11 @@ def visualize_topological_correlations(tda_results, gait_metrics, embedded):
     
     colors = plt.cm.tab10.colors
     for i, region in enumerate(regions):
-        if i < len(correlations):
+        if i < len(correlations) and np.sum(region) > 0:
             ax1.scatter(
                 embedded[region, 0],
                 embedded[region, 1],
-                embedded[region, 2],
+                embedded[region, 2] if embedded.shape[1] > 2 else np.zeros(np.sum(region)),
                 c=[colors[i % len(colors)]],
                 alpha=0.6,
                 s=10,
@@ -1563,103 +1679,112 @@ def visualize_topological_correlations(tda_results, gait_metrics, embedded):
     loop_ids = list(correlations.keys())
     gait_params = ['phase', 'frequency', 'duty_factor']
     
-    corr_matrix = np.zeros((len(loop_ids), len(gait_params)))
-    
-    for i, loop_id in enumerate(loop_ids):
-        for j, param in enumerate(gait_params):
-            corr_matrix[i, j] = correlations[loop_id][param][0]
-    
-    im = ax2.imshow(corr_matrix, cmap='coolwarm', vmin=-1, vmax=1)
-    ax2.set_xticks(np.arange(len(gait_params)))
-    ax2.set_yticks(np.arange(len(loop_ids)))
-    ax2.set_xticklabels(gait_params)
-    ax2.set_yticklabels(loop_ids)
-    plt.colorbar(im, ax=ax2, label="Correlation")
-    
-    for i in range(len(loop_ids)):
-        for j in range(len(gait_params)):
-            text = ax2.text(j, i, f"{corr_matrix[i, j]:.2f}",
-                          ha="center", va="center", color="black")
+    if len(loop_ids) > 0:
+        corr_matrix = np.zeros((len(loop_ids), len(gait_params)))
+        
+        for i, loop_id in enumerate(loop_ids):
+            for j, param in enumerate(gait_params):
+                corr_matrix[i, j] = correlations[loop_id][param][0]
+        
+        im = ax2.imshow(corr_matrix, cmap='coolwarm', vmin=-1, vmax=1)
+        ax2.set_xticks(np.arange(len(gait_params)))
+        ax2.set_yticks(np.arange(len(loop_ids)))
+        ax2.set_xticklabels(gait_params)
+        ax2.set_yticklabels(loop_ids)
+        plt.colorbar(im, ax=ax2, label="Correlation")
+        
+        for i in range(len(loop_ids)):
+            for j in range(len(gait_params)):
+                text = ax2.text(j, i, f"{corr_matrix[i, j]:.2f}",
+                              ha="center", va="center", color="black")
     
     ax2.set_title("Correlation: Topological Features vs Gait Parameters", fontsize=14)
     
     ax3 = fig.add_subplot(233)
     
-    persistence_values = [correlations[loop_id]['persistence'] for loop_id in loop_ids]
-    duty_corr_values = [abs(correlations[loop_id]['duty_factor'][0]) for loop_id in loop_ids]
-    phase_corr_values = [abs(correlations[loop_id]['phase'][0]) for loop_id in loop_ids]
-    freq_corr_values = [abs(correlations[loop_id]['frequency'][0]) for loop_id in loop_ids]
-    
-    ax3.scatter(persistence_values, duty_corr_values, label='Duty Factor', alpha=0.7, s=100)
-    ax3.scatter(persistence_values, phase_corr_values, label='Phase', alpha=0.7, s=100)
-    ax3.scatter(persistence_values, freq_corr_values, label='Frequency', alpha=0.7, s=100)
-    
-    ax3.set_xlabel('Persistence')
-    ax3.set_ylabel('Absolute Correlation')
-    ax3.set_title('Feature Persistence vs. Parameter Correlation', fontsize=14)
-    ax3.legend()
-    ax3.grid(True, linestyle='--', alpha=0.7)
+    if len(loop_ids) > 0:
+        persistence_values = [correlations[loop_id]['persistence'] for loop_id in loop_ids]
+        duty_corr_values = [abs(correlations[loop_id]['duty_factor'][0]) for loop_id in loop_ids]
+        phase_corr_values = [abs(correlations[loop_id]['phase'][0]) for loop_id in loop_ids]
+        freq_corr_values = [abs(correlations[loop_id]['frequency'][0]) for loop_id in loop_ids]
+        
+        ax3.scatter(persistence_values, duty_corr_values, label='Duty Factor', alpha=0.7, s=100)
+        ax3.scatter(persistence_values, phase_corr_values, label='Phase', alpha=0.7, s=100)
+        ax3.scatter(persistence_values, freq_corr_values, label='Frequency', alpha=0.7, s=100)
+        
+        ax3.set_xlabel('Persistence')
+        ax3.set_ylabel('Absolute Correlation')
+        ax3.set_title('Feature Persistence vs. Parameter Correlation', fontsize=14)
+        ax3.legend()
+        ax3.grid(True, linestyle='--', alpha=0.7)
     
     ax4 = fig.add_subplot(234)
     
-    sizes = [correlations[loop_id]['size'] for loop_id in loop_ids]
-    
-    bars = ax4.bar(loop_ids, sizes, color=[colors[i % len(colors)] for i in range(len(loop_ids))])
-    
-    ax4.set_xlabel('Topological Feature')
-    ax4.set_ylabel('Number of Points')
-    ax4.set_title('Size of Topological Regions', fontsize=14)
-    
-    max_region_idx = np.argmax(sizes)
-    max_region_id = loop_ids[max_region_idx]
-    max_region = regions[max_region_idx]
-    
-    ax5 = fig.add_subplot(235)
-    
-    frequencies = gait_metrics['frequencies']
-    duty_factor = gait_metrics['duty_factor']
-    
-    ax5.hist(duty_factor[max_region], alpha=0.7, label='Duty Factor')
-    ax5.hist(frequencies[max_region], alpha=0.7, label='Frequency')
-    
-    ax5.set_xlabel('Parameter Value')
-    ax5.set_ylabel('Count')
-    ax5.set_title(f'Parameter Distribution in {max_region_id}', fontsize=14)
-    ax5.legend()
-    
-    ax6 = fig.add_subplot(236, projection='polar')
-    
-    for i, region in enumerate(regions):
-        if np.sum(region) > 5:
-            hist, bins = np.histogram(
-                gait_metrics['phases'][region], 
-                bins=16, 
-                range=(-np.pi, np.pi)
-            )
-            width = (bins[1] - bins[0])
-            ax6.bar(
-                bins[:-1], 
-                hist/np.sum(hist), 
-                width=width, 
-                alpha=0.5,
-                label=f"Loop {i}",
-                color=colors[i % len(colors)]
-            )
-    
-    ax6.set_title('Phase Distribution by Topological Region', fontsize=14)
-    ax6.legend(loc='upper right')
+    if len(loop_ids) > 0:
+        sizes = [correlations[loop_id]['size'] for loop_id in loop_ids]
+        
+        bars = ax4.bar(loop_ids, sizes, color=[colors[i % len(colors)] for i in range(len(loop_ids))])
+        
+        ax4.set_xlabel('Topological Feature')
+        ax4.set_ylabel('Number of Points')
+        ax4.set_title('Size of Topological Regions', fontsize=14)
+        
+        if len(sizes) > 0:
+            max_region_idx = np.argmax(sizes)
+            max_region_id = loop_ids[max_region_idx]
+            max_region = regions[max_region_idx]
+            
+            ax5 = fig.add_subplot(235)
+            
+            if len(gait_metrics.get('duty_factor', [])) > 0 and len(gait_metrics.get('frequencies', [])) > 0:
+                ax5.hist(gait_metrics['duty_factor'][max_region], alpha=0.7, label='Duty Factor')
+                ax5.hist(gait_metrics['frequencies'][max_region], alpha=0.7, label='Frequency')
+                
+                ax5.set_xlabel('Parameter Value')
+                ax5.set_ylabel('Count')
+                ax5.set_title(f'Parameter Distribution in {max_region_id}', fontsize=14)
+                ax5.legend()
+            
+            ax6 = fig.add_subplot(236, projection='polar')
+            
+            if len(gait_metrics.get('phases', [])) > 0:
+                for i, region in enumerate(regions):
+                    if np.sum(region) > 5:
+                        hist, bins = np.histogram(
+                            gait_metrics['phases'][region], 
+                            bins=16, 
+                            range=(-np.pi, np.pi)
+                        )
+                        width = (bins[1] - bins[0])
+                        ax6.bar(
+                            bins[:-1], 
+                            hist/np.sum(hist), 
+                            width=width, 
+                            alpha=0.5,
+                            label=f"Loop {i}",
+                            color=colors[i % len(colors)]
+                        )
+                
+                ax6.set_title('Phase Distribution by Topological Region', fontsize=14)
+                ax6.legend(loc='upper right')
     
     plt.tight_layout()
     plt.show()
 
-
 def cluster_based_on_topology(embedded, tda_features):
+    if len(embedded) < 2:
+        return np.zeros(len(embedded), dtype=int)
+        
     landscape_features = tda_features['landscape']
     
     if landscape_features.shape[0] == 1:
         point_features = np.tile(landscape_features[0], (len(embedded), 1))
     else:
         point_features = landscape_features
+    
+    # Make sure point_features has the right shape
+    if point_features.shape[0] != embedded.shape[0]:
+        point_features = np.tile(point_features[0], (embedded.shape[0], 1))
     
     combined_features = np.hstack([
         StandardScaler().fit_transform(embedded),
@@ -1676,22 +1801,22 @@ def cluster_based_on_topology(embedded, tda_features):
 
 
 def manifold_with_tda_optimized(results, max_points):
-    print("Starting TDA analysis with optimizations...")
     embedded = results['embedded']
-    gait_metrics = results['gait_metrics']
+    gait_metrics = results.get('gait_metrics', {})
     
-    min_size = min(len(embedded), len(gait_metrics['phases']))
+    if len(embedded) < 2:
+        print("Not enough points for TDA analysis")
+        return None
+    
+    min_size = min(len(embedded), len(gait_metrics.get('phases', embedded)))
     embedded = embedded[:min_size]
     
     for key in gait_metrics:
         if isinstance(gait_metrics[key], np.ndarray) and len(gait_metrics[key]) > min_size:
             gait_metrics[key] = gait_metrics[key][:min_size]
     
-    print(f"Subsampling from {len(embedded)} points...")
     subsampled_embedded = subsample_for_tda(embedded, max_points=max_points)
-    print(f"Subsampled to {len(subsampled_embedded)} points")
     
-    print("Computing persistence diagrams...")
     diagrams = compute_persistence_diagrams(
         subsampled_embedded, 
         max_dim=2
@@ -1699,33 +1824,29 @@ def manifold_with_tda_optimized(results, max_points):
     
     visualize_persistence_diagrams(diagrams, "Persistence Diagrams (Optimized)")
     
-    diameter = np.max(np.linalg.norm(subsampled_embedded, axis=1))
+    diameter = np.max(np.linalg.norm(subsampled_embedded, axis=1)) if len(subsampled_embedded) > 0 else 0
     threshold = diameter * 0.2
     persistent_features = extract_persistent_features(diagrams, threshold)
     
     tda_features = compute_topological_features(subsampled_embedded)
     
-    if len(subsampled_embedded) < len(embedded):
+    if len(subsampled_embedded) < len(embedded) and len(subsampled_embedded) > 0:
         nn = NearestNeighbors(n_neighbors=1).fit(subsampled_embedded)
         _, indices = nn.kneighbors(embedded)
         indices = indices.flatten()
     
+    gait_metrics_subsampled = {k: v[:len(subsampled_embedded)] if isinstance(v, np.ndarray) else v 
+                            for k, v in gait_metrics.items()}
+    
     tda_results = identify_topological_regions(
-        subsampled_embedded, diagrams, persistent_features, 
-        {k: v[:len(subsampled_embedded)] if isinstance(v, np.ndarray) else v 
-         for k, v in gait_metrics.items()}
+        subsampled_embedded, diagrams, persistent_features, gait_metrics_subsampled
     )
     
     if tda_results:
-        visualize_topological_correlations(tda_results, 
-            {k: v[:len(subsampled_embedded)] if isinstance(v, np.ndarray) else v 
-             for k, v in gait_metrics.items()},
-            subsampled_embedded
-        )
+        visualize_topological_correlations(tda_results, gait_metrics_subsampled, subsampled_embedded)
     
     full_tda_features = {
-        'landscape': np.tile(tda_features['landscape'][0], (len(embedded), 1))
-        if tda_features['landscape'].shape[0] == 1 else tda_features['landscape']
+        'landscape': tda_features['landscape']
     }
     
     topo_clusters = cluster_based_on_topology(embedded, full_tda_features)
@@ -1735,7 +1856,7 @@ def manifold_with_tda_optimized(results, max_points):
     scatter = ax.scatter(
         embedded[:, 0],
         embedded[:, 1],
-        embedded[:, 2],
+        embedded[:, 2] if embedded.shape[1] > 2 else np.zeros(len(embedded)),
         c=topo_clusters,
         cmap='tab10',
         alpha=0.6,
@@ -1755,3 +1876,513 @@ def manifold_with_tda_optimized(results, max_points):
         'tda_results': tda_results,
         'topo_clusters': topo_clusters
     }
+
+
+def sliding_window_tda(embedded, window_size=50, stride=10, max_points=500, gait_metrics=None):
+    """Perform TDA on sliding windows of data."""
+    n_frames = embedded.shape[0]
+    n_windows = max(0, (n_frames - window_size) // stride + 1)
+    
+    if n_windows == 0:
+        return []
+    
+    all_results = []
+    
+    for i in range(n_windows):
+        start_idx = i * stride
+        end_idx = start_idx + window_size
+        
+        window_data = embedded[start_idx:end_idx]
+        
+        if len(window_data) > max_points:
+            indices = np.random.choice(len(window_data), max_points, replace=False)
+            window_data = window_data[indices]
+        
+        diagrams = compute_persistence_diagrams(window_data, max_dim=2)
+        
+        window_gait_metrics = None
+        if gait_metrics is not None:
+            window_gait_metrics = {
+                key: value[start_idx:end_idx] if isinstance(value, np.ndarray) and len(value) >= end_idx else value
+                for key, value in gait_metrics.items()
+            }
+        
+        diameter = np.max(np.linalg.norm(window_data, axis=1)) if len(window_data) > 0 else 0
+        threshold = diameter * 0.1
+        persistent_features = extract_persistent_features(diagrams, threshold)
+        
+        tda_regions = None
+        if window_gait_metrics is not None:
+            try:
+                tda_regions = identify_topological_regions(
+                    window_data, diagrams, persistent_features, window_gait_metrics
+                )
+            except Exception as e:
+                tda_regions = None
+        
+        window_result = {
+            'window_idx': i,
+            'start_frame': start_idx,
+            'end_frame': end_idx,
+            'diagrams': diagrams,
+            'persistent_features': persistent_features,
+            'tda_regions': tda_regions
+        }
+        
+        all_results.append(window_result)
+    
+    return all_results
+
+
+def visualize_window_evolution(window_results):
+    """Visualize the evolution of topological features across windows."""
+    n_windows = len(window_results)
+    if n_windows == 0:
+        return
+    
+    window_indices = [r['window_idx'] for r in window_results]
+    h1_means = [r['diagrams']['H1_stats']['mean'] for r in window_results]
+    h1_maxes = [r['diagrams']['H1_stats']['max'] for r in window_results]
+    h1_counts = [len(r['diagrams']['H1']) for r in window_results]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    
+    axes[0, 0].plot(window_indices, h1_means, 'o-', linewidth=2)
+    axes[0, 0].set_title('Mean H1 Persistence Over Windows')
+    axes[0, 0].set_xlabel('Window Index')
+    axes[0, 0].set_ylabel('Mean Persistence')
+    axes[0, 0].grid(True, linestyle='--', alpha=0.7)
+    
+    axes[0, 1].plot(window_indices, h1_maxes, 'o-', linewidth=2, color='orange')
+    axes[0, 1].set_title('Max H1 Persistence Over Windows')
+    axes[0, 1].set_xlabel('Window Index')
+    axes[0, 1].set_ylabel('Max Persistence')
+    axes[0, 1].grid(True, linestyle='--', alpha=0.7)
+    
+    axes[1, 0].plot(window_indices, h1_counts, 'o-', linewidth=2, color='green')
+    axes[1, 0].set_title('Number of H1 Features Over Windows')
+    axes[1, 0].set_xlabel('Window Index')
+    axes[1, 0].set_ylabel('Count')
+    axes[1, 0].grid(True, linestyle='--', alpha=0.7)
+    
+    try:
+        max_features = max([len(r['diagrams'].get('H1_sorted', [])) for r in window_results])
+        if max_features > 0:
+            max_to_show = min(5, max_features)
+            persistence_matrix = np.zeros((n_windows, max_to_show))
+            
+            for i, result in enumerate(window_results):
+                sorted_persistence = result['diagrams'].get('H1_sorted', [])
+                for j in range(min(max_to_show, len(sorted_persistence))):
+                    if j < len(sorted_persistence) and sorted_persistence.shape[0] > 0:
+                        persistence_matrix[i, j] = sorted_persistence[j, 1] - sorted_persistence[j, 0]
+            
+            im = axes[1, 1].imshow(persistence_matrix, aspect='auto', cmap='viridis')
+            axes[1, 1].set_title('Top H1 Persistence Values Over Windows')
+            axes[1, 1].set_xlabel('Top Features')
+            axes[1, 1].set_ylabel('Window Index')
+            plt.colorbar(im, ax=axes[1, 1], label='Persistence')
+    except Exception as e:
+        axes[1, 1].text(0.5, 0.5, "Error creating persistence heatmap", 
+                      ha='center', va='center', transform=axes[1, 1].transAxes)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    try:
+        n_diagrams_to_show = min(6, n_windows)
+        indices_to_show = np.linspace(0, n_windows-1, n_diagrams_to_show, dtype=int)
+        
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+        axes = axes.flatten()
+        
+        for i, idx in enumerate(indices_to_show):
+            if i < len(axes):
+                result = window_results[idx]
+                ax = axes[i]
+                try:
+                    plot_diagrams(result['diagrams']['diagrams'], show=False, ax=ax)
+                    ax.set_title(f"Window {idx} (Frames {result['start_frame']}-{result['end_frame']})")
+                except:
+                    ax.text(0.5, 0.5, "No diagram data", ha='center', va='center')
+                    ax.set_title(f"Window {idx} - No Data")
+    except Exception as e:
+        pass
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def process_intention_tda(int_rodent, jf_rodent, window_size=50, stride=10, max_points=1000, gait_metrics=None, embedding_option='combine'):
+    """Process intention data directly using TDA with rolling windows and manifold analysis."""
+    if len(int_rodent.shape) > 2:
+        int_rodent = int_rodent.reshape(-1, int_rodent.shape[-1])
+    
+    if len(jf_rodent.shape) > 2:
+        jf_rodent = jf_rodent.reshape(-1, jf_rodent.shape[-1])
+    
+    if embedding_option == 'combine':
+        print('Using combined embeddings')
+        combined_intentions = np.hstack([int_rodent, jf_rodent])
+        
+    if embedding_option == 'intention':
+        print('Using intention embeddings')
+        combined_intentions = int_rodent
+        
+    if embedding_option == 'force':
+        print('Using force embeddings')
+        combined_intentions = jf_rodent
+    
+    if combined_intentions.shape[0] < window_size:
+        raise ValueError(f"Not enough data points. Got {combined_intentions.shape[0]} points but window_size is {window_size}")
+    
+    reducer = umap.UMAP(n_components=3, min_dist=0.1, n_neighbors=min(30, combined_intentions.shape[0]-1), random_state=42)
+    embedded = reducer.fit_transform(combined_intentions)
+    
+    all_results = {
+        'embedded': embedded,
+        'gait_metrics': gait_metrics,
+        'window_results': [],
+        'global_tda': None
+    }
+    
+    if embedded.shape[0] > 1:
+        global_tda = manifold_with_tda_optimized({'embedded': embedded, 'gait_metrics': gait_metrics}, min(max_points, embedded.shape[0]))
+        all_results['global_tda'] = global_tda
+    else:
+        all_results['global_tda'] = None
+    
+    window_results = sliding_window_tda(embedded, window_size=window_size, stride=stride, max_points=max_points, gait_metrics=gait_metrics)
+    all_results['window_results'] = window_results
+    
+    if len(window_results) > 0:
+        try:
+            visualize_window_evolution(window_results)
+        except Exception as e:
+            pass
+    
+    return all_results
+
+
+def analyze_intentions_with_tda(int_rodent, jf_rodent, window_size=50, stride=10, max_points=1000, gait_metrics=None):
+    """Complete function to analyze intention data using TDA and manifold learning."""
+    try:
+        int_rodent_reshaped = int_rodent.squeeze() if len(int_rodent.shape) > 2 else int_rodent
+        jf_rodent_reshaped = jf_rodent.squeeze() if len(jf_rodent.shape) > 2 else jf_rodent
+        
+        all_results = process_intention_tda(
+            int_rodent_reshaped, 
+            jf_rodent_reshaped, 
+            window_size=window_size, 
+            stride=stride, 
+            max_points=max_points, 
+            gait_metrics=gait_metrics
+        )
+        
+        return all_results
+    
+    except Exception as e:
+        print(f"Error in analyze_intentions_with_tda: {str(e)}")
+        return None
+
+
+def visualize_window_manifolds(all_results):
+    """Create a grid of manifold plots for selected windows to see evolution."""
+    n_windows = len(all_results['window_results'])
+    if n_windows == 0:
+        return
+        
+    n_to_show = min(9, n_windows)
+    indices_to_show = np.linspace(0, n_windows-1, n_to_show, dtype=int)
+    
+    rows = int(np.ceil(np.sqrt(n_to_show)))
+    cols = int(np.ceil(n_to_show / rows))
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*4, rows*4), subplot_kw={'projection': '3d'})
+    axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
+    
+    for i, idx in enumerate(indices_to_show):
+        if i < len(axes):
+            window = all_results['window_results'][idx]
+            ax = axes[i]
+            
+            start_frame = window['start_frame']
+            end_frame = window['end_frame']
+            embed = all_results['embedded'][start_frame:end_frame]
+            
+            if len(embed) > 0:
+                ax.scatter(
+                    embed[:, 0],
+                    embed[:, 1],
+                    embed[:, 2] if embed.shape[1] > 2 else np.zeros(len(embed)),
+                    alpha=0.7,
+                    s=10,
+                    c=np.arange(len(embed)),
+                    cmap='viridis'
+                )
+                
+                ax.set_title(f"Window {idx} (Frames {start_frame}-{end_frame})")
+                ax.set_xlabel("UMAP 1")
+                ax.set_ylabel("UMAP 2")
+                ax.set_zlabel("UMAP 3")
+                
+                if window.get('tda_regions') is not None and 'regions' in window['tda_regions']:
+                    for j, region in enumerate(window['tda_regions']['regions']):
+                        if np.sum(region) > 5:
+                            color = plt.cm.tab10.colors[j % 10]
+                            region_pts = np.where(region)[0]
+                            if len(region_pts) > 0 and max(region_pts) < len(embed):
+                                ax.scatter(
+                                    embed[region, 0],
+                                    embed[region, 1],
+                                    embed[region, 2] if embed.shape[1] > 2 else np.zeros(np.sum(region)),
+                                    color=color,
+                                    alpha=0.9,
+                                    s=20,
+                                    label=f"Loop {j}"
+                                )
+                    
+                    ax.legend(loc='upper right', fontsize='small')
+    
+    for i in range(n_to_show, len(axes)):
+        axes[i].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def compare_window_with_global(all_results, window_idx=None):
+    """Compare a specific window's TDA results with the global TDA results."""
+    if all_results['global_tda'] is None:
+        print("No global TDA results available")
+        return
+        
+    if window_idx is None:
+        if len(all_results['window_results']) > 0:
+            window_idx = len(all_results['window_results']) // 2  # Use middle window if not specified
+        else:
+            print("No window results available")
+            return
+    
+    if window_idx >= len(all_results['window_results']):
+        print(f"Error: Window index {window_idx} out of range.")
+        return
+    
+    window = all_results['window_results'][window_idx]
+    global_tda = all_results['global_tda']
+    
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    
+    try:
+        plot_diagrams(global_tda['diagrams']['diagrams'], show=False, ax=axes[0, 0])
+        axes[0, 0].set_title('Global Persistence Diagram')
+    except:
+        axes[0, 0].text(0.5, 0.5, "Error plotting global diagram", ha='center', va='center')
+        axes[0, 0].set_title('Global Persistence Diagram - Error')
+    
+    try:
+        plot_diagrams(window['diagrams']['diagrams'], show=False, ax=axes[0, 1])
+        axes[0, 1].set_title(f'Window {window_idx} Persistence Diagram')
+    except:
+        axes[0, 1].text(0.5, 0.5, "Error plotting window diagram", ha='center', va='center')
+        axes[0, 1].set_title(f'Window {window_idx} Persistence Diagram - Error')
+    
+    axes[1, 0].scatter(
+        all_results['embedded'][:, 0],
+        all_results['embedded'][:, 1],
+        c='lightgray',
+        alpha=0.3,
+        s=5
+    )
+    
+    start_frame = window['start_frame']
+    end_frame = window['end_frame']
+    if start_frame < len(all_results['embedded']) and end_frame <= len(all_results['embedded']):
+        axes[1, 0].scatter(
+            all_results['embedded'][start_frame:end_frame, 0],
+            all_results['embedded'][start_frame:end_frame, 1],
+            c='red',
+            alpha=0.7,
+            s=10
+        )
+    axes[1, 0].set_title('Global Manifold with Window Highlighted')
+    
+    window_pts = all_results['embedded'][start_frame:end_frame]
+    if len(window_pts) > 0:
+        axes[1, 1].scatter(
+            window_pts[:, 0],
+            window_pts[:, 1],
+            c='blue',
+            alpha=0.7,
+            s=10
+        )
+    axes[1, 1].set_title(f'Window {window_idx} Local Manifold')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    global_h1_stats = global_tda['diagrams']['H1_stats']
+    window_h1_stats = window['diagrams']['H1_stats']
+    
+    print("\nComparison of TDA Statistics:")
+    print("-" * 50)
+    print(f"{'Metric':<20} {'Global':<15} {'Window':<15}")
+    print("-" * 50)
+    
+    for stat in ['mean', 'median', 'max']:
+        print(f"{stat:<20} {global_h1_stats[stat]:<15.4f} {window_h1_stats[stat]:<15.4f}")
+    
+    print("-" * 50)
+    print(f"{'Top 5 Global':<20} {'Value':<15}")
+    for i, val in enumerate(global_h1_stats['top_5']):
+        print(f"{f'  #{i+1}':<20} {val:<15.4f}")
+    
+    print("-" * 50)
+    print(f"{'Top 5 Window':<20} {'Value':<15}")
+    for i, val in enumerate(window_h1_stats['top_5']):
+        print(f"{f'  #{i+1}':<20} {val:<15.4f}")
+
+
+def analyze_intention_structure_over_time(all_results):
+    """Analyze how the structure of the intention manifold changes over time."""
+    n_windows = len(all_results['window_results'])
+    if n_windows < 2:
+        print("Not enough windows for temporal analysis")
+        return
+    
+    window_indices = [r['window_idx'] for r in all_results['window_results']]
+    start_frames = [r['start_frame'] for r in all_results['window_results']]
+    
+    # wasserstein distances between consecutive window diagrams
+    window_tda_distances = []
+    
+    for i in range(1, n_windows):
+        prev_window = all_results['window_results'][i-1]
+        curr_window = all_results['window_results'][i]
+        
+        prev_diagram = prev_window['diagrams']['H1']
+        curr_diagram = curr_window['diagrams']['H1']
+        
+        if len(prev_diagram) > 0 and len(curr_diagram) > 0:
+            try:
+                wass_dist = wasserstein(prev_diagram, curr_diagram)
+            except:
+                wass_dist = 0.0
+        else:
+            wass_dist = 0.0
+        
+        window_tda_distances.append(wass_dist)
+    
+    plt.figure(figsize=(12, 6))
+    plt.plot(window_indices[1:], window_tda_distances, 'o-', linewidth=2)
+    plt.title('Topological Distance Between Consecutive Windows')
+    plt.xlabel('Window Index')
+    plt.ylabel('Wasserstein Distance Between H1 Diagrams')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+    
+    plt.figure(figsize=(12, 8))
+    
+    h1_counts = [len(r['diagrams']['H1']) for r in all_results['window_results']]
+    plt.plot(start_frames, h1_counts, 'o-', label='Number of H1 Features')
+    
+    h1_means = [r['diagrams']['H1_stats']['mean'] for r in all_results['window_results']]
+    plt.plot(start_frames, h1_means, 'o-', label='Mean H1 Persistence')
+    
+    plt.title('Evolution of Topological Features Over Time')
+    plt.xlabel('Start Frame')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
+
+def compare_tda_across_behaviors(behavior_data, window_size=50, max_points=300):
+    """Compare TDA features across different behavior types."""
+    behavior_tda_results = {}
+    all_h1_means = []
+    all_h1_maxes = []
+    all_behavior_types = []
+    
+    for behavior_type, data in behavior_data.items():
+        int_data, jf_data = data['int'], data['jf']
+        
+        if len(int_data.shape) > 2:
+            int_data = int_data.reshape(-1, int_data.shape[-1])
+        if len(jf_data.shape) > 2:
+            jf_data = jf_data.reshape(-1, jf_data.shape[-1])
+        
+        combined = np.hstack([int_data, jf_data])
+        
+        try:
+            reducer = umap.UMAP(n_components=3, min_dist=0.1, n_neighbors=min(30, combined.shape[0]-1), random_state=42)
+            embedded = reducer.fit_transform(combined)
+            
+            subsampled = subsample_for_tda(embedded, max_points=max_points)
+            
+            diagrams = compute_persistence_diagrams(subsampled, max_dim=2)
+            
+            h1_mean = diagrams['H1_stats']['mean']
+            h1_max = diagrams['H1_stats']['max']
+            
+            all_h1_means.append(h1_mean)
+            all_h1_maxes.append(h1_max)
+            all_behavior_types.append(behavior_type)
+            
+            behavior_tda_results[behavior_type] = {
+                'diagrams': diagrams,
+                'embedded': embedded,
+                'stats': diagrams['H1_stats']
+            }
+            
+            plt.figure(figsize=(12, 8))
+            plot_diagrams(diagrams['diagrams'], show=False)
+            plt.title(f"Persistence Diagram: {behavior_type}", fontsize=16)
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            print(f"Error processing {behavior_type}: {str(e)}")
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # giev mean persistence
+    ax1.bar(all_behavior_types, all_h1_means, color='skyblue', alpha=0.7)
+    ax1.set_title('Mean H1 Persistence by Behavior Type')
+    ax1.set_xlabel('Behavior Type')
+    ax1.set_ylabel('Mean Persistence')
+    
+    # give max persistence
+    ax2.bar(all_behavior_types, all_h1_maxes, color='salmon', alpha=0.7)
+    ax2.set_title('Max H1 Persistence by Behavior Type')
+    ax2.set_xlabel('Behavior Type')
+    ax2.set_ylabel('Max Persistence')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # when we have more than one behavior, compare manifolds
+    if len(behavior_data) > 1:
+        n_behaviors = len(behavior_data)
+        fig = plt.figure(figsize=(5*n_behaviors, 5))
+        
+        for i, behavior_type in enumerate(behavior_tda_results.keys()):
+            ax = fig.add_subplot(1, n_behaviors, i+1, projection='3d')
+            embedded = behavior_tda_results[behavior_type]['embedded']
+            ax.scatter(
+                embedded[:, 0], 
+                embedded[:, 1], 
+                embedded[:, 2] if embedded.shape[1] > 2 else np.zeros(len(embedded)),
+                alpha=0.7,
+                s=5
+            )
+            ax.set_title(f"{behavior_type} Manifold")
+            ax.set_xlabel("UMAP 1")
+            ax.set_ylabel("UMAP 2")
+            ax.set_zlabel("UMAP 3")
+        
+        plt.tight_layout()
+        plt.show()
+    
+    return behavior_tda_results

@@ -465,7 +465,7 @@
         <!-- <joint name="haltere_right"/> -->
         <geom name="haltere_right" pos="-0.0528 -0.101 0.0405" quat="0.28 0.206 0.829 0.438" mesh="haltere_right"/>
       </body>
-      <!-- <body name="coxa_T1_left" childclass="leg" pos="0.0317 0.0209 -0.0272" quat="-0.532 0.787 -0.311 -0.0229">
+      <body name="coxa_T1_left" childclass="leg" pos="0.0317 0.0209 -0.0272" quat="-0.532 0.787 -0.311 -0.0229">
         <joint name="coxa_flexion_T1_left" class="flexion_coxa_T1"/>
         <joint name="coxa_twist_T1_left" class="twist_coxa_T1"/>
         <geom name="coxa_T1_left" pos="0.0131 0.104 0.0119" quat="0.0229 -0.311 -0.787 0.532" mesh="coxa_T1_left"/>
@@ -508,7 +508,7 @@
             </body>
           </body>
         </body>
-      </body> -->
+      </body>
       <body name="coxa_T1_right" childclass="leg" pos="0.0317 -0.0209 -0.0272" quat="0.319 0.011 -0.543 -0.777">
         <joint name="coxa_flexion_T1_right" class="flexion_coxa_T1"/>
         <joint name="coxa_twist_T1_right" class="twist_coxa_T1"/>
@@ -1006,22 +1006,22 @@
     <adhesion name="adhere_claw_T3_right" class="adhesion_claw" body="claw_T3_right"/> -->
   </actuator>
 
-  <!-- <sensor>
+  <sensor>
     <accelerometer name="accelerometer" site="thorax"/>
     <gyro name="gyro" site="thorax"/>
     <velocimeter name="velocimeter" site="thorax"/>
-    <force name="force_tarsus_T1_left" site="tarsus_T1_left"/>
+    <!-- <force name="force_tarsus_T1_left" site="tarsus_T1_left"/>
     <force name="force_tarsus_T1_right" site="tarsus_T1_right"/>
     <force name="force_tarsus_T2_left" site="tarsus_T2_left"/>
     <force name="force_tarsus_T2_right" site="tarsus_T2_right"/>
     <force name="force_tarsus_T3_left" site="tarsus_T3_left"/>
-    <force name="force_tarsus_T3_right" site="tarsus_T3_right"/>
+    <force name="force_tarsus_T3_right" site="tarsus_T3_right"/> -->
     <touch name="touch_claw_T1_left" site="claw_T1_left"/>
     <touch name="touch_claw_T1_right" site="claw_T1_right"/>
     <touch name="touch_claw_T2_left" site="claw_T2_left"/>
     <touch name="touch_claw_T2_right" site="claw_T2_right"/>
     <touch name="touch_claw_T3_left" site="claw_T3_left"/>
     <touch name="touch_claw_T3_right" site="claw_T3_right"/>
-  </sensor> -->
+  </sensor>
 
 </mujoco>

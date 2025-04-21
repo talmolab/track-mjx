@@ -1011,22 +1011,22 @@
     <adhesion name="adhere_claw_T3_right" class="adhesion_claw" body="claw_T3_right"/> -->
   </actuator>
 
-  <!-- <sensor>
+  <sensor>
     <accelerometer name="accelerometer" site="thorax"/>
     <gyro name="gyro" site="thorax"/>
     <velocimeter name="velocimeter" site="thorax"/>
-    <force name="force_tarsus_T1_left" site="tarsus_T1_left"/>
+    <!-- <force name="force_tarsus_T1_left" site="tarsus_T1_left"/>
     <force name="force_tarsus_T1_right" site="tarsus_T1_right"/>
     <force name="force_tarsus_T2_left" site="tarsus_T2_left"/>
     <force name="force_tarsus_T2_right" site="tarsus_T2_right"/>
     <force name="force_tarsus_T3_left" site="tarsus_T3_left"/>
-    <force name="force_tarsus_T3_right" site="tarsus_T3_right"/>
+    <force name="force_tarsus_T3_right" site="tarsus_T3_right"/> -->
     <touch name="touch_claw_T1_left" site="claw_T1_left"/>
     <touch name="touch_claw_T1_right" site="claw_T1_right"/>
     <touch name="touch_claw_T2_left" site="claw_T2_left"/>
     <touch name="touch_claw_T2_right" site="claw_T2_right"/>
     <touch name="touch_claw_T3_left" site="claw_T3_left"/>
     <touch name="touch_claw_T3_right" site="claw_T3_right"/>
-  </sensor> -->
+  </sensor>
 
 </mujoco>

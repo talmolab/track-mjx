@@ -67,7 +67,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     input_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
     logging.info(f"Loading data: {input_data_path}")
     with open(input_data_path, "rb") as file:
-        sys.modules["preprocessing"] = preprocessing
+        # sys.modules["preprocessing"] = preprocessing
         reference_clip = pickle.load(file)
     walker_map = {
         "rodent": Rodent,
@@ -251,6 +251,7 @@ def create_rollout_generator(
             ctrl, extras = jit_inference_fn(state.obs, act_rng)
             next_state = jit_step(state, ctrl)
             
+            # next state, results of the current action ctrl
             joint_forces = next_state.pipeline_state.cfrc_ext
             sensor_readings = next_state.pipeline_state.sensordata
             

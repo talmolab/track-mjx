@@ -2064,7 +2064,7 @@ def process_intention_tda(int_rodent, jf_rodent, window_size=50, stride=10, max_
     return all_results
 
 
-def analyze_intentions_with_tda(int_rodent, jf_rodent, window_size=50, stride=10, max_points=1000, gait_metrics=None):
+def analyze_intentions_with_tda(int_rodent, jf_rodent, window_size=50, stride=10, max_points=1000, gait_metrics=None, embedding_option='combine'):
     """Complete function to analyze intention data using TDA and manifold learning."""
     try:
         int_rodent_reshaped = int_rodent.squeeze() if len(int_rodent.shape) > 2 else int_rodent
@@ -2076,7 +2076,8 @@ def analyze_intentions_with_tda(int_rodent, jf_rodent, window_size=50, stride=10
             window_size=window_size, 
             stride=stride, 
             max_points=max_points, 
-            gait_metrics=gait_metrics
+            gait_metrics=gait_metrics,
+            embedding_option=embedding_option
         )
         
         return all_results

@@ -139,11 +139,13 @@ def create_abstract_policy(
     reset_fn = environment.reset
     key_envs = jax.random.key(1)
     env_state = reset_fn(key_envs)
-
+    
+    normalize = running_statistics.normalize
     ppo_network = network_factory(
         env_state.obs.shape[-1],
         int(env_state.info["reference_obs_size"]),
         environment.action_size,
+        preprocess_observations_fn=normalize,
     )
 
     make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
@@ -303,12 +305,22 @@ def create_rollout_generator(
 
         # Reference and rollout qposes
         ref_traj = rollout_env._get_reference_clip(init_state.info)
-        qposes_ref = jnp.tile(
+        # qposes_ref = jnp.tile(
+        #     jnp.concatenate(
+        #         [ref_traj.position, ref_traj.quaternion, ref_traj.joints], axis=-1
+        #     ),
+        #     (int(environment._steps_for_cur_frame), 1),
+        # )
+        
+        repeats = int(environment._steps_for_cur_frame)
+        qposes_ref = jnp.repeat(
             jnp.concatenate(
                 [ref_traj.position, ref_traj.quaternion, ref_traj.joints], axis=-1
             ),
-            (int(environment._steps_for_cur_frame), 1),
+            repeats=repeats,
+            axis=0
         )
+
 
         # Collect qposes from states
         qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)

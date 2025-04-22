@@ -2052,7 +2052,7 @@ def process_intention_tda(int_rodent, jf_rodent, window_size=50, stride=10, max_
     else:
         all_results['global_tda'] = None
     
-    window_results = sliding_window_tda(embedded, window_size=window_size, stride=stride, max_points=max_points, gait_metrics=gait_metrics)
+    window_results = sliding_window_tda(combined_intentions, window_size=window_size, stride=stride, max_points=max_points, gait_metrics=gait_metrics)
     all_results['window_results'] = window_results
     
     if len(window_results) > 0:

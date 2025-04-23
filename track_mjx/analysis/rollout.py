@@ -142,13 +142,12 @@ def create_abstract_policy(
     
     # normalize = running_statistics.normalize
     def safe_normalize(x, params):
-        # 添加一个小的常数来避免除以零
+        # avoid zeo division
         eps = 1e-6
         mean = params.mean
-        std = params.std + eps  # 避免除以零
+        std = params.std + eps
         return (x - mean) / std
         
-    # 然后使用这个安全的归一化函数
     normalize = safe_normalize
 
     ppo_network = network_factory(

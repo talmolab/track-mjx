@@ -1231,7 +1231,7 @@ def process_manifold_gait(int_data, jf_array, window_size=31, stride=1, n_sample
     """
     print(f"Processing data with paper methods, window_size={window_size}")
     
-    jf_array_reshape = jf_array.reshape(-1, 4)
+    jf_array_reshape = jf_array.reshape(-1, jf_array.shape[-1])
     combined_intentions = np.hstack([int_data, jf_array_reshape])
     
     windows, center_frames = create_time_windows(int_data, window_size, stride)
@@ -1300,89 +1300,172 @@ def subsample_for_tda(embedded, max_points):
     return embedded[indices]
 
 
+# def compute_persistence_diagrams(embedded, max_dim=2):
+#     if len(embedded) < 2:
+#         empty_result = {
+#             'diagrams': [np.array([]), np.array([])],
+#             'H0': np.array([]),
+#             'H1': np.array([]),
+#             'H2': None,
+#             'H1_persistence': np.array([]),
+#             'H1_sorted': np.array([]),
+#             'H1_stats': {
+#                 'mean': 0,
+#                 'median': 0,
+#                 'max': 0,
+#                 'top_5': np.array([])
+#             }
+#         }
+#         return empty_result
+    
+#     try:
+#         diagrams = ripser.ripser(
+#             embedded, 
+#             maxdim=max_dim,
+#             thresh=np.inf,
+#             coeff=2,
+#             do_cocycles=False,
+#         )['dgms']
+        
+#         H0 = diagrams[0]
+#         H1 = diagrams[1] if len(diagrams) > 1 else np.array([])
+        
+#         H2 = None
+#         if max_dim >= 2 and len(diagrams) > 2:
+#             H2 = diagrams[2]
+        
+#         if len(H1) > 0:
+#             H1_persistence = H1[:, 1] - H1[:, 0]
+#             H1_sorted_idx = np.argsort(-H1_persistence)
+#             H1_sorted = H1[H1_sorted_idx]
+#             H1_sorted_persistence = H1_persistence[H1_sorted_idx]
+            
+#             H1_stats = {
+#                 'mean': np.mean(H1_persistence),
+#                 'median': np.median(H1_persistence),
+#                 'max': np.max(H1_persistence),
+#                 'top_5': H1_sorted_persistence[:min(5, len(H1_sorted_persistence))]
+#             }
+#         else:
+#             H1_persistence = np.array([])
+#             H1_sorted = np.array([])
+#             H1_stats = {
+#                 'mean': 0,
+#                 'median': 0,
+#                 'max': 0,
+#                 'top_5': np.array([])
+#             }
+        
+#         results = {
+#             'diagrams': diagrams,
+#             'H0': H0,
+#             'H1': H1,
+#             'H2': H2,
+#             'H1_persistence': H1_persistence,
+#             'H1_sorted': H1_sorted,
+#             'H1_stats': H1_stats
+#         }
+        
+#         return results
+#     except Exception as e:
+#         empty_result = {
+#             'diagrams': [np.array([]), np.array([])],
+#             'H0': np.array([]),
+#             'H1': np.array([]),
+#             'H2': None,
+#             'H1_persistence': np.array([]),
+#             'H1_sorted': np.array([]),
+#             'H1_stats': {
+#                 'mean': 0,
+#                 'median': 0,
+#                 'max': 0,
+#                 'top_5': np.array([])
+#             }
+#         }
+#         return empty_result
+
+
 def compute_persistence_diagrams(embedded, max_dim=2):
     if len(embedded) < 2:
         empty_result = {
-            'diagrams': [np.array([]), np.array([])],
+            'diagrams': [np.array([]) for _ in range(max_dim + 1)],
             'H0': np.array([]),
             'H1': np.array([]),
-            'H2': None,
+            'H2': np.array([]),
             'H1_persistence': np.array([]),
             'H1_sorted': np.array([]),
-            'H1_stats': {
-                'mean': 0,
-                'median': 0,
-                'max': 0,
-                'top_5': np.array([])
-            }
+            'H1_stats': {'mean': 0, 'median': 0, 'max': 0, 'top_5': np.array([])},
+            'H2_persistence': np.array([]),
+            'H2_sorted': np.array([]),
+            'H2_stats': {'mean': 0, 'median': 0, 'max': 0, 'top_5': np.array([])}
         }
         return empty_result
-    
+
     try:
         diagrams = ripser.ripser(
-            embedded, 
+            embedded,
             maxdim=max_dim,
             thresh=np.inf,
             coeff=2,
             do_cocycles=False,
         )['dgms']
-        
+
         H0 = diagrams[0]
         H1 = diagrams[1] if len(diagrams) > 1 else np.array([])
-        
-        H2 = None
-        if max_dim >= 2 and len(diagrams) > 2:
-            H2 = diagrams[2]
-        
-        if len(H1) > 0:
-            H1_persistence = H1[:, 1] - H1[:, 0]
-            H1_sorted_idx = np.argsort(-H1_persistence)
-            H1_sorted = H1[H1_sorted_idx]
-            H1_sorted_persistence = H1_persistence[H1_sorted_idx]
-            
-            H1_stats = {
-                'mean': np.mean(H1_persistence),
-                'median': np.median(H1_persistence),
-                'max': np.max(H1_persistence),
-                'top_5': H1_sorted_persistence[:min(5, len(H1_sorted_persistence))]
-            }
-        else:
-            H1_persistence = np.array([])
-            H1_sorted = np.array([])
-            H1_stats = {
-                'mean': 0,
-                'median': 0,
-                'max': 0,
-                'top_5': np.array([])
-            }
-        
-        results = {
+        H2 = diagrams[2] if max_dim >= 2 and len(diagrams) > 2 else np.array([])
+
+        # Compute H1 stats
+        H1_persistence = H1[:, 1] - H1[:, 0] if len(H1) > 0 else np.array([])
+        H1_sorted_idx = np.argsort(-H1_persistence) if len(H1_persistence) > 0 else []
+        H1_sorted = H1[H1_sorted_idx] if len(H1_sorted_idx) > 0 else np.array([])
+        H1_sorted_persistence = H1_persistence[H1_sorted_idx] if len(H1_sorted_idx) > 0 else np.array([])
+        H1_stats = {
+            'mean': np.mean(H1_persistence) if len(H1_persistence) > 0 else 0,
+            'median': np.median(H1_persistence) if len(H1_persistence) > 0 else 0,
+            'max': np.max(H1_persistence) if len(H1_persistence) > 0 else 0,
+            'top_5': H1_sorted_persistence[:5] if len(H1_sorted_persistence) >= 5 else H1_sorted_persistence
+        }
+
+        # Compute H2 stats
+        H2_persistence = H2[:, 1] - H2[:, 0] if len(H2) > 0 else np.array([])
+        H2_sorted_idx = np.argsort(-H2_persistence) if len(H2_persistence) > 0 else []
+        H2_sorted = H2[H2_sorted_idx] if len(H2_sorted_idx) > 0 else np.array([])
+        H2_sorted_persistence = H2_persistence[H2_sorted_idx] if len(H2_sorted_idx) > 0 else np.array([])
+        H2_stats = {
+            'mean': np.mean(H2_persistence) if len(H2_persistence) > 0 else 0,
+            'median': np.median(H2_persistence) if len(H2_persistence) > 0 else 0,
+            'max': np.max(H2_persistence) if len(H2_persistence) > 0 else 0,
+            'top_5': H2_sorted_persistence[:5] if len(H2_sorted_persistence) >= 5 else H2_sorted_persistence
+        }
+
+        return {
             'diagrams': diagrams,
             'H0': H0,
             'H1': H1,
             'H2': H2,
             'H1_persistence': H1_persistence,
             'H1_sorted': H1_sorted,
-            'H1_stats': H1_stats
+            'H1_stats': H1_stats,
+            'H2_persistence': H2_persistence,
+            'H2_sorted': H2_sorted,
+            'H2_stats': H2_stats
         }
-        
-        return results
+
     except Exception as e:
-        empty_result = {
-            'diagrams': [np.array([]), np.array([])],
+        print("Error in compute_persistence_diagrams:", e)
+        return {
+            'diagrams': [np.array([]) for _ in range(max_dim + 1)],
             'H0': np.array([]),
             'H1': np.array([]),
-            'H2': None,
+            'H2': np.array([]),
             'H1_persistence': np.array([]),
             'H1_sorted': np.array([]),
-            'H1_stats': {
-                'mean': 0,
-                'median': 0,
-                'max': 0,
-                'top_5': np.array([])
-            }
+            'H1_stats': {'mean': 0, 'median': 0, 'max': 0, 'top_5': np.array([])},
+            'H2_persistence': np.array([]),
+            'H2_sorted': np.array([]),
+            'H2_stats': {'mean': 0, 'median': 0, 'max': 0, 'top_5': np.array([])}
         }
-        return empty_result
+
 
 
 def extract_persistent_features(diagrams, threshold=0.1):
@@ -2011,6 +2094,53 @@ def visualize_window_evolution(window_results):
     
     plt.tight_layout()
     plt.show()
+    
+
+def manual_plot_barcode(diagram, ax, title=""):
+    """Plot a barcode diagram from birth-death pairs using matplotlib."""
+    if len(diagram) == 0:
+        ax.text(0.5, 0.5, "No features", ha='center', va='center')
+        ax.set_title(title)
+        return
+
+    for i, (birth, death) in enumerate(diagram):
+        ax.hlines(y=i, xmin=birth, xmax=death, linewidth=2)
+        ax.plot([birth, death], [i, i], 'o', markersize=4)
+
+    ax.set_ylim(-1, len(diagram))
+    ax.set_xlim(np.min(diagram[:, 0]) - 0.1, np.max(diagram[:, 1]) + 0.1)
+    ax.set_xlabel("Persistence (Birth → Death)")
+    ax.set_title(title)
+    ax.grid(True, linestyle="--", alpha=0.5)
+
+
+def visualize_h1_barcodes(window_results, n_show=6):
+    """
+    Show barcode plots of H1 persistence diagrams for a selected set of windows.
+    """
+    n_windows = len(window_results)
+    if n_windows == 0:
+        print("No window results to visualize.")
+        return
+
+    indices_to_show = np.linspace(0, n_windows - 1, min(n_show, n_windows), dtype=int)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 8))
+    axes = axes.flatten()
+
+    for i, idx in enumerate(indices_to_show):
+        result = window_results[idx]
+        ax = axes[i]
+        h1 = result['diagrams'].get('H1', np.array([]))
+        if isinstance(h1, list):
+            h1 = np.array(h1)
+        if h1.size > 0:
+            manual_plot_barcode(h1, ax, title=f"Barcode: Window {idx}")
+        else:
+            ax.text(0.5, 0.5, "No H1 features", ha='center', va='center')
+            ax.set_title(f"Window {idx} - No H1")
+
+    plt.tight_layout()
+    plt.show()
 
 
 def process_intention_tda(int_rodent, jf_rodent, window_size=50, stride=10, max_points=1000, gait_metrics=None, embedding_option='combine'):
@@ -2046,18 +2176,30 @@ def process_intention_tda(int_rodent, jf_rodent, window_size=50, stride=10, max_
         'global_tda': None
     }
     
+    # if combined_intentions.shape[0] > max_points:
+    #     print(f"Subsampling from {combined_intentions.shape[0]} to {max_points} for PHATE")
+    #     indices = np.random.choice(combined_intentions.shape[0], max_points, replace=False)
+    #     combined_intentions_subsampled = combined_intentions[indices]
+    #     if gait_metrics is not None:
+    #         gait_metrics = {k: v[indices] if isinstance(v, np.ndarray) else v for k, v in gait_metrics.items()}
+    # else:
+    #     combined_intentions_subsampled = combined_intentions
+    
     if embedded.shape[0] > 1:
+        # give you tda upon the UMAP embedded manifold
         global_tda = manifold_with_tda_optimized({'embedded': embedded, 'gait_metrics': gait_metrics}, min(max_points, embedded.shape[0]))
         all_results['global_tda'] = global_tda
     else:
         all_results['global_tda'] = None
     
+    # give you tda upon the intention/force/combined ambient space with isomap
     window_results = sliding_window_tda(combined_intentions, window_size=window_size, stride=stride, max_points=max_points, gait_metrics=gait_metrics)
     all_results['window_results'] = window_results
     
     if len(window_results) > 0:
         try:
             visualize_window_evolution(window_results)
+            visualize_h1_barcodes(window_results)
         except Exception as e:
             pass
     
@@ -2300,80 +2442,197 @@ def analyze_intention_structure_over_time(all_results):
     plt.show()
 
 
-def compare_tda_across_behaviors(behavior_data, window_size=50, max_points=300):
-    """Compare TDA features across different behavior types."""
-    behavior_tda_results = {}
-    all_h1_means = []
-    all_h1_maxes = []
-    all_behavior_types = []
+# def compare_tda_across_behaviors(behavior_data, window_size=50, max_points=300):
+#     """Compare TDA features across different behavior types."""
+#     behavior_tda_results = {}
+#     all_h1_means = []
+#     all_h1_maxes = []
+#     all_behavior_types = []
     
+#     for behavior_type, data in behavior_data.items():
+#         int_data, jf_data = data['int'], data['jf']
+        
+#         if len(int_data.shape) > 2:
+#             int_data = int_data.reshape(-1, int_data.shape[-1])
+#         if len(jf_data.shape) > 2:
+#             jf_data = jf_data.reshape(-1, jf_data.shape[-1])
+        
+#         combined = np.hstack([int_data, jf_data])
+        
+#         try:
+#             reducer = umap.UMAP(n_components=3, min_dist=0.1, n_neighbors=min(30, combined.shape[0]-1), random_state=42)
+#             embedded = combined #reducer.fit_transform(combined)
+            
+#             subsampled = subsample_for_tda(embedded, max_points=max_points)
+            
+#             diagrams = compute_persistence_diagrams(subsampled, max_dim=2)
+            
+#             h1_mean = diagrams['H1_stats']['mean']
+#             h1_max = diagrams['H1_stats']['max']
+            
+#             all_h1_means.append(h1_mean)
+#             all_h1_maxes.append(h1_max)
+#             all_behavior_types.append(behavior_type)
+            
+#             behavior_tda_results[behavior_type] = {
+#                 'diagrams': diagrams,
+#                 'embedded': embedded,
+#                 'stats': diagrams['H1_stats']
+#             }
+            
+#             plt.figure(figsize=(12, 8))
+#             plot_diagrams(diagrams['diagrams'], show=False)
+#             plt.title(f"Persistence Diagram: {behavior_type}", fontsize=16)
+#             plt.tight_layout()
+#             plt.show()
+#         except Exception as e:
+#             print(f"Error processing {behavior_type}: {str(e)}")
+    
+#     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+#     # giev mean persistence
+#     ax1.bar(all_behavior_types, all_h1_means, color='skyblue', alpha=0.7)
+#     ax1.set_title('Mean H1 Persistence by Behavior Type')
+#     ax1.set_xlabel('Behavior Type')
+#     ax1.set_ylabel('Mean Persistence')
+    
+#     # give max persistence
+#     ax2.bar(all_behavior_types, all_h1_maxes, color='salmon', alpha=0.7)
+#     ax2.set_title('Max H1 Persistence by Behavior Type')
+#     ax2.set_xlabel('Behavior Type')
+#     ax2.set_ylabel('Max Persistence')
+    
+#     plt.tight_layout()
+#     plt.show()
+    
+#     # when we have more than one behavior, compare manifolds
+#     if len(behavior_data) > 1:
+#         n_behaviors = len(behavior_data)
+#         fig = plt.figure(figsize=(5*n_behaviors, 5))
+        
+#         for i, behavior_type in enumerate(behavior_tda_results.keys()):
+#             ax = fig.add_subplot(1, n_behaviors, i+1, projection='3d')
+#             embedded = behavior_tda_results[behavior_type]['embedded']
+#             ax.scatter(
+#                 embedded[:, 0], 
+#                 embedded[:, 1], 
+#                 embedded[:, 2] if embedded.shape[1] > 2 else np.zeros(len(embedded)),
+#                 alpha=0.7,
+#                 s=5
+#             )
+#             ax.set_title(f"{behavior_type} Manifold")
+#             ax.set_xlabel("UMAP 1")
+#             ax.set_ylabel("UMAP 2")
+#             ax.set_zlabel("UMAP 3")
+        
+#         plt.tight_layout()
+#         plt.show()
+    
+#     return behavior_tda_results
+
+
+def compare_tda_across_behaviors(behavior_data, max_points=300, embedding_option='combine'):
+    """Compare TDA features across different behavior types."""
+    import matplotlib.pyplot as plt
+    from persim import plot_diagrams
+
+    behavior_tda_results = {}
+    all_behavior_types = []
+
+    all_h1_means, all_h1_maxes = [], []
+    all_h2_means, all_h2_maxes = [], []
+
     for behavior_type, data in behavior_data.items():
         int_data, jf_data = data['int'], data['jf']
-        
+
         if len(int_data.shape) > 2:
             int_data = int_data.reshape(-1, int_data.shape[-1])
         if len(jf_data.shape) > 2:
             jf_data = jf_data.reshape(-1, jf_data.shape[-1])
-        
-        combined = np.hstack([int_data, jf_data])
-        
+
+        if embedding_option == 'combine':
+            print('Using combined embeddings')
+            combined = np.hstack([int_data, jf_data])
+            
+        if embedding_option == 'intention':
+            print('Using intention embeddings')
+            combined = int_data
+            
+        if embedding_option == 'force':
+            print('Using force embeddings')
+            combined = jf_data
+
         try:
             reducer = umap.UMAP(n_components=3, min_dist=0.1, n_neighbors=min(30, combined.shape[0]-1), random_state=42)
             embedded = reducer.fit_transform(combined)
-            
-            subsampled = subsample_for_tda(embedded, max_points=max_points)
-            
+
+            subsampled = subsample_for_tda(combined, max_points=max_points)
             diagrams = compute_persistence_diagrams(subsampled, max_dim=2)
-            
+
             h1_mean = diagrams['H1_stats']['mean']
             h1_max = diagrams['H1_stats']['max']
-            
+            h2_mean = diagrams['H2_stats']['mean']
+            h2_max = diagrams['H2_stats']['max']
+
             all_h1_means.append(h1_mean)
             all_h1_maxes.append(h1_max)
+            all_h2_means.append(h2_mean)
+            all_h2_maxes.append(h2_max)
             all_behavior_types.append(behavior_type)
-            
+
             behavior_tda_results[behavior_type] = {
                 'diagrams': diagrams,
                 'embedded': embedded,
-                'stats': diagrams['H1_stats']
+                'H1_stats': diagrams['H1_stats'],
+                'H2_stats': diagrams['H2_stats']
             }
-            
+
+            # Show persistence diagram
             plt.figure(figsize=(12, 8))
             plot_diagrams(diagrams['diagrams'], show=False)
             plt.title(f"Persistence Diagram: {behavior_type}", fontsize=16)
             plt.tight_layout()
             plt.show()
+
         except Exception as e:
             print(f"Error processing {behavior_type}: {str(e)}")
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # giev mean persistence
-    ax1.bar(all_behavior_types, all_h1_means, color='skyblue', alpha=0.7)
-    ax1.set_title('Mean H1 Persistence by Behavior Type')
-    ax1.set_xlabel('Behavior Type')
-    ax1.set_ylabel('Mean Persistence')
-    
-    # give max persistence
-    ax2.bar(all_behavior_types, all_h1_maxes, color='salmon', alpha=0.7)
-    ax2.set_title('Max H1 Persistence by Behavior Type')
-    ax2.set_xlabel('Behavior Type')
-    ax2.set_ylabel('Max Persistence')
-    
+
+    fig, axs = plt.subplots(2, 2, figsize=(16, 10))
+
+    axs[0, 0].bar(all_behavior_types, all_h1_means, color='skyblue', alpha=0.7)
+    axs[0, 0].set_title('Mean H1 Persistence by Behavior Type')
+    axs[0, 0].set_ylabel('Mean H1')
+
+    axs[0, 1].bar(all_behavior_types, all_h1_maxes, color='salmon', alpha=0.7)
+    axs[0, 1].set_title('Max H1 Persistence by Behavior Type')
+    axs[0, 1].set_ylabel('Max H1')
+
+    axs[1, 0].bar(all_behavior_types, all_h2_means, color='lightgreen', alpha=0.7)
+    axs[1, 0].set_title('Mean H2 Persistence by Behavior Type')
+    axs[1, 0].set_ylabel('Mean H2')
+
+    axs[1, 1].bar(all_behavior_types, all_h2_maxes, color='orange', alpha=0.7)
+    axs[1, 1].set_title('Max H2 Persistence by Behavior Type')
+    axs[1, 1].set_ylabel('Max H2')
+
+    for ax in axs.flatten():
+        ax.set_xlabel('Behavior Type')
+        ax.set_xticks(range(len(all_behavior_types)))
+        ax.set_xticklabels(all_behavior_types, rotation=45)
+
     plt.tight_layout()
     plt.show()
-    
-    # when we have more than one behavior, compare manifolds
+
     if len(behavior_data) > 1:
         n_behaviors = len(behavior_data)
-        fig = plt.figure(figsize=(5*n_behaviors, 5))
-        
+        fig = plt.figure(figsize=(5 * n_behaviors, 5))
+
         for i, behavior_type in enumerate(behavior_tda_results.keys()):
-            ax = fig.add_subplot(1, n_behaviors, i+1, projection='3d')
+            ax = fig.add_subplot(1, n_behaviors, i + 1, projection='3d')
             embedded = behavior_tda_results[behavior_type]['embedded']
             ax.scatter(
-                embedded[:, 0], 
-                embedded[:, 1], 
+                embedded[:, 0],
+                embedded[:, 1],
                 embedded[:, 2] if embedded.shape[1] > 2 else np.zeros(len(embedded)),
                 alpha=0.7,
                 s=5
@@ -2382,8 +2641,8 @@ def compare_tda_across_behaviors(behavior_data, window_size=50, max_points=300):
             ax.set_xlabel("UMAP 1")
             ax.set_ylabel("UMAP 2")
             ax.set_zlabel("UMAP 3")
-        
+
         plt.tight_layout()
         plt.show()
-    
+
     return behavior_tda_results

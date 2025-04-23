@@ -61,12 +61,12 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 )
             if deterministic:
                 if get_activation:
-                    return ppo_networks.parametric_action_distribution.mode(logits), {
+                    return parametric_action_distribution.mode(logits), { #ppo_networks.parametric_action_distribution.mode(logits), {
                         "activations": activations,
                         "latent_mean": latent_mean,
                         "latent_logvar": latent_logvar,
                     }
-                return ppo_networks.parametric_action_distribution.mode(logits), {
+                return parametric_action_distribution.mode(logits), { #ppo_networks.parametric_action_distribution.mode(logits), {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
@@ -150,9 +150,9 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
 
 # intention policy
 def make_intention_ppo_networks(
-    observation_size: int,
-    reference_obs_size: int,
-    action_size: int,
+    observation_size: int, # 617
+    reference_obs_size: int, # 470
+    action_size: int, # 38
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     intention_latent_size: int = 60,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
@@ -161,21 +161,21 @@ def make_intention_ppo_networks(
 ) -> PPOImitationNetworks:
     """Make Imitation PPO networks with preprocessor."""
     parametric_action_distribution = distribution.NormalTanhDistribution(
-        event_size=action_size
+        event_size=action_size #action_size = 38
     )
     policy_network = intention_network.make_intention_policy(
-        parametric_action_distribution.param_size,
-        latent_size=intention_latent_size,
-        total_obs_size=observation_size,
-        reference_obs_size=reference_obs_size,
+        parametric_action_distribution.param_size, # 76
+        latent_size=intention_latent_size, # 60
+        total_obs_size=observation_size, # 617
+        reference_obs_size=reference_obs_size, # 470
         preprocess_observations_fn=preprocess_observations_fn,
-        encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
-        decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        encoder_hidden_layer_sizes=encoder_hidden_layer_sizes, # (512, 512, 512)
+        decoder_hidden_layer_sizes=decoder_hidden_layer_sizes, # (512, 512, 512)
     )
     value_network = networks.make_value_network(
-        observation_size,
+        observation_size, # 617
         preprocess_observations_fn=preprocess_observations_fn,
-        hidden_layer_sizes=value_hidden_layer_sizes,
+        hidden_layer_sizes=value_hidden_layer_sizes, # (512, 512, 512)
     )
 
     return PPOImitationNetworks(

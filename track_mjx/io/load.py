@@ -14,20 +14,20 @@ class ReferenceClip:
     """Immutable dataclass defining the trajectory features used in the tracking task."""
 
     # qpos
-    position: jp.ndarray = None
-    quaternion: jp.ndarray = None
-    joints: jp.ndarray = None
+    position: jp.ndarray = None # (842, 250, 3)
+    quaternion: jp.ndarray = None # (842, 250, 4)
+    joints: jp.ndarray = None # (842, 250, 67)
 
     # xpos
-    body_positions: jp.ndarray = None
+    body_positions: jp.ndarray = None # (842, 250, 67, 3)
 
     # velocity (inferred)
-    velocity: jp.ndarray = None
-    angular_velocity: jp.ndarray = None
-    joints_velocity: jp.ndarray = None
+    velocity: jp.ndarray = None # (842, 250, 3)
+    angular_velocity: jp.ndarray = None # (842, 250, 3)
+    joints_velocity: jp.ndarray = None # (842, 250, 67)
 
     # xquat
-    body_quaternions: jp.ndarray = None
+    body_quaternions: jp.ndarray = None # (842, 250, 67, 4)
 
 
 def load_configs(config_dir: Union[Path, str], config_name: str) -> DictConfig:

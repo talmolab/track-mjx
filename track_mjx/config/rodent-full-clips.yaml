@@ -62,9 +62,9 @@ train_setup:
   episode_length: 200
   reset_every: 20_000_000
   train_config:
-    num_envs: 1024
-    num_timesteps: 10_000_000_000
-    batch_size: 512
+    num_envs: 8192
+    num_timesteps: 5_000_000_000
+    batch_size: 4096
     num_minibatches: 4
     num_updates_per_batch: 4
     learning_rate: 1e-4

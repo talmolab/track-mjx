@@ -209,8 +209,8 @@ class SingleClipTracking(PipelineEnv):
         Returns:
             State: The updated environment state.
         """
-
-        data0 = state.pipeline_state
+        # https://github.com/google-deepmind/mujoco/blob/12b40b948e39a20bdc0c67ec23eceb618748ed66/mjx/mujoco/mjx/_src/types.py#L1228
+        data0 = state.pipeline_state #(q, qd, x, xd, contact)
         data = self.pipeline_step(data0, action)
         info = state.info.copy()
 
@@ -335,22 +335,22 @@ class SingleClipTracking(PipelineEnv):
 
         # walker methods to compute the necessary distances and differences
         track_pos_local = self.walker.compute_local_track_positions(
-            ref_traj.position, data.qpos
+            ref_traj.position, data.qpos # (5,3), (74,)
         )
         quat_dist = self.walker.compute_quat_distances(ref_traj.quaternion, data.qpos)
         joint_dist = self.walker.compute_local_joint_distances(
-            ref_traj.joints, data.qpos
+            ref_traj.joints, data.qpos # (5,67), (74,)
         )
         body_pos_dist_local = self.walker.compute_local_body_positions(
-            ref_traj.body_positions, data.xpos, data.qpos
+            ref_traj.body_positions, data.xpos, data.qpos #(5, 67, 3), (67, 3), (74,)
         )
 
         reference_obs = jp.concatenate(
             [
-                track_pos_local,
-                quat_dist,
-                joint_dist,
-                body_pos_dist_local,
+                track_pos_local, # (15,)
+                quat_dist, # (20,)
+                joint_dist, # (165,) # 33 joints selected
+                body_pos_dist_local, # (270,) # 18 body parts selected
             ]
         )
 
@@ -359,13 +359,13 @@ class SingleClipTracking(PipelineEnv):
         # jax.debug.print("joint_dist: {}", joint_dist)
         # jax.debug.print("body_pos_dist_local: {}", body_pos_dist_local)
 
-        prorioceptive_obs = jp.concatenate(
+        proprioceptive_obs = jp.concatenate(
             [
                 data.qpos,
                 data.qvel,
             ]
         )
-        return reference_obs, prorioceptive_obs
+        return reference_obs, proprioceptive_obs # (470,), (147,)
 
     def _get_cur_frame(self, info, data: mjx.Data) -> int:
         """Returns the current frame index based on the simulation time"""

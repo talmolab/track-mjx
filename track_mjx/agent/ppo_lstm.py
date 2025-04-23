@@ -180,6 +180,7 @@ def train(
         (intention network variational layer)
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
       get_activation: whether to get activation from the policy
+      use_lstm: whether to use LSTM in the policy
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -335,7 +336,7 @@ def train(
         data: types.Transition,
         normalizer_params: running_statistics.RunningStatisticsState,
     ):
-        optimizer_state, params, key, it = carry
+        optimizer_state, params, hidden_state, key, it = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
 
         def convert_data(x: jnp.ndarray):
@@ -347,10 +348,12 @@ def train(
         # num_minibatches = 4
         # batch_size = 4096
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
+        converted_hidden_state = jax.tree_util.tree_map(convert_data, hidden_state)
+
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, key_grad, it), # init
-            shuffled_data, # xs
+            (shuffled_data, converted_hidden_state), # xs
             length=num_minibatches,
         )
         return (optimizer_state, params, key, it), metrics
@@ -367,21 +370,22 @@ def train(
 
         # This is the important bit
         def f(carry, unused_t):
-            current_state, current_key = carry
+            current_state, current_key, hidden_state = carry
             current_key, next_key = jax.random.split(current_key)
-            next_state, data = acting.generate_unroll(
+            next_state, data, forward_hidden_state, backward_hidden_state = acting.generate_unroll( # why forward and backward?
                 env,
                 current_state,
                 policy,
                 current_key,
+                hidden_state,
                 unroll_length,
                 extra_fields=("truncation",),
             )
-            return (next_state, next_key), data
+            return (next_state, next_key, forward_hidden_state), (data, backward_hidden_state)
 
-        (state, _), data = jax.lax.scan(
+        (state, _, forward_hidden_state), (data, backward_hidden_state) = jax.lax.scan(
             f,
-            (state, key_generate_unroll), # state.obs.shape = (8192, 617)
+            (state, key_generate_unroll, training_state.hidden_state), # state.obs.shape = (8192, 617)
             (),
             length=batch_size * num_minibatches // num_envs, # batch_size = 4096, num_minibatches = 4, num_envs = 8192
         ) # length = 2
@@ -393,6 +397,10 @@ def train(
         ) # (2*8192=16384, 20, 617)
         assert data.discount.shape[1:] == (unroll_length,) # unroll_length=20
 
+        reshaped_new_hidden_state = jax.tree_util.tree_map(
+            lambda x: jnp.reshape(x, (batch_size * num_minibatches, unroll_length, -1)), backward_hidden_state
+        )
+
         # Update normalization params and normalize observations.
         normalizer_params = running_statistics.update(
             training_state.normalizer_params,
@@ -402,7 +410,7 @@ def train(
 
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
-            (training_state.optimizer_state, training_state.params, key_sgd, it),
+            (training_state.optimizer_state, training_state.params, reshaped_new_hidden_state, key_sgd, it),
             (),
             length=num_updates_per_batch,
         )
@@ -410,6 +418,7 @@ def train(
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,
             params=params,
+            hidden_state=forward_hidden_state,
             normalizer_params=normalizer_params,
             env_steps=jnp.int32(
                 training_state.env_steps + env_step_per_training_step / 1e3
@@ -505,7 +514,7 @@ def train(
     evaluator = acting.Evaluator(
         eval_env,
         functools.partial(make_policy, deterministic=deterministic_eval),
-        num_eval_envs=num_eval_envs, #128!
+        num_eval_envs=num_eval_envs, # 128!
         episode_length=episode_length, #200
         action_repeat=action_repeat, #1
         key=eval_key,

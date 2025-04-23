@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "track-mjx"
 authors = [
     {name = "Charles Zhang", email = "charleszhang@fas.harvard.edu"},
-    {name = "Scott Yang", email = "scyang@salk.com"},
+    {name = "Scott Yang", email = "scyang@salk.edu"},
     {name = "Talmo Pereira", email = "talmo@salk.edu"}]
 description=  "Track-MJX: A Python package for fast reinforcement learning-based imitation learning tracking for agents"
 requires-python = ">=3.7"
@@ -26,7 +26,7 @@ dependencies = [
     "dm_control",
     "mujoco-mjx",
     "mediapy",
-    "jax",
+    "jax==0.4.35",
     "flax",
     "optax",
     "mediapy",

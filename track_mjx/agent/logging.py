@@ -159,7 +159,7 @@ def rollout_logging_fn(
         policy_params_fn_key: PRNG key.
     """
 
-    ref_trak_config = cfg["reference_config"]
+    ref_traj_config = cfg["reference_config"]
     env_config = cfg["env_config"]
 
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
@@ -169,7 +169,7 @@ def rollout_logging_fn(
     rollout = [state]
     latent_means = []
     latent_logvars = []
-    for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
+    for i in range(int(ref_traj_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
         ctrl, extras = jit_logging_inference_fn(params, obs, act_rng)
@@ -248,7 +248,7 @@ def render_rollout(
     Rendering rollout to visualize the walker with the reference expert demonstration trajectory, without wandb logging.
     This will save the rendered video to the <model_path>_<num_steps>.mp4, it will also return all the frames for notebook inline rendering.
     """
-    ref_trak_config = cfg["reference_config"]
+    ref_traj_config = cfg["reference_config"]
     env_config = cfg["env_config"]
     walker_config = cfg["walker_config"]
 
@@ -266,7 +266,7 @@ def render_rollout(
     state = jit_reset(reset_rng)
 
     rollout = [state]
-    for i in range(int(ref_trak_config.clip_length * env._steps_for_cur_frame)):
+    for i in range(int(ref_traj_config.clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
         ctrl, extras = jit_inference_fn(obs, act_rng)

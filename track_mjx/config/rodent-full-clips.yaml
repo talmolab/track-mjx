@@ -1,6 +1,6 @@
 data_path: data/transform_snips.h5
 walker_type: rodent
-architecture: mlp
+architecture: lstm
 
 env_config:
   env_name: rodent_multi_clip
@@ -50,8 +50,8 @@ network_config:
   decoder_layer_sizes: [512,512,512]
   critic_layer_sizes: [512,512,512]
   intention_size: 60
-  hidden_state_size: 128
-  hidden_layer_num: 3
+  hidden_state_size: 1028
+  hidden_layer_num: 2
   kl_weight: 1e-4
 
 train_setup:
@@ -79,7 +79,7 @@ train_setup:
     unroll_length: 20 #2
     seed: 0
     get_activation: True
-    use_lstm: False
+    use_lstm: True
     deterministic_eval: False
 
 logging_config:

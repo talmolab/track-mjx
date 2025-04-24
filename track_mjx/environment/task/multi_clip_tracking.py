@@ -100,6 +100,41 @@ class MultiClipTracking(SingleClipTracking):
             termination_joint_distance_threshold  # STORE THE THRESHOLD
         )
 
+    def _normalize_state_info(self, state: State) -> State:
+        """Ensures that state.info has a consistent structure with all required keys using JAX-compatible operations."""
+        info = state.info
+
+        # Create a normalized info dictionary with all required keys
+        # We use a JAX-compatible approach without conditionals or loops
+        normalized_info = {}
+
+        # Core required fields - always include these with appropriate defaults
+        normalized_info["clip_idx"] = jp.array(0)
+        normalized_info["clip_length"] = jp.array(150)
+        normalized_info["start_frame"] = jp.array(0)
+        normalized_info["joint_distance"] = jp.array(0.0)
+        normalized_info["quat_distance"] = jp.array(0.0)
+        normalized_info["energy_cost"] = jp.array(0.0)
+        normalized_info["prev_ctrl"] = jp.zeros((self.sys.nu,))
+        normalized_info["prev_prev_ctrl"] = jp.zeros((self.sys.nu,))
+        normalized_info["prev_qacc"] = jp.zeros((self.sys.nv,))
+        normalized_info["step"] = jp.array(0)
+        normalized_info["reference_obs_size"] = jp.array(0)
+
+        # Reward fields that might be present
+        normalized_info["bodypos_reward"] = jp.array(0.0)
+        normalized_info["endeff_reward"] = jp.array(0.0)
+        normalized_info["reward_ctrlcost"] = jp.array(0.0)
+        normalized_info["ctrl_diff_cost"] = jp.array(0.0)
+        normalized_info["jerk_cost"] = jp.array(0.0)
+        normalized_info["joint_reward"] = jp.array(0.0)
+
+        # Override defaults with actual values where they exist
+        # This uses JAX's functional updating through dictionary merging
+        # First create the info dict with all keys needed
+        # Then update with the original info to preserve any existing values
+        return state.replace(info={**normalized_info, **info})
+
     def reset(self, rng: jp.ndarray, clip_idx: int | None = None) -> State:
         """
         Resets the environment to an initial state.
@@ -127,19 +162,20 @@ class MultiClipTracking(SingleClipTracking):
             "prev_qacc": jp.zeros((self.sys.nv,)),  # Added to preserve carry structure
             "step": jp.array(0),  # Step counter initialization
             "energy_cost": jp.array(0.0),  # Initialize energy_cost field
+            "step": jp.array(0),
         }
 
         state = self.reset_from_clip(rng, info, noise=True)
-
-        # Make sure clip_length is ALWAYS preserved in state.info
+        # Make sure both clip_length AND step are preserved in state.info
         state = state.replace(
             info={
                 **state.info,
                 "clip_length": info["clip_length"],
                 "step": info["step"],
-                "clip_idx": info["clip_idx"],  # Ensure clip_idx is preserved too
             }
         )
+        # Normalize state structure
+        state = self._normalize_state_info(state)
         return state
 
     def step(self, state: State, action: jp.ndarray) -> State:
@@ -153,33 +189,22 @@ class MultiClipTracking(SingleClipTracking):
         Returns:
             State: The new state of the environment.
         """
-        # First, ensure step exists and increment it
-        if "step" not in state.info:
-            state = state.replace(info={**state.info, "step": jp.array(0)})
-
-        # Get the clip_length before we increment the step counter
-        clip_length = state.info.get("clip_length")
-        if (clip_length is None) and ("clip_idx" in state.info):
-            # If clip_length is missing but we have clip_idx, get it from _clip_lengths
-            clip_length = self._clip_lengths[state.info["clip_idx"]]
-            state = state.replace(info={**state.info, "clip_length": clip_length})
-        elif clip_length is None:
-            # Fallback to default if both are missing (shouldn't happen but just in case)
-            clip_length = jp.array(250)  # Default fallback
-            state = state.replace(info={**state.info, "clip_length": clip_length})
+        # Normalize state.info to ensure consistent structure
+        state = self._normalize_state_info(state)
 
         # Increment the step counter
-        state = state.replace(
-            info={**state.info, "step": state.info.get("step", 0) + 1}
-        )
+        state = state.replace(info={**state.info, "step": state.info["step"] + 1})
 
-        # ADDED: Clip action values to match XML ctrlrange [-0.1, 0.1]
+        # IMPORTANT: Clip actions to allowed range before applying
         clipped_action = jp.clip(action, -0.1, 0.1)
 
-        # Call parent step method with updated state and clipped action
+        # Call parent step method with normalized state
         state = super().step(state, clipped_action)
 
-        # Handle NaNs or all-zero observations.
+        # Renormalize after parent step to ensure structure consistency
+        state = self._normalize_state_info(state)
+
+        # Handle NaNs or all-zero observations
         condition = jp.logical_or(jp.any(jp.isnan(state.obs)), jp.all(state.obs == 0))
         state = jax.lax.cond(
             condition,
@@ -188,17 +213,7 @@ class MultiClipTracking(SingleClipTracking):
             state,
         )
 
-        # Now safely check if step >= clip_length
-        state = jax.lax.cond(
-            jp.greater_equal(
-                state.info.get("step", 0), state.info.get("clip_length", jp.array(250))
-            ),
-            lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
-            lambda st: st,
-            state,
-        )
-
-        # NEW: Early termination based on joint distance threshold
+        # Early termination based on joint distance threshold
         state = jax.lax.cond(
             state.info["joint_distance"] > self._termination_threshold,
             lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
@@ -206,14 +221,24 @@ class MultiClipTracking(SingleClipTracking):
             state,
         )
 
+        # Early termination when reaching end of reference clip
+        state = jax.lax.cond(
+            state.info["step"] >= state.info["clip_length"],
+            lambda st: st.replace(done=jp.array(True, dtype=st.done.dtype)),
+            lambda st: st,
+            state,
+        )
+
+        # Update info with previous controls
         new_info = {
             **state.info,
             "prev_prev_ctrl": state.info["prev_ctrl"],
-            "prev_ctrl": action,
-            # Always ensure clip_length is in the info dictionary
-            "clip_length": state.info.get("clip_length", clip_length),
+            "prev_ctrl": clipped_action,  # Store clipped action
         }
         state = state.replace(info=new_info)
+
+        # Final normalization to guarantee consistent structure
+        state = self._normalize_state_info(state)
 
         return state
 

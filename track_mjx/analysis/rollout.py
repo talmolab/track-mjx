@@ -47,7 +47,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
         "rodent": Rodent,
         "fly": Fly,
     }
-    walker_class = walker_map[cfg_dict["walker_type"]]
+    walker_class = walker_map[cfg_dict["env_config"]["walker_name"]]
     walker = walker_class(**walker_config)
 
     reward_config = RewardConfig(**env_rewards)

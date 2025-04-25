@@ -11,8 +11,6 @@ import mujoco
 from track_mjx.environment.walker.base import BaseWalker
 
 _XML_PATH = "assets/fruitfly/fruitfly_force_fast.xml"
-_PAIR_XML_PATH = "assets/fruitfly/fruitfly_force_pair.xml"
-
 
 class Fly(BaseWalker):
     """FlyBody class that manages the body structure, joint configurations, and model loading."""
@@ -38,8 +36,6 @@ class Fly(BaseWalker):
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
-        self._pair_rendering_xml_path = _PAIR_XML_PATH
-
         self._mjcf_model = self._load_mjcf_model(torque_actuators, rescale_factor)
         self.sys = mjcf_brax.load_model(self._mjcf_model.model.ptr)
 

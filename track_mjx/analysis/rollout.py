@@ -50,6 +50,9 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     walker_class = walker_map[cfg_dict["env_config"]["walker_name"]]
     walker = walker_class(**walker_config)
 
+    if "energy_cost_weight" not in env_rewards:
+        env_rewards["energy_cost_weight"] = 0.0
+
     reward_config = RewardConfig(**env_rewards)
     # Automatically match dict keys and func needs
     env = envs.get_environment(

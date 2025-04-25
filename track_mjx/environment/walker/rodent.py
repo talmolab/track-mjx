@@ -18,7 +18,6 @@ import os
 from track_mjx.environment.walker.base import BaseWalker
 
 _XML_PATH = "assets/rodent/rodent.xml"
-_PAIR_XML_PATH = "assets/rodent/rodent_ghostpair_scale080.xml"
 
 
 class Rodent(BaseWalker):
@@ -44,8 +43,6 @@ class Rodent(BaseWalker):
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
-        self._pair_rendering_xml_path = _PAIR_XML_PATH
-
         self._mjcf_model = self._load_mjcf_model(torque_actuators, rescale_factor)
         self.sys = mjcf_brax.load_model(self._mjcf_model.model.ptr)
 

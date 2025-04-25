@@ -33,7 +33,8 @@ from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
-from track_mjx.agent.logging import rollout_logging_fn, make_rollout_renderer
+from track_mjx.agent import wandb_logging
+from track_mjx.analysis import render
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
@@ -107,7 +108,7 @@ def main(cfg: DictConfig):
     logging.info(f"Loading data: {cfg.data_path}")
     reference_clip = load.load_data(cfg.data_path)
 
-    walker = _WALKERS[cfg_dict["walker_type"]](**walker_config)
+    walker = _WALKERS[cfg.env_config.walker_name](**walker_config)
     reward_config = RewardConfig(**env_rewards)
 
     env = envs.get_environment(
@@ -168,9 +169,9 @@ def main(cfg: DictConfig):
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
-    renderer, mj_model, mj_data, scene_option = make_rollout_renderer(rollout_env, cfg)
+    renderer, mj_model, mj_data, scene_option = render.make_rollout_renderer(cfg)
     policy_params_fn = functools.partial(
-        rollout_logging_fn,
+        wandb_logging.rollout_logging_fn,
         rollout_env,
         jit_reset,
         jit_step,

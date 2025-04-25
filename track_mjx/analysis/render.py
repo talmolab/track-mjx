@@ -36,6 +36,12 @@ import multiprocessing as mp
 import functools
 
 
+_GHOST_RENDER_XML_PATHS = {
+    "rodent": "assets/rodent/rodent_ghostpair_scale080.xml",
+    "fly": "assets/fruitfly/fruitfly_force_pair.xml",
+}
+
+
 def agg_backend_context(func):
     """
     Decorator to switch to a headless backend during function execution.
@@ -54,7 +60,71 @@ def agg_backend_context(func):
     return wrapper
 
 
-def render_from_saved_rollout(
+def make_rollout_renderer(cfg):
+    walker_config = cfg["walker_config"]
+
+    _XML_PATH = (
+        Path(__file__).resolve().parent.parent
+        / "environment"
+        / "walker"
+        / _GHOST_RENDER_XML_PATHS[cfg.env_config.walker_name]
+    )
+
+    if cfg.env_config.walker_name == "rodent":
+        root = mjcf_dm.from_path(_XML_PATH)
+        rescale.rescale_subtree(
+            root,
+            walker_config.rescale_factor / 0.8,
+            walker_config.rescale_factor / 0.8,
+        )
+
+        mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+    elif cfg.env_config.walker_name == "fly":
+        spec = mujoco.MjSpec()
+        spec = spec.from_file(str(_XML_PATH))
+
+        # in training scaled by this amount as well
+        for geom in spec.geoms:
+            if geom.size is not None:
+                geom.size *= walker_config.rescale_factor
+            if geom.pos is not None:
+                geom.pos *= walker_config.rescale_factor
+
+        mj_model = spec.compile()
+    else:
+        raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
+
+    mj_model.opt.solver = {
+        "cg": mujoco.mjtSolver.mjSOL_CG,
+        "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+    }["cg"]
+
+    mj_model.opt.iterations = 6
+    mj_model.opt.ls_iterations = 6
+    mj_data = mujoco.MjData(mj_model)
+
+    site_id = [
+        mj_model.site(i).id
+        for i in range(mj_model.nsite)
+        if "-0" in mj_model.site(i).name
+    ]
+    for id in site_id:
+        mj_model.site(id).rgba = [1, 0, 0, 1]
+
+    # visual mujoco rendering
+    scene_option = mujoco.MjvOption()
+    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
+    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
+
+    # save rendering and log to wandb
+    mujoco.mj_kinematics(mj_model, mj_data)
+    renderer = mujoco.Renderer(mj_model, height=512, width=512)
+
+    return renderer, mj_model, mj_data, scene_option
+
+
+def render_rollout(
     cfg,
     rollout: dict,
 ) -> list:
@@ -68,48 +138,7 @@ def render_from_saved_rollout(
         list: list of frames of the rendering
     """
     qposes_ref, qposes_rollout = rollout["qposes_ref"], rollout["qposes_rollout"]
-    if cfg.walker_type == "rodent":
-        pair_render_xml_path = str(
-            (
-                Path(__file__).parent
-                / ".."
-                / "environment"
-                / "walker"
-                / "assets"
-                / "rodent"
-                / "rodent_ghostpair_scale080.xml"
-            ).resolve()
-        )
-    elif cfg.walker_type == "fly":
-        pair_render_xml_path = str(
-            (
-                Path(__file__).parent
-                / ".."
-                / "environment"
-                / "walker"
-                / "assets"
-                / "fruitfly"
-                / "fruitfly_force_pair.xml"
-            ).resolve()
-        )
-    else:
-        raise ValueError(f"Unsupported walker type: {cfg.walker_type}")
-    # TODO: Make this ghost rendering walker agonist
-    root = mjcf_dm.from_path(pair_render_xml_path)
-    rescale.rescale_subtree(
-        root,
-        cfg.walker_config.rescale_factor / 0.8,
-        cfg.walker_config.rescale_factor / 0.8,
-    )
-
-    mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
-    mj_model.opt.solver = {
-        "cg": mujoco.mjtSolver.mjSOL_CG,
-        "newton": mujoco.mjtSolver.mjSOL_NEWTON,
-    }["cg"]
-    mj_model.opt.iterations = 6
-    mj_model.opt.ls_iterations = 6
-    mj_data = mujoco.MjData(mj_model)
+    renderer, mj_model, mj_data, scene_option = make_rollout_renderer(cfg)
 
     # Calulate realtime rendering fps
     render_fps = (
@@ -126,7 +155,9 @@ def render_from_saved_rollout(
     ):
         mj_data.qpos = np.append(qpos1, qpos2)
         mujoco.mj_forward(mj_model, mj_data)
-        renderer.update_scene(mj_data, camera=cfg.env_config.render_camera_name)
+        renderer.update_scene(
+            mj_data, camera=cfg.env_config.render_camera_name, scene_option=scene_option
+        )
         pixels = renderer.render()
         frames.append(pixels)
     return frames, render_fps

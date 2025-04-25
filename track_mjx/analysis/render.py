@@ -41,6 +41,7 @@ _GHOST_RENDER_XML_PATHS = {
     "fly": "assets/fruitfly/fruitfly_force_pair.xml",
 }
 
+
 def agg_backend_context(func):
     """
     Decorator to switch to a headless backend during function execution.
@@ -155,9 +156,7 @@ def render_rollout(
         mj_data.qpos = np.append(qpos1, qpos2)
         mujoco.mj_forward(mj_model, mj_data)
         renderer.update_scene(
-            mj_data, 
-            camera=cfg.env_config.render_camera_name, 
-            scene_option=scene_option
+            mj_data, camera=cfg.env_config.render_camera_name, scene_option=scene_option
         )
         pixels = renderer.render()
         frames.append(pixels)

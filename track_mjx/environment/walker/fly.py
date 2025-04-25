@@ -12,6 +12,7 @@ from track_mjx.environment.walker.base import BaseWalker
 
 _XML_PATH = "assets/fruitfly/fruitfly_force_fast.xml"
 
+
 class Fly(BaseWalker):
     """FlyBody class that manages the body structure, joint configurations, and model loading."""
 

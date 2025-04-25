@@ -1,19 +1,13 @@
-import dataclasses
-from typing import Any, Callable, Sequence, Tuple, Union
-import warnings
+from typing import Sequence, Tuple, Union
 
 from brax.training import networks
 from brax.training import types
-from brax.training import distribution
-from brax.training.networks import MLP
-import brax.training.agents.ppo.networks as ppo_networks
 from brax.training.types import PRNGKey
 
 import jax
 import jax.numpy as jnp
 from jax import random
 
-import flax
 from flax import linen as nn
 
 
@@ -29,7 +23,9 @@ class Encoder(nn.Module):
     @nn.compact
     def __call__(
         self, x: jnp.ndarray, get_activation: bool = False
-    ) -> Union[Tuple[jnp.ndarray, jnp.ndarray], Tuple[Tuple[jnp.ndarray, jnp.ndarray], dict]]:
+    ) -> Union[
+        Tuple[jnp.ndarray, jnp.ndarray], Tuple[Tuple[jnp.ndarray, jnp.ndarray], dict]
+    ]:
         activations = {}
         # For each layer in the sequence
         for i, hidden_size in enumerate(self.layer_sizes):
@@ -64,7 +60,9 @@ class Decoder(nn.Module):
     bias: bool = True
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, get_activation: bool = False) -> Union[jnp.ndarray, Tuple[jnp.ndarray, dict]]:
+    def __call__(
+        self, x: jnp.ndarray, get_activation: bool = False
+    ) -> Union[jnp.ndarray, Tuple[jnp.ndarray, dict]]:
         activations = {}
         for i, hidden_size in enumerate(self.layer_sizes):
             x = nn.Dense(
@@ -104,13 +102,28 @@ class IntentionNetwork(nn.Module):
     def __call__(self, obs, key, get_activation: bool = False):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
-        
+
         if get_activation:
-            (latent_mean, latent_logvar), encoder_activations = self.encoder(traj, get_activation=True)
+            (latent_mean, latent_logvar), encoder_activations = self.encoder(
+                traj, get_activation=True
+            )
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
-            action, decoder_activations = self.decoder(concatenated, get_activation=True)
-            return action, latent_mean, latent_logvar, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
+            concatenated = jnp.concatenate(
+                [z, obs[..., self.reference_obs_size :]], axis=-1
+            )
+            action, decoder_activations = self.decoder(
+                concatenated, get_activation=True
+            )
+            return (
+                action,
+                latent_mean,
+                latent_logvar,
+                {
+                    "encoder": encoder_activations,
+                    "decoder": decoder_activations,
+                    "intention": z,
+                },
+            )
         else:
             latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
@@ -141,7 +154,9 @@ def make_intention_policy(
     def apply(processor_params, policy_params, obs, key, get_activation: bool = False):
         """Applies the policy network with observation normalizer."""
         obs = preprocess_observations_fn(obs, processor_params)
-        return policy_module.apply(policy_params, obs=obs, key=key, get_activation=get_activation)
+        return policy_module.apply(
+            policy_params, obs=obs, key=key, get_activation=get_activation
+        )
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)

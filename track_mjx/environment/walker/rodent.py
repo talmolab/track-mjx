@@ -18,6 +18,8 @@ import os
 from track_mjx.environment.walker.base import BaseWalker
 
 _XML_PATH = "assets/rodent/rodent.xml"
+
+
 class Rodent(BaseWalker):
     """Rodent class that manages the body structure, joint configurations, and model loading"""
 

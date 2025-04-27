@@ -96,19 +96,6 @@ def compute_pos_reward(
     return weighted_pos_reward, pos_distance
 
 
-def compute_energy_cost(
-    qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
-) -> jp.ndarray:
-    """Penalize energy consumption.
-    Args:
-        qvel: Current velocity data.
-        qfrc_actuator: Current actuator force data.
-    Returns:
-        jp.ndarray: Weighted energy cost.
-    """
-    return weight * jp.sum(jp.abs(qvel[6:]) * jp.abs(qfrc_actuator[6:]))
-
-
 def compute_quat_reward(
     quat_array: jp.ndarray,
     reference_clip_quat: jp.ndarray,
@@ -255,6 +242,19 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
+def compute_energy_cost(
+    qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Penalize energy consumption.
+    Args:
+        qvel: Velocity data of joints.
+        qfrc_actuator: Actuator force data.
+    Returns:
+        jp.ndarray: Weighted energy cost.
+    """
+    return weight * jp.minimum(jp.sum(jp.abs(qvel) * jp.abs(qfrc_actuator)), 50.0)
+
+
 def compute_health_penalty(
     torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
 ) -> jp.ndarray:
@@ -388,7 +388,9 @@ def compute_tracking_rewards(
     )
 
     energy_cost = compute_energy_cost(
-        data.qvel, data.qfrc_actuator, reward_config.energy_cost_weight
+        data.qvel[6:],
+        data.qfrc_actuator[6:],
+        reward_config.energy_cost_weight,
     )
 
     torso_z = walker.get_torso_position(data.xpos)[2]

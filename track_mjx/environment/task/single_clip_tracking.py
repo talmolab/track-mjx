@@ -187,6 +187,8 @@ class SingleClipTracking(PipelineEnv):
             "endeff_reward": zero,
             "ctrl_cost": zero,
             "ctrl_diff_cost": zero,
+            "energy_cost": zero,
+            "done": zero,
             "too_far": zero,
             "bad_pose": zero,
             "bad_quat": zero,
@@ -220,6 +222,9 @@ class SingleClipTracking(PipelineEnv):
         )
 
         # reward calculation
+        # TODO: Make it so that a list of rewards is returned and a
+        # list of terminiation values are returned (distances)
+        # So we can sum the whole list to get the total reward
         (
             pos_reward,
             quat_reward,
@@ -229,11 +234,11 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
+            energy_cost,
             too_far,
             bad_pose,
             bad_quat,
             fall,
-            info,
             joint_distance,
             summed_pos_distance,
             quat_distance,
@@ -258,6 +263,7 @@ class SingleClipTracking(PipelineEnv):
             + endeff_reward
             - ctrl_cost
             - ctrl_diff_cost
+            - energy_cost
         )
 
         # Raise done flag if terminating
@@ -282,7 +288,9 @@ class SingleClipTracking(PipelineEnv):
             bodypos_reward=bodypos_reward,
             endeff_reward=endeff_reward,
             ctrl_cost=-ctrl_cost,
-            ctrl_diff_cost=ctrl_diff_cost,
+            ctrl_diff_cost=-ctrl_diff_cost,
+            energy_cost=-energy_cost,
+            done=done,
             too_far=too_far,
             bad_pose=bad_pose,
             bad_quat=bad_quat,

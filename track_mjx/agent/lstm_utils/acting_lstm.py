@@ -42,40 +42,18 @@ def actor_step(
 ) -> tuple[State, Transition, jnp.ndarray]:
     """Collect data and update LSTM hidden state."""
     
-    print(f'[DEBUG] In actor step, before stepping state_obs shape is: {env_state.obs.shape}')
-    print(f'[DEBUG] In actor step, passed in hidden state shape is: {hidden_state[0].shape}')
-    
-    actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state) # ensure policy now returns the updated LSTM hidden state
-    
-    # diff = jnp.linalg.norm(new_hidden_state[0] - hidden_state[0])
-    # jax.debug.print("[DEBUG] Hidden state h diff from prev to new: {}", diff)
+    actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state)
 
     info_hidden = env_state.info["hidden_state"]
-    # jax.debug.print("[DEBUG] In actor_step, sould be all zeros, Hidden mean: {}, Next hidden mean: {}", info_hidden[0].mean(), info_hidden[0].mean())
-    
-    print(f'[DEBUG] In actor step, new hidden state from policy is: {new_hidden_state[1].shape}')
-    print(f'[DEBUG] In actor step, original hidden state shape from info is: {info_hidden[1].shape}')
     
     nstate = env.step(env_state, actions)
     state_extras = {x: nstate.info[x] for x in extra_fields}
     done = nstate.done[:, None]  # done flags (batch_size, num_envs)
     done = done.reshape((done.shape[0], 1, 1))  # (128, 1, 1)
     
-    # h_before, c_before = new_hidden_state
-    
     new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
     new_hidden_state = jax.tree_map(jax.lax.stop_gradient, new_hidden_state)
     
-    # h_after, c_after = new_hidden_state
-    # h_changed = jnp.any(h_before != h_after, axis=1)
-    # c_changed = jnp.any(c_before != c_after, axis=1)
-    # num_h_reset = jnp.sum(h_changed)
-    # num_c_reset = jnp.sum(c_changed)
-    # jax.debug.print("[DEBUG] Hidden state reset count (h): {}", num_h_reset)
-    # jax.debug.print("[DEBUG] Hidden state reset count (c): {}", num_c_reset)
-    # num_resets = jnp.sum(done)
-    # jax.debug.print("Number of hidden states replaced: {}", num_resets)
-
     return nstate, Transition(  
         observation=env_state.obs, # start with first obs, nstate as next obs will feed in and update next iter
         action=actions,
@@ -111,7 +89,7 @@ def generate_unroll(
             env, state, policy, current_key, hidden_state, extra_fields=extra_fields
         )  # updated hidden state
         
-        # both here and in forward, provide 20 here
+        # both here and in forward, provide unroll_length here
         # return the final hidden in carry for carry alignment (forward), return stacked hidden in transition extra field
         return (nstate, next_key, new_hidden_state), transition
 
@@ -119,9 +97,6 @@ def generate_unroll(
     (final_state, _, forward_hidden_state), data = jax.lax.scan(
         f, (env_state, key, hidden_state), (), length=unroll_length
     )
-    
-    print(f'[DEBUG] In generate unroll, the forward hidden shape is: {forward_hidden_state[0].shape}')
-    # print(f'In generate unroll, the backward hidden shape is: {backward_hidden_state[0].shape}')
     
     return final_state, data, forward_hidden_state
 

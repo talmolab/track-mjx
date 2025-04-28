@@ -32,10 +32,8 @@ from brax.training.acme import running_statistics
 from brax.training.acme import specs
 import flax.training
 
-# from brax.training.agents.ppo import losses as ppo_losses
 from track_mjx.agent import custom_losses as ppo_losses
 
-# from brax.training.agents.ppo import networks as ppo_networks
 from track_mjx.agent import custom_ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey

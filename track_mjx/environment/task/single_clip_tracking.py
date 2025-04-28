@@ -5,24 +5,12 @@ from jax import numpy as jp
 
 from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf as mjcf_brax
-from brax import math as brax_math
-from dm_control.locomotion.walkers import rescale
-from dm_control import mjcf as mjcf_dm
-
-from jax.numpy import inf, ndarray
 import mujoco
 from mujoco import mjx
 
-import numpy as np
+from typing import Any
 
-import os
-
-import collections
-
-import typing
-from typing import Any, Callable, Mapping, Optional, Sequence, Set, Text, Union
-
-from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
+from track_mjx.io.load import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.environment.task.reward import RewardConfig
@@ -120,9 +108,6 @@ class SingleClipTracking(PipelineEnv):
 
         info = {
             "start_frame": start_frame,
-            "summed_pos_distance": 0.0,
-            "quat_distance": 0.0,
-            "joint_distance": 0.0,
             "prev_ctrl": jp.zeros((self.sys.nv,)),
         }
 
@@ -191,6 +176,8 @@ class SingleClipTracking(PipelineEnv):
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
 
         reward, done, zero = jp.zeros(3)
+
+        # TODO: Set up a metrics dataclass
         metrics = {
             "pos_reward": zero,
             "quat_reward": zero,
@@ -198,13 +185,18 @@ class SingleClipTracking(PipelineEnv):
             "angvel_reward": zero,
             "bodypos_reward": zero,
             "endeff_reward": zero,
-            "reward_ctrlcost": zero,
+            "ctrl_cost": zero,
             "ctrl_diff_cost": zero,
+            "energy_cost": zero,
+            "done": zero,
             "too_far": zero,
             "bad_pose": zero,
             "bad_quat": zero,
             "fall": zero,
             "nan": zero,
+            "joint_distance": zero,
+            "summed_pos_distance": zero,
+            "quat_distance": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -230,6 +222,9 @@ class SingleClipTracking(PipelineEnv):
         )
 
         # reward calculation
+        # TODO: Make it so that a list of rewards is returned and a
+        # list of terminiation values are returned (distances)
+        # So we can sum the whole list to get the total reward
         (
             pos_reward,
             quat_reward,
@@ -239,11 +234,14 @@ class SingleClipTracking(PipelineEnv):
             endeff_reward,
             ctrl_cost,
             ctrl_diff_cost,
+            energy_cost,
             too_far,
             bad_pose,
             bad_quat,
             fall,
-            info,
+            joint_distance,
+            summed_pos_distance,
+            quat_distance,
         ) = compute_tracking_rewards(
             data=data,
             reference_clip=reference_clip,
@@ -265,6 +263,7 @@ class SingleClipTracking(PipelineEnv):
             + endeff_reward
             - ctrl_cost
             - ctrl_diff_cost
+            - energy_cost
         )
 
         # Raise done flag if terminating
@@ -288,13 +287,18 @@ class SingleClipTracking(PipelineEnv):
             angvel_reward=angvel_reward,
             bodypos_reward=bodypos_reward,
             endeff_reward=endeff_reward,
-            reward_ctrlcost=-ctrl_cost,
-            ctrl_diff_cost=ctrl_diff_cost,
+            ctrl_cost=-ctrl_cost,
+            ctrl_diff_cost=-ctrl_diff_cost,
+            energy_cost=-energy_cost,
+            done=done,
             too_far=too_far,
             bad_pose=bad_pose,
             bad_quat=bad_quat,
             fall=fall,
             nan=nan,
+            joint_distance=joint_distance,
+            summed_pos_distance=summed_pos_distance,
+            quat_distance=quat_distance,
         )
 
         return state.replace(

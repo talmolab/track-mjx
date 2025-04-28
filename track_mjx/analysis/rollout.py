@@ -7,48 +7,20 @@ import jax
 from brax.envs.base import Env
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
-import pickle
 from brax import envs
-from brax.training.acme import running_statistics, specs
-from typing import Dict, List, Callable, Tuple
-import orbax.checkpoint as ocp
-import functools
-from track_mjx.agent import custom_ppo_networks
+from typing import Dict, Callable
 import hydra
 import logging
-from track_mjx.io import preprocess as preprocessing
 from track_mjx.environment.task.reward import RewardConfig
 from jax import numpy as jnp
 
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
-from track_mjx.environment import custom_wrappers
-from track_mjx.agent import custom_losses as ppo_losses
-
-from omegaconf import DictConfig, OmegaConf
+from track_mjx.environment import wrappers
+from track_mjx.io import load
 
 
-def restore_config(checkpoint_path: str) -> DictConfig:
-    """
-    Restore the config from the checkpoint
-
-    Args:
-        checkpoint_path (str): The path to the checkpoint
-
-    Returns:
-        DictConfig: The restored config
-    """
-    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
-    with ocp.CheckpointManager(
-        checkpoint_path,
-        options=options,
-    ) as mngr:
-        print(f"latest checkpoint step: {mngr.latest_step()}")
-        config = mngr.restore(
-            mngr.latest_step(),
-            args=ocp.args.Composite(config=ocp.args.JsonRestore(None)),
-        )["config"]
-    return config
+from omegaconf import DictConfig
 
 
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:
@@ -58,43 +30,31 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
 
     env_args = cfg_dict["env_config"]["env_args"]
     env_rewards = cfg_dict["env_config"]["reward_weights"]
-    train_config = cfg_dict["train_setup"]["train_config"]
     walker_config = cfg_dict["walker_config"]
     traj_config = cfg_dict["reference_config"]
 
-    # TODO(Scott): move this to track_mjx.io module
-    input_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
-    logging.info(f"Loading data: {input_data_path}")
-    with open(input_data_path, "rb") as file:
-        reference_clip = pickle.load(file)
+    reference_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
+    logging.info(f"Loading data: {reference_data_path}")
+    try:
+        reference_clip = load.make_multiclip_data(reference_data_path)
+    except KeyError:
+        logging.info(
+            f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
+        )
+        reference_clip = load.load_reference_clip_data(reference_data_path)
+
     walker_map = {
         "rodent": Rodent,
         "fly": Fly,
     }
-    walker_class = walker_map[cfg_dict["walker_type"]]
+    walker_class = walker_map[cfg_dict["env_config"]["walker_name"]]
     walker = walker_class(**walker_config)
 
-    reward_config = RewardConfig(
-        too_far_dist=env_rewards.too_far_dist,
-        bad_pose_dist=env_rewards.bad_pose_dist,
-        bad_quat_dist=env_rewards.bad_quat_dist,
-        ctrl_cost_weight=env_rewards.ctrl_cost_weight,
-        ctrl_diff_cost_weight=env_rewards.ctrl_diff_cost_weight,
-        pos_reward_weight=env_rewards.pos_reward_weight,
-        quat_reward_weight=env_rewards.quat_reward_weight,
-        joint_reward_weight=env_rewards.joint_reward_weight,
-        angvel_reward_weight=env_rewards.angvel_reward_weight,
-        bodypos_reward_weight=env_rewards.bodypos_reward_weight,
-        endeff_reward_weight=env_rewards.endeff_reward_weight,
-        healthy_z_range=env_rewards.healthy_z_range,
-        pos_reward_exp_scale=env_rewards.pos_reward_exp_scale,
-        quat_reward_exp_scale=env_rewards.quat_reward_exp_scale,
-        joint_reward_exp_scale=env_rewards.joint_reward_exp_scale,
-        angvel_reward_exp_scale=env_rewards.angvel_reward_exp_scale,
-        bodypos_reward_exp_scale=env_rewards.bodypos_reward_exp_scale,
-        endeff_reward_exp_scale=env_rewards.endeff_reward_exp_scale,
-        penalty_pos_distance_scale=jnp.array(env_rewards.penalty_pos_distance_scale),
-    )
+    # TODO: Stop-gap to run checkpoint prior to adding energy cost, remove for release
+    if "energy_cost_weight" not in env_rewards:
+        env_rewards["energy_cost_weight"] = 0.0
+
+    reward_config = RewardConfig(**env_rewards)
     # Automatically match dict keys and func needs
     env = envs.get_environment(
         env_name=cfg_dict["env_config"]["env_name"],
@@ -107,100 +67,8 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     return env
 
 
-def create_abstract_policy(
-    environment: Env, cfg_dict: Dict | DictConfig
-) -> Tuple[Tuple, Callable]:
-    """
-    Create the policy function for the environment
-
-    Args:
-        environment (Env): The environment to create the policy for
-        cfg_dict (Dict): The config dictionary, direct translation from the
-            yaml file
-
-    Returns:
-        Tuple[Tuple, Callable]: The abstract policy and the policy function
-    """
-    network_factory = functools.partial(
-        custom_ppo_networks.make_intention_ppo_networks,
-        encoder_hidden_layer_sizes=tuple(
-            cfg_dict["network_config"]["encoder_layer_sizes"]
-        ),
-        decoder_hidden_layer_sizes=tuple(
-            cfg_dict["network_config"]["decoder_layer_sizes"]
-        ),
-        value_hidden_layer_sizes=tuple(
-            cfg_dict["network_config"]["critic_layer_sizes"]
-        ),
-    )
-
-    reset_fn = environment.reset
-    key_envs = jax.random.key(1)
-    env_state = reset_fn(key_envs)
-
-    ppo_network = network_factory(
-        env_state.obs.shape[-1],
-        int(env_state.info["reference_obs_size"]),
-        environment.action_size,
-    )
-
-    make_policy = custom_ppo_networks.make_inference_fn(ppo_network)
-    key_policy, key_value = jax.random.split(jax.random.key(1))
-
-    init_params = ppo_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key_policy),
-        value=ppo_network.value_network.init(key_value),
-    )
-
-    abstract_policy = (
-        running_statistics.init_state(
-            specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
-        ),
-        init_params.policy,
-    )
-
-    return abstract_policy, make_policy
-
-
-def restore_policy(checkpoint_path: str, abstract_policy: Tuple) -> Tuple:
-    """
-    Restore the policy from the checkpoint
-
-    Args:
-        checkpoint_path (str): The path to the checkpoint
-        abstract_policy (Callable): The abstract policy for loading
-
-    Returns:
-        Tuple: The restored policy
-    """
-    options = ocp.CheckpointManagerOptions(step_prefix="PPONetwork")
-    with ocp.CheckpointManager(
-        checkpoint_path,
-        options=options,
-    ) as mngr:
-        print(f"latest checkpoint step: {mngr.latest_step()}")
-        policy = mngr.restore(
-            mngr.latest_step(),
-            args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy)),
-        )["policy"]
-    return policy
-
-
-def create_inference_fn(environment: Env, cfg_dict: Dict | DictConfig) -> Callable:
-    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(environment)
-    abstract_policy, make_policy = create_abstract_policy(rollout_env, cfg_dict)
-    # load the checkpoint
-    policy = restore_policy(
-        cfg_dict["train_setup"]["checkpoint_to_restore"], abstract_policy
-    )
-    jit_inference_fn = jax.jit(
-        make_policy(policy, deterministic=True, get_activation=True)
-    )
-    return jit_inference_fn
-
-
 def create_rollout_generator(
-    ref_traj_config: Dict | DictConfig, environment: Env, inference_fn: Callable
+    cfg: Dict | DictConfig, environment: Env, inference_fn: Callable
 ) -> Callable[[int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
@@ -212,8 +80,9 @@ def create_rollout_generator(
     Returns:
         Callable: A generate_rollout function that can be called with configuration.
     """
+    ref_traj_config = cfg["reference_config"]
     # Wrap the environment
-    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(environment)
+    rollout_env = wrappers.RenderRolloutWrapperTracking(environment)
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)
@@ -225,9 +94,8 @@ def create_rollout_generator(
         Generates a rollout using pre-compiled JIT functions.
 
         Args:
-            cfg_dict (Dict): Configuration dictionary.
             clip_idx (Optional[int]): Specific clip ID to generate the rollout for.
-
+            seed (int): Random seed for jax PRNGKey.
         Returns:
             Dict: A dictionary containing rollout data.
         """
@@ -265,49 +133,26 @@ def create_rollout_generator(
 
         rollout_states = jax.tree.map(prepend, init_state, states)
 
-        # Compute rewards and metrics
-        rewards = {
-            "pos_rewards": jax.vmap(lambda s: s.metrics["pos_reward"])(rollout_states),
-            "endeff_rewards": jax.vmap(lambda s: s.metrics["endeff_reward"])(
-                rollout_states
-            ),
-            "quat_rewards": jax.vmap(lambda s: s.metrics["quat_reward"])(
-                rollout_states
-            ),
-            "angvel_rewards": jax.vmap(lambda s: s.metrics["angvel_reward"])(
-                rollout_states
-            ),
-            "bodypos_rewards": jax.vmap(lambda s: s.metrics["bodypos_reward"])(
-                rollout_states
-            ),
-            "joint_rewards": jax.vmap(lambda s: s.metrics["joint_reward"])(
-                rollout_states
-            ),
-            "summed_pos_distances": jax.vmap(lambda s: s.info["summed_pos_distance"])(
-                rollout_states
-            ),
-            "joint_distances": jax.vmap(lambda s: s.info["joint_distance"])(
-                rollout_states
-            ),
-            "torso_heights": jax.vmap(
-                lambda s: s.pipeline_state.xpos[environment.walker._torso_idx][2]
-            )(rollout_states),
-        }
+        # Get metrics
+        rollout_metrics = {}
+        for rollout_metric in cfg.logging_config.rollout_metrics:
+            rollout_metrics[f"{rollout_metric}s"] = jax.vmap(
+                lambda s: s.metrics[rollout_metric]
+            )(rollout_states)
 
         # Reference and rollout qposes
         ref_traj = rollout_env._get_reference_clip(init_state.info)
-        qposes_ref = jnp.tile(
-            jnp.concatenate(
-                [ref_traj.position, ref_traj.quaternion, ref_traj.joints], axis=-1
-            ),
-            (int(environment._steps_for_cur_frame), 1),
+        qposes_ref = jnp.repeat(
+            jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+            int(environment._steps_for_cur_frame),
+            axis=0,
         )
 
         # Collect qposes from states
         qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
 
         return {
-            "rewards": rewards,
+            "rollout_metrics": rollout_metrics,
             "observations": jax.vmap(lambda s: s.obs)(rollout_states),
             "ctrl": ctrls,
             "activations": activations,

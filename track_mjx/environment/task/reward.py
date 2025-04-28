@@ -5,7 +5,7 @@ import numpy as np
 from typing import Union
 from omegaconf import ListConfig
 from track_mjx.environment.walker.base import BaseWalker
-from track_mjx.io.preprocess.mjx_preprocess import ReferenceClip
+from track_mjx.io.load import ReferenceClip
 from mujoco import MjData
 
 from flax import struct
@@ -13,13 +13,16 @@ from flax import struct
 
 @struct.dataclass
 class RewardConfig:
-    """All configuration for reward computation, including weights and scaling."""
+    """Weights and scales for the imitation reward terms.
+    Initialized through env_config.reward_weights in the config.yaml file.
+    """
 
     too_far_dist: float
     bad_pose_dist: float
     bad_quat_dist: float
     ctrl_cost_weight: float
     ctrl_diff_cost_weight: float
+    energy_cost_weight: float
     pos_reward_weight: float
     quat_reward_weight: float
     joint_reward_weight: float
@@ -239,6 +242,19 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
+def compute_energy_cost(
+    qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Penalize energy consumption.
+    Args:
+        qvel: Velocity data of joints.
+        qfrc_actuator: Actuator force data.
+    Returns:
+        jp.ndarray: Weighted energy cost.
+    """
+    return weight * jp.minimum(jp.sum(jp.abs(qvel) * jp.abs(qfrc_actuator)), 50.0)
+
+
 def compute_health_penalty(
     torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
 ) -> jp.ndarray:
@@ -371,8 +387,13 @@ def compute_tracking_rewards(
         action, info["prev_ctrl"], reward_config.ctrl_diff_cost_weight
     )
 
-    xpos = data.xpos
-    torso_z = walker.get_torso_position(xpos)[2]
+    energy_cost = compute_energy_cost(
+        data.qvel[6:],
+        data.qfrc_actuator[6:],
+        reward_config.energy_cost_weight,
+    )
+
+    torso_z = walker.get_torso_position(data.xpos)[2]
     fall = compute_health_penalty(torso_z, reward_config.healthy_z_range)
     too_far, bad_pose, bad_quat, summed_pos_distance = compute_penalty_terms(
         pos_distance,
@@ -384,10 +405,7 @@ def compute_tracking_rewards(
         reward_config.penalty_pos_distance_scale,
     )
 
-    info["joint_distance"] = joint_distance
-    info["summed_pos_distance"] = summed_pos_distance
-    info["quat_distance"] = quat_distance
-
+    # TODO: return a structured dict
     return (
         pos_reward,
         quat_reward,
@@ -397,9 +415,12 @@ def compute_tracking_rewards(
         endeff_reward,
         ctrl_cost,
         ctrl_diff_cost,
+        energy_cost,
         too_far,
         bad_pose,
         bad_quat,
         fall,
-        info,
+        joint_distance,
+        summed_pos_distance,
+        quat_distance,
     )

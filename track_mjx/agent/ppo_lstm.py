@@ -24,7 +24,6 @@ from typing import Callable, Optional, Tuple, Union, Sequence
 from absl import logging
 from brax import base
 from brax import envs
-# from brax.training import acting
 from brax.training import gradients
 from brax.training import pmap
 from brax.training import types
@@ -32,10 +31,7 @@ from brax.training.acme import running_statistics
 from brax.training.acme import specs
 import flax.training
 
-# from brax.training.agents.ppo import losses as ppo_losses
 from track_mjx.agent import custom_losses as ppo_losses
-
-# from brax.training.agents.ppo import networks as ppo_networks
 from track_mjx.agent import custom_ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
@@ -54,7 +50,6 @@ from flax.training import orbax_utils
 
 from track_mjx.environment import custom_wrappers
 from track_mjx.agent.lstm_utils import acting_lstm as acting
-# from track_mjx.agent import gradients_lstm as gradients
 
 from flax import linen as nn
 
@@ -252,7 +247,6 @@ def train(
     else:
         wrap_for_training = envs_v1.wrappers.wrap_for_training
     
-    #TODO: make it work for both lstm and mlp
     env = wrap_for_training(
         environment,
         episode_length=episode_length,
@@ -262,9 +256,6 @@ def train(
         hidden_state_dim=config_dict['network_config']['hidden_state_size'],
         hidden_layer_num=config_dict['network_config']['hidden_layer_num'],
     )
-    
-    num_l = config_dict['network_config']['hidden_layer_num']
-    print(f'[DEBUG] Number of hidden layers in training loop is: {num_l}')
 
     reset_fn = jax.jit(jax.vmap(env.reset))
     key_envs = jax.random.split(key_env, num_envs // process_count)
@@ -344,8 +335,6 @@ def train(
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
         
         # Jax.lax.scan should scan through minibatches
-        print(f'[DEBUG] In sgd step, shape of shuffled data.observation into scanning is {shuffled_data.observation.shape}')
-        
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, key_grad),
@@ -393,16 +382,10 @@ def train(
             length=batch_size * num_minibatches // num_envs,
         )
         
-        print(f'[DEBUG] In training step, passed into forward hidden shape is: {training_state.hidden_state[0].shape}')
-        print(f'[DEBUG] In training step, new unstack hidden (forward) shape is: {forward_hidden_state[0].shape}')
-        print(f'[DEBUG] In training step, data.observation shape is: {data.observation.shape}')
-        
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data)
         assert data.discount.shape[1:] == (unroll_length,)
-        
-        print(f'[DEBUG] In training step, data.observation shape after shaping is: {data.observation.shape}')
 
         # Update normalization params and normalize observations.
         # normalizer_params = running_statistics.update(
@@ -410,9 +393,7 @@ def train(
         #     data.observation,
         #     pmap_axis_name=_PMAP_AXIS_NAME,
         # )
-        
         normalizer_params = training_state.normalizer_params
-        print(f'[DEBUG] In training step, state.done has shape: {state.done.shape}')
         
         # Final sgd hidden_state returns doesn't matter
         (optimizer_state, params, _), metrics = jax.lax.scan(
@@ -490,9 +471,6 @@ def train(
     dummy_hidden_state = env_state.info["hidden_state"]
     dummy_hidden_state_squeeze = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), dummy_hidden_state)
     
-    print(f'[DEBUG] In training, the dummy hidden shape is: {dummy_hidden_state_squeeze[0].shape}')
-    print(f'[DEBUG] In training, the env obs shape is: {env_state.obs.shape}')
-    
     init_params = ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key=key_policy, hidden_state=dummy_hidden_state_squeeze), # policy network here is an function to be instantiated
         value=ppo_network.value_network.init(key_value),
@@ -548,7 +526,7 @@ def train(
         hidden_layer_num=config_dict['network_config']['hidden_layer_num'],
     )
     
-    print(f'[DEBUG] Using deterministic_eval is {deterministic_eval}')
+    print(f'Using deterministic_eval is {deterministic_eval}')
     
     evaluator = acting.Evaluator(
         eval_env,

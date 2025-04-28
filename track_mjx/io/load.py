@@ -6,6 +6,7 @@ import yaml
 from omegaconf import DictConfig
 from pathlib import Path
 import hydra
+import logging
 
 
 @struct.dataclass
@@ -47,6 +48,22 @@ def load_configs(config_dir: Union[Path, str], config_name: str) -> DictConfig:
         # OmegaConf.merge(structured_config, cfg)
         # print("Config loaded and validated.")
         return cfg
+
+
+def load_data(data_path: str):
+    """Loads data from the specified path.
+    Try to load the data in the stac-mjx format first,
+    then try the reference clip format (fly data).
+    """
+    # TODO: Use a base path given by the config
+    data_path = hydra.utils.to_absolute_path(data_path)
+    try:
+        return make_multiclip_data(data_path)
+    except KeyError:
+        logging.info(
+            f"Loading from stac-mjx format failed. Trying the ReferenceClip format."
+        )
+        return load_reference_clip_data(data_path)
 
 
 def make_singleclip_data(traj_data_path):
@@ -115,14 +132,11 @@ def load_reference_clip_data(
     filepath: str, group_name: str = "all_clips"
 ) -> ReferenceClip:
     """Loads data from an HDF5 file containing Datasets for ReferenceClip.
-
     Args:
         filepath: Path to the HDF5 file.
         group_name: Name of the group containing the datasets.  Defaults to "all_clips".
-
     Returns:
         A ReferenceClip object containing the loaded data.
-
     Raises:
         FileNotFoundError: If the specified file does not exist.
         KeyError: If the specified group or expected datasets are not found.

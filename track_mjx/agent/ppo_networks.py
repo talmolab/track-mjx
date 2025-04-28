@@ -15,7 +15,7 @@ from brax.training import distribution
 from brax.training.types import PRNGKey
 
 import jax
-
+from jax import numpy as jnp
 import flax
 
 from track_mjx.agent import intention_network, masked_running_statistics, checkpointing

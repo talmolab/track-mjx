@@ -186,9 +186,9 @@ def rollout_logging_fn(
         else:
             ctrl, extras,  = jit_logging_inference_fn(params, obs, act_rng, None)
         
-        print(f'[DEBUG] In rendering_logging_fn, before reshape ctrl shape is {ctrl.shape}')
+        # print(f'[DEBUG] In rendering_logging_fn, before reshape ctrl shape is {ctrl.shape}')
         ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
-        print(f'[DEBUG] In rendering_logging_fn, after reshape ctrl shape is {ctrl.shape}')
+        # print(f'[DEBUG] In rendering_logging_fn, after reshape ctrl shape is {ctrl.shape}')
         
         state = jit_step(state, ctrl)
             

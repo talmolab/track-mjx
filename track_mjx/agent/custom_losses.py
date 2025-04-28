@@ -153,8 +153,10 @@ def compute_ppo_loss(
       
       # jax.debug.print("[DEBUG SHAPE]: {}", hidden_state[0].shape)
       
+      hidden_print = data.extras['hidden_state']
       print(f'[DEBUG] In loss function, the data shape is {data.observation.shape}')
-      print(f'[DEBUG] In loss function, the data hidden shape is {hidden_state[1].shape}')
+      print(f'[DEBUG] In loss function, the data full hidden shape is {hidden_print.shape}')
+      print(f'[DEBUG] In loss function, the data first time step hidden shape is {hidden_state[0].shape}')
       
       def scan_policy_fn(carry, inputs):
           """
@@ -182,11 +184,10 @@ def compute_ppo_loss(
           # batch_size = h.shape[0]
           # lstm_cell = nn.LSTMCell(features=h.shape[1])
           # reset_h, reset_c = lstm_cell.initialize_carry(jax.random.PRNGKey(0), (batch_size, h.shape[1]))
-          # new_h = jnp.where(done_mask, reset_h, new_h)
-          # new_c = jnp.where(done_mask, reset_c, new_c)
 
           reset_h = jnp.zeros_like(h)
           reset_c = jnp.zeros_like(c)
+          
           new_h = jnp.where(done_mask, reset_h, new_h)
           new_c = jnp.where(done_mask, reset_c, new_c)
 
@@ -199,10 +200,10 @@ def compute_ppo_loss(
           (data.observation, 1 - data.discount, data.extras) # scan over 20 in (20, 512, data_dim) & discount is opposite to done
       )
       
-      # diffs_h = jnp.linalg.norm(stack_h - data.extras["hidden_state"], axis=(1, 2)) # length 20, stack_h need to consider first h
-      # diffs_c = jnp.linalg.norm(stack_c - data.extras["cell_state"], axis=(1, 2))
+      # diffs_h = jnp.linalg.norm(jnp.squeeze(stack_h, axis=2) - jnp.squeeze(data.extras["hidden_state"], axis=2), axis=(1, 2))
+      # diffs_c = jnp.linalg.norm(jnp.squeeze(stack_c, axis=2) - jnp.squeeze(data.extras["cell_state"], axis=2), axis=(1, 2))
       # diff_logits = jnp.linalg.norm(policy_logits - data.extras["policy_extras"]['logits'], axis=(1, 2))
-      
+
       # jax.debug.print("0, -1 diffs_h: {}, {}", diffs_h[0], diffs_h[-1])
       # jax.debug.print("0, -1 diffs_c: {}, {}", diffs_c[0], diffs_c[-1])
       # jax.debug.print("0, -1 diff_logits: {}, {}", diff_logits[0], diff_logits[-1])

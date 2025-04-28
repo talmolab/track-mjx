@@ -262,6 +262,9 @@ def train(
         hidden_state_dim=config_dict['network_config']['hidden_state_size'],
         hidden_layer_num=config_dict['network_config']['hidden_layer_num'],
     )
+    
+    num_l = config_dict['network_config']['hidden_layer_num']
+    print(f'[DEBUG] Number of hidden layers in training loop is: {num_l}')
 
     reset_fn = jax.jit(jax.vmap(env.reset))
     key_envs = jax.random.split(key_env, num_envs // process_count)
@@ -309,7 +312,6 @@ def train(
         ) # partial loss here, this would inherent parameters from loss_fn
         
     
-    #TODO: chaneg naging of data
     def minibatch_step(
         carry,
         data: types.Transition,
@@ -403,13 +405,13 @@ def train(
         print(f'[DEBUG] In training step, data.observation shape after shaping is: {data.observation.shape}')
 
         # Update normalization params and normalize observations.
-        normalizer_params = running_statistics.update(
-            training_state.normalizer_params,
-            data.observation,
-            pmap_axis_name=_PMAP_AXIS_NAME,
-        )
+        # normalizer_params = running_statistics.update(
+        #     training_state.normalizer_params,
+        #     data.observation,
+        #     pmap_axis_name=_PMAP_AXIS_NAME,
+        # )
         
-        # normalizer_params = training_state.normalizer_params
+        normalizer_params = training_state.normalizer_params
         print(f'[DEBUG] In training step, state.done has shape: {state.done.shape}')
         
         # Final sgd hidden_state returns doesn't matter
@@ -420,11 +422,11 @@ def train(
             length=num_updates_per_batch,
         ) # no specific scan axis
         
-        # normalizer_params = running_statistics.update(
-        #     training_state.normalizer_params,
-        #     data.observation,
-        #     pmap_axis_name=_PMAP_AXIS_NAME,
-        # )
+        normalizer_params = running_statistics.update(
+            training_state.normalizer_params,
+            data.observation,
+            pmap_axis_name=_PMAP_AXIS_NAME,
+        )
 
         new_training_state = TrainingState(
             optimizer_state=optimizer_state,
@@ -542,7 +544,8 @@ def train(
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
         use_lstm=use_lstm,
-        hidden_state_dim=config_dict['network_config']['hidden_state_size']
+        hidden_state_dim=config_dict['network_config']['hidden_state_size'],
+        hidden_layer_num=config_dict['network_config']['hidden_layer_num'],
     )
     
     print(f'[DEBUG] Using deterministic_eval is {deterministic_eval}')

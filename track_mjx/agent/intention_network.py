@@ -33,6 +33,7 @@ class Encoder(nn.Module):
         activations = {}
         # For each layer in the sequence
         for i, hidden_size in enumerate(self.layer_sizes):
+            # jax.debug.print("[DEBUG inside Encoder] layer {}, x mean: {}", i, x.mean())
             x = nn.Dense(
                 hidden_size,
                 name=f"hidden_{i}",
@@ -40,7 +41,7 @@ class Encoder(nn.Module):
                 use_bias=self.bias,
             )(x)
             x = self.activation(x)
-            x = nn.LayerNorm()(x)
+            # x = nn.LayerNorm()(x)
             if get_activation:
                 activations[f"layer_{i}"] = x
 
@@ -111,11 +112,16 @@ class LSTMDecoder(nn.Module):
             # if h.ndim != 1:
             h_i = h[:, layer_idx, :]
             c_i = c[:, layer_idx, :]
+            
+            # jax.debug.print("[DEBUG inside LSTMDecoder] Before LSTM layer {}, x mean: {}, h mean: {}, c mean: {}", layer_idx, x.mean(), h_i.mean(), c_i.mean())
                 
             (new_c_i, new_h_i), x = lstm((c_i, h_i), x)
+            
+            # jax.debug.print("[DEBUG inside LSTMDecoder] After LSTM layer {}, new_h mean: {}, new_c mean: {}", layer_idx, new_h_i.mean(), new_c_i.mean())
 
             h_new.append(new_h_i)
             c_new.append(new_c_i)
+            
 
         # flax does not allow control the output size independently of the hidden state size.
         x = nn.Dense(self.layer_sizes[-1], name="lstm_projection", kernel_init=self.kernel_init, use_bias=self.bias)(x)
@@ -142,7 +148,7 @@ class LSTMDecoder(nn.Module):
         if get_activation:
             # no hidden is stored as (num_hidden_layers, 128) rather than 128
             return x, (stacke_h_new, stacke_c_new), activations
-        return x, (stacke_h_new, stacke_c_new)
+        return x, (stacke_h_new, stacke_c_new) # still tuple
 
 
 def reparameterize(rng, mean, logvar):
@@ -177,6 +183,7 @@ class IntentionNetwork(nn.Module):
             
             if use_lstm:
                 z = latent_mean
+                # jax.debug.print("[DEBUG inside IntentionNetwork] z mean: {}", z.mean())
                 concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
                 print('[DEBUG] In intention_network using LSTM + Activation')
                 action, new_hidden_state, decoder_activations = self.lstm_decoder(concatenated, hidden_state, get_activation=get_activation)
@@ -192,6 +199,7 @@ class IntentionNetwork(nn.Module):
             
             if use_lstm:
                 z = latent_mean
+                # jax.debug.print("[DEBUG inside IntentionNetwork] z mean: {}", z.mean())
                 concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
                 print('[DEBUG] In intention_network using just LSTM, no Activation')
                 action, new_hidden_state = self.lstm_decoder(concatenated, hidden_state)

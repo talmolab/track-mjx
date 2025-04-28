@@ -69,7 +69,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 # returning hidden_state here
                 if get_activation:
                     if use_lstm:
-                        return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}, new_hidden_state
+                        return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}, new_hidden_state # swapped order from network return
                     else:
                         return ppo_networks.parametric_action_distribution.mode(logits), {"activations": activations}
                 

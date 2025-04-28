@@ -43,14 +43,15 @@ def actor_step(
     """Collect data and update LSTM hidden state."""
     
     print(f'[DEBUG] In actor step, before stepping state_obs shape is: {env_state.obs.shape}')
-    print(f'[DEBUG] In actor step, passed in hidden state shape is: {hidden_state[1].shape}')
+    print(f'[DEBUG] In actor step, passed in hidden state shape is: {hidden_state[0].shape}')
     
     actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state) # ensure policy now returns the updated LSTM hidden state
     
     # diff = jnp.linalg.norm(new_hidden_state[0] - hidden_state[0])
     # jax.debug.print("[DEBUG] Hidden state h diff from prev to new: {}", diff)
 
-    info_hidden = env_state.info['hidden_state']
+    info_hidden = env_state.info["hidden_state"]
+    # jax.debug.print("[DEBUG] In actor_step, sould be all zeros, Hidden mean: {}, Next hidden mean: {}", info_hidden[0].mean(), info_hidden[0].mean())
     
     print(f'[DEBUG] In actor step, new hidden state from policy is: {new_hidden_state[1].shape}')
     print(f'[DEBUG] In actor step, original hidden state shape from info is: {info_hidden[1].shape}')
@@ -84,7 +85,7 @@ def actor_step(
         extras={
             'policy_extras': policy_extras,
             'state_extras': state_extras,
-            'hidden_state': hidden_state[0], # lag one, else first hidden_state lost
+            'hidden_state': hidden_state[0], # lag one, or else first hidden_state lost, should be hidden before policy
             'cell_state': hidden_state[1]
         }
     ), new_hidden_state # use for forward

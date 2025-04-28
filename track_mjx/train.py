@@ -146,10 +146,10 @@ def main(cfg: DictConfig):
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
     
-    if cfg.architecture == 'lstm':
+    if cfg.train_setup.train_config.use_lstm:
         print('Using LSTM')
         custom_ppo = custom_ppo_lstm
-    elif cfg.architecture == 'mlp':
+    else:
         print('Using MLP')
         custom_ppo = custom_ppo_mlp
 

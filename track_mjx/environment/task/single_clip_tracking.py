@@ -223,6 +223,9 @@ class SingleClipTracking(PipelineEnv):
         )
 
         # reward calculation
+        # TODO: Make it so that a list of rewards is returned and a
+        # list of terminiation values are returned (distances)
+        # So we can sum the whole list to get the total reward
         (
             pos_reward,
             quat_reward,

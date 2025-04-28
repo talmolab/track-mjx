@@ -1,6 +1,6 @@
 """
 Custom network definitions.
-This is needed because we need to route the observations 
+This is needed because we need to route the observations
 to proper places in the network in the case of the VAE (CoMic, Hasenclever 2020)
 """
 
@@ -12,20 +12,16 @@ import warnings
 from brax.training import networks
 from brax.training import types
 from brax.training import distribution
-from brax.training.networks import MLP
-
 from brax.training.types import PRNGKey
 
 import jax
-import jax.numpy as jnp
-from jax import random
 
 import flax
-from flax import linen as nn
 
 from track_mjx.agent import intention_network, masked_running_statistics, checkpointing
 
 from omegaconf import DictConfig, OmegaConf
+
 
 @flax.struct.dataclass
 class PPOImitationNetworks:
@@ -185,6 +181,54 @@ def make_intention_ppo_networks(
         value_network=value_network,
         parametric_action_distribution=parametric_action_distribution,
     )
+
+
+def make_decoder_policy_fn(ckpt_path: str | Path, step: int = None):
+
+    def make_decoder_policy(
+        params, policy_network, parametric_action_distribution
+    ) -> types.Policy:
+        def policy(
+            observations: types.Observation,
+        ) -> Tuple[types.Action, types.Extra]:
+            logits, extras = policy_network.apply(*params, observations)
+            return parametric_action_distribution.mode(logits), extras
+
+        return policy
+
+    cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step=step)
+    observation_size = cfg["network_config"]["observation_size"]
+    reference_obs_size = cfg["network_config"]["reference_obs_size"]
+    action_size = cfg["network_config"]["action_size"]
+    intention_latent_size = cfg["network_config"]["intention_size"]
+    decoder_hidden_layer_sizes = cfg["network_config"]["decoder_layer_sizes"]
+
+    intention_policy_params = checkpointing.load_policy(ckpt_path, cfg, step=step)
+
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+    policy_network = intention_network.make_decoder_policy(
+        parametric_action_distribution.param_size,
+        decoder_obs_size=(observation_size - reference_obs_size)
+        + intention_latent_size,
+        preprocess_observations_fn=masked_running_statistics.normalize,
+        decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+    )
+    decoder_normalizer_params = masked_running_statistics.RunningStatisticsState(
+        count=jnp.zeros(()),
+        mean=intention_policy_params[0].mean[reference_obs_size:],
+        summed_variance=intention_policy_params[0].summed_variance[reference_obs_size:],
+        std=intention_policy_params[0].std[reference_obs_size:],
+    )
+    decoder_params = (
+        decoder_normalizer_params,
+        {"params": intention_policy_params[1]["params"]["decoder"]},
+    )
+    decoder_policy = make_decoder_policy(
+        decoder_params, policy_network, parametric_action_distribution
+    )
+    return decoder_policy
 
 
 def make_decoder_policy_fn(ckpt_path: str | Path, step: int = None):

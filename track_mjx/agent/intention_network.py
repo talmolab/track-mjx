@@ -134,15 +134,6 @@ class IntentionNetwork(nn.Module):
             return action, latent_mean, latent_logvar
 
 
-@dataclasses.dataclass
-class FeedForwardNetwork(networks.FeedForwardNetwork):
-    """
-    FeedForwardNetwork with intention module.
-    """
-
-    policy_module: IntentionNetwork
-
-
 def make_intention_policy(
     action_param_size: int,
     latent_size: int,
@@ -151,7 +142,7 @@ def make_intention_policy(
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
-) -> FeedForwardNetwork:
+) -> networks.FeedForwardNetwork:
     """
     Create a policy network with intention module.
 
@@ -186,10 +177,9 @@ def make_intention_policy(
     dummy_total_obs = jnp.zeros((1, total_obs_size))
     dummy_key = jax.random.PRNGKey(0)
 
-    return FeedForwardNetwork(
+    return networks.FeedForwardNetwork(
         init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
         apply=apply,
-        policy_module=policy_module,
     )
 
 

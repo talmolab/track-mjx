@@ -22,6 +22,8 @@ class RewardConfig:
     bad_quat_dist: float
     ctrl_cost_weight: float
     ctrl_diff_cost_weight: float
+    energy_cost_weight: float
+    energy_cost_weight: float
     pos_reward_weight: float
     quat_reward_weight: float
     joint_reward_weight: float
@@ -241,6 +243,19 @@ def compute_ctrl_diff_cost(
     return weighted_ctrl_diff_cost
 
 
+def compute_energy_cost(
+    qvel: jp.ndarray, qfrc_actuator: jp.ndarray, weight: float
+) -> jp.ndarray:
+    """Penalize energy consumption.
+    Args:
+        qvel: Velocity data of joints.
+        qfrc_actuator: Actuator force data.
+    Returns:
+        jp.ndarray: Weighted energy cost.
+    """
+    return weight * jp.minimum(jp.sum(jp.abs(qvel) * jp.abs(qfrc_actuator)), 50.0)
+
+
 def compute_health_penalty(
     torso_z: jp.ndarray, healthy_z_range: tuple[float, float]
 ) -> jp.ndarray:
@@ -294,7 +309,7 @@ def compute_penalty_terms(
 
 def compute_tracking_rewards(
     data: MjData,
-    reference_clip: ReferenceClip,
+    reference_frame: ReferenceClip,
     walker: BaseWalker,
     action: jp.ndarray,
     info: dict[str, jp.ndarray],
@@ -315,55 +330,55 @@ def compute_tracking_rewards(
     """
 
     pos_array = data.qpos[:3]
-    reference_clip_pos = reference_clip.position
+    reference_frame_pos = reference_frame.position
     pos_reward, pos_distance = compute_pos_reward(
         pos_array,
-        reference_clip_pos,
+        reference_frame_pos,
         reward_config.pos_reward_weight,
         reward_config.pos_reward_exp_scale,
     )
 
     quat_array = data.qpos[3:7]
-    reference_clip_quat = reference_clip.quaternion
+    reference_frame_quat = reference_frame.quaternion
     quat_reward, quat_distance = compute_quat_reward(
         quat_array,
-        reference_clip_quat,
+        reference_frame_quat,
         reward_config.quat_reward_weight,
         reward_config.quat_reward_exp_scale,
     )
 
     joint_array = data.qpos[7:]
-    reference_clip_joint = reference_clip.joints
+    reference_frame_joint = reference_frame.joints
     joint_reward, joint_distance = compute_joint_reward(
         joint_array,
-        reference_clip_joint,
+        reference_frame_joint,
         reward_config.joint_reward_weight,
         reward_config.joint_reward_exp_scale,
     )
 
     angvel_array = data.qvel[3:6]
-    reference_clip_angvel = reference_clip.angular_velocity
+    reference_frame_angvel = reference_frame.angular_velocity
     angvel_reward = compute_angvel_reward(
         angvel_array,
-        reference_clip_angvel,
+        reference_frame_angvel,
         reward_config.angvel_reward_weight,
         reward_config.angvel_reward_exp_scale,
     )
 
     bodypos_array = walker.get_body_positions(data.xpos)
-    reference_clip_bodypos = reference_clip.body_positions[walker.body_idxs]
+    reference_frame_bodypos = reference_frame.body_positions[walker.body_idxs]
     bodypos_reward = compute_bodypos_reward(
         bodypos_array,
-        reference_clip_bodypos,
+        reference_frame_bodypos,
         reward_config.bodypos_reward_weight,
         reward_config.bodypos_reward_exp_scale,
     )
 
     endeff_array = walker.get_end_effector_positions(data.xpos)
-    reference_clip_endeff = reference_clip.body_positions[walker.endeff_idxs]
+    reference_frame_endeff = reference_frame.body_positions[walker.endeff_idxs]
     endeff_reward = compute_endeff_reward(
         endeff_array,
-        reference_clip_endeff,
+        reference_frame_endeff,
         reward_config.endeff_reward_weight,
         reward_config.endeff_reward_exp_scale,
     )
@@ -371,6 +386,12 @@ def compute_tracking_rewards(
     ctrl_cost = compute_ctrl_cost(action, reward_config.ctrl_cost_weight)
     ctrl_diff_cost = compute_ctrl_diff_cost(
         action, info["prev_ctrl"], reward_config.ctrl_diff_cost_weight
+    )
+
+    energy_cost = compute_energy_cost(
+        data.qvel[6:],
+        data.qfrc_actuator[6:],
+        reward_config.energy_cost_weight,
     )
 
     torso_z = walker.get_torso_position(data.xpos)[2]
@@ -385,6 +406,7 @@ def compute_tracking_rewards(
         reward_config.penalty_pos_distance_scale,
     )
 
+    # TODO: return a structured dict
     return (
         pos_reward,
         quat_reward,
@@ -394,11 +416,11 @@ def compute_tracking_rewards(
         endeff_reward,
         ctrl_cost,
         ctrl_diff_cost,
+        energy_cost,
         too_far,
         bad_pose,
         bad_quat,
         fall,
-        info,
         joint_distance,
         summed_pos_distance,
         quat_distance,

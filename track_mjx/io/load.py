@@ -101,7 +101,7 @@ def make_singleclip_data(traj_data_path):
         )
 
 
-def make_multiclip_data(traj_data_path):
+def make_multiclip_data(traj_data_path, n_frames_per_clip: int | None = None):
     """Creates ReferenceClip object with multiclip tracking data.
     Features have shape = (clips, frames, dims)
     """
@@ -112,17 +112,18 @@ def make_multiclip_data(traj_data_path):
         )
 
     with h5py.File(traj_data_path, "r") as data:
-        # Read the config string as yaml in to dict
-        yaml_str = data["config"][()]
-        yaml_str = yaml_str.decode("utf-8")
-        config = yaml.safe_load(yaml_str)
-        clip_len = config["stac"]["n_frames_per_clip"]
+        # Read the config string as yaml in to dict if needed
+        if n_frames_per_clip is None:
+            yaml_str = data["config"][()]
+            yaml_str = yaml_str.decode("utf-8")
+            config = yaml.safe_load(yaml_str)
+            n_frames_per_clip = config["stac"]["n_frames_per_clip"]
 
         # Reshape the data to (clips, frames, dims)
-        batch_qpos = reshape_frames(data["qpos"], clip_len)
-        batch_xpos = reshape_frames(data["xpos"], clip_len)
-        batch_qvel = reshape_frames(data["qvel"], clip_len)
-        batch_xquat = reshape_frames(data["xquat"], clip_len)
+        batch_qpos = reshape_frames(data["qpos"], n_frames_per_clip)
+        batch_xpos = reshape_frames(data["xpos"], n_frames_per_clip)
+        batch_qvel = reshape_frames(data["qvel"], n_frames_per_clip)
+        batch_xquat = reshape_frames(data["xquat"], n_frames_per_clip)
         return ReferenceClip(
             position=batch_qpos[:, :, :3],
             quaternion=batch_qpos[:, :, 3:7],

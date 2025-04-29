@@ -47,8 +47,12 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
         "rodent": Rodent,
         "fly": Fly,
     }
-    walker_class = walker_map[cfg_dict["walker_type"]]
+    walker_class = walker_map[cfg_dict["env_config"]["walker_name"]]
     walker = walker_class(**walker_config)
+
+    # TODO: Stop-gap to run checkpoint prior to adding energy cost, remove for release
+    if "energy_cost_weight" not in env_rewards:
+        env_rewards["energy_cost_weight"] = 0.0
 
     reward_config = RewardConfig(**env_rewards)
     # Automatically match dict keys and func needs
@@ -78,7 +82,11 @@ def create_rollout_generator(
     """
     ref_traj_config = cfg["reference_config"]
     # Wrap the environment
-    rollout_env = wrappers.EvalClipResetWrapper(environment)
+    # TODO this logic is used in a few different places, make it a function?
+    if type(environment) == MultiClipTracking:
+        rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(environment)
+    elif type(environment) == SingleClipTracking:
+        rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(environment)
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)

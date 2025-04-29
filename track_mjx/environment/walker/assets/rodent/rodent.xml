@@ -4,7 +4,7 @@
   <!-- <size njmax="8000" nconmax="4000"/> -->
   <visual>
         <quality shadowsize="2048"/>
-        <global offwidth="1920" offheight="1200" elevation="-20" azimuth="120"/>
+        <global offwidth="3840" offheight="2160" elevation="-20" azimuth="120"/>
       </visual>
   <default>
     <joint limited="true" solreflimit="0.01 1" solimplimit="0.9 0.99 0.003" armature="6e-07" damping="0.001"/>

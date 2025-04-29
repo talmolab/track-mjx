@@ -65,7 +65,6 @@ class TrainingState:
 
 
 from track_mjx.agent import checkpointing
-from track_mjx.agent.checkpointing import load_decoder_param
 
 
 def _unpmap(v):
@@ -105,7 +104,6 @@ def create_policy_module_mask(
 
     # Reconstruct the PPONetworkParams mask
     return losses.PPONetworkParams(policy=policy_mask, value=value_mask)
-
 
 
 def run_evaluation(

@@ -10,6 +10,8 @@ from brax.envs.wrappers.training import (
 import jax
 from jax import numpy as jp
 from mujoco import mjx
+from brax.v1.envs import env as brax_env
+from mujoco.mjx._src import smooth
 
 
 def wrap(
@@ -41,7 +43,48 @@ def wrap(
     return env
 
 
-class RenderRolloutWrapperTracking(Wrapper):
+# TODO: Rename these wrappers to be more concise/descriptive
+class RenderRolloutVmapWrapper(brax_env.Wrapper):
+    """Vectorizes Brax env given a clip index, used with RenderRolloutWrapperMulticlipTracking."""
+
+    def __init__(self, env: Env, batch_size: Optional[int] = None):
+        super().__init__(env)
+        self.batch_size = batch_size
+
+    def reset(self, rng: jax.Array, clip_idx: jax.Array = None) -> State:
+        if self.batch_size is not None:
+            rng = jax.random.split(rng, self.batch_size)
+        if clip_idx is None:
+            clip_idx = jnp.zeros((rng.shape[0],), dtype=jnp.int32)
+
+        return jax.vmap(self.env.reset)(rng, clip_idx)
+
+    def step(self, state: State, action: jax.Array) -> State:
+        return jax.vmap(self.env.step)(state, action)
+
+
+class RenderRolloutWrapperSingleclipTracking(Wrapper):
+    """Always resets to the first frame of the clips for complete rollouts."""
+
+    def reset(self, rng: jax.Array, start_frame: int = 0) -> State:
+        """
+        Resets the environment to an initial state.
+        Args:
+            rng (jax.Array): Random key for reproducibility.
+            clip_idx (int | None, optional): clip index to reset to. if None, randomly choose the clip . Defaults to None.
+        Returns:
+            State: The initial state of the environment.
+        """
+
+        info = {
+            "start_frame": start_frame,
+            "prev_ctrl": jp.zeros((self.sys.nu,)),
+        }
+
+        return self.reset_from_clip(rng, info)
+
+
+class RenderRolloutWrapperMulticlipTracking(Wrapper):
     """Always resets to the first frame of the clips for complete rollouts."""
 
     def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
@@ -116,3 +159,80 @@ class EvalClipWrapperTracking(Wrapper):
         }
 
         return self.reset_from_clip(rng, info, noise=False)
+
+
+class AutoAlignWrapperTracking(Wrapper):
+    """When done (reset), align pose with reference trajectory.
+    Only works with the multiclip tracking env after multiclipvmapwrapper.
+    """
+
+    def reset(self, rng: jax.Array, clip_idx: jax.Array = None) -> State:
+        state = self.env.reset(rng, clip_idx)
+        return state
+
+    def step(self, state: State, action: jax.Array) -> State:
+        if "steps" in state.info:
+            steps = state.info["steps"]
+            steps = jp.where(state.done, jp.zeros_like(steps), steps)
+            state.info.update(steps=steps)
+        state = state.replace(done=jp.zeros_like(state.done))
+        state = self.env.step(state, action)
+
+        def where_done(x, y):
+            done = state.done
+            if done.shape:
+                done = jp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # type: ignore
+            return jp.where(done, x, y)
+
+        new_qpos = jp.concatenate(
+            (
+                state.info["reference_frame"].position,
+                state.info["reference_frame"].quaternion,
+                state.info["reference_frame"].joints,
+            ),
+            axis=-1,
+        )
+        new_qvel = jp.concatenate(
+            (
+                state.info["reference_frame"].velocity,
+                state.info["reference_frame"].angular_velocity,
+                state.info["reference_frame"].joints_velocity,
+            ),
+            axis=-1,
+        )
+        aligned_pipeline_state = state.pipeline_state.replace(
+            qpos=new_qpos, qvel=new_qvel
+        )
+        aligned_pipeline_state = jax.vmap(smooth.kinematics, in_axes=(None, 0))(
+            self._mjx_model, aligned_pipeline_state
+        )
+        pipeline_state = jax.tree.map(
+            where_done, aligned_pipeline_state, state.pipeline_state
+        )
+
+        reference_obs, proprioceptive_obs = jax.vmap(self._get_obs)(
+            pipeline_state, state.info
+        )
+        obs = jp.concatenate([reference_obs, proprioceptive_obs], axis=-1)
+        return state.replace(pipeline_state=pipeline_state, obs=obs)
+
+
+class HighLevelWrapper(Wrapper):
+    """Takes a decoder inference function and uses it to get the ctrl used in the sim step"""
+
+    def __init__(self, env, decoder_inference_fn, reference_obs_size):
+        self._decoder_inference_fn = decoder_inference_fn
+        self._reference_obs_size = reference_obs_size
+        super().__init__(env)
+
+    def step(self, state: State, latents: jax.Array) -> State:
+        obs = state.obs
+
+        # TODO replace reference obs size
+        action, _ = self._decoder_inference_fn(
+            jp.concatenate(
+                [latents, obs[..., self._reference_obs_size :]],
+                axis=-1,
+            ),
+        )
+        return self.env.step(state, action)

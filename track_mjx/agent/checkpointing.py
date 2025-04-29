@@ -79,8 +79,8 @@ def load_policy(
             policy=ocp.args.StandardRestore(abstract_policy),
         ),
     )["policy"]
-    
-    
+
+
 def load_checkpoint_for_eval(
     checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
 ):

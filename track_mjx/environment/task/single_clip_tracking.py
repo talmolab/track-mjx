@@ -17,6 +17,7 @@ from track_mjx.environment.task.reward import RewardConfig
 
 from jax.flatten_util import ravel_pytree
 
+
 class SingleClipTracking(PipelineEnv):
     """Tracking task for a continuous reference clip."""
 
@@ -131,9 +132,9 @@ class SingleClipTracking(PipelineEnv):
         reference_frame = jax.tree.map(
             lambda x: x[info["start_frame"]], self._get_reference_clip(info)
         )
-        
+
         info["reference_frame"] = reference_frame
-        
+
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
 
         # # Add pos
@@ -298,7 +299,6 @@ class SingleClipTracking(PipelineEnv):
             joint_distance=joint_distance,
             summed_pos_distance=summed_pos_distance,
             quat_distance=quat_distance,
-            
         )
 
         return state.replace(

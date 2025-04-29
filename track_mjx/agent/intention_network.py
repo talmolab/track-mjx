@@ -167,7 +167,6 @@ def make_intention_policy(
     )
 
 
-
 def make_decoder_policy(
     param_size: int,
     decoder_obs_size: int,

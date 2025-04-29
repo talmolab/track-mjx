@@ -77,7 +77,6 @@ def rollout_logging_fn(
         else:
             ctrl, extras,  = jit_logging_inference_fn(params, obs, act_rng, None)
         ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
-        ctrl, extras = jit_logging_inference_fn(params, obs, act_rng)
         latent_means.append(extras["latent_mean"])
         latent_logvars.append(extras["latent_logvar"])
         state = jit_step(state, ctrl)

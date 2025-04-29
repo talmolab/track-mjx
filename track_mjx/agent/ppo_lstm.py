@@ -124,6 +124,8 @@ def train(
     ] = None,
     get_activation: bool = True,
     use_lstm: bool = True,
+    use_kl_schedule: bool = True,
+    kl_ramp_up_frac: float = 0.25,
 ):
     """PPO training.
 
@@ -180,6 +182,9 @@ def train(
       get_activation: boolean argument indicating for getting activations of all of
         the networks
       use_lstm: boolean argument for using an LSTM decoder
+      use_kl_schedule: whether to use a ramping schedule for the kl weight in the PPO loss
+        (intention network variational layer)
+      kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
 
     Returns:
       Tuple of (make_policy function, network params, metrics)

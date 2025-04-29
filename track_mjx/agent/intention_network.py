@@ -101,7 +101,6 @@ class LSTMDecoder(nn.Module):
     def __call__(self, x, hidden_state, get_activation: bool = False):
         activations = {}
         h, c = hidden_state
-        
 
         h_new, c_new = [], []
         for layer_idx in range(self.hidden_layer_num):

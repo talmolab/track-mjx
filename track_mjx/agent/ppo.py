@@ -296,7 +296,7 @@ def train(
     
     kl_schedule = None
     if use_kl_schedule:
-        kl_schedule = losses.create_ramp_schedule(
+        kl_schedule = ppo_losses.create_ramp_schedule(
             max_value=kl_weight, ramp_steps=int(num_evals * kl_ramp_up_frac)
         )
         

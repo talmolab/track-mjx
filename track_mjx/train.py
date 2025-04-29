@@ -131,13 +131,13 @@ def main(cfg: DictConfig):
     
     if cfg.train_setup.train_config.use_lstm:
         print('Using LSTM')
-        custom_ppo = ppo_lstm
+        selected_ppo = ppo_lstm
     else:
         print('Using MLP')
-        custom_ppo = ppo
+        selected_ppo = ppo
 
     train_fn = functools.partial(
-        ppo.train,
+        selected_ppo.train,
         **train_config,
         num_evals=int(
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every

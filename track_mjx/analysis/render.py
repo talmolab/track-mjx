@@ -127,6 +127,8 @@ def make_rollout_renderer(cfg):
 def render_rollout(
     cfg,
     rollout: dict,
+    height: int = 480,
+    width: int = 640,
 ) -> list:
     """
     Render a rollout from saved qposes.
@@ -147,7 +149,7 @@ def render_rollout(
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=480, width=640)
+    renderer = mujoco.Renderer(mj_model, height=height, width=width)
     frames = []
     print("MuJoCo Rendering...")
     for qpos1, qpos2 in tqdm(

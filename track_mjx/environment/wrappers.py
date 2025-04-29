@@ -75,8 +75,6 @@ class LSTMAutoResetWrapperTracking(Wrapper):
 
         env_rngs = jax.random.split(rng, num_envs)
         h_stack, c_stack = jax.vmap(init_single_env)(env_rngs)  # [num_envs, num_layers, hidden_dim]
-
-        print(f'[DEBUG] In env_wrapper, the initialized hidden shape: {h_stack.shape}')
         
         return h_stack, c_stack
     
@@ -91,8 +89,6 @@ class LSTMAutoResetWrapperTracking(Wrapper):
         num_envs = state.obs.shape[0]
         hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0), num_envs)
         state.info["hidden_state"] = hidden_state
-        
-        print(f'[DEBUG] In env_wrapper: obs shape {state.obs.shape[0]}, hidden shape {hidden_state[1].shape}')
         
         return state
 
@@ -167,7 +163,6 @@ class RenderRolloutWrapperTracking(Wrapper):
         env_rngs = jax.random.split(rng, num_envs)
         h_stack, c_stack = jax.vmap(init_single_env)(env_rngs)
 
-        print(f'[DEBUG] In env_wrapper, the rendering initialized hidden shape: {h_stack.shape}')
         return h_stack, c_stack
         
 

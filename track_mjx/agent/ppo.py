@@ -248,7 +248,7 @@ def train(
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
     if isinstance(environment, envs.Env):
-        wrap_for_training = custom_wrappers.wrap
+        wrap_for_training = wrappers.wrap
     else:
         wrap_for_training = envs_v1.wrappers.wrap_for_training
     
@@ -274,6 +274,7 @@ def train(
             "normalize_observations": normalize_observations,
             "reference_obs_size": int(_unpmap(env_state.info["reference_obs_size"])[0]),
         }
+    )
 
     normalize = lambda x, y: x
     if normalize_observations:
@@ -288,9 +289,9 @@ def train(
         get_activation=get_activation,
         use_lstm=use_lstm,
     )
-    make_policy = custom_ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
+    make_policy = ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
 
-    make_logging_policy = custom_ppo_networks.make_logging_inference_fn(ppo_network)
+    make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=deterministic_eval, get_activation=False, use_lstm=use_lstm,))
     
     kl_schedule = None
@@ -377,7 +378,7 @@ def train(
             params=(training_state.normalizer_params, training_state.params.policy), get_activation=get_activation, use_lstm=use_lstm, # pass in here
         )
 
-        #TODO: make this embeded in custom_ppo
+        #TODO: make this embeded in ppo.py
         def f(carry, unused_t):
             current_state, current_key = carry
             current_key, next_key = jax.random.split(current_key)

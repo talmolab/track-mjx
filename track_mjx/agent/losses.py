@@ -246,7 +246,7 @@ def compute_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL Divergence for latent layer
-    if kl_schedule is not None & not use_lstm:
+    if (kl_schedule is not None) & (not use_lstm):
         print('Using MLP + KL Scheduler')
         kl_weight = kl_schedule(step)
         

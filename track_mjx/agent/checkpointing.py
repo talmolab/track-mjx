@@ -5,6 +5,7 @@ from track_mjx.agent import ppo_networks
 from typing import Callable
 
 from track_mjx.agent import ppo_networks, losses
+from track_mjx.agent import ppo
 from jax import numpy as jnp
 import jax
 from omegaconf import OmegaConf

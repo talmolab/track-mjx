@@ -80,7 +80,6 @@ class LSTMAutoResetWrapperTracking(Wrapper):
         
         return h_stack, c_stack
     
-
     def reset(self, rng: jax.Array) -> State:
         """Resets the environment and reinitializes LSTM hidden states."""
         state = self.env.reset(rng)

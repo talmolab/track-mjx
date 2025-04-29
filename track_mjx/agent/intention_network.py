@@ -1,4 +1,5 @@
-from typing import Sequence, Tuple, Union
+from typing import Sequence, Tuple, Callable, Union, Any
+import dataclasses
 
 from brax.training import networks
 from brax.training import types
@@ -9,6 +10,11 @@ import jax.numpy as jnp
 from jax import random
 
 from flax import linen as nn
+
+@dataclasses.dataclass
+class FeedForwardIntentionNetwork:
+  init: Callable[..., Any]
+  apply: Callable[..., Any]
 
 
 class Encoder(nn.Module):
@@ -37,7 +43,7 @@ class Encoder(nn.Module):
                 use_bias=self.bias,
             )(x)
             x = self.activation(x)
-            # x = nn.LayerNorm()(x)
+            x = nn.LayerNorm()(x)
             if get_activation:
                 activations[f"layer_{i}"] = x
 
@@ -160,7 +166,7 @@ class IntentionNetwork(nn.Module):
                 concatenated = jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
                 print('In intention_network using LSTM + Activation')
                 action, new_hidden_state, decoder_activations = self.lstm_decoder(concatenated, hidden_state, get_activation=get_activation)
-                return action, latent_mean, latent_logvar, new_hidden_state, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z}
+                return action, latent_mean, latent_logvar, new_hidden_state, {"encoder": encoder_activations, "decoder": decoder_activations, "intention": z, "hidden_state": new_hidden_state}
             else:
                 print('[DEBUG] In intention_network using MLP + Activation')
                 action, decoder_activations = self.decoder(concatenated, get_activation=get_activation)
@@ -195,7 +201,7 @@ def make_intention_policy(
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     get_activation: bool = True,
     use_lstm: bool = True,
-) -> networks.FeedForwardNetwork:
+) -> FeedForwardIntentionNetwork:
     """Creates an intention policy network."""
 
     policy_module = IntentionNetwork(
@@ -217,7 +223,7 @@ def make_intention_policy(
     dummy_key = jax.random.PRNGKey(0)
     
     # lambda function here to pass in hidden from training loop
-    return networks.FeedForwardNetwork(
+    return FeedForwardIntentionNetwork(
         init=lambda key, hidden_state: policy_module.init(key, dummy_total_obs, dummy_key, hidden_state, get_activation, use_lstm),
         apply=apply,
     )

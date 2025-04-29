@@ -41,7 +41,7 @@ class Encoder(nn.Module):
                 use_bias=self.bias,
             )(x)
             x = self.activation(x)
-            # x = nn.LayerNorm()(x)
+            x = nn.LayerNorm()(x)
             if get_activation:
                 activations[f"layer_{i}"] = x
 

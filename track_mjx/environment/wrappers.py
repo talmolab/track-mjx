@@ -43,8 +43,9 @@ def wrap(
     return env
 
 
+# TODO: Rename these wrappers to be more concise/descriptive
 class RenderRolloutVmapWrapper(brax_env.Wrapper):
-    """Vectorizes Brax env."""
+    """Vectorizes Brax env given a clip index, used with RenderRolloutWrapperMulticlipTracking."""
 
     def __init__(self, env: Env, batch_size: Optional[int] = None):
         super().__init__(env)
@@ -55,12 +56,13 @@ class RenderRolloutVmapWrapper(brax_env.Wrapper):
             rng = jax.random.split(rng, self.batch_size)
         if clip_idx is None:
             clip_idx = jnp.zeros((rng.shape[0],), dtype=jnp.int32)
-            
+
         return jax.vmap(self.env.reset)(rng, clip_idx)
 
     def step(self, state: State, action: jax.Array) -> State:
         return jax.vmap(self.env.step)(state, action)
-    
+
+
 class RenderRolloutWrapperSingleclipTracking(Wrapper):
     """Always resets to the first frame of the clips for complete rollouts."""
 
@@ -80,6 +82,7 @@ class RenderRolloutWrapperSingleclipTracking(Wrapper):
         }
 
         return self.reset_from_clip(rng, info)
+
 
 class RenderRolloutWrapperMulticlipTracking(Wrapper):
     """Always resets to the first frame of the clips for complete rollouts."""
@@ -157,6 +160,7 @@ class EvalClipWrapperTracking(Wrapper):
 
         return self.reset_from_clip(rng, info, noise=False)
 
+
 class AutoAlignWrapperTracking(Wrapper):
     """When done (reset), align pose with reference trajectory.
     Only works with the multiclip tracking env after multiclipvmapwrapper.
@@ -173,7 +177,6 @@ class AutoAlignWrapperTracking(Wrapper):
             state.info.update(steps=steps)
         state = state.replace(done=jp.zeros_like(state.done))
         state = self.env.step(state, action)
-
 
         def where_done(x, y):
             done = state.done
@@ -212,7 +215,7 @@ class AutoAlignWrapperTracking(Wrapper):
         )
         obs = jp.concatenate([reference_obs, proprioceptive_obs], axis=-1)
         return state.replace(pipeline_state=pipeline_state, obs=obs)
-    
+
 
 class HighLevelWrapper(Wrapper):
     """Takes a decoder inference function and uses it to get the ctrl used in the sim step"""

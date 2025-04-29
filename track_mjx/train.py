@@ -153,7 +153,6 @@ def main(cfg: DictConfig):
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-            intention_latent_size=cfg.network_config.intention_size,
         ),
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
@@ -174,9 +173,9 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
         
-    rollout_env = custom_wrappers.RenderRolloutWrapperTracking(env=env,
-                                                               lstm_features=cfg.network_config.hidden_state_size,
-                                                               hidden_layer_num=cfg.network_config.hidden_layer_num)
+    rollout_env = wrappers.RenderRolloutWrapperTracking(env=env,
+                                                        lstm_features=cfg.network_config.hidden_state_size,
+                                                        hidden_layer_num=cfg.network_config.hidden_layer_num)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

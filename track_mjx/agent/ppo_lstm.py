@@ -31,8 +31,8 @@ from brax.training.acme import running_statistics
 from brax.training.acme import specs
 import flax.training
 
-from track_mjx.agent import custom_losses as ppo_losses
-from track_mjx.agent import custom_ppo_networks
+from track_mjx.agent import losses as ppo_losses
+from track_mjx.agent import ppo_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.training.types import Metrics
@@ -48,7 +48,7 @@ import optax
 import orbax.checkpoint as ocp
 from flax.training import orbax_utils
 
-from track_mjx.environment import custom_wrappers
+from track_mjx.environment import wrappers
 from track_mjx.agent.lstm_utils import acting_lstm as acting
 
 from flax import linen as nn
@@ -113,8 +113,8 @@ def train(
     gae_lambda: float = 0.95,
     deterministic_eval: bool = False,
     network_factory: types.NetworkFactory[
-        custom_ppo_networks.PPOImitationNetworks
-    ] = custom_ppo_networks.make_intention_ppo_networks,
+        ppo_networks.PPOImitationNetworks
+    ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
     eval_env: Optional[envs.Env] = None,
@@ -309,10 +309,11 @@ def train(
         normalizer_params: running_statistics.RunningStatisticsState,
     ):   
         optimizer_state, params, key = carry
+        step = 0 # place holder, will not be used in loss, only MLP has KL schedules
         
         key, key_loss = jax.random.split(key)
         (_, metrics), params, optimizer_state = gradient_update_fn(
-            params, normalizer_params, data, key_loss, optimizer_state=optimizer_state, # for los_fn, f **args functions
+            params, normalizer_params, data, key_loss, step, optimizer_state=optimizer_state, # for los_fn, f **args functions
         )
 
         return (optimizer_state, params, key), metrics # updated params

@@ -18,7 +18,7 @@ class ReferenceClip:
     """Immutable dataclass defining the trajectory features used in the tracking task."""
 
     # qpos
-    position: jp.ndarray 
+    position: jp.ndarray
     quaternion: jp.ndarray
     joints: jp.ndarray
 

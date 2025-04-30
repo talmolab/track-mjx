@@ -81,12 +81,13 @@ def _strip_weak_type(tree):
 
     return jax.tree_util.tree_map(f, tree)
 
+
 def run_evaluation(
     self,
     policy_params,
     training_metrics: Metrics,
     aggregate_episodes: bool = True,
-    data_split: str = ""
+    data_split: str = "",
 ) -> Metrics:
     """Run one epoch of evaluation."""
     self._key, unroll_key = jax.random.split(self._key)
@@ -120,8 +121,10 @@ def run_evaluation(
 
     return metrics  # pytype: disable=bad-return-type  # jax-ndarray
 
+
 # Monkey patch the run_evaluation method to include data_split
 acting.Evaluator.run_evaluation = run_evaluation
+
 
 # TODO: Pass in a loss-specific config instead of throwing them all in individually.
 def train(
@@ -444,7 +447,8 @@ def train(
             params=params,
             normalizer_params=normalizer_params,
             env_steps=jnp.int32(
-                training_state.env_steps + env_step_per_training_step / STEPS_IN_THOUSANDS
+                training_state.env_steps
+                + env_step_per_training_step / STEPS_IN_THOUSANDS
             ),  # env step in thousands
         )
         return (new_training_state, state, new_key, it), metrics
@@ -635,12 +639,12 @@ def train(
             if evaluator_test_set is not None:
                 # run evaluation on hold out test set
                 metrics = evaluator_test_set.run_evaluation(
-                _unpmap(
-                    (training_state.normalizer_params, training_state.params.policy)
-                ),
-                metrics,
-                data_split="test_set",
-            )
+                    _unpmap(
+                        (training_state.normalizer_params, training_state.params.policy)
+                    ),
+                    metrics,
+                    data_split="test_set",
+                )
             logging.info(metrics)
             progress_fn(current_step, metrics)
 
@@ -662,9 +666,9 @@ def train(
                 )
 
     total_steps = current_step
-    assert total_steps >= num_timesteps / STEPS_IN_THOUSANDS, (  
-        "Total steps must be at least the number of timesteps scaled to thousands."  
-    )  
+    assert (
+        total_steps >= num_timesteps / STEPS_IN_THOUSANDS
+    ), "Total steps must be at least the number of timesteps scaled to thousands."
 
     # If there was no mistakes the training_state should still be identical on all
     # devices.

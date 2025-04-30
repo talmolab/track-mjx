@@ -109,9 +109,7 @@ class IntentionNetwork(nn.Module):
             )
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
             egocentric_obs = obs[..., self.reference_obs_size :]
-            concatenated = jnp.concatenate(
-                [z, egocentric_obs], axis=-1
-            )
+            concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
             action, decoder_activations = self.decoder(
                 concatenated, get_activation=True
             )

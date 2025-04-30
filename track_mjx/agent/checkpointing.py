@@ -56,22 +56,6 @@ def load_training_state(
         )["train_state"]
 
 
-def load_decoder_param(checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None):
-    """
-    Load the decoder parameters from a checkpoint.
-
-    Args:
-        checkpoint_path (str): path to the checkpoint.
-        step_prefix (str, optional): _description_. Defaults to "PPONetwork".
-        step (int | None, optional): _description_. Defaults to None.
-
-    Returns:
-        _type_: raw decoder parameters.
-    """
-    ckpt = load_checkpoint_for_eval(checkpoint_path, step_prefix, step)
-    return ckpt["policy"][1]["params"]["decoder"]
-
-
 def load_policy(
     checkpoint_path: str, cfg=None, ckpt_mgr=None, step_prefix="PPONetwork", step=None
 ):

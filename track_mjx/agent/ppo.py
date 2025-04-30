@@ -50,6 +50,7 @@ import orbax.checkpoint as ocp
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
+STEPS_IN_THOUSANDS = 1e3
 
 _PMAP_AXIS_NAME = "i"
 
@@ -79,32 +80,6 @@ def _strip_weak_type(tree):
         return leaf.astype(leaf.dtype)
 
     return jax.tree_util.tree_map(f, tree)
-
-
-def create_policy_module_mask(
-    ppo_params: losses.PPONetworkParams, freeze_submodule_name: str
-):
-    # Flatten the policy params
-    flat_policy = traverse_util.flatten_dict(ppo_params.policy)
-
-    # Create a mask dict for policy params
-    policy_mask = {}
-    for param_path in flat_policy:
-        # param_path is a tuple like ('Dense_0', 'kernel')
-        if freeze_submodule_name in param_path:
-            policy_mask[param_path] = False  # Freeze this submodule
-        else:
-            policy_mask[param_path] = True  # Train other modules
-
-    # Unflatten policy mask
-    policy_mask = traverse_util.unflatten_dict(policy_mask)
-
-    # The value network stays fully trainable here:
-    value_mask = jax.tree_util.tree_map(lambda _: True, ppo_params.value)
-
-    # Reconstruct the PPONetworkParams mask
-    return losses.PPONetworkParams(policy=policy_mask, value=value_mask)
-
 
 def run_evaluation(
     self,
@@ -469,7 +444,7 @@ def train(
             params=params,
             normalizer_params=normalizer_params,
             env_steps=jnp.int32(
-                training_state.env_steps + env_step_per_training_step / 1e3
+                training_state.env_steps + env_step_per_training_step / STEPS_IN_THOUSANDS
             ),  # env step in thousands
         )
         return (new_training_state, state, new_key, it), metrics
@@ -687,7 +662,9 @@ def train(
                 )
 
     total_steps = current_step
-    assert total_steps >= num_timesteps / 1e3 # to make the steps in thousands
+    assert total_steps >= num_timesteps / STEPS_IN_THOUSANDS, (  
+        "Total steps must be at least the number of timesteps scaled to thousands."  
+    )  
 
     # If there was no mistakes the training_state should still be identical on all
     # devices.

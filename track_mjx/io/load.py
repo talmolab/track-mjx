@@ -9,7 +9,8 @@ from pathlib import Path
 import hydra
 import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import Tuple
+import re
 
 
 @struct.dataclass
@@ -31,10 +32,10 @@ class ReferenceClip:
 
     # xquat
     body_quaternions: jp.ndarray
-    
+
     # clip_idx based on the original clip order. Used to recover the metadata
     # for the original clip.
-    clip_idx: jp.ndarray | None = None
+    original_clip_idx: jp.ndarray | None = None
 
 
 def load_configs(config_dir: Union[Path, str], config_name: str) -> DictConfig:
@@ -183,6 +184,62 @@ def load_reference_clip_data(
         raise OSError(f"Error reading HDF5 file: {filepath} - {e}")
 
 
+def generate_train_test_split(
+    data: ReferenceClip,
+    test_ratio: float = 0.1,
+) -> Tuple[ReferenceClip, ReferenceClip]:
+    """
+    Generates a train-test split of the clips based on the provided ratio.
+    The split is done by randomly sampling clips from the metadata list.
+    The function returns two ReferenceClip objects: one for training and one for testing.
+
+    Args:
+        data (ReferenceClip): The ReferenceClip object containing the clips to be split.
+        test_ratio (float, optional): ratio of the test set. Defaults to 0.1.
+
+    Returns:
+        Tuple[ReferenceClip, ReferenceClip]: training set and testing set as ReferenceClip objects.
+    """
+    num_clips = data.position.shape[0]
+    indices = np.arange(num_clips)
+    test_idx = np.random.choice(
+        indices, size=int(num_clips * test_ratio), replace=False
+    )
+    train_idx = indices[~np.isin(indices, test_idx)]
+    train_idx.sort()
+    test_idx.sort()
+    train_set = select_clips(data, train_idx)
+    test_set = select_clips(data, test_idx)
+    return train_set, test_set
+
+
+def load_clips_metadata(traj_data_path: str) -> list[Tuple[str, int]]:
+    """
+    Loads the metadata of the clips from the specified trajectory data path.
+    the metadata includes the behavior groups and number of each clip.
+    This methods is specific to the stac-mjx format of the rodent data.
+
+    Args:
+        traj_data_path (str): Path to the trajectory data file.
+
+    Returns:
+        list[Tuple[str, int]]: List of tuples containing the clip name and number.
+    """
+    with h5py.File(traj_data_path, "r") as data:
+        # Read the config string as yaml in to dict
+        yaml_str = data["config"][()]
+        yaml_str = yaml_str.decode("utf-8")
+        config = yaml.safe_load(yaml_str)
+    pattern = re.compile(r"/([^/]+)_([0-9]+)\.p$")
+    clip_metadata = []
+    for path in config["model"]["snips_order"]:
+        match = pattern.search(path)
+        if match:
+            name, number = match.groups()
+            clip_metadata.append((name, int(number)))
+    return clip_metadata
+
+
 def sub_sample_training_set(train_idx: np.ndarray, train_ratio: float = 0.1):
     """
     Given the indices of the training clips, this function randomly samples a subset
@@ -216,6 +273,6 @@ def select_clips(
         angular_velocity=clips.angular_velocity[indices],
         joints_velocity=clips.joints_velocity[indices],
         body_quaternions=clips.body_quaternions[indices],
-        clip_idx=jp.array(indices[:, np.newaxis]),
+        original_clip_idx=jp.array(indices[:, jp.newaxis]),
     )
     return selected_clips

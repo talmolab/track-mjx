@@ -21,11 +21,6 @@ os.environ["XLA_FLAGS"] = (
 )
 
 
-# os.environ["JAX_LOG_COMPILES"] = "1"
-
-# # (Optional) For more detailed logging
-# os.environ["JAX_LOG_COMPILES_VERBOSE"] = "1"
-
 import jax
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -60,7 +55,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-sample-efficiency")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -136,12 +131,27 @@ def main(cfg: DictConfig):
             train_idx = split_info["train_subset"][
                 f"{cfg.train_setup['train_subset_ratio']:.2f}"
             ]
-        logging.info(f"train/test split info: {len(test_idx)=}, {len(train_idx)=}")
         test_clips = load.select_clips(all_clips, test_idx)
         train_clips = load.select_clips(all_clips, train_idx)
-        
-        logging.info(f"{train_clips.position.shape=}, {train_clips.quaternion.shape=}")
-
+        logging.info(
+            f"Train set length:{train_clips.position.shape[0]}, Test set length: {test_clips.quaternion.shape[0]}"
+        )
+        test_env = envs.get_environment(
+            env_name=cfg.env_config.env_name,
+            reference_clip=test_clips,
+            walker=walker,
+            reward_config=reward_config,
+            **env_args,
+            **traj_config,
+        )
+    elif cfg.train_setup["train_subset_ratio"] is not None:
+        all_clips = load.load_data(cfg.data_path)
+        train_clips, test_clips = load.generate_train_test_split(
+            all_clips, test_ratio=1 - cfg.train_setup["train_subset_ratio"]
+        )
+        logging.info(
+            f"Train set length:{train_clips.position.shape[0]}, Test set length: {test_clips.quaternion.shape[0]}"
+        )
         test_env = envs.get_environment(
             env_name=cfg.env_config.env_name,
             reference_clip=test_clips,
@@ -197,8 +207,7 @@ def main(cfg: DictConfig):
         eval_env_test_set=test_env,
     )
 
-    # run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
-    run_id = f"R-SE-{cfg.train_setup.train_subset_ratio:.2f}_exp3_80test_{run_id}"
+    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),

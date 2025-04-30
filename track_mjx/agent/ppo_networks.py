@@ -59,12 +59,16 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 )
             if deterministic:
                 if get_activation:
-                    return ppo_networks.parametric_action_distribution.mode(logits), {
+                    return jnp.array(
+                        ppo_networks.parametric_action_distribution.mode(logits)
+                    ), {
                         "activations": activations,
                         "latent_mean": latent_mean,
                         "latent_logvar": latent_logvar,
                     }
-                return ppo_networks.parametric_action_distribution.mode(logits), {
+                return jnp.array(
+                    ppo_networks.parametric_action_distribution.mode(logits)
+                ), {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
@@ -81,7 +85,7 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 raw_actions
             )
 
-            return postprocessed_actions, {
+            return jnp.array(postprocessed_actions), {
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
                 "log_prob": log_prob,
@@ -117,7 +121,9 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
 
             if deterministic:
-                return ppo_networks.parametric_action_distribution.mode(logits), {
+                return jnp.array(
+                    ppo_networks.parametric_action_distribution.mode(logits)
+                ), {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
@@ -133,7 +139,7 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             postprocessed_actions = parametric_action_distribution.postprocess(
                 raw_actions
             )
-            return postprocessed_actions, {
+            return jnp.array(postprocessed_actions), {
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
                 "log_prob": log_prob,

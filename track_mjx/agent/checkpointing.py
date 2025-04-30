@@ -5,6 +5,7 @@ from track_mjx.agent import ppo_networks
 from typing import Callable
 
 from track_mjx.agent import ppo_networks, losses
+from track_mjx.agent import ppo
 from jax import numpy as jnp
 import jax
 from omegaconf import OmegaConf
@@ -34,8 +35,8 @@ def load_training_state(
     checkpoint_path: str,
     abstract_training_state,
     step_prefix: str = "PPONetwork",
-    step: int = None,
-):
+    step: int | None = None,
+) -> ppo.TrainingState:
     """Load the training state from checkpoint, given an arbitrary reference training state."""
     mgr_options = ocp.CheckpointManagerOptions(
         create=False,
@@ -82,7 +83,7 @@ def load_policy(
 
 
 def load_checkpoint_for_eval(
-    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
+    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None
 ):
     """Load a checkpoint's config and policy. Creates an abstract state to define structure.
 
@@ -100,6 +101,7 @@ def load_checkpoint_for_eval(
         step = ckpt_mgr.latest_step()
 
     logging.info(f"Loading checkpoint from {checkpoint_path} at step {step}")
+    print(f"Loading checkpoint from {checkpoint_path} at step {step}")
 
     # First load the config
     cfg = OmegaConf.create(

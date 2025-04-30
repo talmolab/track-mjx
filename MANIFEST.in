@@ -1,0 +1,2 @@
+prune model_checkpoints
+prune site

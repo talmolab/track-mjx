@@ -108,9 +108,8 @@ class IntentionNetwork(nn.Module):
                 traj, get_activation=True
             )
             z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            concatenated = jnp.concatenate(
-                [z, obs[..., self.reference_obs_size :]], axis=-1
-            )
+            egocentric_obs = obs[..., self.reference_obs_size :]
+            concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
             action, decoder_activations = self.decoder(
                 concatenated, get_activation=True
             )
@@ -121,6 +120,8 @@ class IntentionNetwork(nn.Module):
                 {
                     "encoder": encoder_activations,
                     "decoder": decoder_activations,
+                    "egocentric_obs": egocentric_obs,
+                    "traj_obs": traj,
                     "intention": z,
                 },
             )
@@ -134,7 +135,7 @@ class IntentionNetwork(nn.Module):
 
 
 def make_intention_policy(
-    param_size: int,
+    action_param_size: int,
     latent_size: int,
     total_obs_size: int,
     reference_obs_size: int,
@@ -142,17 +143,32 @@ def make_intention_policy(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
 ) -> networks.FeedForwardNetwork:
-    """Creates an intention policy network."""
+    """
+    Create a policy network with intention module.
+
+    Args:
+        action_param_size (int): the parameter size of the action space, usually double of the action size to model both the mean and variance of the action distribution
+        latent_size (int): the size of the latent space
+        total_obs_size (int): the total size of observations
+        reference_obs_size (int): the size of reference observations
+        preprocess_observations_fn (types.PreprocessObservationFn, optional): function to preprocess observations. Defaults to types.identity_observation_preprocessor.
+        encoder_hidden_layer_sizes (Sequence[int], optional): sizes of encoder hidden layers. Defaults to (1024, 1024).
+        decoder_hidden_layer_sizes (Sequence[int], optional): sizes of decoder hidden layers. Defaults to (1024, 1024).
+
+    Returns:
+        networks.FeedForwardNetwork: the created policy network
+    """
 
     policy_module = IntentionNetwork(
         encoder_layers=list(encoder_hidden_layer_sizes),
-        decoder_layers=list(decoder_hidden_layer_sizes) + [param_size],
+        decoder_layers=list(decoder_hidden_layer_sizes)
+        + [action_param_size],  # add action size to the last layer
         reference_obs_size=reference_obs_size,
         latents=latent_size,
     )
 
     def apply(processor_params, policy_params, obs, key, get_activation: bool = False):
-        """Applies the policy network with observation normalizer."""
+        """Applies the policy network with observation normalizer, the output is the action distribution parameters."""
         obs = preprocess_observations_fn(obs, processor_params)
         return policy_module.apply(
             policy_params, obs=obs, key=key, get_activation=get_activation

@@ -5,7 +5,6 @@ from track_mjx.agent import ppo_networks
 from typing import Callable
 
 from track_mjx.agent import ppo_networks, losses
-from track_mjx.agent import ppo
 from jax import numpy as jnp
 import jax
 from omegaconf import OmegaConf
@@ -36,7 +35,7 @@ def load_training_state(
     abstract_training_state,
     step_prefix: str = "PPONetwork",
     step: int | None = None,
-) -> ppo.TrainingState:
+):
     """Load the training state from checkpoint, given an arbitrary reference training state."""
     mgr_options = ocp.CheckpointManagerOptions(
         create=False,

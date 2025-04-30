@@ -59,7 +59,7 @@ train_setup:
   train_test_split_info: # "data/train_test_split_rodent.json" # Path to the train/test split file, records the index
   # Ratio of training data of the whole training dataset. Needs to be in the train_test_split_info["train_subset"] key. 
   # If not, please run the `notebooks/sample_efficiency_dev.ipynb` notebook to generate the train/test split file.
-  train_subset_ratio: # 0.1
+  train_subset_ratio: 0.5
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
   eval_every: 50_000_000
@@ -83,6 +83,7 @@ train_setup:
 
 logging_config:
   project_name: vnl_debug
+  group_name: 
   clip_id: -1
   model_path: model_checkpoints
   algo_name: ppo

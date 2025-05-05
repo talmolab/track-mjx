@@ -339,7 +339,7 @@ def train(
         
         def convert_data(x: jnp.ndarray):
             # start with (2048, 20, 128)
-            x = jax.random.permutation(key_perm, x)
+            # x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
             return x
         

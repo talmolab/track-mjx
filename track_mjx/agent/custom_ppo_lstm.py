@@ -274,6 +274,8 @@ def train(
     normalize = lambda x, y: x
     if normalize_observations:
         normalize = running_statistics.normalize
+    else:
+        print('[DEBUG] In setting up, observations are not normalized')
     
     # lstm and activation argument passed in here
     ppo_network = network_factory(

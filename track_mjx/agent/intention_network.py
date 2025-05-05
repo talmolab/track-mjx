@@ -33,7 +33,7 @@ class Encoder(nn.Module):
         activations = {}
         # For each layer in the sequence
         for i, hidden_size in enumerate(self.layer_sizes):
-            # jax.debug.print("[DEBUG inside Encoder] layer {}, x mean: {}", i, x.mean())
+            jax.debug.print("[DEBUG inside Encoder] layer {}, x mean: {}", i, x.mean())
             x = nn.Dense(
                 hidden_size,
                 name=f"hidden_{i}",
@@ -113,11 +113,11 @@ class LSTMDecoder(nn.Module):
             h_i = h[:, layer_idx, :]
             c_i = c[:, layer_idx, :]
             
-            # jax.debug.print("[DEBUG inside LSTMDecoder] Before LSTM layer {}, x mean: {}, h mean: {}, c mean: {}", layer_idx, x.mean(), h_i.mean(), c_i.mean())
+            jax.debug.print("[DEBUG inside LSTMDecoder] Before LSTM layer {}, x mean: {}, h mean: {}, c mean: {}", layer_idx, x.mean(), h_i.mean(), c_i.mean())
                 
             (new_c_i, new_h_i), x = lstm((c_i, h_i), x)
             
-            # jax.debug.print("[DEBUG inside LSTMDecoder] After LSTM layer {}, new_h mean: {}, new_c mean: {}", layer_idx, new_h_i.mean(), new_c_i.mean())
+            jax.debug.print("[DEBUG inside LSTMDecoder] After LSTM layer {}, new_h mean: {}, new_c mean: {}", layer_idx, new_h_i.mean(), new_c_i.mean())
 
             h_new.append(new_h_i)
             c_new.append(new_c_i)

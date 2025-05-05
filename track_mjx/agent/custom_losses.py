@@ -200,13 +200,13 @@ def compute_ppo_loss(
           (data.observation, 1 - data.discount, data.extras) # scan over 20 in (20, 512, data_dim) & discount is opposite to done
       )
       
-      # diffs_h = jnp.linalg.norm(jnp.squeeze(stack_h, axis=2) - jnp.squeeze(data.extras["hidden_state"], axis=2), axis=(1, 2))
-      # diffs_c = jnp.linalg.norm(jnp.squeeze(stack_c, axis=2) - jnp.squeeze(data.extras["cell_state"], axis=2), axis=(1, 2))
-      # diff_logits = jnp.linalg.norm(policy_logits - data.extras["policy_extras"]['logits'], axis=(1, 2))
+      diffs_h = jnp.linalg.norm(jnp.squeeze(stack_h, axis=2) - jnp.squeeze(data.extras["hidden_state"], axis=2), axis=(1, 2))
+      diffs_c = jnp.linalg.norm(jnp.squeeze(stack_c, axis=2) - jnp.squeeze(data.extras["cell_state"], axis=2), axis=(1, 2))
+      diff_logits = jnp.linalg.norm(policy_logits - data.extras["policy_extras"]['logits'], axis=(1, 2))
 
-      # jax.debug.print("0, -1 diffs_h: {}, {}", diffs_h[0], diffs_h[-1])
-      # jax.debug.print("0, -1 diffs_c: {}, {}", diffs_c[0], diffs_c[-1])
-      # jax.debug.print("0, -1 diff_logits: {}, {}", diff_logits[0], diff_logits[-1])
+      jax.debug.print("0, -1 diffs_h: {}, {}", diffs_h[0], diffs_h[-1])
+      jax.debug.print("0, -1 diffs_c: {}, {}", diffs_c[0], diffs_c[-1])
+      jax.debug.print("0, -1 diff_logits: {}, {}", diff_logits[0], diff_logits[-1])
       
       # should be independent across loss update not used anymore
       new_hidden_state = jax.tree_map(jax.lax.stop_gradient, (final_h, final_c))

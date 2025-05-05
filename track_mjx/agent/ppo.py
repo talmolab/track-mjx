@@ -424,7 +424,7 @@ def train(
         carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t
     ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey], Metrics]:
 
-        training_state, state, key = carry
+        training_state, state, key, it = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
         policy = make_policy(
@@ -612,7 +612,7 @@ def train(
         )
         evaluator_test_set = acting.Evaluator(
             eval_env_test_set,
-            functools.partial(make_policy, deterministic=deterministic_eval),
+            functools.partial(make_policy, deterministic=deterministic_eval, use_lstm=use_lstm),
             num_eval_envs=num_eval_envs,
             episode_length=episode_length,
             action_repeat=action_repeat,

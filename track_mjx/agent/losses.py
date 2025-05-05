@@ -224,7 +224,7 @@ def compute_ppo_loss(
             policy_key,
             None,
             get_activation=False,
-            use_lstm=use_lstm,
+            use_lstm=False,
         )
 
     baseline = value_apply(normalizer_params, params.value, data.observation)

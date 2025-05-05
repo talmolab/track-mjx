@@ -231,7 +231,7 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = wrappers.RenderRolloutWrapperTracking(
+    rollout_env = wrappers.RenderRolloutWrapperTrackingLSTM(
         env=env,
         lstm_features=cfg.network_config.hidden_state_size,
         hidden_layer_num=cfg.network_config.hidden_layer_num,

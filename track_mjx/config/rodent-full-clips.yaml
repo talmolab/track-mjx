@@ -64,15 +64,15 @@ train_setup:
   train_subset_ratio: 0.5
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 10_000_000
+  eval_every: 1 #10_000_000
   episode_length: 200
   reset_every: 50_000_000
   train_config:
-    num_envs: 2048
+    num_envs: 1024 #2048
     num_timesteps: 15_000_000_000
     batch_size: 1024
-    num_minibatches: 8
-    num_updates_per_batch: 4
+    num_minibatches: 1 #8
+    num_updates_per_batch: 1 # 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2     
     discounting: 0.95
@@ -80,10 +80,10 @@ train_setup:
     entropy_cost: 5e-2
     reward_scaling: 1
     normalize_observations: True
-    unroll_length: 20
+    unroll_length: 2 #20
     seed: 0
     get_activation: True
-    use_lstm: True
+    use_lstm: False
     deterministic_eval: False
 
 logging_config:

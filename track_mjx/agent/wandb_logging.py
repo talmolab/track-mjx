@@ -61,9 +61,11 @@ def rollout_logging_fn(
         params: Parameters for the policy model.
         policy_params_fn_key: PRNG key.
     """
+    train_config = cfg["train_setup"]["train_config"]
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
 
     state = jit_reset(reset_rng)
+    hidden_state = state.info["hidden_state"]
 
     rollout = [state]
     latent_means = []
@@ -71,7 +73,16 @@ def rollout_logging_fn(
     for i in range(int(cfg["reference_config"].clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        ctrl, extras = jit_logging_inference_fn(params, obs, act_rng)
+        if train_config["use_lstm"]:
+            ctrl, extras, hidden_state = jit_logging_inference_fn(
+                params, obs, act_rng, hidden_state
+            )
+        else:
+            (
+                ctrl,
+                extras,
+            ) = jit_logging_inference_fn(params, obs, act_rng, None)
+        ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
         latent_means.append(extras["latent_mean"])
         latent_logvars.append(extras["latent_logvar"])
         state = jit_step(state, ctrl)

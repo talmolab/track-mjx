@@ -29,7 +29,7 @@ import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-from track_mjx.agent import ppo, ppo_networks
+from track_mjx.agent import ppo, ppo_lstm, ppo_networks
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -55,6 +55,7 @@ _WALKERS = {
 }
 
 
+@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 @hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
@@ -184,8 +185,15 @@ def main(cfg: DictConfig):
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
+    if cfg.train_setup.train_config.use_lstm:
+        print("Using LSTM")
+        selected_ppo = ppo_lstm
+    else:
+        print("Using MLP")
+        selected_ppo = ppo
+
     train_fn = functools.partial(
-        ppo.train,
+        selected_ppo.train,
         **train_config,
         num_evals=int(
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
@@ -195,10 +203,12 @@ def main(cfg: DictConfig):
         kl_weight=cfg.network_config.kl_weight,
         network_factory=functools.partial(
             ppo_networks.make_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            hidden_state_size=cfg.network_config.hidden_state_size,
+            hidden_layer_num=cfg.network_config.hidden_layer_num,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-            intention_latent_size=cfg.network_config.intention_size,
         ),
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
@@ -221,7 +231,11 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(env)
+    rollout_env = wrappers.RenderRolloutWrapperTrackingLSTM(
+        env=env,
+        lstm_features=cfg.network_config.hidden_state_size,
+        hidden_layer_num=cfg.network_config.hidden_layer_num,
+    )
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)
@@ -243,7 +257,7 @@ def main(cfg: DictConfig):
     make_inference_fn, params, _ = train_fn(
         environment=env,
         progress_fn=wandb_progress,
-        policy_params_fn=policy_params_fn,
+        policy_params_fn=policy_params_fn,  # fill in the rest in training
     )
 
 

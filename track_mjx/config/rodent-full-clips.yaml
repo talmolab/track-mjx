@@ -50,7 +50,9 @@ network_config:
   critic_layer_sizes: [512,512,512]
   intention_size: 60
   kl_schedule: True # Whether to use a ramping KL schedule
-  kl_weight: 1e-3 # The maximum weight if schedule is True
+  kl_weight: 1e-4 # The maximum weight if schedule is True
+  hidden_state_size: 512
+  hidden_layer_num: 3
 
 train_setup:
   agent_name: rodent
@@ -62,7 +64,7 @@ train_setup:
   train_subset_ratio: 0.5
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 50_000_000
+  eval_every: 10_000_000
   episode_length: 200
   reset_every: 50_000_000
   train_config:
@@ -80,6 +82,9 @@ train_setup:
     normalize_observations: True
     unroll_length: 20
     seed: 0
+    get_activation: True
+    use_lstm: False
+    deterministic_eval: False
 
 logging_config:
   project_name: vnl_debug

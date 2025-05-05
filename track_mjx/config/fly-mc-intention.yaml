@@ -75,6 +75,8 @@ train_setup:
     normalize_observations: True
     unroll_length: 20
     seed: 0
+    get_activation: True
+    use_lstm: True
 
 logging_config:
   project_name: vnl_fly_debug

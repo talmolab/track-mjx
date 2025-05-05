@@ -175,3 +175,5 @@ cython_debug/
 #.idea/
 .DS_Store
 *.out
+*.mp4
+*.h5

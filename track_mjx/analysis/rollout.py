@@ -82,7 +82,11 @@ def create_rollout_generator(
     """
     ref_traj_config = cfg["reference_config"]
     # Wrap the environment
-    rollout_env = wrappers.RenderRolloutWrapperTracking(environment)
+    # TODO this logic is used in a few different places, make it a function?
+    if type(environment) == MultiClipTracking:
+        rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(environment)
+    elif type(environment) == SingleClipTracking:
+        rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(environment)
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)

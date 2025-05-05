@@ -1,7 +1,7 @@
 from brax.training.acme import running_statistics, specs
 
 from orbax import checkpoint as ocp
-from track_mjx.agent import ppo_networks, ppo
+from track_mjx.agent import ppo_networks
 from typing import Callable
 
 from track_mjx.agent import ppo_networks, losses
@@ -34,8 +34,8 @@ def load_training_state(
     checkpoint_path: str,
     abstract_training_state,
     step_prefix: str = "PPONetwork",
-    step: int = None,
-) -> ppo.TrainingState:
+    step: int | None = None,
+):
     """Load the training state from checkpoint, given an arbitrary reference training state."""
     mgr_options = ocp.CheckpointManagerOptions(
         create=False,
@@ -55,8 +55,34 @@ def load_training_state(
         )["train_state"]
 
 
+def load_policy(
+    checkpoint_path: str, cfg=None, ckpt_mgr=None, step_prefix="PPONetwork", step=None
+):
+    if cfg is None:
+        cfg = load_config_from_checkpoint(checkpoint_path, step_prefix, step)
+
+    # Make an abstract policy to get the pytree structure
+    abstract_policy = make_abstract_policy(cfg)
+    if ckpt_mgr is None:
+        mgr_options = ocp.CheckpointManagerOptions(
+            create=False,
+            step_prefix=step_prefix,
+        )
+        ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
+    if step is None:
+        step = ckpt_mgr.latest_step()
+
+    # Then load the policy given the pytree structure
+    return ckpt_mgr.restore(
+        step,
+        args=ocp.args.Composite(
+            policy=ocp.args.StandardRestore(abstract_policy),
+        ),
+    )["policy"]
+
+
 def load_checkpoint_for_eval(
-    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
+    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None
 ):
     """Load a checkpoint's config and policy. Creates an abstract state to define structure.
 
@@ -74,22 +100,14 @@ def load_checkpoint_for_eval(
         step = ckpt_mgr.latest_step()
 
     logging.info(f"Loading checkpoint from {checkpoint_path} at step {step}")
+    print(f"Loading checkpoint from {checkpoint_path} at step {step}")
 
     # First load the config
     cfg = OmegaConf.create(
         load_config_from_checkpoint(checkpoint_path, step_prefix, step)
     )
 
-    # Then make an abstract policy to get the pytree structure
-    abstract_policy = make_abstract_policy(cfg)
-
-    # Then load the policy given the pytree structure
-    policy = ckpt_mgr.restore(
-        step,
-        args=ocp.args.Composite(
-            policy=ocp.args.StandardRestore(abstract_policy),
-        ),
-    )["policy"]
+    policy = load_policy(checkpoint_path, cfg, ckpt_mgr, step_prefix, step)
 
     return {"cfg": cfg, "policy": policy}
 

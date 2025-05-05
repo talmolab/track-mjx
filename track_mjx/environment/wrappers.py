@@ -10,6 +10,8 @@ from brax.envs.wrappers.training import (
 import jax
 from jax import numpy as jp
 from mujoco import mjx
+from brax.v1.envs import env as brax_env
+from mujoco.mjx._src import smooth
 from flax import linen as nn
 
 
@@ -251,3 +253,80 @@ class EvalClipWrapperTracking(Wrapper):
         }
 
         return self.reset_from_clip(rng, info, noise=False)
+
+
+class AutoAlignWrapperTracking(Wrapper):
+    """When done (reset), align pose with reference trajectory.
+    Only works with the multiclip tracking env after multiclipvmapwrapper.
+    """
+
+    def reset(self, rng: jax.Array, clip_idx: jax.Array = None) -> State:
+        state = self.env.reset(rng, clip_idx)
+        return state
+
+    def step(self, state: State, action: jax.Array) -> State:
+        if "steps" in state.info:
+            steps = state.info["steps"]
+            steps = jp.where(state.done, jp.zeros_like(steps), steps)
+            state.info.update(steps=steps)
+        state = state.replace(done=jp.zeros_like(state.done))
+        state = self.env.step(state, action)
+
+        def where_done(x, y):
+            done = state.done
+            if done.shape:
+                done = jp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # type: ignore
+            return jp.where(done, x, y)
+
+        new_qpos = jp.concatenate(
+            (
+                state.info["reference_frame"].position,
+                state.info["reference_frame"].quaternion,
+                state.info["reference_frame"].joints,
+            ),
+            axis=-1,
+        )
+        new_qvel = jp.concatenate(
+            (
+                state.info["reference_frame"].velocity,
+                state.info["reference_frame"].angular_velocity,
+                state.info["reference_frame"].joints_velocity,
+            ),
+            axis=-1,
+        )
+        aligned_pipeline_state = state.pipeline_state.replace(
+            qpos=new_qpos, qvel=new_qvel
+        )
+        aligned_pipeline_state = jax.vmap(smooth.kinematics, in_axes=(None, 0))(
+            self._mjx_model, aligned_pipeline_state
+        )
+        pipeline_state = jax.tree.map(
+            where_done, aligned_pipeline_state, state.pipeline_state
+        )
+
+        reference_obs, proprioceptive_obs = jax.vmap(self._get_obs)(
+            pipeline_state, state.info
+        )
+        obs = jp.concatenate([reference_obs, proprioceptive_obs], axis=-1)
+        return state.replace(pipeline_state=pipeline_state, obs=obs)
+
+
+class HighLevelWrapper(Wrapper):
+    """Takes a decoder inference function and uses it to get the ctrl used in the sim step"""
+
+    def __init__(self, env, decoder_inference_fn, reference_obs_size):
+        self._decoder_inference_fn = decoder_inference_fn
+        self._reference_obs_size = reference_obs_size
+        super().__init__(env)
+
+    def step(self, state: State, latents: jax.Array) -> State:
+        obs = state.obs
+
+        # TODO replace reference obs size
+        action, _ = self._decoder_inference_fn(
+            jp.concatenate(
+                [latents, obs[..., self._reference_obs_size :]],
+                axis=-1,
+            ),
+        )
+        return self.env.step(state, action)

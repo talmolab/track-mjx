@@ -1,12 +1,16 @@
 from typing import Union
 import h5py
 from jax import numpy as jp
+import numpy as np
 from flax import struct
 import yaml
 from omegaconf import DictConfig
 from pathlib import Path
 import hydra
 import logging
+from dataclasses import dataclass
+from typing import Tuple
+import re
 
 
 @struct.dataclass
@@ -14,20 +18,24 @@ class ReferenceClip:
     """Immutable dataclass defining the trajectory features used in the tracking task."""
 
     # qpos
-    position: jp.ndarray = None
-    quaternion: jp.ndarray = None
-    joints: jp.ndarray = None
+    position: jp.ndarray
+    quaternion: jp.ndarray
+    joints: jp.ndarray
 
     # xpos
-    body_positions: jp.ndarray = None
+    body_positions: jp.ndarray
 
     # velocity (inferred)
-    velocity: jp.ndarray = None
-    angular_velocity: jp.ndarray = None
-    joints_velocity: jp.ndarray = None
+    velocity: jp.ndarray
+    angular_velocity: jp.ndarray
+    joints_velocity: jp.ndarray
 
     # xquat
-    body_quaternions: jp.ndarray = None
+    body_quaternions: jp.ndarray
+
+    # clip_idx based on the original clip order. Used to recover the metadata
+    # for the original clip.
+    original_clip_idx: jp.ndarray | None = None
 
 
 def load_configs(config_dir: Union[Path, str], config_name: str) -> DictConfig:
@@ -94,7 +102,7 @@ def make_singleclip_data(traj_data_path):
         )
 
 
-def make_multiclip_data(traj_data_path):
+def make_multiclip_data(traj_data_path, n_frames_per_clip: int | None = None):
     """Creates ReferenceClip object with multiclip tracking data.
     Features have shape = (clips, frames, dims)
     """
@@ -105,17 +113,18 @@ def make_multiclip_data(traj_data_path):
         )
 
     with h5py.File(traj_data_path, "r") as data:
-        # Read the config string as yaml in to dict
-        yaml_str = data["config"][()]
-        yaml_str = yaml_str.decode("utf-8")
-        config = yaml.safe_load(yaml_str)
-        clip_len = config["stac"]["n_frames_per_clip"]
+        # Read the config string as yaml in to dict if needed
+        if n_frames_per_clip is None:
+            yaml_str = data["config"][()]
+            yaml_str = yaml_str.decode("utf-8")
+            config = yaml.safe_load(yaml_str)
+            n_frames_per_clip = config["stac"]["n_frames_per_clip"]
 
         # Reshape the data to (clips, frames, dims)
-        batch_qpos = reshape_frames(data["qpos"], clip_len)
-        batch_xpos = reshape_frames(data["xpos"], clip_len)
-        batch_qvel = reshape_frames(data["qvel"], clip_len)
-        batch_xquat = reshape_frames(data["xquat"], clip_len)
+        batch_qpos = reshape_frames(data["qpos"], n_frames_per_clip)
+        batch_xpos = reshape_frames(data["xpos"], n_frames_per_clip)
+        batch_qvel = reshape_frames(data["qvel"], n_frames_per_clip)
+        batch_xquat = reshape_frames(data["xquat"], n_frames_per_clip)
         return ReferenceClip(
             position=batch_qpos[:, :, :3],
             quaternion=batch_qpos[:, :, 3:7],
@@ -173,3 +182,97 @@ def load_reference_clip_data(
         raise FileNotFoundError(f"File not found: {filepath}")
     except OSError as e:  # Catch more specific HDF5-related errors
         raise OSError(f"Error reading HDF5 file: {filepath} - {e}")
+
+
+def generate_train_test_split(
+    data: ReferenceClip,
+    test_ratio: float = 0.1,
+) -> Tuple[ReferenceClip, ReferenceClip]:
+    """
+    Generates a train-test split of the clips based on the provided ratio.
+    The split is done by randomly sampling clips from the metadata list.
+    The function returns two ReferenceClip objects: one for training and one for testing.
+
+    Args:
+        data (ReferenceClip): The ReferenceClip object containing the clips to be split.
+        test_ratio (float, optional): ratio of the test set. Defaults to 0.1.
+
+    Returns:
+        Tuple[ReferenceClip, ReferenceClip]: training set and testing set as ReferenceClip objects.
+    """
+    num_clips = data.position.shape[0]
+    indices = np.arange(num_clips)
+    test_idx = np.random.choice(
+        indices, size=int(num_clips * test_ratio), replace=False
+    )
+    train_idx = indices[~np.isin(indices, test_idx)]
+    train_idx.sort()
+    test_idx.sort()
+    train_set = select_clips(data, train_idx)
+    test_set = select_clips(data, test_idx)
+    return train_set, test_set
+
+
+def load_clips_metadata(traj_data_path: str) -> list[Tuple[str, int]]:
+    """
+    Loads the metadata of the clips from the specified trajectory data path.
+    the metadata includes the behavior groups and number of each clip.
+    This methods is specific to the stac-mjx format of the rodent data.
+
+    Args:
+        traj_data_path (str): Path to the trajectory data file.
+
+    Returns:
+        list[Tuple[str, int]]: List of tuples containing the clip name and number.
+    """
+    with h5py.File(traj_data_path, "r") as data:
+        # Read the config string as yaml in to dict
+        yaml_str = data["config"][()]
+        yaml_str = yaml_str.decode("utf-8")
+        config = yaml.safe_load(yaml_str)
+    pattern = re.compile(r"/([^/]+)_([0-9]+)\.p$")
+    clip_metadata = []
+    for path in config["model"]["snips_order"]:
+        match = pattern.search(path)
+        if match:
+            name, number = match.groups()
+            clip_metadata.append((name, int(number)))
+    return clip_metadata
+
+
+def sub_sample_training_set(train_idx: np.ndarray, train_ratio: float = 0.1):
+    """
+    Given the indices of the training clips, this function randomly samples a subset
+    of the training clips based on the provided ratio without replacement.
+
+    Args:
+        train_idx (np.ndarray): Array of indices for the training clips.
+        train_ratio (float, optional): Ratio of the training clips to sample. Defaults to 0.1.
+    """
+    sample_size = int(len(train_idx) * train_ratio)
+    sampled_idx = np.random.choice(train_idx, size=sample_size, replace=False)
+    sampled_idx.sort()
+    return sampled_idx
+
+
+def select_clips(
+    clips: ReferenceClip,
+    indices: np.ndarray,
+) -> ReferenceClip:
+    """
+    Selects clips from the ReferenceClip object based on the provided indices.
+    The function returns a new ReferenceClip object containing only the selected clips.
+    """
+    indices = np.array(indices)
+    selected_clips = ReferenceClip(
+        position=clips.position[indices],
+        quaternion=clips.quaternion[indices],
+        joints=clips.joints[indices],
+        body_positions=clips.body_positions[indices],
+        velocity=clips.velocity[indices],
+        angular_velocity=clips.angular_velocity[indices],
+        joints_velocity=clips.joints_velocity[indices],
+        body_quaternions=clips.body_quaternions[indices],
+        original_clip_idx=jp.array(indices[:, jp.newaxis]),
+    )
+    return selected_clips

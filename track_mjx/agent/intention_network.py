@@ -86,7 +86,7 @@ class Decoder(nn.Module):
                     activations[f"layer_{i}"] = x
         if get_activation:
             return x, activations
-        return x
+        return x, {}
 
 
 class LSTMDecoder(nn.Module):
@@ -138,7 +138,7 @@ class LSTMDecoder(nn.Module):
         if get_activation:
             # hidden is stored as (num_hidden_layers, 128)
             return x, (stacke_h_new, stacke_c_new), activations
-        return x, (stacke_h_new, stacke_c_new) # still tuple
+        return x, (stacke_h_new, stacke_c_new), {} # still tuple
 
 
 def reparameterize(rng, mean, logvar):
@@ -232,12 +232,12 @@ class IntentionNetwork(nn.Module):
                     [z, egocentric_obs], axis=-1
                 )
                 print("In intention_network using just LSTM, no Activation")
-                action, new_hidden_state = self.lstm_decoder(concatenated, hidden_state)
+                action, new_hidden_state, decoder_activations = self.lstm_decoder(concatenated, hidden_state)
                 return action, latent_mean, latent_logvar, new_hidden_state
 
             else:
                 print("[DEBUG] In intention_network using just MLP, no Activation")
-                action = self.decoder(concatenated)
+                action, decoder_activations = self.decoder(concatenated)
                 return action, latent_mean, latent_logvar
 
 

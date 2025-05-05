@@ -421,8 +421,8 @@ def train(
         return (optimizer_state, params, key, it), metrics
 
     def training_step(
-        carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t
-    ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey], Metrics]:
+        carry: Tuple[TrainingState, envs.State, PRNGKey, int], unused_t
+    ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey, int], Metrics]:
 
         training_state, state, key, it = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)

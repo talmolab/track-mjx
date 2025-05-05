@@ -145,10 +145,6 @@ class Evaluator:
 
             dummy_hidden_state = eval_first_state.info["hidden_state"]
 
-            print(
-                f"[DEBUG] In evals, info hidden have shape: {dummy_hidden_state[0].shape}"
-            )
-
             # unstack one here
             final_state, _, final_hidden_state = generate_unroll(
                 eval_env,

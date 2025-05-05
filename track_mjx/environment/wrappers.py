@@ -43,12 +43,14 @@ def wrap(
         env = VmapWrapper(env)
     else:
         env = DomainRandomizationVmapWrapper(env, randomization_fn)
-    
+
     if use_lstm:
-        env = LSTMAutoResetWrapperTracking(env, lstm_features=hidden_state_dim, hidden_layer_num=hidden_layer_num)
+        env = LSTMAutoResetWrapperTracking(
+            env, lstm_features=hidden_state_dim, hidden_layer_num=hidden_layer_num
+        )
     else:
         env = AutoResetWrapperTracking(env)
-        
+
     return env
 
 
@@ -61,23 +63,28 @@ class LSTMAutoResetWrapperTracking(Wrapper):
         self.lstm_features = lstm_features
         self.hidden_layer_num = hidden_layer_num
 
-    def initialize_hidden_state(self, rng: jax.Array, num_envs: int) -> tuple[jp.ndarray, jp.ndarray]:
+    def initialize_hidden_state(
+        self, rng: jax.Array, num_envs: int
+    ) -> tuple[jp.ndarray, jp.ndarray]:
         """Initializes LSTM hidden state (h_t, c_t) for each environment."""
-        
+
         lstm_cell = nn.LSTMCell(features=self.lstm_features)
-        
+
         def init_single_env(_rng):
             def init_single_layer(layer_rng):
                 return lstm_cell.initialize_carry(layer_rng, ())
+
             layer_rngs = jax.random.split(_rng, self.hidden_layer_num)
             c_list, h_list = zip(*[init_single_layer(r) for r in layer_rngs])
             return jp.stack(h_list), jp.stack(c_list)  # [num_layers, hidden_dim]
 
         env_rngs = jax.random.split(rng, num_envs)
-        h_stack, c_stack = jax.vmap(init_single_env)(env_rngs)  # [num_envs, num_layers, hidden_dim]
-        
+        h_stack, c_stack = jax.vmap(init_single_env)(
+            env_rngs
+        )  # [num_envs, num_layers, hidden_dim]
+
         return h_stack, c_stack
-    
+
     def reset(self, rng: jax.Array) -> State:
         """Resets the environment and reinitializes LSTM hidden states."""
         state = self.env.reset(rng)
@@ -89,12 +96,12 @@ class LSTMAutoResetWrapperTracking(Wrapper):
         num_envs = state.obs.shape[0]
         hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0), num_envs)
         state.info["hidden_state"] = hidden_state
-        
+
         return state
 
     def step(self, state: State, action: jax.Array) -> State:
         """Steps through the environment and resets hidden states for done envs."""
-        
+
         if "steps" in state.info:
             steps = state.info["steps"]
             steps = jp.where(state.done, jp.zeros_like(steps), steps)
@@ -107,7 +114,9 @@ class LSTMAutoResetWrapperTracking(Wrapper):
             """Reinitialize hidden state where done == True."""
             done = state.done
             if done.shape:
-                done = jp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))  # broadcasts over batch dim
+                done = jp.reshape(
+                    done, [x.shape[0]] + [1] * (len(x.shape) - 1)
+                )  # broadcasts over batch dim
             return jp.where(done, x, y)  # reset only where `done == True`
 
         pipeline_state = jax.tree.map(
@@ -129,16 +138,16 @@ class LSTMAutoResetWrapperTracking(Wrapper):
         # )
 
         # state.info["hidden_state"] = hidden_state
-        
+
         return state.replace(pipeline_state=pipeline_state, obs=obs)
 
 
 class RenderRolloutWrapperTracking(Wrapper):
     """Always resets to the first frame of the clips for complete rollouts."""
-    
-    def __init__(self, env, lstm_features: int = 128, hidden_layer_num: int =2):
+
+    def __init__(self, env, lstm_features: int = 128, hidden_layer_num: int = 2):
         """Initialize the wrapper.
-        
+
         Args:
             env: The environment to wrap.
             lstm_features (int): The size of the LSTM hidden state.
@@ -146,25 +155,25 @@ class RenderRolloutWrapperTracking(Wrapper):
         super().__init__(env)
         self.lstm_features = lstm_features
         self.hidden_layer_num = hidden_layer_num
-    
+
     def initialize_hidden_state(self, rng: jax.Array) -> tuple[jp.ndarray, jp.ndarray]:
         """Initializes LSTM hidden states for the environment."""
         lstm_cell = nn.LSTMCell(features=self.lstm_features)
         # return lstm_cell.initialize_carry(rng, ())
-    
+
         def init_single_env(_rng):
             def init_single_layer(layer_rng):
                 return lstm_cell.initialize_carry(layer_rng, ())
+
             layer_rngs = jax.random.split(_rng, self.hidden_layer_num)
             c_list, h_list = zip(*[init_single_layer(r) for r in layer_rngs])
             return jp.stack(h_list), jp.stack(c_list)  # [num_layers, hidden_dim]
-        
+
         num_envs = 1
         env_rngs = jax.random.split(rng, num_envs)
         h_stack, c_stack = jax.vmap(init_single_env)(env_rngs)
 
         return h_stack, c_stack
-        
 
     def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
         """
@@ -180,13 +189,13 @@ class RenderRolloutWrapperTracking(Wrapper):
         _, clip_rng, rng = jax.random.split(rng, 3)
         if clip_idx is None:
             clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
-        
+
         info = {
             "clip_idx": clip_idx,
             "start_frame": 0,
             "prev_ctrl": jp.zeros((self.sys.nu,)),
         }
-        
+
         hidden_state = self.initialize_hidden_state(jax.random.PRNGKey(0))
         info["hidden_state"] = hidden_state
 

@@ -251,15 +251,15 @@ def train(
         wrap_for_training = wrappers.wrap
     else:
         wrap_for_training = envs_v1.wrappers.wrap_for_training
-    
+
     env = wrap_for_training(
         environment,
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
         use_lstm=use_lstm,
-        hidden_state_dim=config_dict['network_config']['hidden_state_size'],
-        hidden_layer_num=config_dict['network_config']['hidden_layer_num'],
+        hidden_state_dim=config_dict["network_config"]["hidden_state_size"],
+        hidden_layer_num=config_dict["network_config"]["hidden_layer_num"],
     )
 
     reset_fn = jax.jit(jax.vmap(env.reset))
@@ -270,7 +270,7 @@ def train(
     normalize = lambda x, y: x
     if normalize_observations:
         normalize = running_statistics.normalize
-    
+
     # lstm and activation argument passed in here
     ppo_network = network_factory(
         env_state.obs.shape[-1],
@@ -280,12 +280,20 @@ def train(
         get_activation=get_activation,
         use_lstm=use_lstm,
     )
-    make_policy = ppo_networks.make_inference_fn(ppo_network) # don't need to pass, make_policy will written with having args
+    make_policy = ppo_networks.make_inference_fn(
+        ppo_network
+    )  # don't need to pass, make_policy will written with having args
 
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
-    
+
     # always true for rendering env
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True, get_activation=False, use_lstm=use_lstm,))
+    jit_logging_inference_fn = jax.jit(
+        make_logging_policy(
+            deterministic=True,
+            get_activation=False,
+            use_lstm=use_lstm,
+        )
+    )
 
     optimizer = optax.adam(learning_rate=learning_rate)
 
@@ -299,29 +307,33 @@ def train(
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
-        use_lstm=use_lstm, # add args here
+        use_lstm=use_lstm,  # add args here
     )
-    
+
     # use brax gradient function now
     gradient_update_fn = gradients.gradient_update_fn(
         loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
-        ) # partial loss here, this would inherent parameters from loss_fn
-        
-    
+    )  # partial loss here, this would inherent parameters from loss_fn
+
     def minibatch_step(
         carry,
         data: types.Transition,
         normalizer_params: running_statistics.RunningStatisticsState,
-    ):   
+    ):
         optimizer_state, params, key = carry
-        step = 0 # place holder, will not be used in loss, only MLP has KL schedules
-        
+        step = 0  # place holder, will not be used in loss, only MLP has KL schedules
+
         key, key_loss = jax.random.split(key)
         (_, metrics), params, optimizer_state = gradient_update_fn(
-            params, normalizer_params, data, key_loss, step, optimizer_state=optimizer_state, # for los_fn, f **args functions
+            params,
+            normalizer_params,
+            data,
+            key_loss,
+            step,
+            optimizer_state=optimizer_state,  # for los_fn, f **args functions
         )
 
-        return (optimizer_state, params, key), metrics # updated params
+        return (optimizer_state, params, key), metrics  # updated params
 
     def sgd_step(
         carry,
@@ -331,66 +343,77 @@ def train(
     ):
         optimizer_state, params, key = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
-        
+
         def convert_data(x: jnp.ndarray):
             # start with (2048, 20, 128)
             x = jax.random.permutation(key_perm, x)
-            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:]) # (4, 512, 20, 128)
+            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])  # (4, 512, 20, 128)
             return x
-        
+
         shuffled_data = jax.tree_util.tree_map(convert_data, data)
-        
+
         # Jax.lax.scan should scan through minibatches
         (optimizer_state, params, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, key_grad),
-            shuffled_data, # single data pass, no hidden combo, hidden in it
+            shuffled_data,  # single data pass, no hidden combo, hidden in it
             length=num_minibatches,
         )
-        
+
         # return hidden_state for shape consistent, not used later
-        return (optimizer_state, params, key), metrics # carry shape maintains, now updated
+        return (
+            optimizer_state,
+            params,
+            key,
+        ), metrics  # carry shape maintains, now updated
 
     def training_step(
         carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t
     ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey], Metrics]:
-        
+
         training_state, state, key = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
         policy = make_policy(
-            params=(training_state.normalizer_params, training_state.params.policy), get_activation=get_activation, use_lstm=use_lstm, # pass in here
+            params=(training_state.normalizer_params, training_state.params.policy),
+            get_activation=get_activation,
+            use_lstm=use_lstm,  # pass in here
         )
 
-        #TODO: make this embeded in ppo.py
+        # TODO: make this embeded in ppo.py
         def f(carry, unused_t):
             current_state, current_key, hidden_state = carry
             current_key, next_key = jax.random.split(current_key)
             next_state, data, forward_hidden_state = acting.generate_unroll(
                 env,
                 current_state,
-                policy, # has hidden states
+                policy,  # has hidden states
                 current_key,
                 hidden_state,
                 unroll_length,
                 extra_fields=("truncation",),
             )
-            
+
             # both here and in actor_step, provide 4 here
             # return the final hidden in carry for carry alignment (forward), return stacked hidden in transtion extra field
             return (next_state, next_key, forward_hidden_state), data
-        
-        
+
         (state, _, forward_hidden_state), data = jax.lax.scan(
             f,
-            (state, key_generate_unroll, training_state.hidden_state), # forward hidden state
+            (
+                state,
+                key_generate_unroll,
+                training_state.hidden_state,
+            ),  # forward hidden state
             (),
             length=batch_size * num_minibatches // num_envs,
         )
-        
+
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        data = jax.tree_util.tree_map(lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data)
+        data = jax.tree_util.tree_map(
+            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
+        )
         assert data.discount.shape[1:] == (unroll_length,)
 
         # Update normalization params and normalize observations.
@@ -400,15 +423,19 @@ def train(
         #     pmap_axis_name=_PMAP_AXIS_NAME,
         # )
         normalizer_params = training_state.normalizer_params
-        
+
         # Final sgd hidden_state returns doesn't matter
         (optimizer_state, params, _), metrics = jax.lax.scan(
-            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params), 
-            (training_state.optimizer_state, training_state.params, key_sgd), # should pass in new_hidden_state
+            functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
+            (
+                training_state.optimizer_state,
+                training_state.params,
+                key_sgd,
+            ),  # should pass in new_hidden_state
             (),
             length=num_updates_per_batch,
-        ) # no specific scan axis
-        
+        )  # no specific scan axis
+
         normalizer_params = running_statistics.update(
             training_state.normalizer_params,
             data.observation,
@@ -426,7 +453,6 @@ def train(
         )
         return (new_training_state, state, new_key), metrics
 
-
     def training_epoch(
         training_state: TrainingState, state: envs.State, key: PRNGKey
     ) -> Tuple[TrainingState, envs.State, Metrics]:
@@ -436,7 +462,7 @@ def train(
             (),
             length=num_training_steps_per_epoch,
         )
-        
+
         loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
@@ -472,16 +498,20 @@ def train(
             env_state,
             metrics,
         )  # pytype: disable=bad-return-type  # py311-upgrade
-    
+
     # All init here, this policy_network is class of IntentionNetwork
     dummy_hidden_state = env_state.info["hidden_state"]
-    dummy_hidden_state_squeeze = jax.tree_util.tree_map(lambda x: jnp.squeeze(x, axis=0), dummy_hidden_state)
-    
+    dummy_hidden_state_squeeze = jax.tree_util.tree_map(
+        lambda x: jnp.squeeze(x, axis=0), dummy_hidden_state
+    )
+
     init_params = ppo_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key=key_policy, hidden_state=dummy_hidden_state_squeeze), # policy network here is an function to be instantiated
+        policy=ppo_network.policy_network.init(
+            key=key_policy, hidden_state=dummy_hidden_state_squeeze
+        ),  # policy network here is an function to be instantiated
         value=ppo_network.value_network.init(key_value),
     )
-    
+
     training_state = TrainingState(  # pytype: disable=wrong-arg-types  # jax-ndarray
         optimizer_state=optimizer.init(
             init_params
@@ -521,25 +551,27 @@ def train(
         v_randomization_fn = functools.partial(
             randomization_fn, rng=jax.random.split(eval_key, num_eval_envs)
         )
-        
+
     eval_env = wrap_for_training(
         eval_env,
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
         use_lstm=use_lstm,
-        hidden_state_dim=config_dict['network_config']['hidden_state_size'],
-        hidden_layer_num=config_dict['network_config']['hidden_layer_num'],
+        hidden_state_dim=config_dict["network_config"]["hidden_state_size"],
+        hidden_layer_num=config_dict["network_config"]["hidden_layer_num"],
     )
-    
-    print(f'Using deterministic_eval is {deterministic_eval}')
-    
+
+    print(f"Using deterministic_eval is {deterministic_eval}")
+
     evaluator = acting.Evaluator(
         eval_env,
-        functools.partial(make_policy,
-                          deterministic=deterministic_eval,
-                          get_activation=get_activation,
-                          use_lstm=use_lstm,),
+        functools.partial(
+            make_policy,
+            deterministic=deterministic_eval,
+            get_activation=get_activation,
+            use_lstm=use_lstm,
+        ),
         num_eval_envs=num_eval_envs,
         episode_length=episode_length,
         action_repeat=action_repeat,
@@ -606,12 +638,12 @@ def train(
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
-            
+
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             policy_params_fn(
                 current_step=it,
-                jit_logging_inference_fn=jit_logging_inference_fn, # takes in jitted logging inference
+                jit_logging_inference_fn=jit_logging_inference_fn,  # takes in jitted logging inference
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
             )

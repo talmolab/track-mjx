@@ -136,7 +136,7 @@ def compute_ppo_loss(
       clipping_epsilon: Policy loss clipping epsilon
       normalize_advantage: whether to normalize advantage estimate
       use_lstm: boolean argument for using lstm decoder
-      
+
 
     Returns:
       A tuple (loss, metrics)
@@ -146,59 +146,86 @@ def compute_ppo_loss(
     parametric_action_distribution = ppo_network.parametric_action_distribution
     policy_apply = ppo_network.policy_network.apply
     value_apply = ppo_network.value_network.apply
-    
+
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    
+
     if use_lstm:
-      hidden_state = (data.extras['hidden_state'][0], data.extras['cell_state'][0]) # take in first hidden again to unroll
-      
-      def scan_policy_fn(carry, inputs):
-          """
-          carry: (h, c) hidden state for LSTM
-          x_t: observations at time t with shape [B, obs_dim]
-          """
-          (h, c) = carry
-          x_t, next_done, data_extras = inputs
+        hidden_state = (
+            data.extras["hidden_state"][0],
+            data.extras["cell_state"][0],
+        )  # take in first hidden again to unroll
 
-          logits_t, latent_mean_t, latent_logvar_t, new_hidden_state = policy_apply(
-              normalizer_params,
-              params.policy, 
-              x_t, # obs for time t
-              policy_key,
-              (h, c),
-              get_activation=False,
-              use_lstm=True,
-          )
-          (new_h, new_c) = new_hidden_state
-          done_mask = next_done[:, None]
-          done_mask = done_mask.reshape((done_mask.shape[0], 1, 1))
-          
-          reset_h = jnp.zeros_like(h)
-          reset_c = jnp.zeros_like(c)
-          
-          new_h = jnp.where(done_mask, reset_h, new_h)
-          new_c = jnp.where(done_mask, reset_c, new_c)
+        def scan_policy_fn(carry, inputs):
+            """
+            carry: (h, c) hidden state for LSTM
+            x_t: observations at time t with shape [B, obs_dim]
+            """
+            (h, c) = carry
+            x_t, next_done, data_extras = inputs
 
-          # accumulate some fields for the entire sequence
-          return (new_h, new_c), (logits_t, latent_mean_t, latent_logvar_t, h, c) # store input to stack up
-      
-      (final_h, final_c), (policy_logits, latent_mean, latent_logvar, stack_h, stack_c) = jax.lax.scan(
-          scan_policy_fn,
-          hidden_state, # carry only hidden state
-          (data.observation, 1 - data.discount, data.extras) # scan over 20 in (20, 512, data_dim) & discount is opposite to done
-      )
-      
-      # should be independent across loss update not used anymore
-      new_hidden_state = jax.tree_map(jax.lax.stop_gradient, (final_h, final_c))
-      
-      print(f'[DEBUG] In loss function, the new hidden shape is {new_hidden_state[0].shape}')
-      print(f'[DEBUG] In loss function, the logit shape is {policy_logits.shape}')
-        
+            logits_t, latent_mean_t, latent_logvar_t, new_hidden_state = policy_apply(
+                normalizer_params,
+                params.policy,
+                x_t,  # obs for time t
+                policy_key,
+                (h, c),
+                get_activation=False,
+                use_lstm=True,
+            )
+            (new_h, new_c) = new_hidden_state
+            done_mask = next_done[:, None]
+            done_mask = done_mask.reshape((done_mask.shape[0], 1, 1))
+
+            reset_h = jnp.zeros_like(h)
+            reset_c = jnp.zeros_like(c)
+
+            new_h = jnp.where(done_mask, reset_h, new_h)
+            new_c = jnp.where(done_mask, reset_c, new_c)
+
+            # accumulate some fields for the entire sequence
+            return (new_h, new_c), (
+                logits_t,
+                latent_mean_t,
+                latent_logvar_t,
+                h,
+                c,
+            )  # store input to stack up
+
+        (final_h, final_c), (
+            policy_logits,
+            latent_mean,
+            latent_logvar,
+            stack_h,
+            stack_c,
+        ) = jax.lax.scan(
+            scan_policy_fn,
+            hidden_state,  # carry only hidden state
+            (
+                data.observation,
+                1 - data.discount,
+                data.extras,
+            ),  # scan over 20 in (20, 512, data_dim) & discount is opposite to done
+        )
+
+        # should be independent across loss update not used anymore
+        new_hidden_state = jax.tree_map(jax.lax.stop_gradient, (final_h, final_c))
+
+        print(
+            f"[DEBUG] In loss function, the new hidden shape is {new_hidden_state[0].shape}"
+        )
+        print(f"[DEBUG] In loss function, the logit shape is {policy_logits.shape}")
+
     else:
-      policy_logits, latent_mean, latent_logvar = policy_apply(
-      normalizer_params, params.policy, data.observation, policy_key, None, get_activation=False, use_lstm=use_lstm
-      )
+        policy_logits, latent_mean, latent_logvar = policy_apply(
+            normalizer_params,
+            params.policy,
+            data.observation,
+            policy_key,
+            None,
+            get_activation=False,
+            use_lstm=use_lstm,
+        )
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 
@@ -247,9 +274,9 @@ def compute_ppo_loss(
 
     # KL Divergence for latent layer
     if (kl_schedule is not None) & (not use_lstm):
-        print('Using MLP + KL Scheduler')
+        print("Using MLP + KL Scheduler")
         kl_weight = kl_schedule(step)
-        
+
     kl_latent_loss = kl_weight * (
         -0.5
         * jnp.mean(1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar))
@@ -262,7 +289,7 @@ def compute_ppo_loss(
         "v_loss": v_loss,
         "kl_latent_loss": kl_latent_loss,
         "entropy_loss": entropy_loss,
-    } # need to be just two things for jax.value_and_grad(loss_fn, has_aux=has_aux) to work
+    }  # need to be just two things for jax.value_and_grad(loss_fn, has_aux=has_aux) to work
 
 
 def create_ramp_schedule(

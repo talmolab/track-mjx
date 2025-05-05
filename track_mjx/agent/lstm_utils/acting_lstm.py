@@ -32,42 +32,51 @@ from flax import linen as nn
 State = Union[envs.State, envs_v1.State]
 Env = Union[envs.Env, envs_v1.Env, envs_v1.Wrapper]
 
+
 def actor_step(
     env: Env,
     env_state: State,
     policy: Policy,
     key: PRNGKey,
     hidden_state: tuple[jnp.ndarray, jnp.ndarray],
-    extra_fields: Sequence[str] = ()
+    extra_fields: Sequence[str] = (),
 ) -> tuple[State, Transition, jnp.ndarray]:
     """Collect data and update LSTM hidden state."""
-    
+
     actions, policy_extras, new_hidden_state = policy(env_state.obs, key, hidden_state)
 
     info_hidden = env_state.info["hidden_state"]
-    
+
     nstate = env.step(env_state, actions)
     state_extras = {x: nstate.info[x] for x in extra_fields}
     done = nstate.done[:, None]  # done flags (batch_size, num_envs)
     done = done.reshape((done.shape[0], 1, 1))  # (128, 1, 1)
-    
-    new_hidden_state = jax.tree_util.tree_map(lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state)
+
+    new_hidden_state = jax.tree_util.tree_map(
+        lambda info_h, h: jnp.where(done, info_h, h), info_hidden, new_hidden_state
+    )
     new_hidden_state = jax.tree_map(jax.lax.stop_gradient, new_hidden_state)
-    
-    return nstate, Transition(  
-        observation=env_state.obs, # start with first obs, nstate as next obs will feed in and update next iter
-        action=actions,
-        reward=nstate.reward,
-        discount=1 - nstate.done,
-        next_observation=nstate.obs,
-        extras={
-            'policy_extras': policy_extras,
-            'state_extras': state_extras,
-            'hidden_state': hidden_state[0], # lag one, or else first hidden_state lost, should be hidden before policy
-            'cell_state': hidden_state[1]
-        }
-    ), new_hidden_state # use for forward
-    
+
+    return (
+        nstate,
+        Transition(
+            observation=env_state.obs,  # start with first obs, nstate as next obs will feed in and update next iter
+            action=actions,
+            reward=nstate.reward,
+            discount=1 - nstate.done,
+            next_observation=nstate.obs,
+            extras={
+                "policy_extras": policy_extras,
+                "state_extras": state_extras,
+                "hidden_state": hidden_state[
+                    0
+                ],  # lag one, or else first hidden_state lost, should be hidden before policy
+                "cell_state": hidden_state[1],
+            },
+        ),
+        new_hidden_state,
+    )  # use for forward
+
 
 def generate_unroll(
     env: Env,
@@ -76,7 +85,7 @@ def generate_unroll(
     key: PRNGKey,
     hidden_state: tuple[jnp.ndarray, jnp.ndarray],
     unroll_length: int,
-    extra_fields: Sequence[str] = ()
+    extra_fields: Sequence[str] = (),
 ) -> tuple[State, Transition, jnp.ndarray]:
     """Collect trajectories of given unroll_length while tracking LSTM state."""
 
@@ -88,7 +97,7 @@ def generate_unroll(
         nstate, transition, new_hidden_state = actor_step(
             env, state, policy, current_key, hidden_state, extra_fields=extra_fields
         )  # updated hidden state
-        
+
         # both here and in forward, provide unroll_length here
         # return the final hidden in carry for carry alignment (forward), return stacked hidden in transition extra field
         return (nstate, next_key, new_hidden_state), transition
@@ -97,16 +106,22 @@ def generate_unroll(
     (final_state, _, forward_hidden_state), data = jax.lax.scan(
         f, (env_state, key, hidden_state), (), length=unroll_length
     )
-    
+
     return final_state, data, forward_hidden_state
+
 
 class Evaluator:
     """Class to run evaluations with LSTM state handling."""
 
-    def __init__(self, eval_env: envs.Env,
-                 eval_policy_fn: Callable[[PolicyParams], Policy],
-                 num_eval_envs: int, episode_length: int,
-                 action_repeat: int, key: PRNGKey):
+    def __init__(
+        self,
+        eval_env: envs.Env,
+        eval_policy_fn: Callable[[PolicyParams], Policy],
+        num_eval_envs: int,
+        episode_length: int,
+        action_repeat: int,
+        key: PRNGKey,
+    ):
         """Init.
 
         Args:
@@ -118,68 +133,69 @@ class Evaluator:
           key: RNG key.
         """
         self._key = key
-        self._eval_walltime = 0.
+        self._eval_walltime = 0.0
 
         eval_env = envs.training.EvalWrapper(eval_env)
 
-        def generate_eval_unroll(policy_params: PolicyParams,
-                                 key: PRNGKey) -> tuple[State, tuple[jnp.ndarray, jnp.ndarray]]:
+        def generate_eval_unroll(
+            policy_params: PolicyParams, key: PRNGKey
+        ) -> tuple[State, tuple[jnp.ndarray, jnp.ndarray]]:
             reset_keys = jax.random.split(key, num_eval_envs)
             eval_first_state = eval_env.reset(reset_keys)
-            
+
             dummy_hidden_state = eval_first_state.info["hidden_state"]
-            
-            print(f'[DEBUG] In evals, info hidden have shape: {dummy_hidden_state[0].shape}')
-            
+
+            print(
+                f"[DEBUG] In evals, info hidden have shape: {dummy_hidden_state[0].shape}"
+            )
+
             # unstack one here
             final_state, _, final_hidden_state = generate_unroll(
                 eval_env,
                 eval_first_state,
                 eval_policy_fn(policy_params),
                 key,
-                dummy_hidden_state, 
-                unroll_length=episode_length // action_repeat
+                dummy_hidden_state,
+                unroll_length=episode_length // action_repeat,
             )
             return final_state, final_hidden_state
 
         self._generate_eval_unroll = jax.jit(generate_eval_unroll)
         self._steps_per_unroll = episode_length * num_eval_envs
 
-    def run_evaluation(self,
-                       policy_params: PolicyParams,
-                       training_metrics: Metrics,
-                       aggregate_episodes: bool = True) -> Metrics:
+    def run_evaluation(
+        self,
+        policy_params: PolicyParams,
+        training_metrics: Metrics,
+        aggregate_episodes: bool = True,
+    ) -> Metrics:
         """Run one epoch of evaluation with LSTM tracking."""
         self._key, unroll_key = jax.random.split(self._key)
 
         t = time.time()
-        
+
         eval_state, hidden_state = self._generate_eval_unroll(policy_params, unroll_key)
-        
-        eval_metrics = eval_state.info['eval_metrics']
+
+        eval_metrics = eval_state.info["eval_metrics"]
         eval_metrics.active_episodes.block_until_ready()
         epoch_eval_time = time.time() - t
         metrics = {}
 
         for fn in [np.mean, np.std]:
-            suffix = '_std' if fn == np.std else ''
+            suffix = "_std" if fn == np.std else ""
             metrics.update(
                 {
-                    f'eval/episode_{name}{suffix}': (
+                    f"eval/episode_{name}{suffix}": (
                         fn(value) if aggregate_episodes else value
                     )
                     for name, value in eval_metrics.episode_metrics.items()
                 }
             )
 
-        metrics['eval/avg_episode_length'] = np.mean(eval_metrics.episode_steps)
-        metrics['eval/epoch_eval_time'] = epoch_eval_time
-        metrics['eval/sps'] = self._steps_per_unroll / epoch_eval_time
+        metrics["eval/avg_episode_length"] = np.mean(eval_metrics.episode_steps)
+        metrics["eval/epoch_eval_time"] = epoch_eval_time
+        metrics["eval/sps"] = self._steps_per_unroll / epoch_eval_time
         self._eval_walltime = self._eval_walltime + epoch_eval_time
-        metrics = {
-            'eval/walltime': self._eval_walltime,
-            **training_metrics,
-            **metrics
-        }
+        metrics = {"eval/walltime": self._eval_walltime, **training_metrics, **metrics}
 
         return metrics  # pytype: disable=bad-return-type  # jax-ndarray

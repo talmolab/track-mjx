@@ -51,7 +51,7 @@ network_config:
   intention_size: 60
   kl_schedule: True # Whether to use a ramping KL schedule
   kl_weight: 1e-4 # The maximum weight if schedule is True
-  hidden_state_size: 256
+  hidden_state_size: 512
   hidden_layer_num: 3
 
 train_setup:
@@ -68,11 +68,11 @@ train_setup:
   episode_length: 200
   reset_every: 50_000_000
   train_config:
-    num_envs: 1024 #2048
+    num_envs: 2048
     num_timesteps: 15_000_000_000
     batch_size: 1024
-    num_minibatches: 1 #8
-    num_updates_per_batch: 1 # 4
+    num_minibatches: 8
+    num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2     
     discounting: 0.95
@@ -80,7 +80,7 @@ train_setup:
     entropy_cost: 5e-2
     reward_scaling: 1
     normalize_observations: True
-    unroll_length: 2 #20
+    unroll_length: 20
     seed: 0
     get_activation: True
     use_lstm: False

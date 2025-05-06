@@ -68,7 +68,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
 
 
 def create_rollout_generator(
-    cfg: Dict | DictConfig, environment: Env, inference_fn: Callable
+    cfg: Dict | DictConfig, environment: Env, inference_fn: Callable, model: str = 'mlp'
 ) -> Callable[[int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
@@ -85,84 +85,165 @@ def create_rollout_generator(
     # TODO this logic is used in a few different places, make it a function?
     if type(environment) == MultiClipTracking:
         rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(environment)
+    
     elif type(environment) == SingleClipTracking:
         rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(environment)
+    
+    if cfg['train_setup']['train_config']['use_lstm']:
+        rollout_env = wrappers.RenderRolloutWrapperTrackingLSTM(environment)
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
+    
+    if model == 'mlp':
+        def generate_rollout_mlp(clip_idx: int | None = None, seed: int = 42) -> Dict:
+            """
+            Generates a rollout using pre-compiled JIT functions.
 
-    def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> Dict:
-        """
-        Generates a rollout using pre-compiled JIT functions.
+            Args:
+                clip_idx (Optional[int]): Specific clip ID to generate the rollout for.
+                seed (int): Random seed for jax PRNGKey.
+            Returns:
+                Dict: A dictionary containing rollout data.
+            """
 
-        Args:
-            clip_idx (Optional[int]): Specific clip ID to generate the rollout for.
-            seed (int): Random seed for jax PRNGKey.
-        Returns:
-            Dict: A dictionary containing rollout data.
-        """
+            # Initialize PRNG keys
+            rollout_key = jax.random.PRNGKey(seed)
+            rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
-        # Initialize PRNG keys
-        rollout_key = jax.random.PRNGKey(seed)
-        rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
+            # Reset the environment
+            init_state = jit_reset(reset_rng, clip_idx=clip_idx)
 
-        # Reset the environment
-        init_state = jit_reset(reset_rng, clip_idx=clip_idx)
+            num_steps = (
+                int(ref_traj_config.clip_length * environment._steps_for_cur_frame) - 1
+            )
 
-        num_steps = (
-            int(ref_traj_config.clip_length * environment._steps_for_cur_frame) - 1
-        )
+            def _step_fn(carry, _):
+                state, act_rng, hidden = carry
+                act_rng, new_rng = jax.random.split(act_rng)
+                ctrl, extras = jit_inference_fn(state.obs, act_rng)
+                next_state = jit_step(state, ctrl)
+                return (next_state, new_rng), (next_state, ctrl, extras["activations"])
 
-        def _step_fn(carry, _):
-            state, act_rng = carry
-            act_rng, new_rng = jax.random.split(act_rng)
-            ctrl, extras = jit_inference_fn(state.obs, act_rng)
-            next_state = jit_step(state, ctrl)
-            return (next_state, new_rng), (next_state, ctrl, extras["activations"])
+            # Run rollout
+            init_carry = (init_state, jax.random.PRNGKey(0))
+            (final_state, _), (states, ctrls, activations) = jax.lax.scan(
+                _step_fn, init_carry, None, length=num_steps
+            )
 
-        # Run rollout
-        init_carry = (init_state, jax.random.PRNGKey(0))
-        (final_state, _), (states, ctrls, activations) = jax.lax.scan(
-            _step_fn, init_carry, None, length=num_steps
-        )
+            def prepend(element, arr):
+                # Scalar elements shouldn't be modified
+                if arr.ndim == 0:
+                    return arr
 
-        def prepend(element, arr):
-            # Scalar elements shouldn't be modified
-            if arr.ndim == 0:
-                return arr
+                return jnp.concatenate([element[None], arr])
 
-            return jnp.concatenate([element[None], arr])
+            rollout_states = jax.tree.map(prepend, init_state, states)
 
-        rollout_states = jax.tree.map(prepend, init_state, states)
+            # Get metrics
+            rollout_metrics = {}
+            for rollout_metric in cfg.logging_config.rollout_metrics:
+                rollout_metrics[f"{rollout_metric}s"] = jax.vmap(
+                    lambda s: s.metrics[rollout_metric]
+                )(rollout_states)
 
-        # Get metrics
-        rollout_metrics = {}
-        for rollout_metric in cfg.logging_config.rollout_metrics:
-            rollout_metrics[f"{rollout_metric}s"] = jax.vmap(
-                lambda s: s.metrics[rollout_metric]
-            )(rollout_states)
+            # Reference and rollout qposes
+            ref_traj = rollout_env._get_reference_clip(init_state.info)
+            qposes_ref = jnp.repeat(
+                jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+                int(environment._steps_for_cur_frame),
+                axis=0,
+            )
 
-        # Reference and rollout qposes
-        ref_traj = rollout_env._get_reference_clip(init_state.info)
-        qposes_ref = jnp.repeat(
-            jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-            int(environment._steps_for_cur_frame),
-            axis=0,
-        )
+            # Collect qposes from states
+            qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
 
-        # Collect qposes from states
-        qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
+            return {
+                "rollout_metrics": rollout_metrics,
+                "observations": jax.vmap(lambda s: s.obs)(rollout_states),
+                "ctrl": ctrls,
+                "activations": activations,
+                "qposes_ref": qposes_ref,
+                "qposes_rollout": qposes_rollout,
+                "info": jax.vmap(lambda s: s.info)(rollout_states),
+            }
 
-        return {
-            "rollout_metrics": rollout_metrics,
-            "observations": jax.vmap(lambda s: s.obs)(rollout_states),
-            "ctrl": ctrls,
-            "activations": activations,
-            "qposes_ref": qposes_ref,
-            "qposes_rollout": qposes_rollout,
-            "info": jax.vmap(lambda s: s.info)(rollout_states),
-        }
+        return jax.jit(generate_rollout_mlp)
+    
+    elif model == 'lstm':
+        def generate_rollout_lstm(clip_idx: int | None = None, seed: int = 42) -> Dict:
+            """
+            Generates a rollout using pre-compiled JIT functions.
 
-    return jax.jit(generate_rollout)
+            Args:
+                clip_idx (Optional[int]): Specific clip ID to generate the rollout for.
+                seed (int): Random seed for jax PRNGKey.
+            Returns:
+                Dict: A dictionary containing rollout data.
+            """
+
+            # Initialize PRNG keys
+            rollout_key = jax.random.PRNGKey(seed)
+            rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
+
+            # Reset the environment
+            init_state = jit_reset(reset_rng, clip_idx=clip_idx)
+
+            num_steps = (
+                int(ref_traj_config.clip_length * environment._steps_for_cur_frame) - 1
+            )
+
+            def _step_fn(carry, _):
+                state, act_rng, hidden = carry
+                act_rng, new_rng = jax.random.split(act_rng)
+                ctrl, extras, new_hidden = jit_inference_fn(state.obs, act_rng, hidden)
+                ctrl = jnp.squeeze(ctrl, axis=0)
+                next_state = jit_step(state, ctrl)
+                return (next_state, new_rng, new_hidden), (next_state, ctrl, hidden, extras["activations"])
+
+            # Run rollout
+            init_carry = (init_state, jax.random.PRNGKey(0), init_state.info["hidden_state"])
+            (final_state, _, final_hidden_state), (states, ctrls, stacked_hidden, activations) = jax.lax.scan(
+                _step_fn, init_carry, None, length=num_steps
+            )
+
+            def prepend(element, arr):
+                # Scalar elements shouldn't be modified
+                if arr.ndim == 0:
+                    return arr
+
+                return jnp.concatenate([element[None], arr])
+
+            rollout_states = jax.tree.map(prepend, init_state, states)
+
+            # Get metrics
+            rollout_metrics = {}
+            for rollout_metric in cfg.logging_config.rollout_metrics:
+                rollout_metrics[f"{rollout_metric}s"] = jax.vmap(
+                    lambda s: s.metrics[rollout_metric]
+                )(rollout_states)
+
+            # Reference and rollout qposes
+            ref_traj = rollout_env._get_reference_clip(init_state.info)
+            qposes_ref = jnp.repeat(
+                jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+                int(environment._steps_for_cur_frame),
+                axis=0,
+            )
+
+            # Collect qposes from states
+            qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
+
+            return {
+                "rollout_metrics": rollout_metrics,
+                "observations": jax.vmap(lambda s: s.obs)(rollout_states),
+                "ctrl": ctrls,
+                "activations": activations,
+                "qposes_ref": qposes_ref,
+                "qposes_rollout": qposes_rollout,
+                "info": jax.vmap(lambda s: s.info)(rollout_states),
+            }
+
+        return jax.jit(generate_rollout_lstm)

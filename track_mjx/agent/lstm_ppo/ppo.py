@@ -31,8 +31,10 @@ from brax.training.acme import running_statistics
 from brax.training.acme import specs
 import flax.training
 
-from track_mjx.agent import losses as ppo_losses
-from track_mjx.agent import ppo_networks
+from track_mjx.agent.lstm_ppo import losses as ppo_losses
+from track_mjx.agent.lstm_ppo import ppo_networks
+from track_mjx.agent.lstm_ppo import acting
+
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.training.types import Metrics
@@ -49,7 +51,6 @@ import orbax.checkpoint as ocp
 from flax.training import orbax_utils
 
 from track_mjx.environment import wrappers
-from track_mjx.agent.lstm_utils import acting_lstm as acting
 
 from flax import linen as nn
 

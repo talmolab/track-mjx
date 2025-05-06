@@ -135,7 +135,7 @@ class IntentionNetwork(nn.Module):
             hidden_layer_num=self.hidden_layer_num,
         )
 
-    def __call__(self, obs, key, hidden_state, get_activation, use_lstm):
+    def __call__(self, obs, key, hidden_state, get_activation):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
 
@@ -190,7 +190,6 @@ def make_intention_policy(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     get_activation: bool = True,
-    use_lstm: bool = True,
 ) -> FeedForwardIntentionNetwork:
     """
     Create a policy network with intention module.
@@ -225,7 +224,6 @@ def make_intention_policy(
         key,
         hidden_state,
         get_activation,
-        use_lstm,
     ):
         """Applies the policy network with observation normalizer, the output is the action distribution parameters."""
         obs = preprocess_observations_fn(obs, processor_params)
@@ -235,7 +233,6 @@ def make_intention_policy(
             key=key,
             hidden_state=hidden_state,
             get_activation=get_activation,
-            use_lstm=use_lstm,
         )
 
     # dummy variables here, actual pass in in training loops
@@ -245,7 +242,7 @@ def make_intention_policy(
     # lambda function here to pass in hidden from training loop
     return LSTMNetwork(
         init=lambda key, hidden_state: policy_module.init(
-            key, dummy_total_obs, dummy_key, hidden_state, get_activation, use_lstm
+            key, dummy_total_obs, dummy_key, hidden_state, get_activation
         ),
         apply=apply,
     )

@@ -43,7 +43,6 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
         params: types.PolicyParams,
         deterministic: bool = False,
         get_activation: bool = True,
-        use_lstm: bool = True,
     ) -> types.Policy:
         policy_network = ppo_networks.policy_network
         # can modify this to provide stochastic action + noise
@@ -72,7 +71,6 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                     key_network,
                     hidden_state,
                     get_activation=get_activation,
-                    use_lstm=use_lstm,
                 )
                 # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
@@ -83,7 +81,6 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                         key_network,
                         hidden_state,
                         get_activation=get_activation,
-                        use_lstm=use_lstm,
                     )
                 )
 
@@ -141,7 +138,7 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
     """Creates params and inference function for the PPO agent with LSTM support."""
 
     def make_logging_policy(
-        deterministic: bool = False, get_activation: bool = False, use_lstm: bool = True
+        deterministic: bool = False, get_activation: bool = False
     ) -> types.Policy:
         policy_network = ppo_networks.policy_network
         parametric_action_distribution = ppo_networks.parametric_action_distribution
@@ -162,7 +159,6 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
                     key_network,
                     hidden_state,
                     get_activation=get_activation,
-                    use_lstm=use_lstm,
                 )
             )
 
@@ -212,7 +208,6 @@ def make_intention_ppo_networks(
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     get_activation: bool = True,
-    use_lstm: bool = True,
 ) -> PPOImitationNetworks:
     """Make Imitation PPO networks with preprocessor."""
     parametric_action_distribution = distribution.NormalTanhDistribution(
@@ -229,7 +224,6 @@ def make_intention_ppo_networks(
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         get_activation=get_activation,
-        use_lstm=use_lstm,
     )
     value_network = networks.make_value_network(
         observation_size,

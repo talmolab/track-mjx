@@ -29,7 +29,8 @@ import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-from track_mjx.agent import ppo, ppo_lstm, ppo_networks
+from track_mjx.agent.mlp_ppo import ppo, ppo_networks as mlp_ppo, mlp_ppo_networks
+from track_mjx.agent.lstm_ppo import ppo, ppo_networks as lstm_ppo, lstm_ppo_networks
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -187,13 +188,16 @@ def main(cfg: DictConfig):
 
     if cfg.train_setup.train_config.use_lstm:
         print("Using LSTM")
-        selected_ppo = ppo_lstm
+        ppo = lstm_ppo
+        ppo_networks = lstm_ppo_networks
+        
     else:
         print("Using MLP")
-        selected_ppo = ppo
+        ppo = mlp_ppo
+        ppo_networks = mlp_ppo_networks
 
     train_fn = functools.partial(
-        selected_ppo.train,
+        ppo.train,
         **train_config,
         num_evals=int(
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every

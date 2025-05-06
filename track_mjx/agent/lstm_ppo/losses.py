@@ -117,7 +117,6 @@ def compute_ppo_loss(
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
     kl_schedule: Callable | None = None,
-    use_lstm: bool = True,
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Computes PPO loss.
 
@@ -135,7 +134,6 @@ def compute_ppo_loss(
       gae_lambda: General advantage estimation lambda.
       clipping_epsilon: Policy loss clipping epsilon
       normalize_advantage: whether to normalize advantage estimate
-      use_lstm: boolean argument for using lstm decoder
 
 
     Returns:
@@ -170,7 +168,6 @@ def compute_ppo_loss(
             policy_key,
             (h, c),
             get_activation=False,
-            use_lstm=True,
         )
         (new_h, new_c) = new_hidden_state
         done_mask = next_done[:, None]
@@ -255,11 +252,12 @@ def compute_ppo_loss(
     )
     entropy_loss = entropy_cost * -entropy
 
+    #TODO: LSTM now does not have KL pipeline
+    # if (kl_schedule is not None):
+    #     print("Using MLP + KL Scheduler")
+    #     kl_weight = kl_schedule(step)
+    
     # KL Divergence for latent layer
-    if (kl_schedule is not None) & (not use_lstm):
-        print("Using MLP + KL Scheduler")
-        kl_weight = kl_schedule(step)
-
     kl_latent_loss = kl_weight * (
         -0.5
         * jnp.mean(1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar))

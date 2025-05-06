@@ -280,7 +280,6 @@ def train(
         env.action_size,
         preprocess_observations_fn=normalize,
         get_activation=get_activation,
-        use_lstm=use_lstm,
     )
     make_policy = ppo_networks.make_inference_fn(
         ppo_network
@@ -293,7 +292,6 @@ def train(
         make_logging_policy(
             deterministic=True,
             get_activation=False,
-            use_lstm=use_lstm,
         )
     )
 
@@ -308,8 +306,7 @@ def train(
         reward_scaling=reward_scaling,
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
-        normalize_advantage=normalize_advantage,
-        use_lstm=use_lstm,  # add args here
+        normalize_advantage=normalize_advantage, # add args here
     )
 
     # use brax gradient function now
@@ -378,8 +375,7 @@ def train(
 
         policy = make_policy(
             params=(training_state.normalizer_params, training_state.params.policy),
-            get_activation=get_activation,
-            use_lstm=use_lstm,  # pass in here
+            get_activation=get_activation, # pass in here
         )
 
         # TODO: make this embeded in ppo.py
@@ -572,7 +568,6 @@ def train(
             make_policy,
             deterministic=deterministic_eval,
             get_activation=get_activation,
-            use_lstm=use_lstm,
         ),
         num_eval_envs=num_eval_envs,
         episode_length=episode_length,

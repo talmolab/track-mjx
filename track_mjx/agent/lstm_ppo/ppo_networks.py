@@ -24,7 +24,8 @@ from jax import random
 from jax import numpy as jnp
 import flax
 from flax import linen as nn
-from track_mjx.agent.lstm_ppo import intention_network  # TODO: still might need this for typing, masked_running_statistics, checkpointing
+from track_mjx.agent.lstm_ppo import intention_network
+from track_mjx.agent import masked_running_statistics, checkpointing
 
 from omegaconf import DictConfig, OmegaConf
 

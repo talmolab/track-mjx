@@ -1,10 +1,16 @@
 from brax.training.acme import running_statistics, specs
 
 from orbax import checkpoint as ocp
-from track_mjx.agent import ppo_networks
 from typing import Callable
 
-from track_mjx.agent import ppo_networks, losses
+from track_mjx.agent.lstm_ppo import (
+    ppo_networks as lstm_ppo_networks,
+    losses as lstm_losses
+)
+from track_mjx.agent.mlp_ppo import (
+    ppo_networks as mlp_ppo_networks,
+    losses as mlp_losses
+)
 from jax import numpy as jnp
 import jax
 from omegaconf import OmegaConf
@@ -113,7 +119,14 @@ def load_checkpoint_for_eval(
 
 
 def make_abstract_policy(cfg: OmegaConf, seed: int = 1):
-    """Create a random policy from a config."""
+    """
+    Create a random policy from a config.
+    """
+    if cfg.train_setup.train_config.use_lstm:
+        losses = lstm_losses
+    else:
+        losses = mlp_losses
+        
     ppo_network = make_ppo_network_from_cfg(cfg)
     key_policy, key_value = jax.random.split(jax.random.key(seed))
 
@@ -136,6 +149,11 @@ def load_inference_fn(
     """
     Create a ppo policy inference function from a checkpoint.
     """
+    if cfg.train_setup.train_config.use_lstm:
+        ppo_networks = lstm_ppo_networks
+    else:
+        ppo_networks = mlp_ppo_networks
+    
     ppo_network = make_ppo_network_from_cfg(cfg)
     make_policy = ppo_networks.make_inference_fn(ppo_network)
 
@@ -145,7 +163,14 @@ def load_inference_fn(
 
 
 def make_ppo_network_from_cfg(cfg):
-    """Create a PPONetwork from a config."""
+    """
+    Create a PPONetwork from a config.
+    """
+    if cfg.train_setup.train_config.use_lstm:
+        ppo_networks = lstm_ppo_networks
+    else:
+        ppo_networks = mlp_ppo_networks
+    
     normalize = lambda x, y: x
     if cfg["network_config"]["normalize_observations"]:
         normalize = running_statistics.normalize

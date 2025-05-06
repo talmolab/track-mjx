@@ -107,7 +107,7 @@ class LSTMDecoder(nn.Module):
         if get_activation:
             # hidden is stored as (num_hidden_layers, 128)
             return x, (stacke_h_new, stacke_c_new), activations
-        return x, (stacke_h_new, stacke_c_new), {} # still tuple
+        return x, (stacke_h_new, stacke_c_new), {} # hidden_states still tuple
 
 
 def reparameterize(rng, mean, logvar):
@@ -128,7 +128,6 @@ class IntentionNetwork(nn.Module):
 
     def setup(self):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
-        self.decoder = Decoder(layer_sizes=self.decoder_layers)
         self.lstm_decoder = LSTMDecoder(
             layer_sizes=self.decoder_layers,
             hidden_dim=self.hidden_states,
@@ -190,7 +189,7 @@ def make_intention_policy(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     get_activation: bool = True,
-) -> FeedForwardIntentionNetwork:
+) -> LSTMNetwork:
     """
     Create a policy network with intention module.
 
@@ -204,7 +203,7 @@ def make_intention_policy(
         decoder_hidden_layer_sizes (Sequence[int], optional): sizes of decoder hidden layers. Defaults to (1024, 1024).
 
     Returns:
-        networks.FeedForwardNetwork: the created policy network
+        LSTMNetwork: the created policy network
     """
 
     policy_module = IntentionNetwork(

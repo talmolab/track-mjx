@@ -145,7 +145,8 @@ class LSTMAutoResetWrapperTracking(Wrapper):
 
 
 class RenderRolloutWrapperTrackingLSTM(Wrapper):
-    """Always resets to the first frame of the clips for complete rollouts."""
+    """Reset wrapper for the LSTM pipeline only.
+    Always resets to the first frame of the clips for complete rollouts."""
     
     def __init__(self, env, lstm_features: int = 128, hidden_layer_num: int =2):
         """Initialize the wrapper.
@@ -161,7 +162,6 @@ class RenderRolloutWrapperTrackingLSTM(Wrapper):
     def initialize_hidden_state(self, rng: jax.Array) -> tuple[jp.ndarray, jp.ndarray]:
         """Initializes LSTM hidden states for the environment."""
         lstm_cell = nn.LSTMCell(features=self.lstm_features)
-        # return lstm_cell.initialize_carry(rng, ())
     
         def init_single_env(_rng):
             def init_single_layer(layer_rng):

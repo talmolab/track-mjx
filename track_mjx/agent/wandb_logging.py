@@ -16,15 +16,12 @@ from brax import envs
 from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
 
-from track_mjx.agent import ppo
-from track_mjx.agent import ppo_networks
-from track_mjx.agent import losses
+from track_mjx.agent.mlp_ppo import losses
+                                     
 from brax.io import model
+from brax.envs.base import Env
 import numpy as np
 from jax import numpy as jp
-
-from track_mjx.environment import wrappers
-from brax.envs.base import Env
 
 # TODO: Use MjSpec to generate the mjcf with ghost
 

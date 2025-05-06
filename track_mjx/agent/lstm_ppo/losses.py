@@ -20,7 +20,7 @@ See: https://arxiv.org/pdf/1707.06347.pdf
 from typing import Any, Callable, Tuple
 
 from brax.training import types
-from brax.training.agents.lstm_ppo.ppo import networks as ppo_networks
+from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.types import Params
 import flax
 import jax

@@ -29,8 +29,12 @@ import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-from track_mjx.agent.mlp_ppo import ppo, ppo_networks as mlp_ppo, mlp_ppo_networks
-from track_mjx.agent.lstm_ppo import ppo, ppo_networks as lstm_ppo, lstm_ppo_networks
+from track_mjx.agent.mlp_ppo import (ppo as mlp_ppo,
+                                     ppo_networks as mlp_ppo_networks
+                                     )
+from track_mjx.agent.lstm_ppo import (ppo as lstm_ppo,
+                                      ppo_networks as lstm_ppo_networks
+                                      )
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -190,11 +194,13 @@ def main(cfg: DictConfig):
         print("Using LSTM")
         ppo = lstm_ppo
         ppo_networks = lstm_ppo_networks
+        render_wrapper = wrappers.RenderRolloutWrapperTrackingLSTM
         
     else:
         print("Using MLP")
         ppo = mlp_ppo
         ppo_networks = mlp_ppo_networks
+        render_wrapper = wrappers.RenderRolloutWrapperMulticlipTracking
 
     train_fn = functools.partial(
         ppo.train,
@@ -235,7 +241,7 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = wrappers.RenderRolloutWrapperTrackingLSTM(
+    rollout_env = render_wrapper(
         env=env,
         lstm_features=cfg.network_config.hidden_state_size,
         hidden_layer_num=cfg.network_config.hidden_layer_num,

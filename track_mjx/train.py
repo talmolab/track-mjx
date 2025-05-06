@@ -203,7 +203,7 @@ def main(cfg: DictConfig):
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        ),
+        )
         
     else:
         print("Using MLP Pipeline Now")
@@ -216,7 +216,7 @@ def main(cfg: DictConfig):
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        ),
+        )
 
     train_fn = functools.partial(
         ppo.train,

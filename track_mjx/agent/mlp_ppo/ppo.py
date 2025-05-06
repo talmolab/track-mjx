@@ -165,6 +165,8 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
+    get_activation: bool = True,
+    use_lstm: bool = True,
     use_kl_schedule: bool = True,
     kl_ramp_up_frac: float = 0.25,
 ):
@@ -219,6 +221,9 @@ def train(
         saving policy checkpoints
       randomization_fn: a user-defined callback function that generates randomized
         environments
+      get_activation: boolean argument indicating for getting activations of all of
+        the networks
+      use_lstm: boolean argument for using an LSTM decoder
       use_kl_schedule: whether to use a ramping schedule for the kl weight in the PPO loss
         (intention network variational layer)
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
@@ -295,6 +300,7 @@ def train(
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
+        use_lstm=use_lstm,
     )
 
     reset_fn = jax.jit(jax.vmap(env.reset))
@@ -536,6 +542,7 @@ def train(
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
+        use_lstm=use_lstm,
     )
 
     evaluator = acting.Evaluator(

@@ -173,11 +173,9 @@ class RenderRolloutWrapperTrackingLSTM(Wrapper):
         num_envs = 1
         env_rngs = jax.random.split(rng, num_envs)
         h_stack, c_stack = jax.vmap(init_single_env)(env_rngs)
-
-        print(f'[DEBUG] In env_wrapper, the rendering initialized hidden shape: {h_stack.shape}')
+        
         return h_stack, c_stack
         
-
     def reset(self, rng: jax.Array, clip_idx: int | None = None) -> State:
         """
         Resets the environment to an initial state.

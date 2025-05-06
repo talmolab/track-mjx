@@ -191,16 +191,32 @@ def main(cfg: DictConfig):
     logging.info(f"episode_length {episode_length}")
 
     if cfg.train_setup.train_config.use_lstm:
-        print("Using LSTM")
+        print("Using LSTM Pipeline Now")
         ppo = lstm_ppo
         ppo_networks = lstm_ppo_networks
         render_wrapper = wrappers.RenderRolloutWrapperTrackingLSTM
+        network_factory = functools.partial(
+            ppo_networks.make_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            hidden_state_size=cfg.network_config.hidden_state_size,
+            hidden_layer_num=cfg.network_config.hidden_layer_num,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        ),
         
     else:
-        print("Using MLP")
+        print("Using MLP Pipeline Now")
         ppo = mlp_ppo
         ppo_networks = mlp_ppo_networks
         render_wrapper = wrappers.RenderRolloutWrapperMulticlipTracking
+        network_factory = functools.partial(
+            ppo_networks.make_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        ),
 
     train_fn = functools.partial(
         ppo.train,
@@ -211,15 +227,7 @@ def main(cfg: DictConfig):
         num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
-        network_factory=functools.partial(
-            ppo_networks.make_intention_ppo_networks,
-            intention_latent_size=cfg.network_config.intention_size,
-            hidden_state_size=cfg.network_config.hidden_state_size,
-            hidden_layer_num=cfg.network_config.hidden_layer_num,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        ),
+        network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
@@ -240,12 +248,15 @@ def main(cfg: DictConfig):
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
-
-    rollout_env = render_wrapper(
-        env=env,
-        lstm_features=cfg.network_config.hidden_state_size,
-        hidden_layer_num=cfg.network_config.hidden_layer_num,
-    )
+        
+    if cfg.train_setup.train_config.use_lstm:
+        rollout_env = render_wrapper(
+            env=env,
+            lstm_features=cfg.network_config.hidden_state_size,
+            hidden_layer_num=cfg.network_config.hidden_layer_num,
+        )
+    else:
+        rollout_env = render_wrapper(env=env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

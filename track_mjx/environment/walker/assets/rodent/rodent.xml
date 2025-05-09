@@ -159,7 +159,10 @@
     <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
   </asset>
   <worldbody>
-    <geom name="floor" class="collision_floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
+        <body name="floor">
+            <geom name="floor" class="collision_floor" pos="0 0 -0.005" size="10 10 0.005"
+                type="plane" material="grid" />
+        </body> 
     <body name="walker">
     <freejoint name="root"/>
     <body name="torso" pos="0.03099526054578288 2.058524937651458e-07 0.06508957263119967">
@@ -616,7 +619,7 @@
     <accelerometer name="accelerometer" site="head"/>
     <velocimeter name="velocimeter" site="head"/>
     <gyro name="gyro" site="head"/>
-    <!-- <touch name="palm_L" site="palm_L"/>
+        <!-- <touch name="palm_L" site="palm_L"/>
     <touch name="palm_R" site="palm_R"/>
     <touch name="sole_L" site="sole_L"/>
     <touch name="sole_R" site="sole_R"/> -->

@@ -4,7 +4,7 @@ import os
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
-from typing import List
+from typing import List, Tuple, Callable, Any, Dict
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -24,6 +24,7 @@ from IPython.display import HTML
 
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.walker.rodent import Rodent
+from track_mjx.environment.walker.utils import _scale_body_tree, _recolour_tree
 
 import mujoco
 from pathlib import Path
@@ -37,17 +38,22 @@ import functools
 
 
 _GHOST_RENDER_XML_PATHS = {
-    "rodent": "assets/rodent/rodent_ghostpair_scale080.xml",
+    # "rodent": "assets/rodent/rodent_ghostpair_scale080.xml",
     "fly": "assets/fruitfly/fruitfly_force_pair.xml",
 }
 
 
-def agg_backend_context(func):
-    """
-    Decorator to switch to a headless backend during function execution.
+def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator to switch to a headless backend during function execution.
+
+    Args:
+        func (Callable[..., Any]): The function to decorate.
+
+    Returns:
+        Callable[..., Any]: The wrapped function using headless backend.
     """
 
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         orig_backend = matplotlib.get_backend()
         matplotlib.use("Agg")  # Switch to headless 'Agg' to inhibit figure rendering.
         # Code to execute BEFORE the original function
@@ -60,26 +66,98 @@ def agg_backend_context(func):
     return wrapper
 
 
-def make_rollout_renderer(cfg):
+def make_ghost_pair(
+    input_xml_str: str,
+    *,
+    scale: float = 0.80,
+    rgba: Tuple[float, float, float, float] = (0.8, 0.8, 0.8, 0.2),
+) -> Tuple[mujoco.MjSpec, mujoco.MjModel, str]:
+    """Build output XML containing the original model plus a ghost copy.
+
+    Args:
+        input_xml_str (str): The XML string of the original model.
+        scale (float, optional): Scale factor for the ghost model. Defaults to 0.80.
+        rgba (Tuple[float, float, float, float], optional): Color and transparency for ghost model. Defaults to (0.8, 0.8, 0.8, 0.2).
+
+    Returns:
+        Tuple[mujoco.MjSpec, mujoco.MjModel, str]: The modified MjSpec, compiled MjModel, and XML string.
+    """
+
+    # ---------------------------------------------------------------------
+    # A) Load the original as a spec
+    # ---------------------------------------------------------------------
+    base = mujoco.MjSpec.from_string(input_xml_str)
+
+    for top in base.worldbody.bodies:
+        _scale_body_tree(top, scale)
+
+    # ---------------------------------------------------------------------
+    # B) Deep‑copy the spec to obtain the second (ghost) rodent
+    # ---------------------------------------------------------------------
+    ghost = base.copy()
+
+    # the first body is the floor
+    floor = ghost.worldbody.bodies[0]
+    ghost.detach_body(floor)
+
+    for top in ghost.worldbody.bodies:
+        _recolour_tree(top, rgba)
+
+    # ---------------------------------------------------------------------
+    # C) Shrink & recolour the copy
+    # ---------------------------------------------------------------------
+
+    # ---------------------------------------------------------------------
+    # D) Attach the ghost back into the parent spec
+    #    – prefix ensures unique names
+    # ---------------------------------------------------------------------
+    anchor = base.worldbody.add_site(name="ghost_anchor", pos=[0, 0, 0])
+    base.attach(ghost, prefix="ghost_", site=anchor)
+
+    # ---------------------------------------------------------------------
+    # E) Compile & write out
+    # ---------------------------------------------------------------------
+    model = base.compile()
+    xml = base.to_xml()
+    return base, model, xml
+
+
+def make_rollout_renderer(
+    cfg: Any,
+) -> Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]:
+    """Create a renderer and related MuJoCo model and data for rollout visualization.
+
+    Args:
+        cfg (Any): Configuration object with environment and walker settings.
+
+    Returns:
+        Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]: Renderer, model, data, and scene options.
+    """
+
     walker_config = cfg["walker_config"]
 
-    _XML_PATH = (
-        Path(__file__).resolve().parent.parent
-        / "environment"
-        / "walker"
-        / _GHOST_RENDER_XML_PATHS[cfg.env_config.walker_name]
-    )
-
     if cfg.env_config.walker_name == "rodent":
-        root = mjcf_dm.from_path(_XML_PATH)
-        rescale.rescale_subtree(
-            root,
-            walker_config.rescale_factor / 0.8,
-            walker_config.rescale_factor / 0.8,
+        # Programmatically build ghost-pair model from base rodent.xml
+        base_xml_path = (
+            Path(__file__).resolve().parent.parent
+            / "environment"
+            / "walker"
+            / "assets"
+            / "rodent"
+            / "rodent.xml"
         )
-
-        mj_model = mjcf_dm.Physics.from_mjcf_model(root).model.ptr
+        xml_str = base_xml_path.read_text()
+        # produce (spec, model, xml) with correct scale
+        _, mj_model, _ = make_ghost_pair(
+            xml_str, scale=walker_config.rescale_factor, rgba=(0.8, 0.8, 0.8, 0.2)
+        )
     elif cfg.env_config.walker_name == "fly":
+        _XML_PATH = (
+            Path(__file__).resolve().parent.parent
+            / "environment"
+            / "walker"
+            / _GHOST_RENDER_XML_PATHS[cfg.env_config.walker_name]
+        )
         spec = mujoco.MjSpec()
         spec = spec.from_file(str(_XML_PATH))
 
@@ -125,19 +203,21 @@ def make_rollout_renderer(cfg):
 
 
 def render_rollout(
-    cfg,
-    rollout: dict,
+    cfg: Any,
+    rollout: Dict[str, Any],
     height: int = 480,
     width: int = 640,
-) -> list:
-    """
-    Render a rollout from saved qposes.
+) -> Tuple[List[np.ndarray], float]:
+    """Render a rollout from saved qposes.
 
     Args:
-        rollout (dict): A dictionary containing the qposes of the reference and rollout trajectories.
+        cfg (Any): Configuration object with environment settings.
+        rollout (Dict[str, Any]): A dictionary containing the qposes of the reference and rollout trajectories.
+        height (int, optional): Height of the rendered frames. Defaults to 480.
+        width (int, optional): Width of the rendered frames. Defaults to 640.
 
     Returns:
-        list: list of frames of the rendering
+        Tuple[List[np.ndarray], float]: List of frames of the rendering and the rendering FPS.
     """
     qposes_ref, qposes_rollout = rollout["qposes_ref"], rollout["qposes_rollout"]
     renderer, mj_model, mj_data, scene_option = make_rollout_renderer(cfg)
@@ -166,8 +246,8 @@ def render_rollout(
 
 
 def plot_pca_intention(
-    idx,
-    episode_start,
+    idx: int,
+    episode_start: int,
     pca: PCA,
     pca_projections: np.ndarray,
     clip_idx: int,
@@ -176,21 +256,21 @@ def plot_pca_intention(
     terminated: bool = False,
     window_size: int = 530,
 ) -> np.ndarray:
-    """
-    plot pca intention progression of the episode
+    """Plot PCA intention progression of the episode.
+
     Args:
-        idx: the current timestep
-        episode_start: the start timestep of the episode
-        pca: the pca object fitted on the dataset
-        pca_projections: the pca projection of the episode, shape (timestep, n_components)
-        clip_idx: the clip index
-        feature_name: the feature name
-        n_components: the number of pca components to plot
-        ylim: the y-axis limit
-        terminated: whether the episode is terminated
-        window_size: the window size of the plot
+        idx (int): The current timestep.
+        episode_start (int): The start timestep of the episode.
+        pca (PCA): The PCA object fitted on the dataset.
+        pca_projections (np.ndarray): The PCA projection of the episode, shape (timestep, n_components).
+        clip_idx (int): The clip index.
+        feature_name (str): The feature name.
+        n_components (int, optional): The number of PCA components to plot. Defaults to 4.
+        terminated (bool, optional): Whether the episode is terminated. Defaults to False.
+        window_size (int, optional): The window size of the plot. Defaults to 530.
+
     Returns:
-        np.ndarray: the image array of the plot
+        np.ndarray: The image array of the plot.
     """
     max_y = np.max(list(pca_projections[:, :n_components]))
     min_y = np.min(list(pca_projections[:, :n_components]))
@@ -240,22 +320,21 @@ def plot_pca_intention(
 
 
 def render_with_pca_progression(
-    rollout: dict,
+    rollout: Dict[str, Any],
     pca_projections: np.ndarray,
     n_components: int = 4,
     feature_name: str = "ctrl",
-) -> list:
-    """
-    render with the rewards progression graph concat alongside with the rendering.
+) -> List[np.ndarray]:
+    """Render rollout frames concatenated with PCA progression plots.
 
     Args:
-        rollout (dict): the rollout dictionary
-        pca_projections (np.ndarray): the pca projections of the rollout
-        n_components (int): the number of pca components to plot
-        feature_name (str): the feature name
+        rollout (Dict[str, Any]): The rollout dictionary.
+        pca_projections (np.ndarray): The PCA projections of the rollout.
+        n_components (int, optional): The number of PCA components to plot. Defaults to 4.
+        feature_name (str, optional): The feature name. Defaults to "ctrl".
 
     Returns:
-        list: list of frames of the rendering
+        List[np.ndarray]: List of frames of the rendering concatenated with PCA plots.
     """
     frames_mujoco = render_from_saved_rollout(rollout)[1:]
     # skip the first frame, since we don't have intention for the first frame
@@ -298,11 +377,15 @@ def render_with_pca_progression(
     return concat_frames
 
 
-def display_video(frames, framerate=30):
-    """
+def display_video(frames: List[np.ndarray], framerate: int = 30) -> HTML:
+    """Display a video from a list of frames.
+
     Args:
-        frames (array): (n_frames, height, width, 3)
-        framerate (int): the framerate of the video
+        frames (List[np.ndarray]): List of frames with shape (height, width, 3).
+        framerate (int, optional): The framerate of the video. Defaults to 30.
+
+    Returns:
+        HTML: HTML video object for display in Jupyter notebooks.
     """
     height, width, _ = frames[0].shape
     dpi = 70
@@ -316,7 +399,7 @@ def display_video(frames, framerate=30):
     ax.set_position([0, 0, 1, 1])
     im = ax.imshow(frames[0])
 
-    def update(frame):
+    def update(frame: np.ndarray) -> List[Any]:
         im.set_data(frame)
         return [im]
 

@@ -44,21 +44,21 @@ class BaseWalker(ABC):
         self.sys = mjcf.load_model(self._mjcf_model.model.ptr)
         self._initialize_indices()
 
-    @abstractmethod
-    def _load_mjcf_model(
-        self, torque_actuators: bool, rescale_factor: float
-    ) -> mjcf_dm.Physics:
-        """
-        Load and configure the MJCF model with optional torque actuators and rescaling.
+    # @abstractmethod
+    # def _load_mjcf_model(
+    #     self, torque_actuators: bool, rescale_factor: float
+    # ) -> mjcf_dm.Physics:
+    #     """
+    #     Load and configure the MJCF model with optional torque actuators and rescaling.
 
-        Args:
-            torque_actuators: Whether to use torque actuators
-            rescale_factor: Factor to rescale the model
+    #     Args:
+    #         torque_actuators: Whether to use torque actuators
+    #         rescale_factor: Factor to rescale the model
 
-        Returns:
-            Configured MuJoCo physics object
-        """
-        pass
+    #     Returns:
+    #         Configured MuJoCo physics object
+    #     """
+    #     pass
 
     @abstractmethod
     def _initialize_indices(self) -> None:

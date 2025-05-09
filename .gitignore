@@ -10,6 +10,7 @@ force_analysis_rollout/
 force_analysis_rollout_better/
 force_analysis_rollout_lstm/
 force_analysis_rollout_fly/
+force_analysis_rollout_charles/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

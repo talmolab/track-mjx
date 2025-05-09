@@ -121,15 +121,17 @@ def create_rollout_generator(
             )
 
             def _step_fn(carry, _):
-                state, act_rng, hidden = carry
+                state, act_rng = carry
                 act_rng, new_rng = jax.random.split(act_rng)
                 ctrl, extras = jit_inference_fn(state.obs, act_rng)
                 next_state = jit_step(state, ctrl)
-                return (next_state, new_rng), (next_state, ctrl, extras["activations"])
+                joint_force = next_state.pipeline_state.cfrc_ext
+                sensor_reading = next_state.pipeline_state.sensordata
+                return (next_state, new_rng), (next_state, ctrl, extras["activations"], joint_force, sensor_reading)
 
             # Run rollout
             init_carry = (init_state, jax.random.PRNGKey(0))
-            (final_state, _), (states, ctrls, activations) = jax.lax.scan(
+            (final_state, _), (states, ctrls, activations, joint_forces, sensor_readings) = jax.lax.scan(
                 _step_fn, init_carry, None, length=num_steps
             )
 
@@ -167,6 +169,8 @@ def create_rollout_generator(
                 "activations": activations,
                 "qposes_ref": qposes_ref,
                 "qposes_rollout": qposes_rollout,
+                "joint_forces": joint_forces,
+                "sensor_readings": sensor_readings,
                 "info": jax.vmap(lambda s: s.info)(rollout_states),
             }
 
@@ -201,11 +205,13 @@ def create_rollout_generator(
                 ctrl, extras, new_hidden = jit_inference_fn(state.obs, act_rng, hidden)
                 ctrl = jnp.squeeze(ctrl, axis=0)
                 next_state = jit_step(state, ctrl)
-                return (next_state, new_rng, new_hidden), (next_state, ctrl, hidden, extras["activations"])
+                joint_force = next_state.pipeline_state.cfrc_ext
+                sensor_reading = next_state.pipeline_state.sensordata
+                return (next_state, new_rng, new_hidden), (next_state, ctrl, hidden, extras["activations"], joint_force, sensor_reading)
 
             # Run rollout
             init_carry = (init_state, jax.random.PRNGKey(0), init_state.info["hidden_state"])
-            (final_state, _, final_hidden_state), (states, ctrls, stacked_hidden, activations) = jax.lax.scan(
+            (final_state, _, final_hidden_state), (states, ctrls, stacked_hidden, activations, joint_forces, sensor_readings) = jax.lax.scan(
                 _step_fn, init_carry, None, length=num_steps
             )
 
@@ -243,6 +249,8 @@ def create_rollout_generator(
                 "activations": activations,
                 "qposes_ref": qposes_ref,
                 "qposes_rollout": qposes_rollout,
+                "joint_forces": joint_forces,
+                "sensor_readings": sensor_readings,
                 "info": jax.vmap(lambda s: s.info)(rollout_states),
             }
 

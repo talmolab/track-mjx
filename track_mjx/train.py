@@ -59,8 +59,6 @@ _WALKERS = {
     "fly": Fly,
 }
 
-
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 @hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""

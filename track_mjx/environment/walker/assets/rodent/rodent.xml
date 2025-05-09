@@ -616,10 +616,10 @@
     <accelerometer name="accelerometer" site="head"/>
     <velocimeter name="velocimeter" site="head"/>
     <gyro name="gyro" site="head"/>
-    <!-- <touch name="palm_L" site="palm_L"/>
+    <touch name="palm_L" site="palm_L"/>
     <touch name="palm_R" site="palm_R"/>
     <touch name="sole_L" site="sole_L"/>
-    <touch name="sole_R" site="sole_R"/> -->
+    <touch name="sole_R" site="sole_R"/>
     <subtreelinvel name="torso" body="torso"/>
   </sensor>
   <compiler meshdir="./"/>

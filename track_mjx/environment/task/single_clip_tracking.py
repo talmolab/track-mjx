@@ -60,7 +60,7 @@ class SingleClipTracking(PipelineEnv):
         self.walker = walker
         self.walker._initialize_indices()
 
-        mj_model = self.walker._mj_model  # ._mjcf_model.model.ptr
+        mj_model = self.walker._mj_model
         mj_model.opt.solver = {
             "cg": mujoco.mjtSolver.mjSOL_CG,
             "newton": mujoco.mjtSolver.mjSOL_NEWTON,

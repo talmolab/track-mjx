@@ -160,11 +160,11 @@ class IntentionNetwork(nn.Module):
     def setup(self):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
-        self.lstm_decoder = LSTMDecoder(
-            layer_sizes=self.decoder_layers,
-            hidden_dim=self.hidden_states,
-            hidden_layer_num=self.hidden_layer_num,
-        )
+        # self.lstm_decoder = LSTMDecoder(
+        #     layer_sizes=self.decoder_layers,
+        #     hidden_dim=self.hidden_states,
+        #     hidden_layer_num=self.hidden_layer_num,
+        # )
 
     def __call__(self, obs, key, hidden_state, get_activation, use_lstm):
         _, encoder_rng = jax.random.split(key)
@@ -305,13 +305,14 @@ def make_intention_policy(
     dummy_key = jax.random.PRNGKey(0)
 
     # lambda function here to pass in hidden from training loop
+    
     return FeedForwardIntentionNetwork(
         init=lambda key, hidden_state: policy_module.init(
-            key, dummy_total_obs, dummy_key, hidden_state, get_activation, use_lstm
+            key, dummy_total_obs, dummy_key, hidden_state, get_activation, False
         ),
         apply=apply,
     )
-
+    
 
 def make_decoder_policy(
     param_size: int,
@@ -339,9 +340,7 @@ def make_decoder_policy(
     dummy_key = jax.random.PRNGKey(0)
 
     # lambda function here to pass in hidden from training loop
-    return FeedForwardIntentionNetwork(
-        init=lambda key, hidden_state: policy_module.init(
-            key, dummy_total_obs, dummy_key, hidden_state, get_activation, use_lstm
-        ),
+    return networks.FeedForwardNetwork(
+        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
         apply=apply,
     )

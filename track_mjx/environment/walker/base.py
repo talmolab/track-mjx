@@ -7,8 +7,7 @@ import jax.numpy as jp
 import jax
 from brax import math as brax_math
 from brax.io import mjcf
-from dm_control import mjcf as mjcf_dm
-from dm_control.locomotion.walkers import rescale
+import mujoco
 
 
 class BaseWalker(ABC):
@@ -38,27 +37,30 @@ class BaseWalker(ABC):
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
+        self._body_idxs, self._joint_idxs, self._endeff_idxs, self._torso_idx = (
+            jp.zeros(4)
+        )
 
         # Load and configure the model
         self._mjcf_model = self._load_mjcf_model(torque_actuators, rescale_factor)
         self.sys = mjcf.load_model(self._mjcf_model.model.ptr)
         self._initialize_indices()
 
-    # @abstractmethod
-    # def _load_mjcf_model(
-    #     self, torque_actuators: bool, rescale_factor: float
-    # ) -> mjcf_dm.Physics:
-    #     """
-    #     Load and configure the MJCF model with optional torque actuators and rescaling.
+    @abstractmethod
+    def _build_spec(
+        self, torque_actuators: bool, rescale_factor: float
+    ) -> mujoco.MjSpec:
+        """
+        Parse XML → MjSpec, apply optional edits, and return the spec.
 
-    #     Args:
-    #         torque_actuators: Whether to use torque actuators
-    #         rescale_factor: Factor to rescale the model
+        Args:
+            torque_actuators (bool): Whether to use torque actuators
+            rescale_factor (float): Factor to rescale the model
 
-    #     Returns:
-    #         Configured MuJoCo physics object
-    #     """
-    #     pass
+        Returns:
+            mujoco.MjSpec: mujoco spec that contains the model
+        """
+        pass
 
     @abstractmethod
     def _initialize_indices(self) -> None:

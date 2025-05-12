@@ -1,3 +1,5 @@
+"""Utility functions for scaling and recoloring geometries in a MuJoCo model."""
+
 import numpy as np
 
 def _scale_vec(vec: list[float] | np.ndarray, s: float) -> None:

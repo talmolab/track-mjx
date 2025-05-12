@@ -268,6 +268,16 @@ def train(
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
     env_state = reset_fn(key_envs)
+    
+    # TODO: reference_obs_size should be optional (network factory-dependent)
+    config_dict["network_config"].update(
+        {
+            "observation_size": env_state.obs.shape[-1],
+            "action_size": env.action_size,
+            "normalize_observations": normalize_observations,
+            "reference_obs_size": int(_unpmap(env_state.info["reference_obs_size"])[0]),
+        }
+    )
 
     normalize = lambda x, y: x
     if normalize_observations:

@@ -63,7 +63,7 @@ def rollout_logging_fn(
 
     state = jit_reset(reset_rng)
     
-    if train_config["use_lstm"]:
+    if train_config.get("use_lstm", None):
         hidden_state = state.info["hidden_state"]
 
     rollout = [state]
@@ -72,7 +72,7 @@ def rollout_logging_fn(
     for i in range(int(cfg["reference_config"].clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        if train_config["use_lstm"]:
+        if train_config.get("use_lstm", None):
             ctrl, extras, hidden_state = jit_logging_inference_fn(
                 params, obs, act_rng, hidden_state
             )

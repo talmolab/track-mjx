@@ -82,41 +82,23 @@ def make_ghost_pair(
     Returns:
         Tuple[mujoco.MjSpec, mujoco.MjModel, str]: The modified MjSpec, compiled MjModel, and XML string.
     """
-
-    # ---------------------------------------------------------------------
     # A) Load the original as a spec
-    # ---------------------------------------------------------------------
     base = mujoco.MjSpec.from_string(input_xml_str)
-
     for top in base.worldbody.bodies:
         _scale_body_tree(top, scale)
-
-    # ---------------------------------------------------------------------
     # B) Deep‑copy the spec to obtain the second (ghost) rodent
-    # ---------------------------------------------------------------------
     ghost = base.copy()
-
     # the first body is the floor
     floor = ghost.worldbody.bodies[0]
     ghost.detach_body(floor)
-
     for top in ghost.worldbody.bodies:
         _recolour_tree(top, rgba)
-
-    # ---------------------------------------------------------------------
     # C) Shrink & recolour the copy
-    # ---------------------------------------------------------------------
-
-    # ---------------------------------------------------------------------
     # D) Attach the ghost back into the parent spec
     #    – prefix ensures unique names
-    # ---------------------------------------------------------------------
     anchor = base.worldbody.add_site(name="ghost_anchor", pos=[0, 0, 0])
     base.attach(ghost, prefix="ghost_", site=anchor)
-
-    # ---------------------------------------------------------------------
     # E) Compile & write out
-    # ---------------------------------------------------------------------
     model = base.compile()
     xml = base.to_xml()
     return base, model, xml

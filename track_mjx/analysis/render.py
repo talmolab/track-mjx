@@ -1,8 +1,8 @@
 # imports
 import os
 
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
 
 from typing import List
 import numpy as np

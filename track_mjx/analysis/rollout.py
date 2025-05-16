@@ -142,14 +142,14 @@ def create_rollout_generator(
             # Run rollout for mlp
             init_carry = (init_state, jax.random.PRNGKey(0))
             (final_state, _), (states, ctrls, activations, joint_forces, sensor_readings) = jax.lax.scan(
-                _step_fn, init_carry, None, length=num_steps
+                _step_fn_mlp, init_carry, None, length=num_steps
             )
         
         elif model == 'lstm':
             # Run rollout for lstm
             init_carry = (init_state, jax.random.PRNGKey(0), init_state.info["hidden_state"])
             (final_state, _, final_hidden_state), (states, ctrls, stacked_hidden, activations, joint_forces, sensor_readings) = jax.lax.scan(
-                _step_fn, init_carry, None, length=num_steps
+                _step_fn_lstm, init_carry, None, length=num_steps
             )
 
         def prepend(element, arr):
@@ -191,4 +191,4 @@ def create_rollout_generator(
             "info": jax.vmap(lambda s: s.info)(rollout_states),
         }
 
-        return jax.jit(generate_rollout)
+    return jax.jit(generate_rollout)

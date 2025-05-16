@@ -207,7 +207,8 @@
                             <geom name="toe_L0_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007253243030021683" pos="0.008496656120882544 -0.0008496656120882542 0" euler="1.570796326794897 -1.221730476396031 0"/>
                             <geom name="toe_L1_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007771331817880374" pos="0.008071823314838416 0.002548996836264763 0" euler="1.570796326794897 -1.221730476396031 0"/>
                             <geom name="toe_L2_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007253243030021683" pos="0.006797324896706034 0.005522826478573654 0" euler="1.570796326794897 -1.221730476396031 0"/>
-                            <site name="sole_L" class="sensor" type="box" size="0.006 0.004 0.002" pos="0.008200000000000001 0.00246 -0.00164" euler="0 0 0.3490658503988659"/>
+                            <!-- <site name="sole_L" class="sensor" type="box" size="0.006 0.004 0.002" pos="0.008200000000000001 0.00246 -0.00164" euler="0 0 0.3490658503988659"/> -->
+                            <site name="sole_L" class="sensor" type="box" size="0.010 0.006 0.002" pos="0.008200000000000001 0.00246 -0.00164" euler="0 0 0.3490658503988659"/>
                           </body>
                         </body>
                         <geom name="lower_leg_L_collision" class="no_collision" size="0.006556802251673236 0.01923328660490816" density="1302.86687267" pos="-0.01226339046929431 0.0001224792426221771 -0.01071813365303941" quat="0.5843939876140521 0.278581552273902 0.3900453953818352 0.6547828460754284"/>
@@ -231,7 +232,8 @@
                             <geom name="toe_R0_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007253243030021683" pos="0.008496656120882544 0.0008496656120882542 0" euler="1.570796326794897 1.221730476396031 0"/>
                             <geom name="toe_R1_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007771331817880374" pos="0.008071823314838416 -0.002548996836264763 0" euler="1.570796326794897 1.221730476396031 0"/>
                             <geom name="toe_R2_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007253243030021683" pos="0.006797324896706034 -0.005522826478573654 0" euler="1.570796326794897 1.221730476396031 0"/>
-                            <site name="sole_R" class="sensor" type="box" size="0.006 0.004 0.002" pos="0.008200000000000001 -0.00246 -0.00164" euler="0 0 -0.3490658503988659"/>
+                            <!-- <site name="sole_R" class="sensor" type="box" size="0.006 0.004 0.002" pos="0.008200000000000001 -0.00246 -0.00164" euler="0 0 -0.3490658503988659"/> -->
+                            <site name="sole_R" class="sensor" type="box" size="0.010 0.006 0.002" pos="0.008200000000000001 -0.00246 -0.00164" euler="0 0 -0.3490658503988659"/>
                           </body>
                         </body>
                         <geom name="lower_leg_R_collision" class="no_collision" size="0.006556802251673236 0.01923328660490816" density="1302.86687267" pos="-0.01202896613332032 -0.0001615786954038913 -0.0105741369075766" quat="0.6564315036111004 0.3901417719765998 0.2779576926818845 0.5827749135856758"/>
@@ -445,7 +447,8 @@
                 <geom name="finger_L0_collision" class="nonself_collision_primitive_paw" size="0.001848626168194797 0.003235095794340896" pos="0.004926588738239136 -0.0007579367289598669 0" euler="1.570796326794897 -1.308996938995747 0"/>
                 <geom name="finger_L1_collision" class="nonself_collision_primitive_paw" size="0.001848626168194797 0.003697252336389595" pos="0.004547620373759201 0.001894841822399667 0" euler="1.570796326794897 -1.099557428756428 0"/>
                 <geom name="finger_L2_collision" class="nonself_collision_primitive_paw" size="0.001848626168194797 0.003235095794340896" pos="0.002652778551359534 0.003789683644799335 0" euler="1.570796326794897 -0.9599310885968813 0"/>
-                <site name="palm_L" class="sensor" type="box" size="0.004 0.004 0.002" pos="0.00492 0.00246 -0.00164" euler="0 0 0.4886921905584123"/>
+                <!-- <site name="palm_L" class="sensor" type="box" size="0.004 0.004 0.002" pos="0.00492 0.00246 -0.00164" euler="0 0 0.4886921905584123"/> -->
+                <site name="palm_L" class="sensor" type="box" size="0.010 0.006 0.002" pos="0.00492 0.00246 -0.00164" euler="0 0 0.4886921905584123"/>
               </body>
             </body>
             <geom name="radius_L_collision" class="no_collision" size="0.003732165792697991 0.01591658941003555" pos="0.01150545467526729 0.006850732667129763 -0.01222632491350886" quat="0.02376493230846292 0.7917721441518218 0.4232293467931716 0.4397829234413568"/>
@@ -476,7 +479,8 @@
                 <geom name="finger_R0_collision" class="nonself_collision_primitive_paw" size="0.001848626168194797 0.003235095794340896" pos="0.004926588738239136 0.0007579367289598669 0" euler="1.570796326794897 1.308996938995747 0"/>
                 <geom name="finger_R1_collision" class="nonself_collision_primitive_paw" size="0.001848626168194797 0.003697252336389595" pos="0.004547620373759201 -0.001894841822399667 0" euler="1.570796326794897 1.099557428756428 0"/>
                 <geom name="finger_R2_collision" class="nonself_collision_primitive_paw" size="0.001848626168194797 0.003235095794340896" pos="0.002652778551359534 -0.003789683644799335 0" euler="1.570796326794897 0.9599310885968813 0"/>
-                <site name="palm_R" class="sensor" type="box" size="0.004 0.004 0.002" pos="0.00492 -0.00246 -0.00164" euler="0 0 -0.4886921905584123"/>
+                <!-- <site name="palm_R" class="sensor" type="box" size="0.004 0.004 0.002" pos="0.00492 -0.00246 -0.00164" euler="0 0 -0.4886921905584123"/> -->
+                <site name="palm_R" class="sensor" type="box" size="0.010 0.006 0.002" pos="0.00492 -0.00246 -0.00164" euler="0 0 -0.4886921905584123"/>
               </body>
             </body>
             <geom name="radius_R_collision" class="no_collision" size="0.003732165792697991 0.01591658941003555" pos="0.01150546139578159 -0.0068511746740596 -0.01222632995360402" quat="0.4397828585901176 0.423230473256099 0.7917715587074765 0.02376557635859348"/>
@@ -616,10 +620,10 @@
     <accelerometer name="accelerometer" site="head"/>
     <velocimeter name="velocimeter" site="head"/>
     <gyro name="gyro" site="head"/>
-    <touch name="palm_L" site="palm_L"/>
+    <!-- <touch name="palm_L" site="palm_L"/>
     <touch name="palm_R" site="palm_R"/>
     <touch name="sole_L" site="sole_L"/>
-    <touch name="sole_R" site="sole_R"/>
+    <touch name="sole_R" site="sole_R"/> -->
     <subtreelinvel name="torso" body="torso"/>
   </sensor>
   <compiler meshdir="./"/>

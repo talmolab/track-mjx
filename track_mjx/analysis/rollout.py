@@ -1,5 +1,5 @@
 """
-rollout file that contains the function to run the trained model on the environment.
+Functions to load environment and run a rollout with a given policy.
 """
 
 import numpy as np
@@ -19,15 +19,14 @@ from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import wrappers
 from track_mjx.io import load
 
-
 from omegaconf import DictConfig
+
+envs.register_environment("rodent_single_clip", SingleClipTracking)
+envs.register_environment("rodent_multi_clip", MultiClipTracking)
+envs.register_environment("fly_multi_clip", MultiClipTracking)
 
 
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:
-    envs.register_environment("rodent_single_clip", SingleClipTracking)
-    envs.register_environment("rodent_multi_clip", MultiClipTracking)
-    envs.register_environment("fly_multi_clip", MultiClipTracking)
-
     env_args = cfg_dict["env_config"]["env_args"]
     env_rewards = cfg_dict["env_config"]["reward_weights"]
     walker_config = cfg_dict["walker_config"]
@@ -36,7 +35,9 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     reference_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
     logging.info(f"Loading data: {reference_data_path}")
     try:
-        reference_clip = load.make_multiclip_data(reference_data_path)
+        reference_clip = load.make_multiclip_data(
+            reference_data_path, n_frames_per_clip=traj_config.clip_length
+        )
     except KeyError:
         logging.info(
             f"Loading from stac-mjx format failed. Loading from ReferenceClip format."

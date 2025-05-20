@@ -38,7 +38,6 @@ import functools
 
 
 _GHOST_RENDER_XML_PATHS = {
-    # "rodent": "assets/rodent/rodent_ghostpair_scale080.xml",
     "fly": "assets/fruitfly/fruitfly_force_pair.xml",
 }
 

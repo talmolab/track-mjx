@@ -70,7 +70,7 @@ class Fly(BaseWalker):
 
         # b) Uniform rescale (geometry + body positions)
         if abs(rescale_factor - 1.0) > 1e-6:
-            for top in spec.worldbody.bodies:
+            for top in spec.worldbody.find_child("thorax"):
                 _scale_body_tree(top, rescale_factor)
 
         return spec

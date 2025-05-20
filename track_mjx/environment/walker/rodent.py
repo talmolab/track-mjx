@@ -33,9 +33,9 @@ class Rodent(BaseWalker):
             torque_actuators (bool, optional): whether modify the model to use torque actuators. Defaults to False.
             rescale_factor (float, optional): the rescale factor for the body model. Defaults to 0.9.
         """
-        self._joint_names = list(joint_names)
-        self._body_names = list(body_names)
-        self._end_eff_names = list(end_eff_names)
+        self._joint_names = joint_names
+        self._body_names = body_names
+        self._end_eff_names = end_eff_names
 
         # 1) Build the physics model via MjSpec
         self._mj_spec = self._build_spec(torque_actuators, rescale_factor)
@@ -57,7 +57,7 @@ class Rodent(BaseWalker):
         Returns:
             mujoco.MjSpec: mujoco spec that contains the model
         """
-        path = Path(__file__).with_suffix("").parent / _XML_PATH
+        path = Path(__file__).parent / _XML_PATH
         xml_str = path.read_text()
         spec = mujoco.MjSpec.from_string(xml_str)
 
@@ -74,7 +74,7 @@ class Rodent(BaseWalker):
 
         # b) Uniform rescale (geometry + body positions)
         if abs(rescale_factor - 1.0) > 1e-6:
-            for top in spec.worldbody.bodies:
+            for top in spec.worldbody.bodies.find_child("torso"):
                 _scale_body_tree(top, rescale_factor)
 
         return spec

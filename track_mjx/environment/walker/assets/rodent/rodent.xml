@@ -1,165 +1,173 @@
 <mujoco model="rat">
-  <compiler angle="radian"/>
+  <compiler angle="radian" />
   <option timestep="0.002" solver="CG" iterations="6" ls_iterations="6"></option>
   <!-- <size njmax="8000" nconmax="4000"/> -->
   <visual>
-        <quality shadowsize="2048"/>
-        <global offwidth="3840" offheight="2160" elevation="-20" azimuth="120"/>
-      </visual>
+    <quality shadowsize="2048" />
+    <global offwidth="3840" offheight="2160" elevation="-20" azimuth="120" />
+  </visual>
   <default>
-    <joint limited="true" solreflimit="0.01 1" solimplimit="0.9 0.99 0.003" armature="6e-07" damping="0.001"/>
-    <geom friction="0.7 0.005 0.0001" solref="0.005 1"/>
-    <site group="3" rgba="0 0 1 1"/>
-    <general ctrllimited="true" ctrlrange="-1 1" forcelimited="false" gainprm="0.01"/>
-    <tendon limited="false"/>
+    <joint limited="true" solreflimit="0.01 1" solimplimit="0.9 0.99 0.003" armature="6e-07"
+      damping="0.001" />
+    <geom friction="0.7 0.005 0.0001" solref="0.005 1" />
+    <site group="3" rgba="0 0 1 1" />
+    <general ctrllimited="true" ctrlrange="-1 1" forcelimited="false" gainprm="0.01" />
+    <tendon limited="false" />
     <default class="bone">
-      <geom contype="0" conaffinity="0" group="0" rgba="0.5 0.5 0.5 1" density="1100.0"/>
+      <geom contype="0" conaffinity="0" group="0" rgba="0.5 0.5 0.5 1" density="1100.0" />
     </default>
     <default class="no_collision">
-      <geom type="capsule" contype="0" conaffinity="0" condim="3" group="2"/>
+      <geom type="capsule" contype="0" conaffinity="0" condim="3" group="2" />
     </default>
     <default class="collision">
-      <geom condim="1" group="2"/>
+      <geom condim="1" group="2" />
       <default class="nonself_collision_primitive">
-        <geom contype="1" conaffinity="0" type="capsule" group="2" rgba="0 0.5 0.5 1" density="500.0"/>
+        <geom contype="1" conaffinity="0" type="capsule" group="2" rgba="0 0.5 0.5 1"
+          density="500.0" />
         <default class="nonself_collision_primitive_paw">
-          <geom condim="3" priority="1" rgba="0 0.6 0.7 1" friction="1.5 0.005 0.0001"/>
+          <geom condim="3" priority="1" rgba="0 0.6 0.7 1" friction="1.5 0.005 0.0001" />
         </default>
       </default>
     </default>
     <default class="collision_floor">
-      <geom contype="0" conaffinity="1" condim="3"/>
+      <geom contype="0" conaffinity="1" condim="3" />
     </default>
     <default class="lumbar">
-      <joint group="3" pos="0.003 0 -0.003" armature="1e-05" damping="0.03"/>
-      <general gainprm="0.15"/>
+      <joint group="3" pos="0.003 0 -0.003" armature="1e-05" damping="0.03" />
+      <general gainprm="0.15" />
       <default class="lumbar_extend">
-        <joint stiffness="0.02" range="-0.5235987755982988 0.7853981633974483"/>
-        <tendon range="-1 1"/>
-        <general gainprm="0.4"/>
+        <joint stiffness="0.02" range="-0.5235987755982988 0.7853981633974483" />
+        <tendon range="-1 1" />
+        <general gainprm="0.4" />
       </default>
       <default class="lumbar_bend">
-        <joint stiffness="0.03" range="-0.5235987755982988 0.5235987755982988"/>
-        <tendon range="-1 1"/>
+        <joint stiffness="0.03" range="-0.5235987755982988 0.5235987755982988" />
+        <tendon range="-1 1" />
       </default>
       <default class="lumbar_twist">
-        <joint stiffness="0.03" range="-0.5235987755982988 0.5235987755982988"/>
-        <tendon range="-1 1"/>
+        <joint stiffness="0.03" range="-0.5235987755982988 0.5235987755982988" />
+        <tendon range="-1 1" />
       </default>
     </default>
     <default class="cervical">
-      <joint group="3" pos="-0.02 0 -0.05" stiffness="1.0" armature="0.001" damping="1.0"/>
+      <joint group="3" pos="-0.02 0 -0.05" stiffness="1.0" armature="0.001" damping="1.0" />
       <default class="cervical_extend">
-        <joint range="-0.4072434921320102 0.6108652381980153"/>
-        <tendon range="-1 1"/>
-        <general gainprm="2.5"/>
+        <joint range="-0.4072434921320102 0.6108652381980153" />
+        <tendon range="-1 1" />
+        <general gainprm="2.5" />
       </default>
       <default class="cervical_bend">
-        <joint range="-0.6108652381980153 0.6108652381980153"/>
-        <tendon range="-1 1"/>
-        <general gainprm="2.5"/>
+        <joint range="-0.6108652381980153 0.6108652381980153" />
+        <tendon range="-1 1" />
+        <general gainprm="2.5" />
       </default>
       <default class="cervical_twist">
-        <joint range="-0.6108652381980153 0.6108652381980153"/>
-        <tendon range="-1 1"/>
-        <general gainprm="2.5"/>
+        <joint range="-0.6108652381980153 0.6108652381980153" />
+        <tendon range="-1 1" />
+        <general gainprm="2.5" />
       </default>
     </default>
     <default class="atlas">
-      <joint axis="0 -1 0" stiffness="0.002" range="-0.08726646259971647 0.7853981633974483" damping="0.002"/>
-      <general gainprm="0.025"/>
+      <joint axis="0 -1 0" stiffness="0.002" range="-0.08726646259971647 0.7853981633974483"
+        damping="0.002" />
+      <general gainprm="0.025" />
     </default>
     <default class="mandible">
-      <joint stiffness="0.002" range="-0.296705972839036 0.2617993877991494" springref="-0.314159265359" damping="0.002"/>
-      <general gainprm="0.025"/>
+      <joint stiffness="0.002" range="-0.296705972839036 0.2617993877991494"
+        springref="-0.314159265359" damping="0.002" />
+      <general gainprm="0.025" />
     </default>
     <default class="caudal">
-      <joint group="3" stiffness="1e-05" damping="0.002"/>
-      <general gainprm="0.005"/>
+      <joint group="3" stiffness="1e-05" damping="0.002" />
+      <general gainprm="0.005" />
       <default class="caudal_extend">
-        <joint range="-0.08726646259971647 0.08726646259971647"/>
-        <tendon range="-0.05 0.05"/>
+        <joint range="-0.08726646259971647 0.08726646259971647" />
+        <tendon range="-0.05 0.05" />
       </default>
       <default class="caudal_bend">
-        <joint range="-0.08726646259971647 0.08726646259971647"/>
-        <tendon range="-0.2 0.2"/>
+        <joint range="-0.08726646259971647 0.08726646259971647" />
+        <tendon range="-0.2 0.2" />
       </default>
     </default>
     <default class="hip">
-      <joint armature="1e-05" damping="0.02"/>
-      <general gainprm="0.2"/>
+      <joint armature="1e-05" damping="0.02" />
+      <general gainprm="0.2" />
       <default class="hip_supinate">
-        <joint range="-0.6981317007977318 0.5235987755982988"/>
+        <joint range="-0.6981317007977318 0.5235987755982988" />
       </default>
       <default class="hip_abduct">
-        <joint range="-0.5235987755982988 1.047197551196598"/>
+        <joint range="-0.5235987755982988 1.047197551196598" />
       </default>
       <default class="hip_extend">
-        <joint range="-1.570796326794897 1.047197551196598"/>
-        <general gainprm="0.3"/>
+        <joint range="-1.570796326794897 1.047197551196598" />
+        <general gainprm="0.3" />
       </default>
     </default>
     <default class="knee">
-      <joint range="-1.221730476396031 1.53588974175501" damping="0.005"/>
-      <general gainprm="0.2"/>
+      <joint range="-1.221730476396031 1.53588974175501" damping="0.005" />
+      <general gainprm="0.2" />
     </default>
     <default class="ankle">
-      <joint range="-0.1396263401595464 1.396263401595464" damping="0.003"/>
-      <general gainprm="0.2"/>
+      <joint range="-0.1396263401595464 1.396263401595464" damping="0.003" />
+      <general gainprm="0.2" />
     </default>
     <default class="toe">
-      <joint range="0 0.8726646259971648" damping="0.001"/>
-      <general gainprm="0.025"/>
+      <joint range="0 0.8726646259971648" damping="0.001" />
+      <general gainprm="0.025" />
     </default>
     <default class="scapula">
-      <joint damping="0.005"/>
-      <general gainprm="0.25"/>
+      <joint damping="0.005" />
+      <general gainprm="0.25" />
       <default class="scapula_supinate">
-        <joint pos="0 0.005000000000000001 0" range="-0.0174532925199433 0.1745329251994329"/>
+        <joint pos="0 0.005000000000000001 0" range="-0.0174532925199433 0.1745329251994329" />
       </default>
       <default class="scapula_abduct">
-        <joint pos="0 0.005000000000000001 -0.01" range="-0.2617993877991494 0.2617993877991494"/>
+        <joint pos="0 0.005000000000000001 -0.01" range="-0.2617993877991494 0.2617993877991494" />
       </default>
       <default class="scapula_extend">
-        <joint pos="0 0 0" range="-0.03490658503988659 0.03490658503988659"/>
-        <general gainprm="0.25"/>
+        <joint pos="0 0 0" range="-0.03490658503988659 0.03490658503988659" />
+        <general gainprm="0.25" />
       </default>
     </default>
     <default class="shoulder">
-      <joint range="-1.308996938995747 0.8726646259971648" damping="0.005"/>
-      <general gainprm="0.15"/>
+      <joint range="-1.308996938995747 0.8726646259971648" damping="0.005" />
+      <general gainprm="0.15" />
     </default>
     <default class="shoulder_sup">
-      <joint range="-0.05235987755982989 1.134464013796314" damping="0.005"/>
-      <general gainprm="0.15"/>
+      <joint range="-0.05235987755982989 1.134464013796314" damping="0.005" />
+      <general gainprm="0.15" />
     </default>
     <default class="elbow">
-      <joint range="-1.308996938995747 0.6981317007977318" damping="0.003"/>
-      <general gainprm="0.15"/>
+      <joint range="-1.308996938995747 0.6981317007977318" damping="0.003" />
+      <general gainprm="0.15" />
     </default>
     <default class="wrist">
-      <joint range="-0.3490658503988659 2.094395102393195" damping="0.002"/>
-      <general gainprm="0.05"/>
+      <joint range="-0.3490658503988659 2.094395102393195" damping="0.002" />
+      <general gainprm="0.05" />
     </default>
     <default class="finger">
-      <joint range="0 1.570796326794897" damping="0.002"/>
-      <general gainprm="0.025"/>
+      <joint range="0 1.570796326794897" damping="0.002" />
+      <general gainprm="0.025" />
     </default>
     <default class="sensor">
-      <site group="4"/>
+      <site group="4" />
     </default>
   </default>
   <visual>
-    <quality shadowsize="2048"/>
+    <quality shadowsize="2048" />
   </visual>
-  <statistic meansize="0.003"/>
+  <statistic meansize="0.003" />
   <asset>
     <!-- <skin name="skin" file="rodent_walker_skin.skn"/> -->
-    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
-    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3"
+      rgb2=".2 .3 .4" />
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2" />
   </asset>
   <worldbody>
-    <geom name="floor" class="collision_floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
+    <body name="floor">
+      <geom name="floor" class="collision_floor" pos="0 0 -0.005" size="10 10 0.005"
+        type="plane" material="grid" />
+    </body>
     <body name="walker">
     <freejoint name="root"/>
     <body name="torso" pos="0.03099526054578288 2.058524937651458e-07 0.06508957263119967">
@@ -494,137 +502,190 @@
     </body>
   </worldbody>
   <contact>
-    <exclude name="pelvis:vertebra_C2" body1="pelvis" body2="vertebra_C2"/>
-    <exclude name="pelvis:vertebra_C3" body1="pelvis" body2="vertebra_C3"/>
-    <exclude name="pelvis:vertebra_C4" body1="pelvis" body2="vertebra_C4"/>
-    <exclude name="vertebra_C1:vertebra_C3" body1="vertebra_C1" body2="vertebra_C3"/>
-    <exclude name="vertebra_C1:vertebra_C4" body1="vertebra_C1" body2="vertebra_C4"/>
-    <exclude name="vertebra_C2:vertebra_C4" body1="vertebra_C2" body2="vertebra_C4"/>
-    <exclude name="vertebra_C3:vertebra_C5" body1="vertebra_C3" body2="vertebra_C5"/>
-    <exclude name="vertebra_C4:vertebra_C6" body1="vertebra_C4" body2="vertebra_C6"/>
-    <exclude name="vertebra_C5:vertebra_C7" body1="vertebra_C5" body2="vertebra_C7"/>
-    <exclude name="vertebra_axis:skull" body1="vertebra_axis" body2="skull"/>
-    <exclude name="pelvis:vertebra_C5" body1="pelvis" body2="vertebra_C5"/>
-    <exclude name="pelvis:vertebra_C6" body1="pelvis" body2="vertebra_C6"/>
-    <exclude name="vertebra_C2:vertebra_C5" body1="vertebra_C2" body2="vertebra_C5"/>
-    <exclude name="vertebra_C3:vertebra_C6" body1="vertebra_C3" body2="vertebra_C6"/>
-    <exclude name="vertebra_C4:vertebra_C7" body1="vertebra_C4" body2="vertebra_C7"/>
-    <exclude name="upper_arm_L:upper_arm_R" body1="upper_arm_L" body2="upper_arm_R"/>
-    <exclude name="upper_leg_L:vertebra_C1" body1="upper_leg_L" body2="vertebra_C1"/>
-    <exclude name="upper_leg_L:vertebra_C2" body1="upper_leg_L" body2="vertebra_C2"/>
-    <exclude name="upper_leg_R:vertebra_C1" body1="upper_leg_R" body2="vertebra_C1"/>
-    <exclude name="upper_leg_R:vertebra_C2" body1="upper_leg_R" body2="vertebra_C2"/>
-    <exclude name="vertebra_cervical_1:skull" body1="vertebra_cervical_1" body2="skull"/>
-    <exclude name="vertebra_cervical_2:skull" body1="vertebra_cervical_2" body2="skull"/>
-    <exclude name="upper_arm_L:torso" body1="upper_arm_L" body2="torso"/>
-    <exclude name="upper_arm_R:torso" body1="upper_arm_R" body2="torso"/>
-    <exclude name="lower_leg_L:pelvis" body1="lower_leg_L" body2="pelvis"/>
-    <exclude name="lower_leg_R:pelvis" body1="lower_leg_R" body2="pelvis"/>
+    <exclude name="pelvis:vertebra_C2" body1="pelvis" body2="vertebra_C2" />
+    <exclude name="pelvis:vertebra_C3" body1="pelvis" body2="vertebra_C3" />
+    <exclude name="pelvis:vertebra_C4" body1="pelvis" body2="vertebra_C4" />
+    <exclude name="vertebra_C1:vertebra_C3" body1="vertebra_C1" body2="vertebra_C3" />
+    <exclude name="vertebra_C1:vertebra_C4" body1="vertebra_C1" body2="vertebra_C4" />
+    <exclude name="vertebra_C2:vertebra_C4" body1="vertebra_C2" body2="vertebra_C4" />
+    <exclude name="vertebra_C3:vertebra_C5" body1="vertebra_C3" body2="vertebra_C5" />
+    <exclude name="vertebra_C4:vertebra_C6" body1="vertebra_C4" body2="vertebra_C6" />
+    <exclude name="vertebra_C5:vertebra_C7" body1="vertebra_C5" body2="vertebra_C7" />
+    <exclude name="vertebra_axis:skull" body1="vertebra_axis" body2="skull" />
+    <exclude name="pelvis:vertebra_C5" body1="pelvis" body2="vertebra_C5" />
+    <exclude name="pelvis:vertebra_C6" body1="pelvis" body2="vertebra_C6" />
+    <exclude name="vertebra_C2:vertebra_C5" body1="vertebra_C2" body2="vertebra_C5" />
+    <exclude name="vertebra_C3:vertebra_C6" body1="vertebra_C3" body2="vertebra_C6" />
+    <exclude name="vertebra_C4:vertebra_C7" body1="vertebra_C4" body2="vertebra_C7" />
+    <exclude name="upper_arm_L:upper_arm_R" body1="upper_arm_L" body2="upper_arm_R" />
+    <exclude name="upper_leg_L:vertebra_C1" body1="upper_leg_L" body2="vertebra_C1" />
+    <exclude name="upper_leg_L:vertebra_C2" body1="upper_leg_L" body2="vertebra_C2" />
+    <exclude name="upper_leg_R:vertebra_C1" body1="upper_leg_R" body2="vertebra_C1" />
+    <exclude name="upper_leg_R:vertebra_C2" body1="upper_leg_R" body2="vertebra_C2" />
+    <exclude name="vertebra_cervical_1:skull" body1="vertebra_cervical_1" body2="skull" />
+    <exclude name="vertebra_cervical_2:skull" body1="vertebra_cervical_2" body2="skull" />
+    <exclude name="upper_arm_L:torso" body1="upper_arm_L" body2="torso" />
+    <exclude name="upper_arm_R:torso" body1="upper_arm_R" body2="torso" />
+    <exclude name="lower_leg_L:pelvis" body1="lower_leg_L" body2="pelvis" />
+    <exclude name="lower_leg_R:pelvis" body1="lower_leg_R" body2="pelvis" />
   </contact>
   <tendon>
     <fixed name="lumbar_extend" class="lumbar_extend">
-      <joint joint="vertebra_1_extend" coef="0.604983465832"/>
-      <joint joint="vertebra_4_extend" coef="0.395016534168"/>
+      <joint joint="vertebra_1_extend" coef="0.604983465832" />
+      <joint joint="vertebra_4_extend" coef="0.395016534168" />
     </fixed>
     <fixed name="lumbar_bend" class="lumbar_bend">
-      <joint joint="vertebra_2_bend" coef="0.658212326553"/>
-      <joint joint="vertebra_5_bend" coef="0.341787673447"/>
+      <joint joint="vertebra_2_bend" coef="0.658212326553" />
+      <joint joint="vertebra_5_bend" coef="0.341787673447" />
     </fixed>
     <fixed name="lumbar_twist" class="lumbar_twist">
-      <joint joint="vertebra_3_twist" coef="0.570669983621"/>
-      <joint joint="vertebra_6_twist" coef="0.429330016379"/>
+      <joint joint="vertebra_3_twist" coef="0.570669983621" />
+      <joint joint="vertebra_6_twist" coef="0.429330016379" />
     </fixed>
     <fixed name="cervical_extend" class="cervical_extend">
-      <joint joint="vertebra_cervical_5_extend" coef="0.341713547174"/>
-      <joint joint="vertebra_cervical_2_extend" coef="0.332408292936"/>
-      <joint joint="vertebra_atlant_extend" coef="0.32587815989"/>
+      <joint joint="vertebra_cervical_5_extend" coef="0.341713547174" />
+      <joint joint="vertebra_cervical_2_extend" coef="0.332408292936" />
+      <joint joint="vertebra_atlant_extend" coef="0.32587815989" />
     </fixed>
     <fixed name="cervical_bend" class="cervical_bend">
-      <joint joint="vertebra_cervical_4_bend" coef="0.50743949691"/>
-      <joint joint="vertebra_cervical_1_bend" coef="0.49256050309"/>
+      <joint joint="vertebra_cervical_4_bend" coef="0.50743949691" />
+      <joint joint="vertebra_cervical_1_bend" coef="0.49256050309" />
     </fixed>
     <fixed name="cervical_twist" class="cervical_twist">
-      <joint joint="vertebra_cervical_3_twist" coef="0.496142185731"/>
-      <joint joint="vertebra_axis_twist" coef="0.503857814269"/>
+      <joint joint="vertebra_cervical_3_twist" coef="0.496142185731" />
+      <joint joint="vertebra_axis_twist" coef="0.503857814269" />
     </fixed>
     <fixed name="caudal_extend" class="caudal_extend">
-      <joint joint="vertebra_C1_extend" coef="0.29007246307"/>
-      <joint joint="vertebra_C2_extend" coef="0.207669040031"/>
-      <joint joint="vertebra_C3_extend" coef="0.151635169821"/>
-      <joint joint="vertebra_C4_extend" coef="0.115426643422"/>
-      <joint joint="vertebra_C5_extend" coef="0.0875497823386"/>
-      <joint joint="vertebra_C6_extend" coef="0.0692562920379"/>
-      <joint joint="vertebra_C7_extend" coef="0.0558691633464"/>
-      <joint joint="vertebra_C11_extend" coef="0.0175306632713"/>
-      <joint joint="vertebra_C15_extend" coef="0.00414417378836"/>
-      <joint joint="vertebra_C19_extend" coef="0.00074642278889"/>
-      <joint joint="vertebra_C23_extend" coef="8.5912797067e-05"/>
-      <joint joint="vertebra_C27_extend" coef="1.42732873368e-05"/>
+      <joint joint="vertebra_C1_extend" coef="0.29007246307" />
+      <joint joint="vertebra_C2_extend" coef="0.207669040031" />
+      <joint joint="vertebra_C3_extend" coef="0.151635169821" />
+      <joint joint="vertebra_C4_extend" coef="0.115426643422" />
+      <joint joint="vertebra_C5_extend" coef="0.0875497823386" />
+      <joint joint="vertebra_C6_extend" coef="0.0692562920379" />
+      <joint joint="vertebra_C7_extend" coef="0.0558691633464" />
+      <joint joint="vertebra_C11_extend" coef="0.0175306632713" />
+      <joint joint="vertebra_C15_extend" coef="0.00414417378836" />
+      <joint joint="vertebra_C19_extend" coef="0.00074642278889" />
+      <joint joint="vertebra_C23_extend" coef="8.5912797067e-05" />
+      <joint joint="vertebra_C27_extend" coef="1.42732873368e-05" />
     </fixed>
     <fixed name="caudal_bend" class="caudal_bend">
-      <joint joint="vertebra_C1_bend" coef="0.370792881126"/>
-      <joint joint="vertebra_C2_bend" coef="0.233517805262"/>
-      <joint joint="vertebra_C3_bend" coef="0.150894350178"/>
-      <joint joint="vertebra_C4_bend" coef="0.101885012096"/>
-      <joint joint="vertebra_C5_bend" coef="0.0671743532429"/>
-      <joint joint="vertebra_C6_bend" coef="0.0439561223709"/>
-      <joint joint="vertebra_C9_bend" coef="0.0188199119629"/>
-      <joint joint="vertebra_C13_bend" coef="0.00999889819861"/>
-      <joint joint="vertebra_C17_bend" coef="0.00252642968052"/>
-      <joint joint="vertebra_C21_bend" coef="0.000378783618491"/>
-      <joint joint="vertebra_C25_bend" coef="4.10656566522e-05"/>
-      <joint joint="vertebra_C29_bend" coef="1.43866075466e-05"/>
+      <joint joint="vertebra_C1_bend" coef="0.370792881126" />
+      <joint joint="vertebra_C2_bend" coef="0.233517805262" />
+      <joint joint="vertebra_C3_bend" coef="0.150894350178" />
+      <joint joint="vertebra_C4_bend" coef="0.101885012096" />
+      <joint joint="vertebra_C5_bend" coef="0.0671743532429" />
+      <joint joint="vertebra_C6_bend" coef="0.0439561223709" />
+      <joint joint="vertebra_C9_bend" coef="0.0188199119629" />
+      <joint joint="vertebra_C13_bend" coef="0.00999889819861" />
+      <joint joint="vertebra_C17_bend" coef="0.00252642968052" />
+      <joint joint="vertebra_C21_bend" coef="0.000378783618491" />
+      <joint joint="vertebra_C25_bend" coef="4.10656566522e-05" />
+      <joint joint="vertebra_C29_bend" coef="1.43866075466e-05" />
     </fixed>
   </tendon>
   <actuator>
-    <general name="lumbar_extend" forcerange="-20 20" tendon="lumbar_extend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="13.08996938995747" biasprm="2.617993877991495 -20"/>
-    <general name="lumbar_bend" forcerange="-20 20" tendon="lumbar_bend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="10.47197551196598" biasprm="0 -20"/>
-    <general name="lumbar_twist" forcerange="-20 20" tendon="lumbar_twist" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="10.47197551196598" biasprm="0 -20"/>
-    <general name="cervical_extend" forcerange="-20 20" tendon="cervical_extend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="10.18108730330026" biasprm="2.03621746066005 -20"/>
-    <general name="cervical_bend" forcerange="-20 20" tendon="cervical_bend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="12.21730476396031" biasprm="0 -20"/>
-    <general name="cervical_twist" forcerange="-20 20" tendon="cervical_twist" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="12.21730476396031" biasprm="0 -20"/>
-    <general name="caudal_extend" forcerange="-0.1 0.1" tendon="caudal_extend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.02617993877991495" biasprm="0 -0.1"/>
-    <general name="caudal_bend" forcerange="-0.1 0.1" tendon="caudal_bend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.02617993877991494" biasprm="0 -0.1"/>
-    <general name="hip_L_supinate" forcerange="-0.2 0.2" joint="hip_L_supinate" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.2443460952792061" biasprm="-0.0349065850398866 -0.4"/>
-    <general name="hip_L_abduct" forcerange="-0.2 0.2" joint="hip_L_abduct" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.3141592653589793" biasprm="0.1047197551196598 -0.4"/>
-    <general name="hip_L_extend" forcerange="-0.3 0.3" joint="hip_L_extend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.7853981633974482" biasprm="-0.1570796326794897 -0.6"/>
-    <general name="knee_L" forcerange="-0.2 0.2" joint="knee_L" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.5515240436302081" biasprm="0.06283185307179587 -0.4"/>
-    <general name="ankle_L" forcerange="-0.2 0.2" joint="ankle_L" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.307177948351002" biasprm="0.2513274122871835 -0.4"/>
-    <general name="toe_L" forcerange="-0.025 0.025" joint="toe_L" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.02181661564992912" biasprm="0.02181661564992912 -0.05"/>
-    <general name="hip_R_supinate" forcerange="-0.2 0.2" joint="hip_R_supinate" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.2443460952792061" biasprm="-0.0349065850398866 -0.4"/>
-    <general name="hip_R_abduct" forcerange="-0.2 0.2" joint="hip_R_abduct" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.3141592653589793" biasprm="0.1047197551196598 -0.4"/>
-    <general name="hip_R_extend" forcerange="-0.3 0.3" joint="hip_R_extend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.7853981633974482" biasprm="-0.1570796326794897 -0.6"/>
-    <general name="knee_R" forcerange="-0.2 0.2" joint="knee_R" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.5515240436302081" biasprm="0.06283185307179587 -0.4"/>
-    <general name="ankle_R" forcerange="-0.2 0.2" joint="ankle_R" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.307177948351002" biasprm="0.2513274122871835 -0.4"/>
-    <general name="toe_R" forcerange="-0.025 0.025" joint="toe_R" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.02181661564992912" biasprm="0.02181661564992912 -0.05"/>
-    <general name="atlas" forcerange="-0.025 0.025" joint="atlas" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.02181661564992912" biasprm="0.0174532925199433 -0.05"/>
-    <general name="mandible" forcerange="-0.025 0.025" joint="mandible" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.01396263401595464" biasprm="-0.000872664625997166 -0.05"/>
-    <general name="scapula_L_supinate" forcerange="-0.25 0.25" joint="scapula_L_supinate" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.04799655442984406" biasprm="0.03926990816987241 -0.5"/>
-    <general name="scapula_L_abduct" forcerange="-0.25 0.25" joint="scapula_L_abduct" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.1308996938995747" biasprm="0 -0.5"/>
-    <general name="scapula_L_extend" forcerange="-0.25 0.25" joint="scapula_L_extend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.0174532925199433" biasprm="0 -0.5"/>
-    <general name="shoulder_L" forcerange="-0.15 0.15" joint="shoulder_L" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.3272492347489368" biasprm="-0.06544984694978737 -0.3"/>
-    <general name="shoulder_sup_L" forcerange="-0.15 0.15" joint="shoulder_sup_L" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.1780235837034216" biasprm="0.1623156204354726 -0.3"/>
-    <general name="elbow_L" forcerange="-0.15 0.15" joint="elbow_L" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.3010692959690218" biasprm="-0.0916297857297023 -0.3"/>
-    <general name="wrist_L" forcerange="-0.05 0.05" joint="wrist_L" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.1221730476396031" biasprm="0.08726646259971647 -0.1"/>
-    <general name="finger_L" forcerange="-0.025 0.025" joint="finger_L" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.03926990816987241" biasprm="0.03926990816987241 -0.05"/>
-    <general name="scapula_R_supinate" forcerange="-0.25 0.25" joint="scapula_R_supinate" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.04799655442984406" biasprm="0.03926990816987241 -0.5"/>
-    <general name="scapula_R_abduct" forcerange="-0.25 0.25" joint="scapula_R_abduct" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.1308996938995747" biasprm="0 -0.5"/>
-    <general name="scapula_R_extend" forcerange="-0.25 0.25" joint="scapula_R_extend" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.0174532925199433" biasprm="0 -0.5"/>
-    <general name="shoulder_R" forcerange="-0.15 0.15" joint="shoulder_R" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.3272492347489368" biasprm="-0.06544984694978737 -0.3"/>
-    <general name="shoulder_sup_R" forcerange="-0.15 0.15" joint="shoulder_sup_R" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.1780235837034216" biasprm="0.1623156204354726 -0.3"/>
-    <general name="elbow_R" forcerange="-0.15 0.15" joint="elbow_R" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.3010692959690218" biasprm="-0.0916297857297023 -0.3"/>
-    <general name="wrist_R" forcerange="-0.05 0.05" joint="wrist_R" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.1221730476396031" biasprm="0.08726646259971647 -0.1"/>
-    <general name="finger_R" forcerange="-0.025 0.025" joint="finger_R" dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.03926990816987241" biasprm="0.03926990816987241 -0.05"/>
+    <general name="lumbar_extend" forcerange="-20 20" tendon="lumbar_extend" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="13.08996938995747" biasprm="2.617993877991495 -20" />
+    <general name="lumbar_bend" forcerange="-20 20" tendon="lumbar_bend" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="10.47197551196598" biasprm="0 -20" />
+    <general name="lumbar_twist" forcerange="-20 20" tendon="lumbar_twist" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="10.47197551196598" biasprm="0 -20" />
+    <general name="cervical_extend" forcerange="-20 20" tendon="cervical_extend" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="10.18108730330026" biasprm="2.03621746066005 -20" />
+    <general name="cervical_bend" forcerange="-20 20" tendon="cervical_bend" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="12.21730476396031" biasprm="0 -20" />
+    <general name="cervical_twist" forcerange="-20 20" tendon="cervical_twist" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="12.21730476396031" biasprm="0 -20" />
+    <general name="caudal_extend" forcerange="-0.1 0.1" tendon="caudal_extend" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.02617993877991495" biasprm="0 -0.1" />
+    <general name="caudal_bend" forcerange="-0.1 0.1" tendon="caudal_bend" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.02617993877991494" biasprm="0 -0.1" />
+    <general name="hip_L_supinate" forcerange="-0.2 0.2" joint="hip_L_supinate" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.2443460952792061"
+      biasprm="-0.0349065850398866 -0.4" />
+    <general name="hip_L_abduct" forcerange="-0.2 0.2" joint="hip_L_abduct" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.3141592653589793" biasprm="0.1047197551196598 -0.4" />
+    <general name="hip_L_extend" forcerange="-0.3 0.3" joint="hip_L_extend" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.7853981633974482"
+      biasprm="-0.1570796326794897 -0.6" />
+    <general name="knee_L" forcerange="-0.2 0.2" joint="knee_L" dyntype="filter" biastype="affine"
+      dynprm="0.04" gainprm="0.5515240436302081" biasprm="0.06283185307179587 -0.4" />
+    <general name="ankle_L" forcerange="-0.2 0.2" joint="ankle_L" dyntype="filter" biastype="affine"
+      dynprm="0.04" gainprm="0.307177948351002" biasprm="0.2513274122871835 -0.4" />
+    <general name="toe_L" forcerange="-0.025 0.025" joint="toe_L" dyntype="filter" biastype="affine"
+      dynprm="0.04" gainprm="0.02181661564992912" biasprm="0.02181661564992912 -0.05" />
+    <general name="hip_R_supinate" forcerange="-0.2 0.2" joint="hip_R_supinate" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.2443460952792061"
+      biasprm="-0.0349065850398866 -0.4" />
+    <general name="hip_R_abduct" forcerange="-0.2 0.2" joint="hip_R_abduct" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.3141592653589793" biasprm="0.1047197551196598 -0.4" />
+    <general name="hip_R_extend" forcerange="-0.3 0.3" joint="hip_R_extend" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.7853981633974482"
+      biasprm="-0.1570796326794897 -0.6" />
+    <general name="knee_R" forcerange="-0.2 0.2" joint="knee_R" dyntype="filter" biastype="affine"
+      dynprm="0.04" gainprm="0.5515240436302081" biasprm="0.06283185307179587 -0.4" />
+    <general name="ankle_R" forcerange="-0.2 0.2" joint="ankle_R" dyntype="filter" biastype="affine"
+      dynprm="0.04" gainprm="0.307177948351002" biasprm="0.2513274122871835 -0.4" />
+    <general name="toe_R" forcerange="-0.025 0.025" joint="toe_R" dyntype="filter" biastype="affine"
+      dynprm="0.04" gainprm="0.02181661564992912" biasprm="0.02181661564992912 -0.05" />
+    <general name="atlas" forcerange="-0.025 0.025" joint="atlas" dyntype="filter" biastype="affine"
+      dynprm="0.04" gainprm="0.02181661564992912" biasprm="0.0174532925199433 -0.05" />
+    <general name="mandible" forcerange="-0.025 0.025" joint="mandible" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.01396263401595464"
+      biasprm="-0.000872664625997166 -0.05" />
+    <general name="scapula_L_supinate" forcerange="-0.25 0.25" joint="scapula_L_supinate"
+      dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.04799655442984406"
+      biasprm="0.03926990816987241 -0.5" />
+    <general name="scapula_L_abduct" forcerange="-0.25 0.25" joint="scapula_L_abduct"
+      dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.1308996938995747" biasprm="0 -0.5" />
+    <general name="scapula_L_extend" forcerange="-0.25 0.25" joint="scapula_L_extend"
+      dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.0174532925199433" biasprm="0 -0.5" />
+    <general name="shoulder_L" forcerange="-0.15 0.15" joint="shoulder_L" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.3272492347489368"
+      biasprm="-0.06544984694978737 -0.3" />
+    <general name="shoulder_sup_L" forcerange="-0.15 0.15" joint="shoulder_sup_L" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.1780235837034216" biasprm="0.1623156204354726 -0.3" />
+    <general name="elbow_L" forcerange="-0.15 0.15" joint="elbow_L" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.3010692959690218"
+      biasprm="-0.0916297857297023 -0.3" />
+    <general name="wrist_L" forcerange="-0.05 0.05" joint="wrist_L" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.1221730476396031"
+      biasprm="0.08726646259971647 -0.1" />
+    <general name="finger_L" forcerange="-0.025 0.025" joint="finger_L" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.03926990816987241"
+      biasprm="0.03926990816987241 -0.05" />
+    <general name="scapula_R_supinate" forcerange="-0.25 0.25" joint="scapula_R_supinate"
+      dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.04799655442984406"
+      biasprm="0.03926990816987241 -0.5" />
+    <general name="scapula_R_abduct" forcerange="-0.25 0.25" joint="scapula_R_abduct"
+      dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.1308996938995747" biasprm="0 -0.5" />
+    <general name="scapula_R_extend" forcerange="-0.25 0.25" joint="scapula_R_extend"
+      dyntype="filter" biastype="affine" dynprm="0.04" gainprm="0.0174532925199433" biasprm="0 -0.5" />
+    <general name="shoulder_R" forcerange="-0.15 0.15" joint="shoulder_R" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.3272492347489368"
+      biasprm="-0.06544984694978737 -0.3" />
+    <general name="shoulder_sup_R" forcerange="-0.15 0.15" joint="shoulder_sup_R" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.1780235837034216" biasprm="0.1623156204354726 -0.3" />
+    <general name="elbow_R" forcerange="-0.15 0.15" joint="elbow_R" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.3010692959690218"
+      biasprm="-0.0916297857297023 -0.3" />
+    <general name="wrist_R" forcerange="-0.05 0.05" joint="wrist_R" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.1221730476396031"
+      biasprm="0.08726646259971647 -0.1" />
+    <general name="finger_R" forcerange="-0.025 0.025" joint="finger_R" dyntype="filter"
+      biastype="affine" dynprm="0.04" gainprm="0.03926990816987241"
+      biasprm="0.03926990816987241 -0.05" />
   </actuator>
   <sensor>
-    <accelerometer name="accelerometer" site="head"/>
-    <velocimeter name="velocimeter" site="head"/>
-    <gyro name="gyro" site="head"/>
+    <accelerometer name="accelerometer" site="head" />
+    <velocimeter name="velocimeter" site="head" />
+    <gyro name="gyro" site="head" />
     <!-- <touch name="palm_L" site="palm_L"/>
     <touch name="palm_R" site="palm_R"/>
     <touch name="sole_L" site="sole_L"/>
     <touch name="sole_R" site="sole_R"/> -->
-    <subtreelinvel name="torso" body="torso"/>
+    <subtreelinvel name="torso" body="torso" />
   </sensor>
-  <compiler meshdir="./"/>
+  <compiler meshdir="./" />
 </mujoco>

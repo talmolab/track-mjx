@@ -22,10 +22,14 @@ os.environ["XLA_FLAGS"] = (
 
 
 import jax
+# Enable persistent compilation cache.
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import functools
-import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp

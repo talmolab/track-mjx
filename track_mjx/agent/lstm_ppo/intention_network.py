@@ -23,7 +23,7 @@ class Encoder(nn.Module):
 
     layer_sizes: Sequence[int]
     latents: int  # intention size
-    activation: networks.ActivationFn = nn.relu
+    activation: networks.ActivationFn = nn.silu
     kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform()
     bias: bool = True
 

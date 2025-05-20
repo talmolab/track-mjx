@@ -1,14 +1,10 @@
 import jax
 from jax import numpy as jp
 from pathlib import Path
-
 from brax.io import mjcf as mjcf_brax
-from brax import math as brax_math
-from dm_control.locomotion.walkers import rescale
-from dm_control import mjcf as mjcf_dm
-
 import mujoco
 from track_mjx.environment.walker.base import BaseWalker
+from track_mjx.environment.walker.utils import _scale_body_tree
 
 _XML_PATH = "assets/fruitfly/fruitfly_force_fast.xml"
 
@@ -37,36 +33,47 @@ class Fly(BaseWalker):
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
-        self._mjcf_model = self._load_mjcf_model(torque_actuators, rescale_factor)
-        self.sys = mjcf_brax.load_model(self._mjcf_model.model.ptr)
-
+        # 1) Build the physics model via MjSpec
+        self._mj_spec = self._build_spec(torque_actuators, rescale_factor)
+        self._mj_model = self._mj_spec.compile()  # mujoco.mjx.Model wrapper
+        self.sys = mjcf_brax.load_model(self._mj_model)
+        # 2) Cache index arrays for JIT‑friendly access
         self._initialize_indices()
 
-    def _load_mjcf_model(
-        self, torque_actuators: bool = False, rescale_factor: float = 1.0
-    ) -> mjcf_dm.Physics:
-        """Load and optionally modify the MJCF model.
+    def _build_spec(
+        self, torque_actuators: bool, rescale_factor: float
+    ) -> mujoco.MjSpec:
+        """
+        Parse XML → MjSpec, apply optional edits, and return the spec.
 
         Args:
-            torque_actuators: Whether to use torque actuators. Default is False.
-            rescale_factor: Factor to rescale the model. Default is 1.0.
+            torque_actuators (bool): Whether to use torque actuators
+            rescale_factor (float): Factor to rescale the model
 
         Returns:
-            mjcf_dm.Physics: Loaded MJCF physics model.
+            mujoco.MjSpec: mujoco spec that contains the model
         """
-        path = Path(__file__).resolve().parent / _XML_PATH
-        root = mjcf_dm.from_path(path)
+        path = Path(__file__).with_suffix("").parent / _XML_PATH
+        xml_str = path.read_text()
+        spec = mujoco.MjSpec.from_string(xml_str)
 
-        # torque
-        if torque_actuators:
-            for actuator in root.find_all("actuator"):
-                actuator.gainprm = [actuator.forcerange[1]]
-                del actuator.biastype
-                del actuator.biasprm
+        # a) Convert motors to torque‑mode if requested
+        if torque_actuators and hasattr(spec, "actuator"):
+            for motor in spec.actuator.motors:  # type: ignore[attr-defined]
+                # Set gain to max force; remove bias terms if present
+                if motor.forcerange.size >= 2:
+                    motor.gainprm[0] = motor.forcerange[1]
+                # Safely delete attributes that may not exist in spec version
+                for attr in ("biastype", "biasprm"):
+                    if hasattr(motor, attr):
+                        delattr(motor, attr)
 
-        # rescale
-        rescale.rescale_subtree(root, rescale_factor, rescale_factor)
-        return mjcf_dm.Physics.from_mjcf_model(root)
+        # b) Uniform rescale (geometry + body positions)
+        if abs(rescale_factor - 1.0) > 1e-6:
+            for top in spec.worldbody.find_child("thorax"):
+                _scale_body_tree(top, rescale_factor)
+
+        return spec
 
     def _initialize_indices(self) -> None:
         """Initialize indices for joints, bodies, end-effectors, and thorax."""

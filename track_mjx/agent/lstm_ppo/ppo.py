@@ -268,7 +268,7 @@ def train(
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
     env_state = reset_fn(key_envs)
-    
+
     # TODO: reference_obs_size should be optional (network factory-dependent)
     config_dict["network_config"].update(
         {
@@ -316,7 +316,7 @@ def train(
         reward_scaling=reward_scaling,
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
-        normalize_advantage=normalize_advantage, # add args here
+        normalize_advantage=normalize_advantage,  # add args here
     )
 
     # use brax gradient function now
@@ -385,7 +385,7 @@ def train(
 
         policy = make_policy(
             params=(training_state.normalizer_params, training_state.params.policy),
-            get_activation=get_activation, # pass in here
+            get_activation=get_activation,  # pass in here
         )
 
         # TODO: make this embeded in ppo.py

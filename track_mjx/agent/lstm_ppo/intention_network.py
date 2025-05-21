@@ -107,7 +107,7 @@ class LSTMDecoder(nn.Module):
         if get_activation:
             # hidden is stored as (num_hidden_layers, 128)
             return x, (stacked_h_new, stacked_c_new), activations
-        return x, (stacked_h_new, stacked_c_new), {} # hidden_states still tuple
+        return x, (stacked_h_new, stacked_c_new), {}  # hidden_states still tuple
 
 
 def reparameterize(rng, mean, logvar):
@@ -142,12 +142,10 @@ class IntentionNetwork(nn.Module):
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
                 traj, get_activation=get_activation
             )
-            #TODO add back reparameterization
+            # TODO add back reparameterization
             z = latent_mean
             egocentric_obs = obs[..., self.reference_obs_size :]
-            concatenated = jnp.concatenate(
-                [z, egocentric_obs], axis=-1
-            )
+            concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
             action, new_hidden_state, decoder_activations = self.lstm_decoder(
                 concatenated, hidden_state, get_activation=get_activation
             )
@@ -163,17 +161,17 @@ class IntentionNetwork(nn.Module):
                     "hidden_state": new_hidden_state,
                 },
             )
-                
+
         else:
             latent_mean, latent_logvar = self.encoder(
                 traj, get_activation=get_activation
             )
             z = latent_mean
             egocentric_obs = obs[..., self.reference_obs_size :]
-            concatenated = jnp.concatenate(
-                [z, egocentric_obs], axis=-1
+            concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
+            action, new_hidden_state, decoder_activations = self.lstm_decoder(
+                concatenated, hidden_state
             )
-            action, new_hidden_state, decoder_activations = self.lstm_decoder(concatenated, hidden_state)
             return action, latent_mean, latent_logvar, new_hidden_state
 
 

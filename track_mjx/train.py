@@ -14,14 +14,14 @@ import sys
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # visible GPU masks
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
 )
 
-
 import jax
+
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -33,12 +33,8 @@ import functools
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-from track_mjx.agent.mlp_ppo import (ppo as mlp_ppo,
-                                     ppo_networks as mlp_ppo_networks
-                                     )
-from track_mjx.agent.lstm_ppo import (ppo as lstm_ppo,
-                                      ppo_networks as lstm_ppo_networks
-                                      )
+from track_mjx.agent.mlp_ppo import ppo as mlp_ppo, ppo_networks as mlp_ppo_networks
+from track_mjx.agent.lstm_ppo import ppo as lstm_ppo, ppo_networks as lstm_ppo_networks
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -62,6 +58,7 @@ _WALKERS = {
     "rodent": Rodent,
     "fly": Fly,
 }
+
 
 @hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 def main(cfg: DictConfig):
@@ -206,7 +203,7 @@ def main(cfg: DictConfig):
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
-        
+
     else:
         print("Using MLP Pipeline Now")
         ppo = mlp_ppo
@@ -250,7 +247,7 @@ def main(cfg: DictConfig):
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
-        
+
     if cfg.train_setup.train_config.use_lstm:
         rollout_env = render_wrapper(
             env=env,

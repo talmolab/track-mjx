@@ -17,7 +17,7 @@ from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
 
 from track_mjx.agent.mlp_ppo import losses
-                                     
+
 from brax.io import model
 from brax.envs.base import Env
 import numpy as np
@@ -62,7 +62,7 @@ def rollout_logging_fn(
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
 
     state = jit_reset(reset_rng)
-    
+
     if train_config.get("use_lstm", None):
         hidden_state = state.info["hidden_state"]
 

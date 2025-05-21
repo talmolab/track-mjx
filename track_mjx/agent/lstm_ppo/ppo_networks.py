@@ -90,8 +90,8 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 if get_activation:
                     return (
                         jnp.array(
-                    ppo_networks.parametric_action_distribution.mode(logits)
-                ),
+                            ppo_networks.parametric_action_distribution.mode(logits)
+                        ),
                         {"activations": activations},
                         new_hidden_state,
                     )  # swapped order from network return
@@ -99,8 +99,8 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 else:
                     return (
                         jnp.array(
-                ppo_networks.parametric_action_distribution.mode(logits)
-            ),
+                            ppo_networks.parametric_action_distribution.mode(logits)
+                        ),
                         {},
                         new_hidden_state,
                     )
@@ -117,8 +117,8 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 raw_actions
             )
 
-            return (jnp.array(
-                postprocessed_actions),
+            return (
+                jnp.array(postprocessed_actions),
                 {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
@@ -153,14 +153,12 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
 
-            logits, latent_mean, latent_logvar, new_hidden_state = (
-                policy_network.apply(
-                    *params,
-                    observations,
-                    key_network,
-                    hidden_state,
-                    get_activation=get_activation,
-                )
+            logits, latent_mean, latent_logvar, new_hidden_state = policy_network.apply(
+                *params,
+                observations,
+                key_network,
+                hidden_state,
+                get_activation=get_activation,
             )
 
             if deterministic:

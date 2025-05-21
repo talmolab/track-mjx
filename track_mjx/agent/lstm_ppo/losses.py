@@ -252,11 +252,11 @@ def compute_ppo_loss(
     )
     entropy_loss = entropy_cost * -entropy
 
-    #TODO: LSTM now does not have KL pipeline
+    # TODO: LSTM now does not have KL pipeline
     # if (kl_schedule is not None):
     #     print("Using MLP + KL Scheduler")
     #     kl_weight = kl_schedule(step)
-    
+
     # KL Divergence for latent layer
     kl_latent_loss = kl_weight * (
         -0.5

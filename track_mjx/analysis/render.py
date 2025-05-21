@@ -24,7 +24,7 @@ from IPython.display import HTML
 
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.walker.rodent import Rodent
-from track_mjx.environment.walker.utils import _scale_body_tree, _recolour_tree
+from track_mjx.environment.walker.spec_utils import _scale_body_tree, _recolour_tree
 
 import mujoco
 from pathlib import Path

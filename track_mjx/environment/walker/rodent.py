@@ -6,7 +6,7 @@ import mujoco
 from brax.io import mjcf as mjcf_brax
 import numpy as np
 from track_mjx.environment.walker.base import BaseWalker  # type: ignore
-from track_mjx.environment.walker.spec_utils import _scale_body_tree
+from track_mjx.environment.walker import spec_utils
 
 
 _XML_PATH = "assets/rodent/rodent.xml"  # relative to this file
@@ -65,6 +65,7 @@ class Rodent(BaseWalker):
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):
+            print("Converting to torque actuators")
             for actuator in spec.actuators:  # type: ignore[attr-defined]
                 # Set gain to max force; remove bias terms if present
                 if actuator.forcerange.size >= 2:
@@ -75,8 +76,10 @@ class Rodent(BaseWalker):
 
         # b) Uniform rescale (geometry + body positions)
         if rescale_factor != 1.0:
-            parent = spec.body("walker")
-            _scale_body_tree(parent, rescale_factor)
+            print(f"Rescaling body tree with scale factor {rescale_factor}")
+            # parent = spec.body("walker")
+            # spec_utils._scale_body_tree(parent, rescale_factor)
+            spec = spec_utils.dm_scale_spec(spec, rescale_factor)
 
         return spec
 

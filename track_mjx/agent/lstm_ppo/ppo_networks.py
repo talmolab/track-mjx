@@ -24,7 +24,8 @@ from jax import random
 from jax import numpy as jnp
 import flax
 from flax import linen as nn
-from track_mjx.agent import intention_network  # TODO: still might need this for typing, masked_running_statistics, checkpointing
+from track_mjx.agent.lstm_ppo import intention_network
+from track_mjx.agent import masked_running_statistics, checkpointing
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -43,7 +44,6 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
         params: types.PolicyParams,
         deterministic: bool = False,
         get_activation: bool = True,
-        use_lstm: bool = True,
     ) -> types.Policy:
         policy_network = ppo_networks.policy_network
         # can modify this to provide stochastic action + noise
@@ -59,90 +59,51 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
 
             # here determines if use hidden states
             if get_activation:
-                if use_lstm:
-                    print("In custom_ppo_network using LSTM + Activation")
-                    (
-                        logits,
-                        latent_mean,
-                        latent_logvar,
-                        new_hidden_state,
-                        activations,
-                    ) = policy_network.apply(
-                        *params,
-                        observations,
-                        key_network,
-                        hidden_state,
-                        get_activation=get_activation,
-                        use_lstm=use_lstm,
-                    )
-                else:
-                    logits, latent_mean, latent_logvar, activations = (
-                        policy_network.apply(
-                            *params,
-                            observations,
-                            key_network,
-                            hidden_state,
-                            get_activation=get_activation,
-                            use_lstm=use_lstm,
-                        )
-                    )
-                    # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
+                print("In custom_ppo_network using LSTM + Activation")
+                (
+                    logits,
+                    latent_mean,
+                    latent_logvar,
+                    new_hidden_state,
+                    activations,
+                ) = policy_network.apply(
+                    *params,
+                    observations,
+                    key_network,
+                    hidden_state,
+                    get_activation=get_activation,
+                )
+                # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
-                if use_lstm:
-                    logits, latent_mean, latent_logvar, new_hidden_state = (
-                        policy_network.apply(
-                            *params,
-                            observations,
-                            key_network,
-                            hidden_state,
-                            get_activation=get_activation,
-                            use_lstm=use_lstm,
-                        )
-                    )
-                else:
-                    (
-                        logits,
-                        latent_mean,
-                        latent_logvar,
-                    ) = policy_network.apply(
+                logits, latent_mean, latent_logvar, new_hidden_state = (
+                    policy_network.apply(
                         *params,
                         observations,
                         key_network,
                         hidden_state,
                         get_activation=get_activation,
-                        use_lstm=use_lstm,
                     )
+                )
 
             if deterministic:
                 # returning hidden_state here
                 if get_activation:
-                    if use_lstm:
-                        return (
-                            jnp.array(
-                        ppo_networks.parametric_action_distribution.mode(logits)
-                    ),
-                            {"activations": activations},
-                            new_hidden_state,
-                        )  # swapped order from network return
-                    else:
-                        return ppo_networks.parametric_action_distribution.mode(
-                            logits
-                        ), {"activations": activations}
-
-                else:
-                    if use_lstm:
-                        return (
-                            jnp.array(
+                    return (
+                        jnp.array(
                     ppo_networks.parametric_action_distribution.mode(logits)
                 ),
-                            {},
-                            new_hidden_state,
-                        )
-                    else:
-                        return (
-                            ppo_networks.parametric_action_distribution.mode(logits),
-                            {},
-                        )
+                        {"activations": activations},
+                        new_hidden_state,
+                    )  # swapped order from network return
+
+                else:
+                    return (
+                        jnp.array(
+                ppo_networks.parametric_action_distribution.mode(logits)
+            ),
+                        {},
+                        new_hidden_state,
+                    )
 
             # action sampling is happening here, according to distribution parameter logits
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
@@ -156,28 +117,18 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
                 raw_actions
             )
 
-            if use_lstm:
-                return (jnp.array(
-                    postprocessed_actions),
-                    {
-                        "latent_mean": latent_mean,
-                        "latent_logvar": latent_logvar,
-                        "log_prob": log_prob,
-                        "raw_action": raw_actions,
-                        "logits": logits,
-                        "activations": activations,
-                    },
-                    new_hidden_state,
-                )
-            else:
-                return jnp.array(postprocessed_actions), {
+            return (jnp.array(
+                postprocessed_actions),
+                {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                     "log_prob": log_prob,
                     "raw_action": raw_actions,
                     "logits": logits,
                     "activations": activations,
-                }
+                },
+                new_hidden_state,
+            )
 
         return policy
 
@@ -188,7 +139,7 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
     """Creates params and inference function for the PPO agent with LSTM support."""
 
     def make_logging_policy(
-        deterministic: bool = False, get_activation: bool = False, use_lstm: bool = True
+        deterministic: bool = False, get_activation: bool = False
     ) -> types.Policy:
         policy_network = ppo_networks.policy_network
         parametric_action_distribution = ppo_networks.parametric_action_distribution
@@ -202,45 +153,22 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
 
-            if use_lstm:
-                logits, latent_mean, latent_logvar, new_hidden_state = (
-                    policy_network.apply(
-                        *params,
-                        observations,
-                        key_network,
-                        hidden_state,
-                        get_activation=get_activation,
-                        use_lstm=use_lstm,
-                    )
-                )
-            else:
-                (
-                    logits,
-                    latent_mean,
-                    latent_logvar,
-                ) = policy_network.apply(
+            logits, latent_mean, latent_logvar, new_hidden_state = (
+                policy_network.apply(
                     *params,
                     observations,
                     key_network,
-                    hidden_state,  # will not be used
+                    hidden_state,
                     get_activation=get_activation,
-                    use_lstm=use_lstm,
                 )
+            )
 
             if deterministic:
-                if use_lstm:
-                    return (
-                        jnp.array(ppo_networks.parametric_action_distribution.mode(logits)),
-                        {"latent_mean": latent_mean, "latent_logvar": latent_logvar},
-                        new_hidden_state,
-                    )
-                else:
-                    return jnp.array(
-                    ppo_networks.parametric_action_distribution.mode(logits)
-                ), {
-                        "latent_mean": latent_mean,
-                        "latent_logvar": latent_logvar,
-                    }
+                return (
+                    jnp.array(ppo_networks.parametric_action_distribution.mode(logits)),
+                    {"latent_mean": latent_mean, "latent_logvar": latent_logvar},
+                    new_hidden_state,
+                )
 
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
                 logits, key_sample
@@ -250,27 +178,18 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
                 raw_actions
             )
 
-            if use_lstm:
-                return (
-                    jnp.array(postprocessed_actions),
-                    {
-                        "latent_mean": latent_mean,
-                        "latent_logvar": latent_logvar,
-                        "log_prob": log_prob,
-                        "raw_action": raw_actions,
-                        "logits": logits,
-                        "hidden_state": new_hidden_state,
-                    },
-                    new_hidden_state,
-                )
-            else:
-                return jnp.array(postprocessed_actions), {
+            return (
+                jnp.array(postprocessed_actions),
+                {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                     "log_prob": log_prob,
                     "raw_action": raw_actions,
                     "logits": logits,
-                }
+                    "hidden_state": new_hidden_state,
+                },
+                new_hidden_state,
+            )
 
         return logging_policy
 
@@ -290,7 +209,6 @@ def make_intention_ppo_networks(
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     get_activation: bool = True,
-    use_lstm: bool = True,
 ) -> PPOImitationNetworks:
     """Make Imitation PPO networks with preprocessor."""
     parametric_action_distribution = distribution.NormalTanhDistribution(
@@ -307,7 +225,6 @@ def make_intention_ppo_networks(
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         get_activation=get_activation,
-        use_lstm=use_lstm,
     )
     value_network = networks.make_value_network(
         observation_size,

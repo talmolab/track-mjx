@@ -1,16 +1,22 @@
 from brax.training.acme import running_statistics, specs
 
 from orbax import checkpoint as ocp
-from track_mjx.agent import ppo_networks
 from typing import Callable
 
-from track_mjx.agent import ppo_networks, losses
+from track_mjx.agent.lstm_ppo import (
+    ppo_networks as lstm_ppo_networks,
+    losses as lstm_losses
+)
+from track_mjx.agent.mlp_ppo import (
+    ppo_networks as mlp_ppo_networks,
+    losses as mlp_losses
+)
 from jax import numpy as jnp
-from flax import linen as nn
 import jax
 from omegaconf import OmegaConf
 
 import logging
+from flax import linen as nn
 
 
 def load_config_from_checkpoint(
@@ -141,16 +147,29 @@ def make_dummy_lstm_hidden(cfg: OmegaConf) -> tuple[jnp.ndarray, jnp.ndarray]:
 
 
 def make_abstract_policy(cfg: OmegaConf, seed: int = 1):
-    """Create a random policy from a config."""
+    """
+    Create a random policy from a config.
+    """
+    if cfg.train_setup.train_config.use_lstm:
+        losses = lstm_losses
+    else:
+        losses = mlp_losses
+        
     ppo_network = make_ppo_network_from_cfg(cfg)
     key_policy, key_value = jax.random.split(jax.random.key(seed))
-
-    dummy_hidden_state = make_dummy_lstm_hidden(cfg)
     
-    init_params = losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key_policy,  hidden_state=dummy_hidden_state),
-        value=ppo_network.value_network.init(key_value),
-    )
+    if cfg.train_setup.train_config.use_lstm:
+        dummy_hidden_state = make_dummy_lstm_hidden(cfg)
+        
+        init_params = losses.PPONetworkParams(
+            policy=ppo_network.policy_network.init(key_policy,  hidden_state=dummy_hidden_state),
+            value=ppo_network.value_network.init(key_value),
+        )
+    else:
+        init_params = losses.PPONetworkParams(
+            policy=ppo_network.policy_network.init(key_policy),
+            value=ppo_network.value_network.init(key_value),
+        )
 
     return (
         running_statistics.init_state(
@@ -166,22 +185,36 @@ def load_inference_fn(
     """
     Create a ppo policy inference function from a checkpoint.
     """
+    if cfg.train_setup.train_config.use_lstm:
+        ppo_networks = lstm_ppo_networks
+    else:
+        ppo_networks = mlp_ppo_networks
+    
     ppo_network = make_ppo_network_from_cfg(cfg)
     make_policy = ppo_networks.make_inference_fn(ppo_network)
 
     return make_policy(
-        policy_params, deterministic=deterministic, get_activation=get_activation, use_lstm=False
+        policy_params, deterministic=deterministic, get_activation=get_activation
     )
 
 
 def make_ppo_network_from_cfg(cfg):
-    """Create a PPONetwork from a config."""
+    """
+    Create a PPONetwork from a config.
+    """
+    if cfg.train_setup.train_config.use_lstm:
+        ppo_networks = lstm_ppo_networks
+    else:
+        ppo_networks = mlp_ppo_networks
+    
     normalize = lambda x, y: x
     if cfg["network_config"]["normalize_observations"]:
         normalize = running_statistics.normalize
 
     if cfg["network_config"]["arch_name"] == "intention":
-        ppo_network = ppo_networks.make_intention_ppo_networks(
+        
+        if cfg['train_setup']['train_config']['use_lstm']:
+            ppo_network = ppo_networks.make_intention_ppo_networks(
             observation_size=cfg["network_config"]["observation_size"],
             reference_obs_size=cfg["network_config"]["reference_obs_size"],
             action_size=cfg["network_config"]["action_size"],
@@ -194,7 +227,25 @@ def make_ppo_network_from_cfg(cfg):
                 cfg["network_config"]["decoder_layer_sizes"]
             ),
             value_hidden_layer_sizes=tuple(cfg["network_config"]["critic_layer_sizes"]),
+            hidden_state_size=cfg['network_config']['hidden_state_size'],
+            hidden_layer_num=cfg['network_config']['hidden_layer_num'],
         )
+            
+        else:
+            ppo_network = ppo_networks.make_intention_ppo_networks(
+                observation_size=cfg["network_config"]["observation_size"],
+                reference_obs_size=cfg["network_config"]["reference_obs_size"],
+                action_size=cfg["network_config"]["action_size"],
+                intention_latent_size=cfg["network_config"]["intention_size"],
+                preprocess_observations_fn=normalize,
+                encoder_hidden_layer_sizes=tuple(
+                    cfg["network_config"]["encoder_layer_sizes"]
+                ),
+                decoder_hidden_layer_sizes=tuple(
+                    cfg["network_config"]["decoder_layer_sizes"]
+                ),
+                value_hidden_layer_sizes=tuple(cfg["network_config"]["critic_layer_sizes"]),
+            )
     else:
         raise ValueError(
             f"Unknown network architecture: {cfg['network_config']['arch_name']}"

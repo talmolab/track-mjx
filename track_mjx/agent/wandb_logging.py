@@ -16,15 +16,12 @@ from brax import envs
 from dm_control import mjcf as mjcf_dm
 from dm_control.locomotion.walkers import rescale
 
-from track_mjx.agent import ppo
-from track_mjx.agent import ppo_networks
-from track_mjx.agent import losses
+from track_mjx.agent.mlp_ppo import losses
+                                     
 from brax.io import model
+from brax.envs.base import Env
 import numpy as np
 from jax import numpy as jp
-
-from track_mjx.environment import wrappers
-from brax.envs.base import Env
 
 # TODO: Use MjSpec to generate the mjcf with ghost
 
@@ -65,7 +62,9 @@ def rollout_logging_fn(
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
 
     state = jit_reset(reset_rng)
-    hidden_state = state.info["hidden_state"]
+    
+    if train_config.get("use_lstm", None):
+        hidden_state = state.info["hidden_state"]
 
     rollout = [state]
     latent_means = []
@@ -73,7 +72,7 @@ def rollout_logging_fn(
     for i in range(int(cfg["reference_config"].clip_length * env._steps_for_cur_frame)):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        if train_config["use_lstm"]:
+        if train_config.get("use_lstm", None):
             ctrl, extras, hidden_state = jit_logging_inference_fn(
                 params, obs, act_rng, hidden_state
             )
@@ -81,7 +80,7 @@ def rollout_logging_fn(
             (
                 ctrl,
                 extras,
-            ) = jit_logging_inference_fn(params, obs, act_rng, None)
+            ) = jit_logging_inference_fn(params, obs, act_rng)
         ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
         latent_means.append(extras["latent_mean"])
         latent_logvars.append(extras["latent_logvar"])

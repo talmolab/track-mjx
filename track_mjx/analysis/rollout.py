@@ -69,7 +69,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
 
 
 def create_rollout_generator(
-    cfg: Dict | DictConfig, environment: Env, inference_fn: Callable
+    cfg: Dict | DictConfig, environment: Env, inference_fn: Callable, model: str = 'mlp'
 ) -> Callable[[int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
@@ -86,14 +86,18 @@ def create_rollout_generator(
     # TODO this logic is used in a few different places, make it a function?
     if type(environment) == MultiClipTracking:
         rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(environment)
+    
     elif type(environment) == SingleClipTracking:
         rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(environment)
+    
+    if cfg['train_setup']['train_config']['use_lstm']:
+        rollout_env = wrappers.RenderRolloutWrapperTrackingLSTM(environment)
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
-
+    
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> Dict:
         """
         Generates a rollout using pre-compiled JIT functions.
@@ -116,18 +120,38 @@ def create_rollout_generator(
             int(ref_traj_config.clip_length * environment._steps_for_cur_frame) - 1
         )
 
-        def _step_fn(carry, _):
+        def _step_fn_mlp(carry, _):
             state, act_rng = carry
             act_rng, new_rng = jax.random.split(act_rng)
             ctrl, extras = jit_inference_fn(state.obs, act_rng)
             next_state = jit_step(state, ctrl)
-            return (next_state, new_rng), (next_state, ctrl, extras["activations"])
+            joint_force = next_state.pipeline_state.cfrc_ext
+            sensor_reading = next_state.pipeline_state.sensordata
+            return (next_state, new_rng), (next_state, ctrl, extras["activations"], joint_force, sensor_reading)
+        
+        def _step_fn_lstm(carry, _):
+            state, act_rng, hidden = carry
+            act_rng, new_rng = jax.random.split(act_rng)
+            ctrl, extras, new_hidden = jit_inference_fn(state.obs, act_rng, hidden)
+            ctrl = jnp.squeeze(ctrl, axis=0)
+            next_state = jit_step(state, ctrl)
+            joint_force = next_state.pipeline_state.cfrc_ext
+            sensor_reading = next_state.pipeline_state.sensordata
+            return (next_state, new_rng, new_hidden), (next_state, ctrl, hidden, extras["activations"], joint_force, sensor_reading)
 
-        # Run rollout
-        init_carry = (init_state, jax.random.PRNGKey(0))
-        (final_state, _), (states, ctrls, activations) = jax.lax.scan(
-            _step_fn, init_carry, None, length=num_steps
-        )
+        if model == "mlp":
+            # Run rollout for mlp
+            init_carry = (init_state, jax.random.PRNGKey(0))
+            (final_state, _), (states, ctrls, activations, joint_forces, sensor_readings) = jax.lax.scan(
+                _step_fn_mlp, init_carry, None, length=num_steps
+            )
+        
+        elif model == 'lstm':
+            # Run rollout for lstm
+            init_carry = (init_state, jax.random.PRNGKey(0), init_state.info["hidden_state"])
+            (final_state, _, final_hidden_state), (states, ctrls, stacked_hidden, activations, joint_forces, sensor_readings) = jax.lax.scan(
+                _step_fn_lstm, init_carry, None, length=num_steps
+            )
 
         def prepend(element, arr):
             # Scalar elements shouldn't be modified
@@ -163,6 +187,8 @@ def create_rollout_generator(
             "activations": activations,
             "qposes_ref": qposes_ref,
             "qposes_rollout": qposes_rollout,
+            "joint_forces": joint_forces,
+            "sensor_readings": sensor_readings,
             "info": jax.vmap(lambda s: s.info)(rollout_states),
         }
 

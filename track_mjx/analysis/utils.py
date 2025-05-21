@@ -2,6 +2,7 @@
 
 import h5py
 import jax
+import jax.numpy as jnp
 import numpy as np
 from pathlib import Path
 
@@ -21,22 +22,41 @@ def save_to_h5py(file_path: str | Path, data, group_path="/"):
 
 
 def recursive_dict_to_h5py(file, data, group_path="/"):
+    
+    if data is None:
+        return
+    
+    if isinstance(data, tuple):
+        data = list(data)
+        
     if isinstance(data, dict):
         for key, value in data.items():
             sub_group_path = f"{group_path}/{key}"
             recursive_dict_to_h5py(file, value, sub_group_path)
+    
     elif isinstance(data, list):
         for i, item in enumerate(data):
             sub_group_path = f"{group_path}/{i}"
             recursive_dict_to_h5py(file, item, sub_group_path)
+    
     elif isinstance(data, (int, float, str, bool, np.ndarray)):
         file.create_dataset(group_path, data=data)
+    
     elif hasattr(data, "numpy"):  # For NumPy arrays or PyTorch tensors
         file.create_dataset(group_path, data=data.numpy())
+    
     elif isinstance(data, jax.Array) or hasattr(
         data, "device_buffer"
     ):  # For JAX DeviceArrays
         file.create_dataset(group_path, data=np.array(data))
+    
+    elif hasattr(data, "__dict__"):
+        attr_dict = {
+            k: v for k, v in vars(data).items()
+            if not k.startswith("_")
+        }
+        recursive_dict_to_h5py(file, attr_dict, group_path)
+        
     else:
         raise TypeError(f"Unsupported data type: {type(data)}")
 

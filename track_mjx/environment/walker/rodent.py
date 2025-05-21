@@ -5,6 +5,7 @@ import jax.numpy as jp
 import mujoco
 from brax.io import mjcf as mjcf_brax
 import numpy as np
+import numpy as np
 from track_mjx.environment.walker.base import BaseWalker  # type: ignore
 from track_mjx.environment.walker import spec_utils
 
@@ -68,6 +69,11 @@ class Rodent(BaseWalker):
             print("Converting to torque actuators")
             for actuator in spec.actuators:  # type: ignore[attr-defined]
                 # Set gain to max force; remove bias terms if present
+                if actuator.forcerange.size >= 2:
+                    actuator.gainprm[0] = actuator.forcerange[1]
+                # reset custom bias terms
+                actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
+                actuator.biasprm = np.zeros((10, 1))
                 if actuator.forcerange.size >= 2:
                     actuator.gainprm[0] = actuator.forcerange[1]
                 # reset custom bias terms

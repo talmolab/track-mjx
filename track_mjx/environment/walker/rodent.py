@@ -4,11 +4,13 @@ from typing import Sequence
 import jax.numpy as jp
 import mujoco
 from brax.io import mjcf as mjcf_brax
+import numpy as np
 from track_mjx.environment.walker.base import BaseWalker  # type: ignore
-from track_mjx.environment.walker.utils import _scale_body_tree
+from track_mjx.environment.walker.spec_utils import _scale_body_tree
 
 
 _XML_PATH = "assets/rodent/rodent.xml"  # relative to this file
+
 
 class Rodent(BaseWalker):
     """Rodent walker using MuJoCo **MjSpec**"""
@@ -63,34 +65,44 @@ class Rodent(BaseWalker):
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):
-            for motor in spec.actuator.motors:  # type: ignore[attr-defined]
+            for actuator in spec.actuators:  # type: ignore[attr-defined]
                 # Set gain to max force; remove bias terms if present
-                if motor.forcerange.size >= 2:
-                    motor.gainprm[0] = motor.forcerange[1]
-                # Safely delete attributes that may not exist in spec version
-                for attr in ("biastype", "biasprm"):
-                    if hasattr(motor, attr):
-                        delattr(motor, attr)
+                if actuator.forcerange.size >= 2:
+                    actuator.gainprm[0] = actuator.forcerange[1]
+                # reset custom bias terms
+                actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
+                actuator.biasprm = np.zeros((10, 1))
 
         # b) Uniform rescale (geometry + body positions)
-        if abs(rescale_factor - 1.0) > 1e-6:
-            for top in spec.worldbody.bodies.find_child("torso"):
-                _scale_body_tree(top, rescale_factor)
+        if rescale_factor != 1.0:
+            parent = spec.body("walker")
+            _scale_body_tree(parent, rescale_factor)
 
         return spec
 
     def _initialize_indices(self) -> None:
         """Create immutable JAX arrays of IDs for joints, bodies, end-effectors."""
         self._joint_idxs = jp.array(
-            [mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, j) for j in self._joint_names]
+            [
+                mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, j)
+                for j in self._joint_names
+            ]
         )
 
         self._body_idxs = jp.array(
-            [mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, b) for b in self._body_names]
+            [
+                mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, b)
+                for b in self._body_names
+            ]
         )
 
         self._endeff_idxs = jp.array(
-            [mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, e) for e in self._end_eff_names]
+            [
+                mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, e)
+                for e in self._end_eff_names
+            ]
         )
 
-        self._torso_idx = mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso")
+        self._torso_idx = mujoco.mj_name2id(
+            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso"
+        )

@@ -4,7 +4,7 @@ from pathlib import Path
 from brax.io import mjcf as mjcf_brax
 import mujoco
 from track_mjx.environment.walker.base import BaseWalker
-from track_mjx.environment.walker.utils import _scale_body_tree
+from track_mjx.environment.walker.spec_utils import _scale_body_tree
 
 _XML_PATH = "assets/fruitfly/fruitfly_force_fast.xml"
 

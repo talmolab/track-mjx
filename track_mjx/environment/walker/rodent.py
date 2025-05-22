@@ -74,11 +74,6 @@ class Rodent(BaseWalker):
                 # reset custom bias terms
                 actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
                 actuator.biasprm = np.zeros((10, 1))
-                if actuator.forcerange.size >= 2:
-                    actuator.gainprm[0] = actuator.forcerange[1]
-                # reset custom bias terms
-                actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
-                actuator.biasprm = np.zeros((10, 1))
 
         # b) Uniform rescale (geometry + body positions)
         if rescale_factor != 1.0:

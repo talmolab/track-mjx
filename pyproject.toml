@@ -39,6 +39,8 @@ dependencies = [
     "matplotlib",
     "pandas",
     "numpy",
+    "orbax-checkpoint==0.11.4",
+    "track-mjx",
     ]
 
 dynamic = ["version", "readme"]
@@ -70,7 +72,7 @@ with-cuda = [
     "track-mjx[dev]",
     "flax[all]",
     "optax[all]",
-    "jax[cuda12]",
+    "jax[cuda12]==0.4.38",
 ]
 
 [project.urls]

@@ -13,19 +13,25 @@ import sys
 # limit to 1 GPU
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # visible GPU masks
 
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+# hydra config debugging
+# os.environ["HYDRA_FULL_ERROR"] = "1"
+
+# turn on jax traceback filtering
+# os.environ["JAX_TRACEBACK_FILTERING"] = "off"
+# os.environ["JAX_ENABLE_X64"] = "true"
+# os.environ["JAX_DEBUG_NANS"] = "true"
+
+# os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
-os.environ["XLA_FLAGS"] = (
-    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
-)
+os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=True "
 
 import jax
 
 # Enable persistent compilation cache.
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+# jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+# jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+# jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 import hydra
 from omegaconf import DictConfig, OmegaConf

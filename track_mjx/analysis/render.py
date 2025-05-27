@@ -36,11 +36,11 @@ import numpy as np
 import multiprocessing as mp
 import functools
 
-
-_GHOST_RENDER_XML_PATHS = {
-    "fly": "assets/fruitfly/fruitfly_force_pair.xml",
+# TODO: should this be part of config?
+_BASE_XML_PATHS = {
+    "rodent": str(Path(__file__).parent.parent / "environment/walker/assets/rodent/rodent.xml"),
+    "fly": str(Path(__file__).parent.parent / "environment/walker/assets/fruitfly/fruitfly_force.xml"),
 }
-
 
 def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to switch to a headless backend during function execution.
@@ -66,37 +66,37 @@ def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def make_ghost_pair(
-    input_xml_str: str,
+    xml_path: str,
     *,
-    scale: float = 0.80,
-    rgba: Tuple[float, float, float, float] = (0.8, 0.8, 0.8, 0.2),
+    scale: float = 1.0,
 ) -> Tuple[mujoco.MjSpec, mujoco.MjModel, str]:
     """Build output XML containing the original model plus a ghost copy.
 
     Args:
         input_xml_str (str): The XML string of the original model.
-        scale (float, optional): Scale factor for the ghost model. Defaults to 0.80.
+        scale (float, optional): Scale factor for the ghost model. Defaults to 1.0.
         rgba (Tuple[float, float, float, float], optional): Color and transparency for ghost model. Defaults to (0.8, 0.8, 0.8, 0.2).
 
     Returns:
         Tuple[mujoco.MjSpec, mujoco.MjModel, str]: The modified MjSpec, compiled MjModel, and XML string.
     """
-    # A) Load the original as a spec
-    base = mujoco.MjSpec.from_string(input_xml_str)
+    # Load the original as a spec
+    base = mujoco.MjSpec.from_file(xml_path)
     for top in base.worldbody.bodies:
         _scale_body_tree(top, scale)
-    # B) Deep‑copy the spec to obtain the second (ghost) rodent
+    
+    # Deep‑copy the spec to obtain the second (ghost) body
     ghost = base.copy()
-    # the first body is the floor
-    floor = ghost.worldbody.bodies[0]
-    ghost.detach_body(floor)
+
+    # recolour the ghost body
     for top in ghost.worldbody.bodies:
-        _recolour_tree(top, rgba)
-    # C) Shrink & recolour the copy
-    # D) Attach the ghost back into the parent spec
-    #    – prefix ensures unique names
-    anchor = base.worldbody.add_site(name="ghost_anchor", pos=[0, 0, 0])
-    base.attach(ghost, prefix="ghost_", site=anchor)
+        _recolour_tree(top, rgba=[0.8, 0.8, 0.8, 0.2])
+    
+    # add a frame to the worldbody to attach the ghost body
+    frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0],
+                                 quat=[0,0,0,0])
+    frame.attach_body(ghost.body('walker'), str(0), str(0))
+    
     # E) Compile & write out
     model = base.compile()
     xml = base.to_xml()
@@ -115,41 +115,10 @@ def make_rollout_renderer(
         Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]: Renderer, model, data, and scene options.
     """
 
-    walker_config = cfg["walker_config"]
-
-    if cfg.env_config.walker_name == "rodent":
-        # Programmatically build ghost-pair model from base rodent.xml
-        base_xml_path = (
-            Path(__file__).resolve().parent.parent
-            / "environment"
-            / "walker"
-            / "assets"
-            / "rodent"
-            / "rodent.xml"
-        )
-        xml_str = base_xml_path.read_text()
-        # produce (spec, model, xml) with correct scale
+    if cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
         _, mj_model, _ = make_ghost_pair(
-            xml_str, scale=walker_config.rescale_factor, rgba=(0.8, 0.8, 0.8, 0.2)
+            _BASE_XML_PATHS[cfg.env_config.walker_name], scale=cfg.walker_config.rescale_factor
         )
-    elif cfg.env_config.walker_name == "fly":
-        _XML_PATH = (
-            Path(__file__).resolve().parent.parent
-            / "environment"
-            / "walker"
-            / _GHOST_RENDER_XML_PATHS[cfg.env_config.walker_name]
-        )
-        spec = mujoco.MjSpec()
-        spec = spec.from_file(str(_XML_PATH))
-
-        # in training scaled by this amount as well
-        for geom in spec.geoms:
-            if geom.size is not None:
-                geom.size *= walker_config.rescale_factor
-            if geom.pos is not None:
-                geom.pos *= walker_config.rescale_factor
-
-        mj_model = spec.compile()
     else:
         raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
 
@@ -171,6 +140,7 @@ def make_rollout_renderer(
         mj_model.site(id).rgba = [1, 0, 0, 1]
 
     # visual mujoco rendering
+    # TODO: Add more rendering options
     scene_option = mujoco.MjvOption()
     scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
     # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True

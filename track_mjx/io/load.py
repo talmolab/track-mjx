@@ -187,6 +187,7 @@ def load_reference_clip_data(
 def generate_train_test_split(
     data: ReferenceClip,
     test_ratio: float = 0.1,
+    seed: int = 42,
 ) -> Tuple[ReferenceClip, ReferenceClip]:
     """
     Generates a train-test split of the clips based on the provided ratio.
@@ -200,6 +201,7 @@ def generate_train_test_split(
     Returns:
         Tuple[ReferenceClip, ReferenceClip]: training set and testing set as ReferenceClip objects.
     """
+    np.random.seed(seed)
     num_clips = data.position.shape[0]
     indices = np.arange(num_clips)
     test_idx = np.random.choice(

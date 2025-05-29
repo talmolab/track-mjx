@@ -3,6 +3,8 @@ data/
 model_checkpoints/
 wandb/
 outputs/
+rollouts/
+patch.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

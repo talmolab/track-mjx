@@ -14,22 +14,27 @@ import sys
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # visible GPU masks
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
 os.environ["XLA_FLAGS"] = (
     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
 )
 
-
 import jax
+
+# Enable persistent compilation cache.
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import functools
-import jax
 import wandb
 from brax import envs
 import orbax.checkpoint as ocp
-from track_mjx.agent import ppo, ppo_networks
+from track_mjx.agent.mlp_ppo import ppo as mlp_ppo, ppo_networks as mlp_ppo_networks
+from track_mjx.agent.lstm_ppo import ppo as lstm_ppo, ppo_networks as lstm_ppo_networks
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -184,6 +189,34 @@ def main(cfg: DictConfig):
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
+    if cfg.train_setup.train_config.use_lstm:
+        print("Using LSTM Pipeline Now")
+        ppo = lstm_ppo
+        ppo_networks = lstm_ppo_networks
+        render_wrapper = wrappers.RenderRolloutWrapperTrackingLSTM
+        network_factory = functools.partial(
+            ppo_networks.make_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            hidden_state_size=cfg.network_config.hidden_state_size,
+            hidden_layer_num=cfg.network_config.hidden_layer_num,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        )
+
+    else:
+        print("Using MLP Pipeline Now")
+        ppo = mlp_ppo
+        ppo_networks = mlp_ppo_networks
+        render_wrapper = wrappers.RenderRolloutWrapperMulticlipTracking
+        network_factory = functools.partial(
+            ppo_networks.make_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        )
+
     train_fn = functools.partial(
         ppo.train,
         **train_config,
@@ -193,13 +226,7 @@ def main(cfg: DictConfig):
         num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         episode_length=episode_length,
         kl_weight=cfg.network_config.kl_weight,
-        network_factory=functools.partial(
-            ppo_networks.make_intention_ppo_networks,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-            intention_latent_size=cfg.network_config.intention_size,
-        ),
+        network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
@@ -222,7 +249,14 @@ def main(cfg: DictConfig):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
 
-    rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(env)
+    if cfg.train_setup.train_config.use_lstm:
+        rollout_env = render_wrapper(
+            env=env,
+            lstm_features=cfg.network_config.hidden_state_size,
+            hidden_layer_num=cfg.network_config.hidden_layer_num,
+        )
+    else:
+        rollout_env = render_wrapper(env=env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)
@@ -244,7 +278,7 @@ def main(cfg: DictConfig):
     make_inference_fn, params, _ = train_fn(
         environment=env,
         progress_fn=wandb_progress,
-        policy_params_fn=policy_params_fn,
+        policy_params_fn=policy_params_fn,  # fill in the rest in training
     )
 
 

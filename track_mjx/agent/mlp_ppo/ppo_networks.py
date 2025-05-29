@@ -18,7 +18,8 @@ import jax
 from jax import numpy as jnp
 import flax
 
-from track_mjx.agent import intention_network, masked_running_statistics, checkpointing
+from track_mjx.agent.mlp_ppo import intention_network
+from track_mjx.agent import masked_running_statistics, checkpointing
 
 from omegaconf import DictConfig, OmegaConf
 

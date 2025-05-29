@@ -60,7 +60,7 @@ class SingleClipTracking(PipelineEnv):
         self.walker = walker
         self.walker._initialize_indices()
 
-        mj_model = self.walker._mjcf_model.model.ptr
+        mj_model = self.walker._mj_model
         mj_model.opt.solver = {
             "cg": mujoco.mjtSolver.mjSOL_CG,
             "newton": mujoco.mjtSolver.mjSOL_NEWTON,
@@ -350,7 +350,10 @@ class SingleClipTracking(PipelineEnv):
             ref_traj.joints, data.qpos
         )
         body_pos_dist_local = self.walker.compute_local_body_positions(
-            ref_traj.body_positions, data.xpos, data.qpos
+            # xpos now contains the floor body (to support model editing)
+            ref_traj.body_positions,
+            data.xpos[1:],
+            data.qpos,
         )
 
         reference_obs = jp.concatenate(

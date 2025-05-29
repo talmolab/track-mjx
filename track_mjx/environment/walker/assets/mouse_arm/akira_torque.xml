@@ -66,7 +66,7 @@
 									<body name="wrist_body" pos="-0.002 0.0065 0.0005" euler="0 0 0">
 										<geom name="wrist_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8" />
 										<!-- <geom name="wrist_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8" /> -->
-										<geom type="mesh" mesh="Bone_Segments_Hand_fixed" pos="0 0 0"/>					
+										<geom type="mesh" mesh="Bone_Segments_Hand_fixed" contype="0" conaffinity="0"  pos="0 0 0"/>					
 										<inertial pos="-0.0048 0.0019 0.012" mass=" 0.00071" diaginertia="7e-08 7e-08 7e-08"/>
 										</body>
 									</body>	
@@ -84,16 +84,14 @@
 		<motor name="sh_rotation_act" joint="sh_rotation" ctrllimited="true" ctrlrange="-.1 .1" forcerange="-.1 .1"/>
 		<motor name="elbow_act" joint="elbow_joint" ctrllimited="true" ctrlrange="-.05 .05" forcerange="-.1 .1"/>
 	</actuator>
-	<sensor>
+	<!-- <sensor>
         <actuatorfrc name="sh_elv_act_force" actuator="sh_elv_act"/>
         <actuatorfrc name="sh_extension_act_force" actuator="sh_extension_act"/>
         <actuatorfrc name="sh_rotation_act_force" actuator="sh_rotation_act"/>
         <actuatorfrc name="elbow_act_force" actuator="elbow_act"/>
-        
-        <!-- Add joint position sensors -->
         <jointpos name="sh_elv_pos" joint="sh_elv"/>
         <jointpos name="sh_extension_pos" joint="sh_extension"/>
         <jointpos name="sh_rotation_pos" joint="sh_rotation"/>
         <jointpos name="elbow_joint_pos" joint="elbow_joint"/>
-    </sensor>
+    </sensor> -->
 </mujoco>

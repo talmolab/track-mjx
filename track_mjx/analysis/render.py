@@ -126,7 +126,7 @@ def render_from_saved_rollout(
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=1080, width=1920)
+    renderer = mujoco.Renderer(mj_model, height=480, width=640)
     frames = []
     print("MuJoCo Rendering...")
     for qpos1, qpos2 in tqdm(

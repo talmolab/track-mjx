@@ -28,7 +28,7 @@ env_config:
     bodypos_reward_exp_scale: 0.0
     endeff_reward_exp_scale: 0.0
     jerk_cost_weight: 0.0
-    energy_cost: 0.1
+    energy_cost: 0.01
 
 reference_config:
   clip_length: 150
@@ -50,9 +50,9 @@ train_setup:
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 100_000
+  eval_every: 1_000_000
   episode_length: 150
-  reset_every: 100_000
+  reset_every: 1_000_000
   train_config:
     num_envs: 256
     num_timesteps: 10_000_000_000

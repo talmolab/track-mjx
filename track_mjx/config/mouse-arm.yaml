@@ -21,14 +21,14 @@ env_config:
   reward_weights:
     ctrl_cost_weight: 0.2
     ctrl_diff_cost_weight: 0.2
-    joint_reward_weight: 8.0
+    joint_reward_weight: 5.0
     bodypos_reward_weight: 0.0
     endeff_reward_weight: 0.0
     joint_reward_exp_scale: 1.0
     bodypos_reward_exp_scale: 0.0
     endeff_reward_exp_scale: 0.0
     jerk_cost_weight: 0.0
-    energy_cost_weight: 0.1  # Added energy cost weight
+    energy_cost_weight: 0.01  # Added energy cost weight
 
 reference_config:
   clip_length: 100
@@ -40,7 +40,7 @@ network_config:
   encoder_layer_sizes: [512,512,512]
   decoder_layer_sizes: [512,512,512]
   critic_layer_sizes: [512,512,512]
-  intention_size: 60
+  intention_size: 3
   kl_weight: 1e-4
 
 train_setup:

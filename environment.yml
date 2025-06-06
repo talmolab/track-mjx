@@ -1,10 +1,9 @@
 name: track_mjx
 channels:
   - conda-forge
-  # - menpo
 
 dependencies:
-  - python=3.11
+  - python=3.12
   - numpy
   - matplotlib
   - pandas

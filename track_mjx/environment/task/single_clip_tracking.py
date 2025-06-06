@@ -223,7 +223,7 @@ class SingleClipTracking(PipelineEnv):
         reference_frame = jax.tree.map(
             lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
-
+        info["reference_frame"] = reference_frame
         # reward calculation
         # TODO: Make it so that a list of rewards is returned and a
         # list of terminiation values are returned (distances)

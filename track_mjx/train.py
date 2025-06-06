@@ -11,7 +11,7 @@ import sys
 # )
 
 # limit to 1 GPU
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # visible GPU masks
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # visible GPU id
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")

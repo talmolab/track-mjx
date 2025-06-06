@@ -362,14 +362,14 @@ def train(
             and frozen_proprioceptive_normalizer_params is not None
         ):
             normalizer_params = normalizer_params.replace(
-                mean=normalizer_params.mean.at[:proprioceptive_obs_size].set(
+                mean=normalizer_params.mean.at[-proprioceptive_obs_size:].set(
                     frozen_proprioceptive_normalizer_params.mean
                 ),
-                std=normalizer_params.std.at[:proprioceptive_obs_size].set(
+                std=normalizer_params.std.at[-proprioceptive_obs_size:].set(
                     frozen_proprioceptive_normalizer_params.std
                 ),
                 summed_variance=normalizer_params.summed_variance.at[
-                    :proprioceptive_obs_size
+                    -proprioceptive_obs_size:
                 ].set(frozen_proprioceptive_normalizer_params.summed_variance),
             )
 
@@ -484,6 +484,7 @@ def train(
         proprioceptive_obs_size = int(
             _unpmap(env_state.info["proprioceptive_obs_size"])[0]
         )
+        logging.info("Proprioceptive observation size: %s", proprioceptive_obs_size)
 
     # TODO: reference_obs_size should be optional (network factory-dependent)
     config_dict["network_config"].update(
@@ -585,14 +586,14 @@ def train(
                     "Proprioceptive observation size is 0, "
                     "but decoder parameters are being frozen."
                 )
-            mean = loaded_normalizer_params.mean[:proprioceptive_obs_size]
-            std = loaded_normalizer_params.std[:proprioceptive_obs_size]
+            mean = loaded_normalizer_params.mean[-proprioceptive_obs_size:]
+            std = loaded_normalizer_params.std[-proprioceptive_obs_size:]
             summed_variance = loaded_normalizer_params.summed_variance[
-                :proprioceptive_obs_size
+                -proprioceptive_obs_size:
             ]
             # TODO, normalizer implementations
             # this will remain unchanged, and use to set the decoder normalizer
-            proprioceptive_normalizer_params = (
+            frozen_proprioceptive_normalizer_params = (
                 running_statistics.RunningStatisticsState(
                     count=jnp.zeros(()),
                     mean=mean,
@@ -600,17 +601,16 @@ def train(
                     std=std,
                 )
             )
-            frozen_proprioceptive_normalizer_params = proprioceptive_normalizer_params
             training_state = training_state.replace(
                 normalizer_params=training_state.normalizer_params.replace(
                     mean=training_state.normalizer_params.mean.at[
-                        :proprioceptive_obs_size
+                        -proprioceptive_obs_size:
                     ].set(frozen_proprioceptive_normalizer_params.mean),
                     std=training_state.normalizer_params.std.at[
-                        :proprioceptive_obs_size
+                        -proprioceptive_obs_size:
                     ].set(frozen_proprioceptive_normalizer_params.std),
                     summed_variance=training_state.normalizer_params.summed_variance.at[
-                        :proprioceptive_obs_size
+                        -proprioceptive_obs_size:
                     ].set(frozen_proprioceptive_normalizer_params.summed_variance),
                 )
             )

@@ -22,7 +22,7 @@ dependencies = [
     "dm_control",
     "mujoco-mjx",
     "mediapy",
-    "jax==0.4.38",
+    "jax[cuda12]==0.4.38",
     "flax",
     "optax",
     "mediapy",
@@ -36,7 +36,7 @@ dependencies = [
     "pandas",
     "numpy",
     "orbax-checkpoint==0.11.4",
-    "track-mjx"
+    "ipykernel",
     ]
 
 dynamic = ["version", "readme"]
@@ -63,10 +63,6 @@ dev = [
     "mkdocs-section-index",
     "mike",
     ]
-
-with-cuda = [
-    "jax[cuda12]==0.4.38",
-]
 
 [project.urls]
 Repository = "https://github.com/talmolab/track-mjx"

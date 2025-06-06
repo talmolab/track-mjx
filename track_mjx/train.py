@@ -20,9 +20,6 @@ os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=True"
 
 import jax
 
-# Minimize jax precision regression from version update (> 0.5.0)
-jax.config.update("jax_default_matmul_precision", "highest")
-
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)

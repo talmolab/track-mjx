@@ -174,6 +174,7 @@ class SingleClipTracking(PipelineEnv):
 
         # Used to initialize our intention network
         info["reference_obs_size"] = reference_obs.shape[-1]
+        info["proprioceptive_obs_size"] = proprioceptive_obs.shape[-1]
 
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
 
@@ -378,6 +379,6 @@ class SingleClipTracking(PipelineEnv):
         )
         return reference_obs, prorioceptive_obs
 
-    def _get_cur_frame(self, info, data: mjx.Data) -> int:
+    def _get_cur_frame(self, info, data: mjx.Data) -> jp.ndarray:
         """Returns the current frame index based on the simulation time"""
         return jp.array(jp.floor(data.time * self._mocap_hz + info["start_frame"]), int)

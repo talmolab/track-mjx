@@ -14,11 +14,11 @@ import sys
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # visible GPU masks
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
-os.environ["XLA_FLAGS"] = (
-    "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
-)
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+# os.environ["XLA_FLAGS"] = (
+#     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
+# )
 
 import jax
 
@@ -47,10 +47,12 @@ from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
+from track_mjx.agent import network_masks
 from track_mjx.analysis import render
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
+
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -60,7 +62,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="config", config_name="charles_rodent_50hz")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -81,7 +83,7 @@ def main(cfg: DictConfig):
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
     # TODO: Use a base path given by the config
     checkpoint_path = hydra.utils.to_absolute_path(
-        f"./{cfg.logging_config.model_path}/{run_id}"
+        f"./{cfg.logging_config.model_path}/{run_id}_50hz_action"
     )
 
     # Load the checkpoint's config
@@ -232,10 +234,15 @@ def main(cfg: DictConfig):
         config_dict=cfg_dict,
         use_kl_schedule=cfg.network_config.kl_schedule,
         eval_env_test_set=test_env,
+        freeze_decoder=(
+            False
+            if "freeze_decoder" not in cfg.train_setup
+            else cfg.train_setup.freeze_decoder
+        ),
     )
 
-    # run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
-    run_id = f"R-SE-{cfg.train_setup.train_subset_ratio:.2f}_exp3_80test_{run_id}"
+    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    # run_id = f"R-SE-{cfg.train_setup.train_subset_ratio:.2f}_exp3_80test_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),

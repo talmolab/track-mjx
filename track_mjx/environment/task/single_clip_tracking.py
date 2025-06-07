@@ -14,6 +14,7 @@ from track_mjx.io.load import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.environment.task.reward import RewardConfig
+from track_mjx.environment.walker import spec_utils
 
 from jax.flatten_util import ravel_pytree
 
@@ -365,18 +366,18 @@ class SingleClipTracking(PipelineEnv):
             ]
         )
 
-        # jax.debug.print("track_pos_local: {}", track_pos_local)
-        # jax.debug.print("quat_dist: {}", quat_dist)
-        # jax.debug.print("joint_dist: {}", joint_dist)
-        # jax.debug.print("body_pos_dist_local: {}", body_pos_dist_local)
-
-        prorioceptive_obs = jp.concatenate(
+        # align with https://github.com/google-deepmind/mujoco_playground/blob/ff0ea5629bd89662f6ffa54464e247653737ea45/mujoco_playground/_src/locomotion/go1/joystick.py#L316-L332
+        proprioceptive_obs = jp.concatenate(
             [
-                data.qpos,
-                data.qvel,
+                data.qpos[7:],  # to align with
+                data.qvel[6:],
             ]
         )
-        return reference_obs, prorioceptive_obs
+        return reference_obs, proprioceptive_obs
+
+    def _get_gyro(self, data: mjx.Data) -> jp.ndarray:
+        """Returns the gyroscope readings from the data."""
+        return None
 
     def _get_cur_frame(self, info, data: mjx.Data) -> int:
         """Returns the current frame index based on the simulation time"""

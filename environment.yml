@@ -1,20 +1,12 @@
 name: track_mjx
 channels:
   - conda-forge
-  # - menpo
 
 dependencies:
-  - python=3.11
-  - numpy
-  - matplotlib
-  - pandas
-  - h5py
+  - python=3.12
   - ffmpeg
-  - ipykernel
   - jupyterlab
-  - seaborn
-  - scikit-learn
   - mesalib
   - pip
   - pip:
-    - "--editable=.[with-cuda]"
+    - "--editable=."

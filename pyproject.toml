@@ -13,10 +13,6 @@ requires-python = ">=3.7"
 keywords = ["tracking", "imitation learning", "deep learning"]
 license = {text = "BSD-3-Clause"}
 classifiers = [
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12"]
 dependencies = [
@@ -26,7 +22,7 @@ dependencies = [
     "dm_control",
     "mujoco-mjx",
     "mediapy",
-    "jax",
+    "jax[cuda12]==0.4.38",
     "flax",
     "optax",
     "mediapy",
@@ -39,6 +35,8 @@ dependencies = [
     "matplotlib",
     "pandas",
     "numpy",
+    "orbax-checkpoint==0.11.4",
+    "ipykernel",
     ]
 
 dynamic = ["version", "readme"]
@@ -65,13 +63,6 @@ dev = [
     "mkdocs-section-index",
     "mike",
     ]
-
-with-cuda = [
-    "track-mjx[dev]",
-    "flax[all]",
-    "optax[all]",
-    "jax[cuda12]",
-]
 
 [project.urls]
 Repository = "https://github.com/talmolab/track-mjx"

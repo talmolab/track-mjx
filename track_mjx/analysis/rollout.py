@@ -36,7 +36,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     logging.info(f"Loading data: {reference_data_path}")
     try:
         reference_clip = load.make_multiclip_data(
-            reference_data_path, n_frames_per_clip=traj_config.clip_length
+            reference_data_path, n_frames_per_clip=traj_config['clip_length']
         )
     except KeyError:
         logging.info(

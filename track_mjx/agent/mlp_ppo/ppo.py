@@ -38,6 +38,7 @@ import wandb
 
 from track_mjx.agent.mlp_ppo import losses, ppo_networks
 from track_mjx.environment import wrappers
+from track_mjx.agent import checkpointing
 
 import flax
 from flax import traverse_util
@@ -63,9 +64,6 @@ class TrainingState:
     params: losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
-
-
-from track_mjx.agent import checkpointing
 
 
 def _unpmap(v):

@@ -137,19 +137,6 @@ class SingleClipTracking(PipelineEnv):
 
         low, hi = -self._reset_noise_scale, self._reset_noise_scale
 
-        # # Add pos
-        # qpos_with_pos = jp.array(self.sys.qpos0).at[:3].set(reference_frame.position)
-
-        # # Add quat
-        # new_qpos = qpos_with_pos.at[3:7].set(reference_frame.quaternion)
-
-        # # Add noise
-        # qpos = new_qpos + jp.where(
-        #     noise,
-        #     jax.random.uniform(rng1, (self.sys.nq,), minval=low, maxval=hi),
-        #     jp.zeros((self.sys.nq,)),
-        # )
-
         new_qpos = jp.concatenate(
             (
                 reference_frame.position,
@@ -364,11 +351,6 @@ class SingleClipTracking(PipelineEnv):
                 body_pos_dist_local,
             ]
         )
-
-        # jax.debug.print("track_pos_local: {}", track_pos_local)
-        # jax.debug.print("quat_dist: {}", quat_dist)
-        # jax.debug.print("joint_dist: {}", joint_dist)
-        # jax.debug.print("body_pos_dist_local: {}", body_pos_dist_local)
 
         prorioceptive_obs = jp.concatenate(
             [

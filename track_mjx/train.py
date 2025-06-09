@@ -5,25 +5,20 @@ Entry point for track-mjx. Load the config file, create environments, initialize
 import os
 import sys
 
-# set default env variable if not set
+# Limit to a particular GPU
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+# Either preallocate memory for JAX or disable it
 # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
 #     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
 # )
-
-# limit to 1 GPU
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # visible GPU id
-
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=True"
 
 import jax
-
-# Enable persistent compilation cache.
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -72,9 +67,6 @@ def main(cfg: DictConfig):
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
 
-    logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-
     # Generate a new run_id and associated checkpoint path
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
     # TODO: Use a base path given by the config
@@ -96,6 +88,10 @@ def main(cfg: DictConfig):
         cfg.train_setup["checkpoint_to_restore"] = checkpoint_to_restore
         checkpoint_path = Path(checkpoint_to_restore)
         run_id = checkpoint_path.name
+
+    # Convert config to dict TODO: do we need this?
+    logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(

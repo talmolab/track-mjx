@@ -40,8 +40,11 @@ class BaseWalker(ABC):
         self._body_idxs, self._joint_idxs = jp.zeros(2)
         self._endeff_idxs, self._torso_idx = jp.zeros(2)
         # Load and configure the model
-        self._mjcf_model = self._load_mjcf_model(torque_actuators, rescale_factor)
-        self.sys = mjcf.load_model(self._mjcf_model.model.ptr)
+        # 1) Build the physics model via MjSpec
+        self._mj_spec = self._build_spec(torque_actuators, rescale_factor)
+        self._mj_model = self._mj_spec.compile()  # mujoco.mjx.Model wrapper
+        # 2) Load the model into MuJoCo
+        self.sys = mjcf.load_model(self._mj_model)
         self._initialize_indices()
 
     @abstractmethod

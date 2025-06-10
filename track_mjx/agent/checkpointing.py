@@ -29,12 +29,20 @@ def load_config_from_checkpoint(
             step = ckpt_mgr.latest_step()
 
         logging.info(f"Loading config from {checkpoint_path} at step {step}")
-        return ckpt_mgr.restore(
+        cfg = ckpt_mgr.restore(
             step,
             args=ocp.args.Composite(
                 config=ocp.args.JsonRestore(),
             ),
         )["config"]
+         # TODO: Fill in missing cfg keys--remove once cfg structure is stable
+        if "use_lstm" not in cfg["train_setup"]["train_config"]:
+            cfg["train_setup"]["train_config"]["use_lstm"] = False
+        if "get_activation" not in cfg["train_setup"]["train_config"]:
+            cfg["train_setup"]["train_config"]["get_activation"] = False
+        if "deterministic_eval" not in cfg["train_setup"]["train_config"]:
+            cfg["train_setup"]["train_config"]["deterministic_eval"] = False
+        return cfg
 
 
 def load_training_state(
@@ -158,7 +166,8 @@ def make_abstract_policy(cfg: OmegaConf, seed: int = 1):
     """
     Create a random policy from a config.
     """
-    if cfg.train_setup.train_config.use_lstm:
+    use_lstm = False #cfg["train_setup"]["train_config"]["use_lstm"]
+    if use_lstm:
         losses = lstm_losses
     else:
         losses = mlp_losses
@@ -166,7 +175,7 @@ def make_abstract_policy(cfg: OmegaConf, seed: int = 1):
     ppo_network = make_ppo_network_from_cfg(cfg)
     key_policy, key_value = jax.random.split(jax.random.key(seed))
 
-    if cfg.train_setup.train_config.use_lstm:
+    if use_lstm:
         dummy_hidden_state = make_dummy_lstm_hidden(cfg)
 
         init_params = losses.PPONetworkParams(
@@ -212,7 +221,8 @@ def make_ppo_network_from_cfg(cfg):
     """
     Create a PPONetwork from a config.
     """
-    if cfg.train_setup.train_config.use_lstm:
+    lstm = False #cfg["train_setup"]["train_config"]["use_lstm"]
+    if lstm:
         ppo_networks = lstm_ppo_networks
     else:
         ppo_networks = mlp_ppo_networks
@@ -223,7 +233,7 @@ def make_ppo_network_from_cfg(cfg):
 
     if cfg["network_config"]["arch_name"] == "intention":
 
-        if cfg["train_setup"]["train_config"]["use_lstm"]:
+        if lstm:
             ppo_network = ppo_networks.make_intention_ppo_networks(
                 observation_size=cfg["network_config"]["observation_size"],
                 reference_obs_size=cfg["network_config"]["reference_obs_size"],

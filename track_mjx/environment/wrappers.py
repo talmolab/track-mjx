@@ -390,6 +390,16 @@ class HighLevelWrapper(Wrapper):
         super().__init__(env)
 
     def step(self, state: State, latents: jax.Array) -> State:
+        """Treat the decoder as part of the environment, and currently the policy is only
+        the high level encoder that encodes the task related inputs
+
+        Args:
+            state (State): environment state
+            latents (jax.Array): intentions that is the output of the high level encoder
+
+        Returns:
+            State: the new state after taking a step in the environment
+        """
         obs = state.obs
 
         # TODO replace reference obs size

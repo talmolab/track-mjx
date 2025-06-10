@@ -14,8 +14,8 @@ import sys
 # )
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=True"
 
 import jax
@@ -53,7 +53,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="config", config_name="charles_rodent")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:

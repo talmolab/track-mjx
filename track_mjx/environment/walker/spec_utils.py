@@ -1,9 +1,6 @@
 """Utility functions for scaling and recoloring geometries in a MuJoCo model."""
 
 import numpy as np
-import mujoco
-from mujoco import mjx
-import jax
 
 def _scale_vec(vec: list[float] | np.ndarray, s: float) -> None:
     """Scale a vector in-place by a scalar.

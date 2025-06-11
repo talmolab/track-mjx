@@ -8,40 +8,31 @@ import jax
 from brax import math as brax_math
 from brax.io import mjcf
 import mujoco
+from dataclasses import dataclass
+from typing import Any
 
 
+@dataclass
 class BaseWalker(ABC):
     """
     Abstract base class for different types of walker models (rodents, flies, mice, etc.).
     Defines the interface that all walker implementations must follow.
     """
 
-    def __init__(
-        self,
-        joint_names: list[str],
-        body_names: list[str],
-        end_eff_names: list[str],
-        torque_actuators: bool = False,
-        rescale_factor: float = 1.0,
-    ):
-        """
-        Initialize the walker with model configuration.
-
-        Args:
-            joint_names: List of joint names in the model
-            body_names: List of body part names
-            end_eff_names: List of end effector names
-            torque_actuators: Whether to use torque actuators
-            rescale_factor: Factor to rescale the model
-        """
-        self._joint_names = joint_names
-        self._body_names = body_names
-        self._end_eff_names = end_eff_names
-        self._body_idxs, self._joint_idxs = jp.zeros(2)
-        self._endeff_idxs, self._torso_idx = jp.zeros(2)
-        # Load and configure the model
-        self._mjcf_model = self._load_mjcf_model(torque_actuators, rescale_factor)
-        self.sys = mjcf.load_model(self._mjcf_model.model.ptr)
+    # Public constructor parameters
+    joint_names: list[str]
+    body_names: list[str]
+    end_eff_names: list[str]
+    _body_idxs: jp.ndarray
+    _joint_idxs: jp.ndarray
+    _endeff_idxs: jp.ndarray
+    _torso_idx: jp.ndarray
+    _mjcf_model: Any
+    sys: mujoco.MjModel
+    _mj_model: mujoco.MjModel
+    _mj_spec: mujoco.MjSpec
+    torque_actuators: bool = False
+    rescale_factor: float = 1.0
 
     @abstractmethod
     def _build_spec(

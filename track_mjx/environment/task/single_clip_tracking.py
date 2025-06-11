@@ -418,7 +418,8 @@ class SingleClipTracking(PipelineEnv):
                 data.qfrc_actuator,
                 self._get_appendages_pos(data),
                 self._get_kinematic_sensors(data),
-                self._get_touch_sensors(data),
+                # touch does not work for multiple GPUs for now
+                # self._get_touch_sensors(data),
             ]
         )
         return reference_obs, proprioceptive_obs

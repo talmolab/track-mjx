@@ -166,6 +166,7 @@ class SingleClipTracking(PipelineEnv):
 
         # Used to initialize our intention network
         info["reference_obs_size"] = reference_obs.shape[-1]
+        info["proprioceptive_obs_size"] = proprioceptive_obs.shape[-1]
 
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
 
@@ -296,7 +297,7 @@ class SingleClipTracking(PipelineEnv):
         return state.replace(
             pipeline_state=data, obs=obs, reward=reward, done=done, info=info
         )
-        
+
     def _get_appendages_pos(self, data: mjx.Data) -> jp.ndarray:
         """Get appendages positions from the environment."""
         torso = data.bind(self._mjx_model, self._mj_spec.body("torso"))
@@ -329,7 +330,7 @@ class SingleClipTracking(PipelineEnv):
             ]
         )
         return proprioception
-    
+
     def _get_kinematic_sensors(self, data: mjx.Data) -> jp.ndarray:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(self._mjx_model, self._mj_spec.sensor("accelerometer")).sensordata
@@ -412,8 +413,9 @@ class SingleClipTracking(PipelineEnv):
         # align with https://github.com/google-deepmind/mujoco_playground/blob/ff0ea5629bd89662f6ffa54464e247653737ea45/mujoco_playground/_src/locomotion/go1/joystick.py#L316-L332
         proprioceptive_obs = jp.concatenate(
             [
-                data.qpos[7:],  # to align with
+                data.qpos[7:],
                 data.qvel[6:],
+                data.qfrc_actuator,
                 self._get_appendages_pos(data),
                 self._get_kinematic_sensors(data),
                 self._get_touch_sensors(data),

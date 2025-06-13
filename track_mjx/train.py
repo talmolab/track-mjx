@@ -68,7 +68,7 @@ def main(cfg: DictConfig):
     envs.register_environment("fly_multi_clip", MultiClipTracking)
 
     # Generate a new run_id and associated checkpoint path
-    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+    run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
     # TODO: Use a base path given by the config
     checkpoint_path = hydra.utils.to_absolute_path(
         f"./{cfg.logging_config.model_path}/{run_id}"

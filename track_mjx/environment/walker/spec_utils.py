@@ -2,7 +2,6 @@
 
 import numpy as np
 
-
 def _scale_vec(vec: list[float] | np.ndarray, s: float) -> None:
     """Scale a vector in-place by a scalar.
 

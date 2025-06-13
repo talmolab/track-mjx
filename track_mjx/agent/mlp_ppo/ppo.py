@@ -37,6 +37,7 @@ from brax.v1 import envs as envs_v1
 from track_mjx.agent import masked_running_statistics, network_masks
 from track_mjx.agent.mlp_ppo import losses, ppo_networks
 from track_mjx.environment import wrappers
+from track_mjx.agent import checkpointing
 
 from mujoco_playground import wrapper as mp_wrapper
 
@@ -64,9 +65,6 @@ class TrainingState:
     params: losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
-
-
-from track_mjx.agent import checkpointing
 
 
 def _unpmap(v):

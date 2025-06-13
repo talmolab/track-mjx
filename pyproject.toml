@@ -26,7 +26,7 @@ dependencies = [
     "dm_control",
     "mujoco-mjx",
     "mediapy",
-    "jax[cuda12]==0.4.38",
+    "jax[cuda12]==0.4.34",
     "flax",
     "optax",
     "mediapy",

@@ -8,41 +8,35 @@ import jax
 from brax import math as brax_math
 from brax.io import mjcf
 import mujoco
+from dataclasses import dataclass, field
+from typing import Any, Sequence
 
 
+@dataclass
 class BaseWalker(ABC):
     """
     Abstract base class for different types of walker models (rodents, flies, mice, etc.).
     Defines the interface that all walker implementations must follow.
     """
 
-    def __init__(
-        self,
-        joint_names: list[str],
-        body_names: list[str],
-        end_eff_names: list[str],
-        torque_actuators: bool = False,
-        rescale_factor: float = 1.0,
-    ):
-        """
-        Initialize the walker with model configuration.
+    # public, constructor‐args
+    joint_names: Sequence[str]
+    body_names:  Sequence[str]
+    end_eff_names: Sequence[str]
+    torque_actuators: bool = False
+    rescale_factor: float = 1.0
 
-        Args:
-            joint_names: List of joint names in the model
-            body_names: List of body part names
-            end_eff_names: List of end effector names
-            torque_actuators: Whether to use torque actuators
-            rescale_factor: Factor to rescale the model
-        """
-        self._joint_names = joint_names
-        self._body_names = body_names
-        self._end_eff_names = end_eff_names
-        self._body_idxs, self._joint_idxs = jp.zeros(2)
-        self._endeff_idxs, self._torso_idx = jp.zeros(2)
-        # Load and configure the model
-        self._mjcf_model = self._load_mjcf_model(torque_actuators, rescale_factor)
-        self.sys = mjcf.load_model(self._mjcf_model.model.ptr)
-        self._initialize_indices()
+    # private fields that will be assigned later
+    _joint_names: list[str]         = field(init=False, repr=False)
+    _body_names:  Sequence[str]        = field(init=False, repr=False)
+    _end_eff_names: Sequence[str]      = field(init=False, repr=False)
+    _body_idxs:   jp.ndarray        = field(init=False, repr=False)
+    _endeff_idxs: jp.ndarray        = field(init=False, repr=False)
+    _torso_idx:   jp.ndarray        = field(init=False, repr=False)
+    _mjcf_model:  Any               = field(init=False, repr=False)
+    sys:          mujoco.MjModel    = field(init=False, repr=False)
+    _mj_model:    mujoco.MjModel    = field(init=False, repr=False)
+    _mj_spec:     mujoco.MjSpec     = field(init=False, repr=False)
 
     @abstractmethod
     def _build_spec(

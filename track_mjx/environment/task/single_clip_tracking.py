@@ -18,8 +18,6 @@ from track_mjx.environment.walker import spec_utils
 
 from jax.flatten_util import ravel_pytree
 
-END_EFFECTORS = ["lower_arm_R", "lower_arm_L", "foot_R", "foot_L", "skull"]
-TOUCH_SENSORS = ["palm_L", "palm_R", "sole_L", "sole_R"]
 
 
 class SingleClipTracking(PipelineEnv):
@@ -304,7 +302,7 @@ class SingleClipTracking(PipelineEnv):
         positions = jp.vstack(
             [
                 data.bind(self._mjx_model, self._mj_spec.body(f"{name}")).xpos
-                for name in END_EFFECTORS
+                for name in self.walker._end_eff_names
             ]
         )
         # get relative pos in egocentric frame
@@ -345,10 +343,10 @@ class SingleClipTracking(PipelineEnv):
         )
         return sensors
 
-    def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
-        """Get touch sensors data from the environment."""
-        touches = [data.bind(self._mjx_model, self._mj_spec.sensor(f"{name}")).sensordata for name in TOUCH_SENSORS]
-        return jp.array(touches)
+    # def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
+    #     """Get touch sensors data from the environment."""
+    #     touches = [data.bind(self._mjx_model, self._mj_spec.sensor(f"{name}")).sensordata for name in TOUCH_SENSORS]
+    #     return jp.array(touches)
 
     def _get_reference_clip(self, info) -> ReferenceClip:
         """Returns reference clip; to be overridden in child classes"""

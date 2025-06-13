@@ -8,8 +8,8 @@ import jax
 from brax import math as brax_math
 from brax.io import mjcf
 import mujoco
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Sequence
 
 
 @dataclass
@@ -19,20 +19,24 @@ class BaseWalker(ABC):
     Defines the interface that all walker implementations must follow.
     """
 
-    # Public constructor parameters
-    joint_names: list[str]
-    body_names: list[str]
-    end_eff_names: list[str]
-    _body_idxs: jp.ndarray
-    _joint_idxs: jp.ndarray
-    _endeff_idxs: jp.ndarray
-    _torso_idx: jp.ndarray
-    _mjcf_model: Any
-    sys: mujoco.MjModel
-    _mj_model: mujoco.MjModel
-    _mj_spec: mujoco.MjSpec
+    # public, constructor‐args
+    joint_names: Sequence[str]
+    body_names:  Sequence[str]
+    end_eff_names: Sequence[str]
     torque_actuators: bool = False
     rescale_factor: float = 1.0
+
+    # private fields that will be assigned later
+    _joint_names: list[str]         = field(init=False, repr=False)
+    _body_names:  Sequence[str]        = field(init=False, repr=False)
+    _end_eff_names: Sequence[str]      = field(init=False, repr=False)
+    _body_idxs:   jp.ndarray        = field(init=False, repr=False)
+    _endeff_idxs: jp.ndarray        = field(init=False, repr=False)
+    _torso_idx:   jp.ndarray        = field(init=False, repr=False)
+    _mjcf_model:  Any               = field(init=False, repr=False)
+    sys:          mujoco.MjModel    = field(init=False, repr=False)
+    _mj_model:    mujoco.MjModel    = field(init=False, repr=False)
+    _mj_spec:     mujoco.MjSpec     = field(init=False, repr=False)
 
     @abstractmethod
     def _build_spec(

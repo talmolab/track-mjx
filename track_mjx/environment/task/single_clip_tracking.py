@@ -14,8 +14,10 @@ from track_mjx.io.load import ReferenceClip
 from track_mjx.environment.task.reward import compute_tracking_rewards
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.environment.task.reward import RewardConfig
+from track_mjx.environment.walker import spec_utils
 
 from jax.flatten_util import ravel_pytree
+
 
 
 class SingleClipTracking(PipelineEnv):
@@ -87,6 +89,7 @@ class SingleClipTracking(PipelineEnv):
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
         self._mjx_model = mjx.put_model(self.sys.mj_model)
+        self._mj_spec = self.walker._mj_spec
 
     def reset(self, rng: jp.ndarray) -> State:
         """Resets the environment to an initial state.
@@ -161,6 +164,7 @@ class SingleClipTracking(PipelineEnv):
 
         # Used to initialize our intention network
         info["reference_obs_size"] = reference_obs.shape[-1]
+        info["proprioceptive_obs_size"] = proprioceptive_obs.shape[-1]
 
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
 
@@ -292,6 +296,58 @@ class SingleClipTracking(PipelineEnv):
             pipeline_state=data, obs=obs, reward=reward, done=done, info=info
         )
 
+    def _get_appendages_pos(self, data: mjx.Data) -> jp.ndarray:
+        """Get appendages positions from the environment."""
+        torso = data.bind(self._mjx_model, self._mj_spec.body("torso"))
+        positions = jp.vstack(
+            [
+                data.bind(self._mjx_model, self._mj_spec.body(f"{name}")).xpos
+                for name in self.walker._end_eff_names
+            ]
+        )
+        # get relative pos in egocentric frame
+        egocentric_pos = jp.dot(positions - torso.xpos, torso.xmat)
+        return egocentric_pos.flatten()
+
+    def _get_proprioception(self, data: mjx.Data) -> jp.ndarray:
+        """Get proprioception data from the environment."""
+        qpos = data.qpos[7:] # skip the root joint
+        qvel = data.qvel[6:] # skip the root joint velocity
+        actuator_ctrl = data.qfrc_actuator
+        _, body_height, _ = data.bind(self._mjx_model, self._mj_spec.body(f"torso")).xpos
+        world_zaxis = data.bind(self._mjx_model, self._mj_spec.body(f"torso")).xmat.flatten()[6:]
+        appendages_pos = self._get_appendages_pos(data)
+        proprioception = jp.concatenate(
+            [
+                qpos,
+                qvel,
+                actuator_ctrl,
+                jp.array([body_height]),
+                world_zaxis,
+                appendages_pos,
+            ]
+        )
+        return proprioception
+
+    def _get_kinematic_sensors(self, data: mjx.Data) -> jp.ndarray:
+        """Get kinematic sensors data from the environment."""
+        accelerometer = data.bind(self._mjx_model, self._mj_spec.sensor("accelerometer")).sensordata
+        velocimeter = data.bind(self._mjx_model, self._mj_spec.sensor("velocimeter")).sensordata
+        gyro = data.bind(self._mjx_model, self._mj_spec.sensor("gyro")).sensordata
+        sensors = jp.concatenate(
+            [
+                accelerometer,
+                velocimeter,
+                gyro,
+            ]
+        )
+        return sensors
+
+    # def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
+    #     """Get touch sensors data from the environment."""
+    #     touches = [data.bind(self._mjx_model, self._mj_spec.sensor(f"{name}")).sensordata for name in TOUCH_SENSORS]
+    #     return jp.array(touches)
+
     def _get_reference_clip(self, info) -> ReferenceClip:
         """Returns reference clip; to be overridden in child classes"""
         return self._reference_clip
@@ -352,14 +408,20 @@ class SingleClipTracking(PipelineEnv):
             ]
         )
 
-        prorioceptive_obs = jp.concatenate(
+        # align with https://github.com/google-deepmind/mujoco_playground/blob/ff0ea5629bd89662f6ffa54464e247653737ea45/mujoco_playground/_src/locomotion/go1/joystick.py#L316-L332
+        proprioceptive_obs = jp.concatenate(
             [
-                data.qpos,
-                data.qvel,
+                data.qpos[7:],
+                data.qvel[6:],
+                data.qfrc_actuator,
+                self._get_appendages_pos(data),
+                self._get_kinematic_sensors(data),
+                # touch does not work for multiple GPUs for now
+                # self._get_touch_sensors(data),
             ]
         )
-        return reference_obs, prorioceptive_obs
+        return reference_obs, proprioceptive_obs
 
-    def _get_cur_frame(self, info, data: mjx.Data) -> int:
+    def _get_cur_frame(self, info, data: mjx.Data) -> jp.ndarray:
         """Returns the current frame index based on the simulation time"""
         return jp.array(jp.floor(data.time * self._mocap_hz + info["start_frame"]), int)

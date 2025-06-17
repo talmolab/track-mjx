@@ -48,6 +48,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from optax.transforms import freeze
 import orbax.checkpoint as ocp
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -566,13 +567,7 @@ def train(
                 f"Restored decoder parameters from checkpoint at {checkpoint_to_restore}"
             )
             mask = network_masks.create_decoder_mask(init_params)
-            optimizer = optax.multi_transform(
-                {
-                    "learned": optax.adam(learning_rate=learning_rate),
-                    "frozen": optax.set_to_zero(),
-                },
-                mask,
-            )
+            optimizer = optax.chain(optimizer, freeze(mask))
             # overwrite the optimizer state with the new optimizer
             training_state = training_state.replace(
                 optimizer_state=optimizer.init(init_params)

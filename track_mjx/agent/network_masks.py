@@ -9,12 +9,12 @@ def create_decoder_mask(params, decoder_name="decoder"):
     param_mask = copy.deepcopy(params)
     for key in param_mask.policy["params"]:
         if key == decoder_name:
-            param_mask.policy["params"][key] = "frozen"
+            param_mask.policy["params"][key] = True
         else:
-            param_mask.policy["params"][key] = "learned"
+            param_mask.policy["params"][key] = False
 
     for key in param_mask.value:
-        param_mask.value[key] = "learned"
+        param_mask.value[key] = False
 
     return param_mask
 

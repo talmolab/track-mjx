@@ -69,7 +69,13 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
 
 
 def create_rollout_generator(
-    cfg: Dict | DictConfig, environment: Env, inference_fn: Callable, model: str = "mlp"
+    cfg: Dict | DictConfig,
+    environment: Env,
+    inference_fn: Callable,
+    model: str = "mlp",
+    log_activations: bool = False,
+    log_metrics: bool = False,
+    log_sensor_data: bool = False,
 ) -> Callable[[int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
@@ -84,9 +90,10 @@ def create_rollout_generator(
     ref_traj_config = cfg["reference_config"]
     # Wrap the environment
     # TODO this logic is used in a few different places, make it a function?
+    rollout_env = environment  # Initialize with base environment
+
     if type(environment) == MultiClipTracking:
         rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(environment)
-
     elif type(environment) == SingleClipTracking:
         rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(environment)
 
@@ -105,6 +112,10 @@ def create_rollout_generator(
         Args:
             clip_idx (Optional[int]): Specific clip ID to generate the rollout for.
             seed (int): Random seed for jax PRNGKey.
+            log_activations (bool): Whether to log neural network activations.
+            log_metrics (bool): Whether to log rollout metrics.
+            log_sensor_data (bool): Whether to log sensor readings.
+
         Returns:
             Dict: A dictionary containing rollout data.
         """
@@ -125,12 +136,20 @@ def create_rollout_generator(
             act_rng, new_rng = jax.random.split(act_rng)
             ctrl, extras = jit_inference_fn(state.obs, act_rng)
             next_state = jit_step(state, ctrl)
-            joint_force = next_state.pipeline_state.cfrc_ext
-            sensor_reading = next_state.pipeline_state.sensordata
+
+            # Collect optional data based on logging flags
+            joint_force = (
+                next_state.pipeline_state.cfrc_ext if log_sensor_data else None
+            )
+            sensor_reading = (
+                next_state.pipeline_state.sensordata if log_sensor_data else None
+            )
+            activations = extras["activations"] if log_activations else None
+
             return (next_state, new_rng), (
                 next_state,
                 ctrl,
-                extras["activations"],
+                activations,
                 joint_force,
                 sensor_reading,
             )
@@ -141,16 +160,32 @@ def create_rollout_generator(
             ctrl, extras, new_hidden = jit_inference_fn(state.obs, act_rng, hidden)
             ctrl = jnp.squeeze(ctrl, axis=0)
             next_state = jit_step(state, ctrl)
-            joint_force = next_state.pipeline_state.cfrc_ext
-            sensor_reading = next_state.pipeline_state.sensordata
+
+            # Collect optional data based on logging flags
+            joint_force = (
+                next_state.pipeline_state.cfrc_ext if log_sensor_data else None
+            )
+            sensor_reading = (
+                next_state.pipeline_state.sensordata if log_sensor_data else None
+            )
+            activations = extras["activations"] if log_activations else None
+
             return (next_state, new_rng, new_hidden), (
                 next_state,
                 ctrl,
                 hidden,
-                extras["activations"],
+                activations,
                 joint_force,
                 sensor_reading,
             )
+
+        # Initialize variables
+        states = None
+        ctrls = None
+        activations = None
+        joint_forces = None
+        sensor_readings = None
+        stacked_hidden = None
 
         if model == "mlp":
             # Run rollout for mlp
@@ -183,19 +218,11 @@ def create_rollout_generator(
             # Scalar elements shouldn't be modified
             if arr.ndim == 0:
                 return arr
-
             return jnp.concatenate([element[None], arr])
 
         rollout_states = jax.tree.map(prepend, init_state, states)
 
-        # Get metrics
-        rollout_metrics = {}
-        for rollout_metric in cfg.logging_config.rollout_metrics:
-            rollout_metrics[f"{rollout_metric}s"] = jax.vmap(
-                lambda s: s.metrics[rollout_metric]
-            )(rollout_states)
-
-        # Reference and rollout qposes
+        # Reference and rollout qposes (always logged)
         ref_traj = rollout_env._get_reference_clip(init_state.info)
         qposes_ref = jnp.repeat(
             jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
@@ -203,19 +230,38 @@ def create_rollout_generator(
             axis=0,
         )
 
-        # Collect qposes from states
+        # Collect qposes from states (always logged)
         qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
 
-        return {
-            "rollout_metrics": rollout_metrics,
-            "observations": jax.vmap(lambda s: s.obs)(rollout_states),
-            "ctrl": ctrls,
-            "activations": activations,
+        # Extract state rewards (always logged)
+        state_rewards = jax.vmap(lambda s: s.reward)(rollout_states)
+
+        # Build return dictionary with required data
+        result = {
             "qposes_ref": qposes_ref,
             "qposes_rollout": qposes_rollout,
-            "joint_forces": joint_forces,
-            "sensor_readings": sensor_readings,
-            "info": jax.vmap(lambda s: s.info)(rollout_states),
+            "ctrl": ctrls,
+            "state_rewards": state_rewards,
         }
+
+        # Add optional data if requested
+        if log_metrics:
+            rollout_metrics = {}
+            for rollout_metric in cfg.logging_config.rollout_metrics:
+                rollout_metrics[f"{rollout_metric}s"] = jax.vmap(
+                    lambda s: s.metrics[rollout_metric]
+                )(rollout_states)
+            result["rollout_metrics"] = rollout_metrics
+
+        if log_activations and activations is not None:
+            result["activations"] = activations
+
+        if log_sensor_data:
+            if joint_forces is not None:
+                result["joint_forces"] = joint_forces
+            if sensor_readings is not None:
+                result["sensor_readings"] = sensor_readings
+
+        return result
 
     return jax.jit(generate_rollout)

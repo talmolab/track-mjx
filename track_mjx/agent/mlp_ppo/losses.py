@@ -197,10 +197,42 @@ def compute_ppo_loss(
     if kl_schedule is not None:
         kl_weight = kl_schedule(step)
 
-    kl_latent_loss = kl_weight * (
-        -0.5
-        * jnp.mean(1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar))
+    # Use autoregressive Gaussian prior: p(z_t | z_t-1) = N(0.95 * z_t-1, (1-0.95^2) * I)
+    alpha = 0.95
+    prior_variance = 1 - alpha**2  # = 0.0975
+
+    # For the first timestep, use standard Gaussian prior
+    # KL(q(z_0)||N(0,I))
+    kl_0 = -0.5 * jnp.mean(
+        1 + latent_logvar[0] - jnp.square(latent_mean[0]) - jnp.exp(latent_logvar[0])
     )
+
+    # For subsequent timesteps, use autoregressive prior
+    # KL(q(z_t)||N(alpha * z_{t-1}, prior_variance * I))
+    if latent_mean.shape[0] > 1:  # If we have more than one timestep
+        # Get z_{t-1} and z_t
+        z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
+        mu_curr = latent_mean[1:]  # mu_1, ..., mu_{T-1}
+        logvar_curr = latent_logvar[1:]  # logvar_1, ..., logvar_{T-1}
+
+        # Prior mean: alpha * z_{t-1}
+        prior_mean = alpha * z_prev
+
+        # KL divergence components
+        var_ratio = jnp.exp(logvar_curr) / prior_variance
+        mean_diff_sq = jnp.square(prior_mean - mu_curr) / prior_variance
+        log_var_ratio = jnp.log(prior_variance) - logvar_curr
+
+        kl_t = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_ratio)
+
+        # Combine KL losses (weighted by sequence length)
+        total_timesteps = latent_mean.shape[0]
+        kl_latent_loss = kl_weight * (
+            (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
+        )
+    else:
+        # Only one timestep, use standard Gaussian prior
+        kl_latent_loss = kl_weight * kl_0
 
     total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss
     return total_loss, {
@@ -218,20 +250,41 @@ def create_ramp_schedule(
     min_value: float = 0.0001,
     ramp_steps: int = 1000,
     warmup_steps: int = 0,
-    smoothing: str = "linear",
+    schedule: str = "linear",
+    period: int = 45,
 ) -> optax.Schedule:
     """
-    Creates a schedule that smoothly ramps from 0 to a maximum value.
+    Creates a schedule that can be either:
+    - A linear ramp from min_value to max_value
+    - A cyclic cosine schedule oscillating between min_value and max_value with given period
+    - A cyclic sine schedule oscillating between min_value and max_value with given period
     """
 
     def schedule_fn(step):
         step = jnp.asarray(step, dtype=jnp.float32)
-        progress = jnp.clip((step - warmup_steps) / ramp_steps, min_value, 1)
 
-        if smoothing == "cosine":
-            progress = 0.5 * (1 - jnp.cos(jnp.pi * progress))
-
-        is_warmup = step < warmup_steps
-        return jnp.where(is_warmup, min_value, progress * max_value)
+        if schedule == "linear":
+            progress = jnp.clip((step - warmup_steps) / ramp_steps, min_value, 1)
+            is_warmup = step < warmup_steps
+            return jnp.where(is_warmup, min_value, progress * max_value)
+        elif schedule == "cosine":  # cosine cyclic
+            # Convert step to angle in [0, 2π] based on period
+            angle = (2 * jnp.pi * step) / period
+            # Scale and shift to oscillate between min_value and max_value
+            amplitude = (max_value - min_value) / 2
+            midpoint = (max_value + min_value) / 2
+            return midpoint + min_value + amplitude * jnp.cos(angle)
+        elif schedule == "sine":
+            angle = (
+                2 * jnp.pi * step
+            ) / period - jnp.pi / 2  # Subtract π/2 to start at 0
+            # Scale and shift to oscillate between min_value and max_value
+            amplitude = (max_value - min_value) / 2
+            midpoint = (max_value + min_value) / 2
+            return midpoint + min_value + amplitude * jnp.sin(angle)
+        else:
+            raise ValueError(
+                f"schedule must be either 'linear' 'cosine', or 'sine', not {schedule}"
+            )
 
     return schedule_fn

@@ -330,12 +330,17 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    optimizer = optax.adam(learning_rate=learning_rate)
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(10.0),
+        optax.adam(learning_rate=learning_rate),
+    )
 
     kl_schedule = None
     if use_kl_schedule:
         kl_schedule = losses.create_ramp_schedule(
-            max_value=kl_weight, ramp_steps=int(num_evals * kl_ramp_up_frac)
+            max_value=kl_weight,
+            ramp_steps=int(num_evals * kl_ramp_up_frac),
+            schedule="linear",
         )
 
     loss_fn = functools.partial(

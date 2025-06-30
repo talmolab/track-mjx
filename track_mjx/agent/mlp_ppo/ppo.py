@@ -34,7 +34,7 @@ from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
 
-from track_mjx.agent import masked_running_statistics, network_masks
+from track_mjx.agent import network_masks
 from track_mjx.agent.mlp_ppo import losses, ppo_networks
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing

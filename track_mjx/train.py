@@ -13,10 +13,8 @@ import sys
 #     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
 # )
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
-os.environ["XLA_FLAGS"] = "--xla_gpu_triton_gemm_any=True"
 
 import jax
 
@@ -226,6 +224,11 @@ def main(cfg: DictConfig):
         config_dict=cfg_dict,
         use_kl_schedule=cfg.network_config.kl_schedule,
         eval_env_test_set=test_env,
+        freeze_decoder=(
+            False
+            if "freeze_decoder" not in cfg.train_setup
+            else cfg.train_setup.freeze_decoder
+        ),
     )
 
     run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"

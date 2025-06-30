@@ -33,12 +33,11 @@ from brax.training.acme import specs
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.v1 import envs as envs_v1
-import flax.training
-import wandb
-
+from track_mjx.agent import network_masks
 from track_mjx.agent.mlp_ppo import losses, ppo_networks
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
+from mujoco_playground import wrapper as mp_wrapper
 
 import flax
 from flax import traverse_util
@@ -47,6 +46,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from optax.transforms import freeze
 import orbax.checkpoint as ocp
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -167,6 +167,7 @@ def train(
     use_lstm: bool = True,
     use_kl_schedule: bool = True,
     kl_ramp_up_frac: float = 0.25,
+    freeze_decoder: bool = False,
 ):
     """PPO training.
 
@@ -269,97 +270,6 @@ def train(
         )
     ).astype(int)
 
-    key = jax.random.PRNGKey(seed)
-    global_key, local_key = jax.random.split(key)
-    del key
-    local_key = jax.random.fold_in(local_key, process_id)
-    local_key, key_env, eval_key = jax.random.split(local_key, 3)
-    # key_networks should be global, so that networks are initialized the same
-    # way for different processes.
-    key_policy, key_value, policy_params_fn_key = jax.random.split(global_key, 3)
-    del global_key
-
-    assert num_envs % device_count == 0
-
-    v_randomization_fn = None
-    if randomization_fn is not None:
-        randomization_batch_size = num_envs // local_device_count
-        # all devices gets the same randomization rng
-        randomization_rng = jax.random.split(key_env, randomization_batch_size)
-        v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
-
-    if isinstance(environment, envs.Env):
-        wrap_for_training = wrappers.wrap
-    else:
-        wrap_for_training = envs_v1.wrappers.wrap_for_training
-
-    env = wrap_for_training(
-        environment,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        randomization_fn=v_randomization_fn,
-        use_lstm=use_lstm,
-    )
-
-    reset_fn = jax.jit(jax.vmap(env.reset))
-    key_envs = jax.random.split(key_env, num_envs // process_count)
-    key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
-    env_state = reset_fn(key_envs)
-
-    # TODO: reference_obs_size should be optional (network factory-dependent)
-    config_dict["network_config"].update(
-        {
-            "observation_size": env_state.obs.shape[-1],
-            "action_size": env.action_size,
-            "normalize_observations": normalize_observations,
-            "reference_obs_size": int(_unpmap(env_state.info["reference_obs_size"])[0]),
-        }
-    )
-
-    normalize = lambda x, y: x
-    if normalize_observations:
-        normalize = running_statistics.normalize
-    ppo_network = network_factory(
-        env_state.obs.shape[-1],
-        int(_unpmap(env_state.info["reference_obs_size"])[0]),
-        env.action_size,
-        preprocess_observations_fn=normalize,
-    )
-    make_policy = ppo_networks.make_inference_fn(ppo_network)
-
-    make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
-
-    optimizer = optax.chain(
-        optax.clip_by_global_norm(10.0),
-        optax.adam(learning_rate=learning_rate),
-    )
-
-    kl_schedule = None
-    if use_kl_schedule:
-        kl_schedule = losses.create_ramp_schedule(
-            max_value=kl_weight,
-            ramp_steps=int(num_evals * kl_ramp_up_frac),
-            schedule="linear",
-        )
-
-    loss_fn = functools.partial(
-        losses.compute_ppo_loss,
-        ppo_network=ppo_network,
-        entropy_cost=entropy_cost,
-        kl_weight=kl_weight,
-        discounting=discounting,
-        reward_scaling=reward_scaling,
-        gae_lambda=gae_lambda,
-        clipping_epsilon=clipping_epsilon,
-        normalize_advantage=normalize_advantage,
-        kl_schedule=kl_schedule,
-    )
-
-    gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
-    )
-
     def minibatch_step(
         carry,
         data: types.Transition,
@@ -444,6 +354,22 @@ def train(
             pmap_axis_name=_PMAP_AXIS_NAME,
         )
 
+        if (
+            proprioceptive_obs_size > 0
+            and frozen_proprioceptive_normalizer_params is not None
+        ):
+            normalizer_params = normalizer_params.replace(
+                mean=normalizer_params.mean.at[-proprioceptive_obs_size:].set(
+                    frozen_proprioceptive_normalizer_params.mean
+                ),
+                std=normalizer_params.std.at[-proprioceptive_obs_size:].set(
+                    frozen_proprioceptive_normalizer_params.std
+                ),
+                summed_variance=normalizer_params.summed_variance.at[
+                    -proprioceptive_obs_size:
+                ].set(frozen_proprioceptive_normalizer_params.summed_variance),
+            )
+
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
             (training_state.optimizer_state, training_state.params, key_sgd, it),
@@ -508,6 +434,106 @@ def train(
             metrics,
         )  # pytype: disable=bad-return-type  # py311-upgrade
 
+    key = jax.random.PRNGKey(seed)
+    global_key, local_key = jax.random.split(key)
+    del key
+    local_key = jax.random.fold_in(local_key, process_id)
+    local_key, key_env, eval_key = jax.random.split(local_key, 3)
+    # key_networks should be global, so that networks are initialized the same
+    # way for different processes.
+    key_policy, key_value, policy_params_fn_key = jax.random.split(global_key, 3)
+    del global_key
+
+    assert num_envs % device_count == 0
+
+    v_randomization_fn = None
+    if randomization_fn is not None:
+        randomization_batch_size = num_envs // local_device_count
+        # all devices gets the same randomization rng
+        randomization_rng = jax.random.split(key_env, randomization_batch_size)
+        v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
+
+    if isinstance(environment, envs.Env):
+        wrap_for_training = wrappers.wrap
+    else:
+        # adapt to mujoco_playground wrapper
+        wrap_for_training = mp_wrapper.wrap_for_brax_training
+
+    # TODO: playground env wrapper should be used here
+    env = wrap_for_training(
+        environment,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        randomization_fn=v_randomization_fn,
+        # use_lstm=use_lstm,
+    )
+
+    reset_fn = jax.jit(jax.vmap(env.reset))
+    key_envs = jax.random.split(key_env, num_envs // process_count)
+    key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
+    env_state = reset_fn(key_envs)
+
+    reference_obs_size = int(_unpmap(env_state.info["reference_obs_size"])[0])
+    # might be breaking change for old checkpoint
+    if "proprioceptive_obs_size" not in env_state.info:
+        proprioceptive_obs_size = 0
+    else:
+        proprioceptive_obs_size = int(
+            _unpmap(env_state.info["proprioceptive_obs_size"])[0]
+        )
+        logging.info("Proprioceptive observation size: %s", proprioceptive_obs_size)
+
+    # TODO: reference_obs_size should be optional (network factory-dependent)
+    config_dict["network_config"].update(
+        {
+            "observation_size": env_state.obs.shape[-1],
+            "action_size": env.action_size,
+            "normalize_observations": normalize_observations,
+            "reference_obs_size": reference_obs_size,
+            "proprioceptive_obs_size": proprioceptive_obs_size,
+        }
+    )
+
+    normalize = lambda x, y: x
+    if normalize_observations:
+        normalize = running_statistics.normalize
+    ppo_network = network_factory(
+        env_state.obs.shape[-1],
+        reference_obs_size,
+        env.action_size,
+        preprocess_observations_fn=normalize,
+    )
+    make_policy = ppo_networks.make_inference_fn(ppo_network)
+
+    make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(10.0),
+        optax.adam(learning_rate=learning_rate),
+    )
+
+    kl_schedule = None
+    if use_kl_schedule:
+        kl_schedule = losses.create_ramp_schedule(
+            max_value=kl_weight,
+            ramp_steps=int(num_evals * kl_ramp_up_frac),
+            schedule="linear",
+        )
+
+    loss_fn = functools.partial(
+        losses.compute_ppo_loss,
+        ppo_network=ppo_network,
+        entropy_cost=entropy_cost,
+        kl_weight=kl_weight,
+        discounting=discounting,
+        reward_scaling=reward_scaling,
+        gae_lambda=gae_lambda,
+        clipping_epsilon=clipping_epsilon,
+        normalize_advantage=normalize_advantage,
+        kl_schedule=kl_schedule,
+    )
+
     init_params = losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
@@ -523,18 +549,78 @@ def train(
         env_steps=0,
     )
 
+    frozen_proprioceptive_normalizer_params = None
+
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        training_state = checkpointing.load_training_state(
-            checkpoint_to_restore, training_state
-        )
-        logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
+        if not freeze_decoder:
+            # we are recovering the full training state
+            training_state = checkpointing.load_training_state(
+                checkpoint_to_restore, training_state
+            )
+            logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
+        if freeze_decoder:
+            # first is normalizer
+            loaded_checkpoint = checkpointing.load_policy(checkpoint_to_restore)
+            loaded_normalizer_params = loaded_checkpoint[0]
+            loaded_policy = loaded_checkpoint[1]
+            decoder_params = loaded_policy["params"]["decoder"]
+            training_state.params.policy["params"]["decoder"] = decoder_params
+            logging.info(
+                f"Restored decoder parameters from checkpoint at {checkpoint_to_restore}"
+            )
+            mask = network_masks.create_decoder_mask(init_params)
+            optimizer = optax.chain(optimizer, freeze(mask))
+            # overwrite the optimizer state with the new optimizer
+            training_state = training_state.replace(
+                optimizer_state=optimizer.init(init_params)
+            )
+            logging.info("Freezing decoder parameters")
+            # TODO WIP
+            if proprioceptive_obs_size == 0:
+                raise ValueError(
+                    "Proprioceptive observation size is 0, "
+                    "but decoder parameters are being frozen."
+                )
+            mean = loaded_normalizer_params.mean[-proprioceptive_obs_size:]
+            std = loaded_normalizer_params.std[-proprioceptive_obs_size:]
+            summed_variance = loaded_normalizer_params.summed_variance[
+                -proprioceptive_obs_size:
+            ]
+            # TODO, normalizer implementations
+            # this will remain unchanged, and use to set the decoder normalizer
+            frozen_proprioceptive_normalizer_params = (
+                running_statistics.RunningStatisticsState(
+                    count=jnp.zeros(()),
+                    mean=mean,
+                    summed_variance=summed_variance,
+                    std=std,
+                )
+            )
+            training_state = training_state.replace(
+                normalizer_params=training_state.normalizer_params.replace(
+                    mean=training_state.normalizer_params.mean.at[
+                        -proprioceptive_obs_size:
+                    ].set(frozen_proprioceptive_normalizer_params.mean),
+                    std=training_state.normalizer_params.std.at[
+                        -proprioceptive_obs_size:
+                    ].set(frozen_proprioceptive_normalizer_params.std),
+                    summed_variance=training_state.normalizer_params.summed_variance.at[
+                        -proprioceptive_obs_size:
+                    ].set(frozen_proprioceptive_normalizer_params.summed_variance),
+                )
+            )
+
+    # gradient update function with the new optimizer and loss function
+    gradient_update_fn = gradients.gradient_update_fn(
+        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
+    )
 
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]
     )
 
-    if not eval_env:
+    if eval_env is None:
         eval_env = environment
     if randomization_fn is not None:
         v_randomization_fn = functools.partial(
@@ -545,7 +631,7 @@ def train(
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
-        use_lstm=use_lstm,
+        # use_lstm=use_lstm,
     )
 
     evaluator = acting.Evaluator(
@@ -556,6 +642,7 @@ def train(
         action_repeat=action_repeat,
         key=eval_key,
     )
+
     evaluator_test_set = None
     if eval_env_test_set is not None:
         key_env, key_env_test_set = jax.random.split(key_env, 2)

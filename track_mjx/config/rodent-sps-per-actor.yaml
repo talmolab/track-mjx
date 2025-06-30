@@ -55,21 +55,21 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: imitation_debug
-  train_test_split_info: "data/train_test_split_rodent_exp3_80test.json" # Path to the train/test split file, records the index
+  train_test_split_info:  # Path to the train/test split file, records the index
   # Ratio of training data of the whole training dataset. Needs to be in the train_test_split_info["train_subset"] key. 
   # If not, please run the `notebooks/sample_efficiency_dev.ipynb` notebook to generate the train/test split file.
-  train_subset_ratio: 1.0
+  train_subset_ratio: 
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
-  eval_every: 20_000_000
+  eval_every: 2_000_000
   episode_length: 200
   reset_every: 50_000_000
   train_config:
-    num_envs: 2048
-    num_timesteps: 5_000_000_000
+    num_envs: 8192
+    num_timesteps: 50_000_000
     batch_size: 1024
-    num_minibatches: 8
+    num_minibatches: 16
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2
@@ -83,7 +83,6 @@ train_setup:
 
 logging_config:
   project_name: vnl_debug
-  group_name: "SE_exp3_80%_test"
   clip_id: -1
   model_path: model_checkpoints
   algo_name: ppo
@@ -103,6 +102,7 @@ logging_config:
     - bad_pose
     - bad_quat
     - fall
+  group_name: rodent-sps-per-actor-exp-1
 
 walker_config:
   torque_actuators: False 

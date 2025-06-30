@@ -68,7 +68,7 @@ dev = [
 Repository = "https://github.com/talmolab/track-mjx"
 
 [tool.setuptools.packages.find]
-exclude = ["site", "model_checkpoints*"]
+exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 
 [tool.black]
 line-length = 88

@@ -277,9 +277,17 @@ def make_ppo_network_from_cfg(cfg):
     return ppo_network
 
 
-def save(ckpt_mgr, step, policy, training_state, config):
+def save(ckpt_mgr, step, policy, training_state, config, checkpoint_callback=None):
     """Save a checkpoint during training.
     Consists of policy, training state and config.
+
+    Args:
+    ckpt_mgr: Orbax checkpoint manager
+    step: Training step number
+    policy: Policy parameters
+    training_state: Training state
+    config: Config dictionary
+    checkpoint_callback: Optional callback function to call after successful save
     """
     ckpt_mgr.save(
         step=step,
@@ -289,3 +297,10 @@ def save(ckpt_mgr, step, policy, training_state, config):
             config=ocp.args.JsonSave(config),
         ),
     )
+        
+    # Call the callback after successful checkpoint save
+    if checkpoint_callback is not None:
+        try:
+            checkpoint_callback(step)
+        except Exception as e:
+            logging.warning(f"Checkpoint callback failed: {e}")

@@ -99,7 +99,7 @@ class IntentionNetwork(nn.Module):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
 
-    def __call__(self, obs, key, get_activation: bool = False):
+    def __call__(self, obs, key, deterministic: bool = False, get_activation: bool = False):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
 
@@ -107,7 +107,11 @@ class IntentionNetwork(nn.Module):
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
                 traj, get_activation=True
             )
-            z = reparameterize(encoder_rng, latent_mean, latent_logvar)
+            # Uses mean in the case of deterministic evaluation
+            if deterministic:
+                z = latent_mean
+            else:
+                z = reparameterize(encoder_rng, latent_mean, latent_logvar)
             egocentric_obs = obs[..., self.reference_obs_size :]
             concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
             action, decoder_activations = self.decoder(
@@ -127,7 +131,11 @@ class IntentionNetwork(nn.Module):
             )
         else:
             latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
-            z = reparameterize(encoder_rng, latent_mean, latent_logvar)
+            # Uses mean in the case of deterministic evaluation
+            if deterministic:
+                z = latent_mean
+            else:
+                z = reparameterize(encoder_rng, latent_mean, latent_logvar)
             action, _ = self.decoder(
                 jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
             )

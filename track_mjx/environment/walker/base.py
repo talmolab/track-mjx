@@ -249,3 +249,99 @@ class BaseWalker(ABC):
         ).flatten()
 
         return body_pos_dist_local
+    
+    def compute_local_track_velocities_with_qpos(
+        self, ref_velocities: jp.ndarray, qvel: jp.ndarray, qpos: jp.ndarray
+    ) -> jp.ndarray:
+        """Compute local velocity differences for tracking, rotated to align with agent orientation.
+
+        Args:
+            ref_velocities: Reference linear velocities
+            qvel: Full velocity vector containing linear and angular velocities
+            qpos: Full position vector (needed for orientation)
+
+        Returns:
+            Local velocity differences rotated to align with agent orientation
+        """
+        root_vel = self.get_root_velocity_from_qvel(qvel)
+        quat = self.get_root_quaternion_from_qpos(qpos)
+
+        track_vel_local = jax.vmap(
+            lambda vel, quat: brax_math.rotate(vel, quat),
+            in_axes=(0, None),
+        )(ref_velocities - root_vel, quat).flatten()
+
+        return track_vel_local
+
+    def compute_angular_velocity_distances(
+        self, ref_angular_vels: jp.ndarray, qvel: jp.ndarray
+    ) -> jp.ndarray:
+        """Compute angular velocity distances for rotational tracking.
+
+        Args:
+            ref_angular_vels: Reference angular velocities
+            qvel: Full velocity vector containing angular velocities
+
+        Returns:
+            Angular velocity differences
+        """
+        angular_vel = self.get_root_angular_velocity_from_qvel(qvel)
+        angular_vel_dist = jax.vmap(
+            lambda ref_vel, agent_vel: ref_vel - agent_vel,
+            in_axes=(0, None),
+        )(ref_angular_vels, angular_vel).flatten()
+
+        return angular_vel_dist
+
+    def compute_joint_velocity_distances(
+        self, ref_joint_vels: jp.ndarray, qvel: jp.ndarray
+    ) -> jp.ndarray:
+        """Compute joint velocity distances relative to reference joint velocities.
+
+        Args:
+            ref_joint_vels: Reference joint velocities
+            qvel: Full velocity vector containing joint velocities
+
+        Returns:
+            Joint velocity differences
+        """
+        joint_vels = self.get_joint_velocities_from_qvel(qvel)
+        joint_vel_dist = jax.vmap(
+            lambda ref_vel, agent_vel: ref_vel - agent_vel,
+            in_axes=(0, None),
+        )(ref_joint_vels, joint_vels).flatten()
+
+        return joint_vel_dist
+
+    def get_root_velocity_from_qvel(self, qvel: jp.ndarray) -> jp.ndarray:
+        """Extracts the root's linear velocity (vx, vy, vz) from the velocity vector.
+
+        Args:
+            qvel (jp.ndarray): The full velocity state vector of the model.
+
+        Returns:
+            jp.ndarray: The root's linear velocity. Shape (3,).
+        """
+        return qvel[:3]
+
+    def get_root_angular_velocity_from_qvel(self, qvel: jp.ndarray) -> jp.ndarray:
+        """Extracts the root's angular velocity (ωx, ωy, ωz) from the velocity vector.
+
+        Args:
+            qvel (jp.ndarray): The full velocity state vector of the model.
+
+        Returns:
+            jp.ndarray: The root's angular velocity. Shape (3,).
+        """
+        return qvel[3:6]
+
+    def get_joint_velocities_from_qvel(self, qvel: jp.ndarray) -> jp.ndarray:
+        """Extracts joint velocities from the velocity vector.
+
+        Args:
+            qvel (jp.ndarray): The full velocity state vector of the model.
+
+        Returns:
+            jp.ndarray: Joint velocities. Shape (num_joints,).
+        """
+        return qvel[6:]

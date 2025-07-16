@@ -51,7 +51,9 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(
+    version_base=None, config_path="config", config_name="rodent-generalization"
+)
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -231,7 +233,7 @@ def main(cfg: DictConfig):
         ),
     )
 
-    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    run_id = f"R_SE_exp4_train_ratio_{cfg.train_setup.train_subset_ratio}_{cfg.env_config.env_name}_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),

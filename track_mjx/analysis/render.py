@@ -104,21 +104,29 @@ def make_ghost_pair(
 
 
 def make_rollout_renderer(
-    cfg: Any,
+    cfg: Any, render_ghost: bool = True
 ) -> Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]:
     """Create a renderer and related MuJoCo model and data for rollout visualization.
 
     Args:
         cfg (Any): Configuration object with environment and walker settings.
+        render_ghost (bool, optional): Whether to render the ghost model. Defaults to True.
 
     Returns:
         Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]: Renderer, model, data, and scene options.
     """
 
     if cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
-        _, mj_model, _ = make_ghost_pair(
-            _BASE_XML_PATHS[cfg.env_config.walker_name], scale=cfg.walker_config.rescale_factor
-        )
+        xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
+        if render_ghost:
+            _, mj_model, _ = make_ghost_pair(
+                xml_path, scale=cfg.walker_config.rescale_factor
+            )
+        else:
+            base = mujoco.MjSpec.from_file(xml_path)
+            for top in base.worldbody.bodies:
+                _scale_body_tree(top, cfg.walker_config.rescale_factor)
+            mj_model = base.compile()
     else:
         raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
 
@@ -158,6 +166,7 @@ def render_rollout(
     rollout: Dict[str, Any],
     height: int = 480,
     width: int = 640,
+    render_ghost: bool = True,
 ) -> Tuple[List[np.ndarray], float]:
     """Render a rollout from saved qposes.
 
@@ -166,33 +175,46 @@ def render_rollout(
         rollout (Dict[str, Any]): A dictionary containing the qposes of the reference and rollout trajectories.
         height (int, optional): Height of the rendered frames. Defaults to 480.
         width (int, optional): Width of the rendered frames. Defaults to 640.
+        render_ghost (bool, optional): Whether to render the ghost model. Defaults to True.
 
     Returns:
         Tuple[List[np.ndarray], float]: List of frames of the rendering and the rendering FPS.
     """
-    qposes_ref, qposes_rollout = rollout["qposes_ref"], rollout["qposes_rollout"]
-    renderer, mj_model, mj_data, scene_option = make_rollout_renderer(cfg)
+    # Prepare a unified list of qpos arrays to render
+    qroll = rollout["qposes_rollout"]
+    if not render_ghost:
+        qpos_list = qroll
+        render_msg = "MuJoCo Rendering..."
+    else:
+        qref = rollout["qposes_ref"]
+        # rollout qpos comes first, then reference qpos
+        qpos_list = [np.concatenate((qr, qp)) for qp, qr in zip(qroll, qref)]
+        render_msg = "MuJoCo Rendering with Ghost Model..."
 
-    # Calulate realtime rendering fps
+    # Build renderer and MuJoCo data
+    renderer, mj_model, mj_data, scene_option = make_rollout_renderer(
+        cfg, render_ghost=render_ghost
+    )
+
+    # Compute real-time fps
     render_fps = (
         1.0 / mj_model.opt.timestep
     ) / cfg.env_config.env_args.physics_steps_per_control_step
 
-    # save rendering and log to wandb
+    # Warm up kinematics and reset renderer
     mujoco.mj_kinematics(mj_model, mj_data)
     renderer = mujoco.Renderer(mj_model, height=height, width=width)
+
     frames = []
-    print("MuJoCo Rendering...")
-    for qpos1, qpos2 in tqdm(
-        zip(qposes_rollout, qposes_ref), total=len(qposes_rollout)
-    ):
-        mj_data.qpos = np.append(qpos1, qpos2)
+    print(render_msg)
+    for qpos in tqdm(qpos_list, total=len(qpos_list)):
+        mj_data.qpos = qpos
         mujoco.mj_forward(mj_model, mj_data)
         renderer.update_scene(
             mj_data, camera=cfg.env_config.render_camera_name, scene_option=scene_option
         )
-        pixels = renderer.render()
-        frames.append(pixels)
+        frames.append(renderer.render())
+
     return frames, render_fps
 
 

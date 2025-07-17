@@ -15,9 +15,6 @@ import logging
 from omegaconf import DictConfig, OmegaConf
 import orbax.checkpoint as ocp
 
-import pdb
-
-
 def _hash_config(cfg: DictConfig) -> str:
     """Create a hash of the config for consistency checking."""
     # Convert to dict and create a stable hash

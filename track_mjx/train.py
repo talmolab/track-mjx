@@ -45,12 +45,6 @@ from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
 
-jax.config.update(
-    "jax_compilation_cache_dir", "/home/mila/a/aidan.sirbu/track-mjx/jax_cache"
-)
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", 10240)  # 10KB
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 _WALKERS = {

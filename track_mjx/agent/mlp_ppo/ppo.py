@@ -227,7 +227,8 @@ def train(
       use_kl_schedule: whether to use a ramping schedule for the kl weight in the PPO loss
         (intention network variational layer)
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
-      checkpoint_callback: an optional callback function to call after saving a checkpoint
+      checkpoint_callback: a callback function that is called after checkpointing to update
+        the json file which contains the run state for preemption handling
 
 
     Returns:

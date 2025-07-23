@@ -38,6 +38,9 @@ class RewardConfig:
     bodypos_reward_exp_scale: float
     endeff_reward_exp_scale: float
     penalty_pos_distance_scale: jp.ndarray
+    var_window_size: int = 50
+    var_coeff: float = 5e-2
+    jerk_coeff: float = 5e-4
 
     def __post_init__(self):
         if isinstance(self.penalty_pos_distance_scale, list) or isinstance(

@@ -767,7 +767,12 @@ def train(
             # Save checkpoint
             if ckpt_mgr is not None:
                 checkpointing.save(
-                    ckpt_mgr, it, policy_param, _unpmap(training_state), config_dict, checkpoint_callback
+                    ckpt_mgr,
+                    it,
+                    policy_param,
+                    _unpmap(training_state),
+                    config_dict,
+                    checkpoint_callback,
                 )
 
     total_steps = current_step

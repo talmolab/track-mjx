@@ -35,7 +35,7 @@ def load_config_from_checkpoint(
                 config=ocp.args.JsonRestore(),
             ),
         )["config"]
-         # TODO: Fill in missing cfg keys--remove once cfg structure is stable
+        # TODO: Fill in missing cfg keys--remove once cfg structure is stable
         if "use_lstm" not in cfg["train_setup"]["train_config"]:
             cfg["train_setup"]["train_config"]["use_lstm"] = False
         if "get_activation" not in cfg["train_setup"]["train_config"]:
@@ -166,7 +166,7 @@ def make_abstract_policy(cfg: OmegaConf, seed: int = 1):
     """
     Create a random policy from a config.
     """
-    use_lstm = False #cfg["train_setup"]["train_config"]["use_lstm"]
+    use_lstm = False  # cfg["train_setup"]["train_config"]["use_lstm"]
     if use_lstm:
         losses = lstm_losses
     else:
@@ -221,7 +221,7 @@ def make_ppo_network_from_cfg(cfg):
     """
     Create a PPONetwork from a config.
     """
-    lstm = False #cfg["train_setup"]["train_config"]["use_lstm"]
+    lstm = False  # cfg["train_setup"]["train_config"]["use_lstm"]
     if lstm:
         ppo_networks = lstm_ppo_networks
     else:
@@ -297,7 +297,7 @@ def save(ckpt_mgr, step, policy, training_state, config, checkpoint_callback=Non
             config=ocp.args.JsonSave(config),
         ),
     )
-        
+
     # Call the callback after successful checkpoint save
     if checkpoint_callback is not None:
         try:

@@ -1,0 +1,169 @@
+data_path: data/transform_snips.h5
+
+env_config:
+  env_name: celegans_multi_clip
+  task_name: imitation
+  walker_name: celegans
+  render_camera_name: track
+  render_fps: 5
+
+  env_args:
+    solver: "cg"
+    iterations: 4
+    ls_iterations: 4
+    physics_steps_per_control_step: 5
+    reset_noise_scale: 1e-3
+    mj_model_timestep: 0.002
+    mocap_hz: 50
+
+  reward_weights:
+    too_far_dist: 0.01
+    bad_pose_dist: 20
+    bad_quat_dist: 1
+    ctrl_cost_weight: 0.02
+    ctrl_diff_cost_weight: 0.02
+    energy_cost_weight: 0.001
+    pos_reward_weight: 1.0
+    quat_reward_weight: 1.0
+    joint_reward_weight: 1.0
+    angvel_reward_weight: 0.0
+    bodypos_reward_weight: 0.0
+    endeff_reward_weight: 1.0
+    healthy_z_range: [0.0325, 0.5]
+    pos_reward_exp_scale: 400.0
+    quat_reward_exp_scale: 4.0
+    joint_reward_exp_scale: 0.25
+    angvel_reward_exp_scale: 0.5
+    bodypos_reward_exp_scale: 8.0
+    endeff_reward_exp_scale: 500.0
+    penalty_pos_distance_scale: [1.0, 1.0, 0.2]
+
+reference_config:
+  clip_length: 250
+  random_init_range: 50
+  traj_length: 5
+
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [512,512,512]
+  decoder_layer_sizes: [512,512,512]
+  critic_layer_sizes: [512,512,512]
+  intention_size: 60
+  kl_schedule: True # Whether to use a ramping KL schedule
+  kl_weight: 1e-4 # The maximum weight if schedule is True
+  hidden_state_size: 512
+  hidden_layer_num: 3
+
+train_setup:
+  agent_name: celegans
+  run_name: imitation_init_run
+  checkpoint_to_restore:
+  train_test_split_info: # "data/train_test_split_rodent.json" # Path to the train/test split file, records the index
+  # Ratio of training data of the whole training dataset. Needs to be in the train_test_split_info["train_subset"] key. 
+  # If not, please run the `notebooks/sample_efficiency_dev.ipynb` notebook to generate the train/test split file.
+  train_subset_ratio: 0.5
+  checkpoint_max_to_keep: 
+  checkpoint_keep_period: 
+  eval_every: 50_000_000
+  episode_length: 200
+  reset_every: 50_000_000
+  train_config:
+    num_envs: 2048
+    num_timesteps: 15_000_000_000
+    batch_size: 1024
+    num_minibatches: 8
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2     
+    discounting: 0.95
+    action_repeat: 1
+    entropy_cost: 5e-2
+    reward_scaling: 1
+    normalize_observations: True
+    unroll_length: 20
+    seed: 0
+    get_activation: False
+    use_lstm: False
+    deterministic_eval: False
+
+logging_config:
+  project_name: con3trol
+  group_name: 
+  clip_id: -1
+  model_path: model_checkpoints
+  algo_name: ppo
+  rollout_metrics:
+    - pos_reward
+    - quat_reward
+    - joint_reward
+    - angvel_reward
+    - bodypos_reward
+    - endeff_reward
+    - summed_pos_distance
+    - joint_distance
+    - quat_distance
+    - ctrl_cost
+    - ctrl_diff_cost
+    - energy_cost
+    - too_far
+    - bad_pose
+    - bad_quat
+    - fall
+
+walker_config:
+  torque_actuators: False 
+  rescale_factor: 1.0
+  joint_names:
+    - motor1_rot 
+    - motor2_rot 
+    - rot4
+    - rot5
+    - rot6
+    - rot7
+    - rot8
+    - rot9
+    - rot10 
+    - rot11
+    - rot12
+    - rot13
+    - rot14
+    - rot15
+    - rot16
+    - rot17
+    - rot18
+    - rot19
+    - rot20
+    - rot21
+    - rot22
+    - rot23
+    - rot24
+    - rot25
+  body_names:
+    - torso1_body
+    - torso2_body
+    - torso3_body
+    - torso4_body
+    - torso5_body
+    - torso6_body
+    - torso7_body 
+    - torso8_body
+    - torso9_body
+    - torso10_body
+    - torso11_body
+    - torso12_body
+    - torso13_body
+    - torso14_body
+    - torso15_body
+    - torso16_body
+    - torso17_body
+    - torso18_body
+    - torso19_body
+    - torso20_body
+    - torso21_body
+    - torso22_body
+    - torso23_body
+    - torso24_body
+    - torso25_body
+  end_eff_names:
+    - torso1_body
+    - torso25_body

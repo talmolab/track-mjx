@@ -41,6 +41,7 @@ from track_mjx.agent import wandb_logging
 from track_mjx.analysis import render
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
+from track_mjx.environment.walker.celegans import C_Elegans
 from track_mjx.environment.task.reward import RewardConfig
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -48,6 +49,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 _WALKERS = {
     "rodent": Rodent,
     "fly": Fly,
+    "celegans": C_Elegans
 }
 
 
@@ -64,6 +66,7 @@ def main(cfg: DictConfig):
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
+    envs.register_environment("celegans_multi_clip", MultiClipTracking)
 
     # Generate a new run_id and associated checkpoint path
     run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")

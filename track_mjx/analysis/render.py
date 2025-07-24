@@ -40,7 +40,14 @@ import functools
 _BASE_XML_PATHS = {
     "rodent": str(Path(__file__).parent.parent / "environment/walker/assets/rodent/rodent.xml"),
     "fly": str(Path(__file__).parent.parent / "environment/walker/assets/fruitfly/fruitfly_force.xml"),
+    "celegans": str(Path(__file__).parent.parent / "environment/walker/assets/celegans/celegans.xml"),
 }
+
+_ROOT_NAME = {
+    "rodent": "walker",
+    "fly": "thorax",
+    "celegans": "torso1_body",
+    }
 
 def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to switch to a headless backend during function execution.
@@ -68,12 +75,14 @@ def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
 def make_ghost_pair(
     xml_path: str,
     *,
+    root_name: str = "walker",
     scale: float = 1.0,
 ) -> Tuple[mujoco.MjSpec, mujoco.MjModel, str]:
     """Build output XML containing the original model plus a ghost copy.
 
     Args:
         input_xml_str (str): The XML string of the original model.
+        root_name (str, optional): The name of the root body. Defaults to "walker".
         scale (float, optional): Scale factor for the ghost model. Defaults to 1.0.
         rgba (Tuple[float, float, float, float], optional): Color and transparency for ghost model. Defaults to (0.8, 0.8, 0.8, 0.2).
 
@@ -95,7 +104,7 @@ def make_ghost_pair(
     # add a frame to the worldbody to attach the ghost body
     frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0],
                                  quat=[0,0,0,0])
-    frame.attach_body(ghost.body('walker'), str(0), str(0))
+    frame.attach_body(ghost.body(root_name), str(0), str(0))
     
     # E) Compile & write out
     model = base.compile()
@@ -120,7 +129,7 @@ def make_rollout_renderer(
         xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
         if render_ghost:
             _, mj_model, _ = make_ghost_pair(
-                xml_path, scale=cfg.walker_config.rescale_factor
+                xml_path, root_name=_ROOT_NAME[cfg.env_config.walker_name], scale=cfg.walker_config.rescale_factor
             )
         else:
             base = mujoco.MjSpec.from_file(xml_path)

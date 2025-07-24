@@ -19,7 +19,6 @@ from track_mjx.environment.walker import spec_utils
 from jax.flatten_util import ravel_pytree
 
 
-
 class SingleClipTracking(PipelineEnv):
     """Tracking task for a continuous reference clip."""
 
@@ -296,9 +295,15 @@ class SingleClipTracking(PipelineEnv):
             pipeline_state=data, obs=obs, reward=reward, done=done, info=info
         )
 
+    def _get_torso_name(self) -> str:
+        """Get name of walker torso body."""
+        torso_name = mujoco.mj_id2name(self.walker._mj_model, mujoco.mjtObj.mjOBJ_BODY, self.walker.torso_idx)
+        return torso_name
+
     def _get_appendages_pos(self, data: mjx.Data) -> jp.ndarray:
         """Get appendages positions from the environment."""
-        torso = data.bind(self._mjx_model, self._mj_spec.body("torso"))
+
+        torso = data.bind(self._mjx_model, self._mj_spec.body(self.walker.torso_name))
         positions = jp.vstack(
             [
                 data.bind(self._mjx_model, self._mj_spec.body(f"{name}")).xpos
@@ -314,8 +319,8 @@ class SingleClipTracking(PipelineEnv):
         qpos = data.qpos[7:] # skip the root joint
         qvel = data.qvel[6:] # skip the root joint velocity
         actuator_ctrl = data.qfrc_actuator
-        _, body_height, _ = data.bind(self._mjx_model, self._mj_spec.body(f"torso")).xpos
-        world_zaxis = data.bind(self._mjx_model, self._mj_spec.body(f"torso")).xmat.flatten()[6:]
+        _, body_height, _ = data.bind(self._mjx_model, self._mj_spec.body(self.walker.torso_name)).xpos
+        world_zaxis = data.bind(self._mjx_model, self._mj_spec.body(self.walker.torso_name)).xmat.flatten()[6:]
         appendages_pos = self._get_appendages_pos(data)
         proprioception = jp.concatenate(
             [

@@ -33,6 +33,7 @@ class Fly(BaseWalker):
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
+        self._torso_name = "thorax"
         # 1) Build the physics model via MjSpec
         self._mj_spec = self._build_spec(torque_actuators, rescale_factor)
         self._mj_model = self._mj_spec.compile()  # mujoco.mjx.Model wrapper
@@ -96,4 +97,4 @@ class Fly(BaseWalker):
         )
 
         # Treat thorax as torso
-        self._torso_idx = self._mjcf_model.model.name2id("thorax", "body")
+        self._torso_idx = self._mjcf_model.model.name2id(self.torso_name, "body")

@@ -30,6 +30,7 @@ class BaseWalker(ABC):
     _joint_names: list[str]         = field(init=False, repr=False)
     _body_names:  Sequence[str]        = field(init=False, repr=False)
     _end_eff_names: Sequence[str]      = field(init=False, repr=False)
+    _torso_name: str                   = field(init=False, repr=False)
     _body_idxs:   jp.ndarray        = field(init=False, repr=False)
     _endeff_idxs: jp.ndarray        = field(init=False, repr=False)
     _torso_idx:   jp.ndarray        = field(init=False, repr=False)
@@ -65,6 +66,36 @@ class BaseWalker(ABC):
         - self._torso_idx
         """
         pass
+
+    @property
+    def joint_names(self) -> list[str]:
+        """Get joint names."""
+        return self._joint_names
+
+    @property
+    def body_names(self) -> list[str]:
+        """Get body names."""
+        return self._body_names
+
+    @property
+    def torso_name(self) -> str:
+        """Get torso name."""
+        return self._torso_name
+
+    @property
+    def end_eff_names(self) -> list[str]:
+        """Get end effector names."""
+        return self._end_eff_names
+
+    @property
+    def torque_actuators(self) -> bool:
+        """Get torque actuators."""
+        return self._torque_actuators
+
+    @property
+    def rescale_factor(self) -> float:
+        """Get rescale factor."""
+        return self._rescale_factor
 
     @property
     def joint_idxs(self) -> jp.ndarray:

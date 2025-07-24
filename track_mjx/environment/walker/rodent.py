@@ -39,7 +39,7 @@ class Rodent(BaseWalker):
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
-
+        self._torso_name = "torso"
         # 1) Build the physics model via MjSpec
         self._mj_spec = self._build_spec(torque_actuators, rescale_factor)
         self._mj_model = self._mj_spec.compile()  # mujoco.mjx.Model wrapper
@@ -89,24 +89,24 @@ class Rodent(BaseWalker):
         self._joint_idxs = jp.array(
             [
                 mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, j)
-                for j in self._joint_names
+                for j in self.joint_names
             ]
         )
 
         self._body_idxs = jp.array(
             [
                 mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, b)
-                for b in self._body_names
+                for b in self.body_names
             ]
         )
 
         self._endeff_idxs = jp.array(
             [
                 mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, e)
-                for e in self._end_eff_names
+                for e in self.end_eff_names
             ]
         )
 
         self._torso_idx = mujoco.mj_name2id(
-            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso"
+            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, self.torso_name
         )

@@ -59,7 +59,7 @@ _ROOT_BODY_NAMES = {
     "rodent": "walker",
     "fly": "thorax",
     "stick": "reference_base",
-    "celegans": str(Path(__file__).parent.parent / "environment/walker/assets/celegans/celegans_fast.xml"),
+    "celegans": "torso1_body",
 }
 
 _ROOT_NAME = {
@@ -68,7 +68,6 @@ _ROOT_NAME = {
     "stick": "reference_base",
     "celegans": "torso1_body",
 }
-
 def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to switch to a headless backend during function execution.
 
@@ -126,7 +125,6 @@ def make_ghost_pair(
     frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0],
                                  quat=[0,0,0,0])
     frame.attach_body(ghost.body(root_body_name), "", "ghost")
-
     # E) Compile & write out
     model = base.compile()
     xml = base.to_xml()

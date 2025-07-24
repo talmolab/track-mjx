@@ -36,7 +36,6 @@ class BaseWalker(ABC):
     _mjcf_model: Any = field(init=False, repr=False)
     sys: mujoco.MjModel = field(init=False, repr=False)
     _mj_model: mujoco.MjModel = field(init=False, repr=False)
-    _mj_spec: mujoco.MjSpec = field(init=False, repr=False)
 
     @abstractmethod
     def _build_spec(

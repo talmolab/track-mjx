@@ -175,11 +175,11 @@ def make_intention_policy(
         latents=latent_size,
     )
 
-    def apply(processor_params, policy_params, obs, key, get_activation: bool = False):
+    def apply(processor_params, policy_params, obs, key, deterministic: bool = False, get_activation: bool = False):
         """Applies the policy network with observation normalizer, the output is the action distribution parameters."""
         obs = preprocess_observations_fn(obs, processor_params)
         return policy_module.apply(
-            policy_params, obs=obs, key=key, get_activation=get_activation
+            policy_params, obs=obs, key=key, deterministic=deterministic, get_activation=get_activation
         )
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))

@@ -1,4 +1,4 @@
-"""All reward calculation and reward calculation helper functions"""
+f"""All reward calculation and reward calculation helper functions"""
 
 from jax import numpy as jp
 import numpy as np
@@ -424,4 +424,109 @@ def compute_tracking_rewards(
         joint_distance,
         summed_pos_distance,
         quat_distance,
+    )
+
+@struct.dataclass
+class RewardConfigReach:
+    """Weights and scales for the reaching reward terms.
+    Initialized through env_config.reward_weights in the config.yaml file.
+    """
+
+    ctrl_cost_weight: float
+    ctrl_diff_cost_weight: float
+    energy_cost_weight: float
+    joint_reward_weight: float
+    endeff_reward_weight: float
+    joint_reward_exp_scale: float
+    endeff_reward_exp_scale: float
+    joint_penalty_threshold: float  # Threshold for joint distance penalty
+    joint_penalty_weight: float  # Threshold for joint distance penalty
+
+
+def compute_penalty_terms_reach(
+    joint_distance: jp.ndarray,
+    joint_penalty_threshold: float,
+    joint_penalty_weight: float,
+) -> tuple[jp.ndarray, jp.ndarray]:
+    """Computes penalty terms for reaching tasks based on joint distance.
+
+    Args:
+        joint_distance: Distance in joint space.
+        joint_penalty_threshold: Threshold for joint distance penalty.
+        joint_penalty_weight: Weight for the joint penalty.
+
+    Returns:
+        Tuple[jp.ndarray, jp.ndarray]: Penalty for bad joint pose and the joint distance.
+    """
+    bad_pose = jp.where(joint_distance > joint_penalty_threshold, 1.0, 0.0)
+    penalty = joint_penalty_weight * bad_pose
+    return penalty, joint_distance
+
+
+def compute_reaching_rewards(
+    data: MjData,
+    reference_frame: ReferenceClip,
+    walker: BaseWalker,
+    action: jp.ndarray,
+    info: dict[str, jp.ndarray],
+    reward_config: RewardConfigReach,
+) -> tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
+    """Computes reaching rewards and penalties for motion imitation.
+
+    Args:
+        data: Current state MjData object.
+        reference_frame: Reference trajectory object.
+        walker: Base walker object.
+        action: Current action.
+        info: Dictionary of information for logging
+        reward_config: Reward configuration object.
+
+    Returns:
+        Tuple containing: joint_reward, endeff_reward, ctrl_cost, ctrl_diff_cost, 
+        energy_cost, joint_distance, joint_penalty
+    """
+
+    joint_array = data.qpos
+    reference_frame_joint = reference_frame.joints
+    joint_reward, joint_distance = compute_joint_reward(
+        joint_array,
+        reference_frame_joint,
+        reward_config.joint_reward_weight,
+        reward_config.joint_reward_exp_scale,
+    )
+
+    endeff_array = walker.get_end_effector_positions(data.xpos)
+    reference_frame_endeff = reference_frame.body_positions[walker.endeff_idxs]
+    endeff_reward = compute_endeff_reward(
+        endeff_array,
+        reference_frame_endeff,
+        reward_config.endeff_reward_weight,
+        reward_config.endeff_reward_exp_scale,
+    )
+
+    ctrl_cost = compute_ctrl_cost(action, reward_config.ctrl_cost_weight)
+    ctrl_diff_cost = compute_ctrl_diff_cost(
+        action, info["prev_ctrl"], reward_config.ctrl_diff_cost_weight
+    )
+
+    energy_cost = compute_energy_cost(
+        data.qvel,
+        data.qfrc_actuator,
+        reward_config.energy_cost_weight,
+    )
+
+    joint_penalty, joint_distance = compute_penalty_terms_reach(
+        joint_distance,
+        reward_config.joint_penalty_threshold,
+        reward_config.joint_penalty_weight,
+    )
+
+    return (
+        joint_reward,
+        endeff_reward,
+        ctrl_cost,
+        ctrl_diff_cost,
+        energy_cost,
+        joint_distance,
+        joint_penalty,
     )

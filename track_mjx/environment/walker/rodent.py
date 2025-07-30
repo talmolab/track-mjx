@@ -61,8 +61,9 @@ class Rodent(BaseWalker):
             mujoco.MjSpec: mujoco spec that contains the model
         """
         path = Path(__file__).parent / _XML_PATH
-        xml_str = path.read_text()
-        spec = mujoco.MjSpec.from_string(xml_str)
+        # reading the xml locally will destroy the relative path
+        # use mj_spec from file instead of directly reading the text
+        spec = mujoco.MjSpec.from_file(str(path))
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):

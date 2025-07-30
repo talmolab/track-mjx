@@ -31,6 +31,7 @@ from pathlib import Path
 from datetime import datetime
 import logging
 import json
+import fcntl
 
 from track_mjx.io import load
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
@@ -38,6 +39,7 @@ from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
+from track_mjx.agent import preemption
 from track_mjx.analysis import render
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
@@ -68,12 +70,38 @@ def main(cfg: DictConfig):
     envs.register_environment("fly_multi_clip", MultiClipTracking)
     envs.register_environment("celegans_multi_clip", MultiClipTracking)
 
-    # Generate a new timestamp and associated checkpoint path
-    timestamp = run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
-    # TODO: Use a base path given by the config
-    checkpoint_path = hydra.utils.to_absolute_path(
-        f"./{cfg.logging_config.model_path}/{timestamp}"
-    )
+    # Check for existing run state (preemption handling)
+    existing_run_state = preemption.discover_existing_run_state(cfg)
+
+    # Auto-preemption resume logic
+    if existing_run_state:
+        # Resume from existing run
+        run_id = existing_run_state["run_id"]
+        checkpoint_path = existing_run_state["checkpoint_path"]
+        logging.info(f"Resuming from existing run: {run_id}")
+        # Add checkpoint path to config to use orbax for resuming
+        cfg.train_setup["checkpoint_to_restore"] = checkpoint_path
+    # If manually passing json run_state
+    elif cfg.train_setup["restore_from_run_state"] is not None:
+        # Access file path
+        base_path = Path(cfg.logging_config.model_path).resolve()
+        full_path = base_path / cfg.train_setup["restore_from_run_state"]
+        # Read json with file locking to prevent concurrent access
+        with open(full_path, "r") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            existing_run_state = json.load(f)
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        run_id = existing_run_state["run_id"]
+        checkpoint_path = existing_run_state["checkpoint_path"]
+        logging.info(f"Restoring from run state: {run_id}")
+        # Add checkpoint path to config to use orbax for resuming
+        cfg.train_setup["checkpoint_to_restore"] = checkpoint_path
+    # If no existing run state, generate a new run_id and checkpoint path
+    else:
+        # Generate a new run_id and associated checkpoint path
+        run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
+        # Use a base path given by the config
+        checkpoint_path = f"{cfg.logging_config.model_path}/{run_id}"
 
     # Load the checkpoint's config
     if cfg.train_setup["checkpoint_to_restore"] is not None:
@@ -86,9 +114,9 @@ def main(cfg: DictConfig):
                 cfg.train_setup["checkpoint_to_restore"]
             )
         )
-        cfg.train_setup["checkpoint_to_restore"] = checkpoint_to_restore
-        checkpoint_path = Path(checkpoint_to_restore)
-        run_id = checkpoint_path.name
+        cfg.train_setup["checkpoint_to_restore"] = str(checkpoint_to_restore)
+        checkpoint_path = str(checkpoint_to_restore)
+        run_id = os.path.basename(checkpoint_path)
 
     # Convert config to dict TODO: do we need this?
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
@@ -211,6 +239,44 @@ def main(cfg: DictConfig):
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
 
+    run_id = f"{cfg.logging_config.exp_name}_{run_id}"
+
+    # Determine wandb run ID for resuming
+    if existing_run_state:
+        wandb_run_id = existing_run_state["wandb_run_id"]
+        wandb_resume = "must"  # Must resume the exact run
+        logging.info(f"Resuming wandb run: {wandb_run_id}")
+    else:
+        wandb_run_id = run_id
+        wandb_resume = "allow"  # Allow resuming if run exists
+        logging.info(f"Starting new wandb run: {wandb_run_id}")
+
+    wandb.init(
+        project=cfg.logging_config.project_name,
+        config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
+        notes=f"",
+        id=wandb_run_id,
+        resume=wandb_resume,
+        group=cfg.logging_config.group_name,
+    )
+
+    # Save initial run state after wandb initialization
+    if not existing_run_state:
+        preemption.save_run_state(
+            cfg=cfg,
+            run_id=run_id,
+            checkpoint_path=checkpoint_path,
+            wandb_run_id=wandb.run.id,
+        )
+
+    # Create the checkpoint callback with the correct wandb_run_id
+    checkpoint_callback = preemption.create_checkpoint_callback(
+        cfg=cfg,
+        run_id=run_id,
+        checkpoint_path=checkpoint_path,
+        wandb_run_id=wandb.run.id,
+    )
+
     train_fn = functools.partial(
         ppo.train,
         **train_config,
@@ -231,27 +297,7 @@ def main(cfg: DictConfig):
             if "freeze_decoder" not in cfg.train_setup
             else cfg.train_setup.freeze_decoder
         ),
-    )
-
-    if cfg.logging_config.run_id is not None:
-        run_id = f"{cfg.logging_config.run_id}_{timestamp}"
-    else:
-        run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
-
-    logging.info(f"run_id: {run_id}")
-
-    if cfg.logging_config.notes is not None:
-        notes = cfg.logging_config.notes
-    else:
-        notes = ""
-        
-    wandb.init(
-        project=cfg.logging_config.project_name,
-        config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
-        notes=notes,
-        id=run_id,
-        resume="allow",
-        group=cfg.logging_config.group_name,
+        checkpoint_callback=checkpoint_callback,
     )
 
     def wandb_progress(num_steps, metrics):
@@ -289,6 +335,13 @@ def main(cfg: DictConfig):
         progress_fn=wandb_progress,
         policy_params_fn=policy_params_fn,  # fill in the rest in training
     )
+
+    # Clean up run state after successful completion
+    try:
+        preemption.cleanup_run_state(cfg)
+        logging.info("Training completed successfully, cleaned up run state")
+    except Exception as e:
+        logging.warning(f"Failed to cleanup run state: {e}")
 
 
 if __name__ == "__main__":

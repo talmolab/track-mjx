@@ -188,7 +188,7 @@ def render_rollout(
     else:
         qref = rollout["qposes_ref"]
         # rollout qpos comes first, then reference qpos
-        qpos_list = [np.concatenate((qr, qp)) for qp, qr in zip(qroll, qref)]
+        qpos_list = [np.concatenate((qp, qr)) for qp, qr in zip(qroll, qref)]
         render_msg = "MuJoCo Rendering with Ghost Model..."
 
     # Build renderer and MuJoCo data

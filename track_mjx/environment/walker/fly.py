@@ -4,7 +4,7 @@ from pathlib import Path
 from brax.io import mjcf as mjcf_brax
 import mujoco
 from track_mjx.environment.walker.base import BaseWalker
-from track_mjx.environment.walker.spec_utils import _scale_body_tree
+from track_mjx.environment.walker import spec_utils
 
 _XML_PATH = "assets/fruitfly/fruitfly_force_fast.xml"
 
@@ -30,6 +30,7 @@ class Fly(BaseWalker):
             torque_actuators: Whether to use torque actuators. Default is False.
             rescale_factor: Factor to rescale the model. Default is 0.9.
         """
+        self._torso_name = "thorax"
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
@@ -55,24 +56,25 @@ class Fly(BaseWalker):
             mujoco.MjSpec: mujoco spec that contains the model
         """
         path = Path(__file__).with_suffix("").parent / _XML_PATH
-        xml_str = path.read_text()
-        spec = mujoco.MjSpec.from_string(xml_str)
+        # reading the xml locally will destroy the relative path
+        # use mj_spec from file instead of directly reading the text
+        spec = mujoco.MjSpec.from_file(str(path))
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):
-            for motor in spec.actuator.motors:  # type: ignore[attr-defined]
+            logging.info("Converting to torque actuators")
+            for actuator in spec.actuators:  # type: ignore[attr-defined]
                 # Set gain to max force; remove bias terms if present
-                if motor.forcerange.size >= 2:
-                    motor.gainprm[0] = motor.forcerange[1]
-                # Safely delete attributes that may not exist in spec version
-                for attr in ("biastype", "biasprm"):
-                    if hasattr(motor, attr):
-                        delattr(motor, attr)
+                if actuator.forcerange.size >= 2:
+                    actuator.gainprm[0] = actuator.forcerange[1]
+                # reset custom bias terms
+                actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
+                actuator.biasprm = jp.zeros((10, 1))
 
         # b) Uniform rescale (geometry + body positions)
-        if abs(rescale_factor - 1.0) > 1e-6:
-            for top in spec.worldbody.find_child("thorax"):
-                _scale_body_tree(top, rescale_factor)
+        if rescale_factor != 1.0:
+            logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
+            spec = spec_utils.dm_scale_spec(spec, rescale_factor)
 
         return spec
 
@@ -80,21 +82,26 @@ class Fly(BaseWalker):
         """Initialize indices for joints, bodies, end-effectors, and thorax."""
         self._joint_idxs = jp.array(
             [
-                self._mjcf_model.model.name2id(joint, "joint")
-                for joint in self._joint_names
+                mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, j)
+                for j in self._joint_names
             ]
         )
 
         self._body_idxs = jp.array(
-            [self._mjcf_model.model.name2id(body, "body") for body in self._body_names]
+            [
+                mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, b)
+                for b in self._body_names
+            ]
         )
 
         self._endeff_idxs = jp.array(
             [
-                self._mjcf_model.model.name2id(end_eff, "body")
-                for end_eff in self._end_eff_names
+                mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, e)
+                for e in self._end_eff_names
             ]
         )
 
         # Treat thorax as torso
-        self._torso_idx = self._mjcf_model.model.name2id(self.torso_name, "body")
+        self._torso_idx = mujoco.mj_name2id(
+            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, self._torso_name
+        )

@@ -72,7 +72,7 @@ class Fly(BaseWalker):
 
         # b) Uniform rescale (geometry + body positions)
         if rescale_factor != 1.0:
-            print(f"Rescaling body tree with scale factor {rescale_factor}")
+            logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
             # parent = spec.body("walker")
             # spec_utils._scale_body_tree(parent, rescale_factor)
             spec = spec_utils.dm_scale_spec(spec, rescale_factor)

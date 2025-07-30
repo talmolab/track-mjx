@@ -91,6 +91,23 @@ logging_config:
   clip_id: -1
   model_path: model_checkpoints/flybody
   algo_name: ppo
+  rollout_metrics:
+    - pos_reward
+    - quat_reward
+    - joint_reward
+    - angvel_reward
+    - bodypos_reward
+    - endeff_reward
+    - summed_pos_distance
+    - joint_distance
+    - quat_distance
+    - ctrl_cost
+    - ctrl_diff_cost
+    - energy_cost
+    - too_far
+    - bad_pose
+    - bad_quat
+    - fall
 
 walker_config:
   torque_actuators: False 

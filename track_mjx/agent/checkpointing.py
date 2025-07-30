@@ -35,7 +35,7 @@ def load_config_from_checkpoint(
                 config=ocp.args.JsonRestore(),
             ),
         )["config"]
-         # TODO: Fill in missing cfg keys--remove once cfg structure is stable
+        # TODO: Fill in missing cfg keys--remove once cfg structure is stable
         if "use_lstm" not in cfg["train_setup"]["train_config"]:
             cfg["train_setup"]["train_config"]["use_lstm"] = False
         if "get_activation" not in cfg["train_setup"]["train_config"]:
@@ -166,7 +166,7 @@ def make_abstract_policy(cfg: OmegaConf, seed: int = 1):
     """
     Create a random policy from a config.
     """
-    use_lstm = False #cfg["train_setup"]["train_config"]["use_lstm"]
+    use_lstm = False  # cfg["train_setup"]["train_config"]["use_lstm"]
     if use_lstm:
         losses = lstm_losses
     else:
@@ -221,7 +221,7 @@ def make_ppo_network_from_cfg(cfg):
     """
     Create a PPONetwork from a config.
     """
-    lstm = False #cfg["train_setup"]["train_config"]["use_lstm"]
+    lstm = False  # cfg["train_setup"]["train_config"]["use_lstm"]
     if lstm:
         ppo_networks = lstm_ppo_networks
     else:
@@ -277,9 +277,17 @@ def make_ppo_network_from_cfg(cfg):
     return ppo_network
 
 
-def save(ckpt_mgr, step, policy, training_state, config):
+def save(ckpt_mgr, step, policy, training_state, config, checkpoint_callback=None):
     """Save a checkpoint during training.
     Consists of policy, training state and config.
+
+    Args:
+    ckpt_mgr: Orbax checkpoint manager
+    step: Training step number
+    policy: Policy parameters
+    training_state: Training state
+    config: Config dictionary
+    checkpoint_callback: Optional callback function to call after successful save
     """
     ckpt_mgr.save(
         step=step,
@@ -289,3 +297,10 @@ def save(ckpt_mgr, step, policy, training_state, config):
             config=ocp.args.JsonSave(config),
         ),
     )
+
+    # Call the callback after successful checkpoint save
+    if checkpoint_callback is not None:
+        try:
+            checkpoint_callback(step)
+        except Exception as e:
+            logging.warning(f"Checkpoint callback failed: {e}")

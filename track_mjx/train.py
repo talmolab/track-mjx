@@ -43,6 +43,14 @@ from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
 
+# enable JAX persistent compilation cache
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+jax.config.update(
+    "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
+)
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 _WALKERS = {
@@ -51,7 +59,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="config", config_name="fly-mc-intention")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -231,7 +239,7 @@ def main(cfg: DictConfig):
         ),
     )
 
-    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    run_id = f"{cfg.logging_config.exp_name}_{cfg.train_setup.train_subset_ratio}_{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),

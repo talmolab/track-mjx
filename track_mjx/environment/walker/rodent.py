@@ -36,6 +36,7 @@ class Rodent(BaseWalker):
             torque_actuators (bool, optional): whether modify the model to use torque actuators. Defaults to False.
             rescale_factor (float, optional): the rescale factor for the body model. Defaults to 0.9.
         """
+        self._torso_name = "torso"
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
@@ -109,5 +110,5 @@ class Rodent(BaseWalker):
         )
 
         self._torso_idx = mujoco.mj_name2id(
-            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso"
+            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, self._torso_name
         )

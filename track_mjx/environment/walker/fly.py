@@ -30,6 +30,7 @@ class Fly(BaseWalker):
             torque_actuators: Whether to use torque actuators. Default is False.
             rescale_factor: Factor to rescale the model. Default is 0.9.
         """
+        self._torso_name = "thorax"
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
@@ -103,5 +104,5 @@ class Fly(BaseWalker):
 
         # Treat thorax as torso
         self._torso_idx = mujoco.mj_name2id(
-            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, "thorax"
+            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, self._torso_name
         )

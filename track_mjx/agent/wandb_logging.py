@@ -125,11 +125,15 @@ def rollout_logging_fn(
         # Render the walker with the reference expert demonstration trajectory
         qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
         ref_traj = env._get_reference_clip(rollout[0].info)
-        qposes_ref = np.repeat(
-            np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-            env._steps_for_cur_frame,
-            axis=0,
-        )
+
+        # Handle both ReferenceClip (tracking) and ReferenceClipReach (reaching)
+        if hasattr(ref_traj, "position") and hasattr(ref_traj, "quaternion"):
+            ref_qpos = np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints])
+        else:
+            # Reacher reference has only joints
+            ref_qpos = ref_traj.joints
+
+        qposes_ref = np.repeat(ref_qpos, env._steps_for_cur_frame, axis=0)
 
         with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
             for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):

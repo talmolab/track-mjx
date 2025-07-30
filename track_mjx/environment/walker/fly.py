@@ -61,7 +61,7 @@ class Fly(BaseWalker):
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):
-            print("Converting to torque actuators")
+            logging.info("Converting to torque actuators")
             for actuator in spec.actuators:  # type: ignore[attr-defined]
                 # Set gain to max force; remove bias terms if present
                 if actuator.forcerange.size >= 2:

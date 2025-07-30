@@ -88,7 +88,7 @@ logging_config:
   group_name: position_actuator
   exp_name: position_actuator
   clip_id: -1
-  model_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints
+  model_path: model_checkpoints
   algo_name: ppo
   rollout_metrics:
     - pos_reward

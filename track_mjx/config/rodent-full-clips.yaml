@@ -1,4 +1,4 @@
-data_path: ./data/transform_snips.h5 # ./data/transform_coltrane_2021_07_29_1.h5
+data_path: ./data/transform_snips.h5 # ./data/transform_coltrane_2021_07_29_1.h5 # ./data/transform_coltrane_2021_07_29_1.h5
 
 env_config:
   env_name: rodent_multi_clip
@@ -60,6 +60,7 @@ train_setup:
   run_name: vnl_debug
   checkpoint_to_restore:
   train_test_split_info:
+  restore_from_run_state:
   train_subset_ratio: 0.8
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
@@ -68,7 +69,7 @@ train_setup:
   reset_every: 25_000_000
   train_config:
     num_envs: 4096
-    num_timesteps: 5_000_000_000
+    num_timesteps: 4_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
@@ -90,7 +91,7 @@ logging_config:
   group_name: jerk_cost
   exp_name: 
   clip_id: -1
-  model_path: model_checkpoints
+  model_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints
   algo_name: ppo
   rollout_metrics:
     - pos_reward

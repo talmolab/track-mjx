@@ -20,13 +20,13 @@ env_config:
   reward_weights:
     ctrl_cost_weight: 0.0
     ctrl_diff_cost_weight: 0.0
-    energy_cost_weight: 0.0
+    energy_cost_weight: 0.001
     joint_reward_weight: 5.0
     endeff_reward_weight: 0.0
     joint_reward_exp_scale: 1.0
     endeff_reward_exp_scale: 0.0
-    joint_penalty_threshold: .13   
-    joint_penalty_weight: 1.0 
+    joint_penalty_threshold: 0.0   
+    joint_penalty_weight: 0.0 
 
 reference_config:
   clip_length: 100
@@ -38,9 +38,9 @@ network_config:
   encoder_layer_sizes: [512,512,512]
   decoder_layer_sizes: [512,512,512]
   critic_layer_sizes: [512,512,512]
-  intention_size: 12
-  kl_schedule: True 
-  kl_weight: 5e-4 
+  intention_size: 6
+  kl_schedule: False
+  kl_weight: 0.0
   hidden_state_size: 512
   hidden_layer_num: 3
 
@@ -68,7 +68,7 @@ train_setup:
     clipping_epsilon: 0.2     
     discounting: 0.95
     action_repeat: 1
-    entropy_cost: .001
+    entropy_cost: .001 
     reward_scaling: 1
     normalize_observations: True
     unroll_length: 20

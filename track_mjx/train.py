@@ -78,6 +78,11 @@ def main(cfg: DictConfig):
         # Resume from existing run
         run_id = existing_run_state["run_id"]
         checkpoint_path = existing_run_state["checkpoint_path"]
+        # Ensure checkpoint_path is absolute
+        checkpoint_path_obj = Path(checkpoint_path)
+        if not checkpoint_path_obj.is_absolute():
+            checkpoint_path_obj = Path.cwd() / checkpoint_path_obj
+        checkpoint_path = str(checkpoint_path_obj)
         logging.info(f"Resuming from existing run: {run_id}")
         # Add checkpoint path to config to use orbax for resuming
         cfg.train_setup["checkpoint_to_restore"] = checkpoint_path
@@ -93,6 +98,11 @@ def main(cfg: DictConfig):
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         run_id = existing_run_state["run_id"]
         checkpoint_path = existing_run_state["checkpoint_path"]
+        # Ensure checkpoint_path is absolute
+        checkpoint_path_obj = Path(checkpoint_path)
+        if not checkpoint_path_obj.is_absolute():
+            checkpoint_path_obj = Path.cwd() / checkpoint_path_obj
+        checkpoint_path = str(checkpoint_path_obj)
         logging.info(f"Restoring from run state: {run_id}")
         # Add checkpoint path to config to use orbax for resuming
         cfg.train_setup["checkpoint_to_restore"] = checkpoint_path
@@ -100,22 +110,29 @@ def main(cfg: DictConfig):
     else:
         # Generate a new run_id and associated checkpoint path
         run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
-        # Use a base path given by the config
-        checkpoint_path = f"{cfg.logging_config.model_path}/{run_id}"
+        # Use a base path given by the config, ensure it's absolute
+        model_path = Path(cfg.logging_config.model_path)
+        if not model_path.is_absolute():
+            model_path = Path.cwd() / model_path
+        checkpoint_path = str(model_path / run_id)
 
     # Load the checkpoint's config
     if cfg.train_setup["checkpoint_to_restore"] is not None:
         # TODO: We set the restored config's checkpoint_to_restore to itself
         # Because that restored config is used from now on. This is a hack.
         checkpoint_to_restore = cfg.train_setup["checkpoint_to_restore"]
+        # Ensure checkpoint_to_restore is an absolute path
+        checkpoint_to_restore_path = Path(checkpoint_to_restore)
+        if not checkpoint_to_restore_path.is_absolute():
+            checkpoint_to_restore_path = Path.cwd() / checkpoint_to_restore_path
+        checkpoint_to_restore = str(checkpoint_to_restore_path)
+        
         # Load the checkpoint's config and update the run_id and checkpoint path
         cfg = OmegaConf.create(
-            checkpointing.load_config_from_checkpoint(
-                cfg.train_setup["checkpoint_to_restore"]
-            )
+            checkpointing.load_config_from_checkpoint(checkpoint_to_restore)
         )
-        cfg.train_setup["checkpoint_to_restore"] = str(checkpoint_to_restore)
-        checkpoint_path = str(checkpoint_to_restore)
+        cfg.train_setup["checkpoint_to_restore"] = checkpoint_to_restore
+        checkpoint_path = checkpoint_to_restore
         run_id = os.path.basename(checkpoint_path)
 
     # Convert config to dict TODO: do we need this?

@@ -5,7 +5,7 @@ env_config:
   env_name: fly_multi_clip
   task_name: imitation
   walker_name: fly
-  render_camera_name: track1-0
+  render_camera_name: track1
   render_fps: 50
 
   env_args:
@@ -110,7 +110,7 @@ logging_config:
     - fall
 
 walker_config:
-  torque_actuators: False 
+  torque_actuators: True 
   rescale_factor: 1.0
   joint_names:
     - coxa_flexion_T1_left

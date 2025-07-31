@@ -1,4 +1,5 @@
 import jax
+import logging
 from jax import numpy as jp
 from pathlib import Path
 from brax.io import mjcf as mjcf_brax

@@ -16,11 +16,13 @@ from jax import numpy as jnp
 
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+from track_mjx.environment.task.multi_clip_reaching import MultiClipReaching
 from track_mjx.environment import wrappers
 from track_mjx.io import load
 
 from omegaconf import DictConfig
 
+envs.register_environment("mouse_arm_multi_clip", MultiClipReaching)
 envs.register_environment("rodent_single_clip", SingleClipTracking)
 envs.register_environment("rodent_multi_clip", MultiClipTracking)
 envs.register_environment("fly_multi_clip", MultiClipTracking)
@@ -96,6 +98,8 @@ def create_rollout_generator(
         rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(environment)
     elif type(environment) == SingleClipTracking:
         rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(environment)
+    elif type(environment) == MultiClipReaching:
+        rollout_env = wrappers.RenderRolloutWrapperMultiClipTracking(environment)
 
     if cfg["train_setup"]["train_config"]["use_lstm"]:
         rollout_env = wrappers.RenderRolloutWrapperTrackingLSTM(environment)
@@ -224,11 +228,22 @@ def create_rollout_generator(
 
         # Reference and rollout qposes (always logged)
         ref_traj = rollout_env._get_reference_clip(init_state.info)
-        qposes_ref = jnp.repeat(
-            jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-            int(environment._steps_for_cur_frame),
-            axis=0,
-        )
+
+        # Check if we're dealing with ReferenceClipReach (reaching task)
+        if hasattr(ref_traj, 'position') and hasattr(ref_traj, 'quaternion'):
+            # Tracking task
+            qposes_ref = jnp.repeat(
+                jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+                int(environment._steps_for_cur_frame),
+                axis=0,
+            )
+        else:
+            # Reaching task - only has joints
+            qposes_ref = jnp.repeat(
+                ref_traj.joints,
+                int(environment._steps_for_cur_frame),
+                axis=0,
+            )
 
         # Collect qposes from states (always logged)
         qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)

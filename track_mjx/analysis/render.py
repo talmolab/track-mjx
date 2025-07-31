@@ -40,6 +40,7 @@ import functools
 _BASE_XML_PATHS = {
     "rodent": str(Path(__file__).parent.parent / "environment/walker/assets/rodent/rodent.xml"),
     "fly": str(Path(__file__).parent.parent / "environment/walker/assets/fruitfly/fruitfly_force.xml"),
+    "mouse_arm": str(Path(__file__).parent.parent / "environment/reacher/assets/mouse_arm/mouse_arm.xml"),
 }
 
 def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -93,9 +94,14 @@ def make_ghost_pair(
         _recolour_tree(top, rgba=[0.8, 0.8, 0.8, 0.2])
     
     # add a frame to the worldbody to attach the ghost body
-    frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0],
-                                 quat=[0,0,0,0])
-    frame.attach_body(ghost.body('walker'), str(0), str(0))
+    frame = base.worldbody.add_frame(pos=[0.0, 0.0, 0.0],
+                                 euler=[0, -15, 0])
+    
+    if not ghost.worldbody.bodies:
+        raise ValueError("No bodies found in ghost model.")
+
+    ghost_body = ghost.worldbody.bodies[0]
+    frame.attach_body(ghost_body, prefix="ghost_") ### try this!
     
     # E) Compile & write out
     model = base.compile()
@@ -106,17 +112,18 @@ def make_ghost_pair(
 def make_rollout_renderer(
     cfg: Any, render_ghost: bool = True
 ) -> Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]:
-    """Create a renderer and related MuJoCo model and data for rollout visualization.
+    """Build a renderer for rollout visualization.
 
     Args:
-        cfg (Any): Configuration object with environment and walker settings.
+        cfg (Any): Configuration object with environment settings.
         render_ghost (bool, optional): Whether to render the ghost model. Defaults to True.
 
     Returns:
         Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]: Renderer, model, data, and scene options.
     """
 
-    if cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
+    # Check for walker_name or reacher_name
+    if hasattr(cfg.env_config, 'walker_name') and cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
         xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
         if render_ghost:
             _, mj_model, _ = make_ghost_pair(
@@ -127,8 +134,25 @@ def make_rollout_renderer(
             for top in base.worldbody.bodies:
                 _scale_body_tree(top, cfg.walker_config.rescale_factor)
             mj_model = base.compile()
+    elif hasattr(cfg.env_config, 'reacher_name') and cfg.env_config.reacher_name in _BASE_XML_PATHS.keys():
+        xml_path = _BASE_XML_PATHS[cfg.env_config.reacher_name]
+        if render_ghost:
+            _, mj_model, _ = make_ghost_pair(
+                xml_path, scale=cfg.reacher_config.rescale_factor
+            )
+        else:
+            base = mujoco.MjSpec.from_file(xml_path)
+            for top in base.worldbody.bodies:
+                _scale_body_tree(top, cfg.reacher_config.rescale_factor)
+            mj_model = base.compile()
     else:
-        raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
+        # Try to determine which name is available
+        if hasattr(cfg.env_config, 'walker_name'):
+            raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
+        elif hasattr(cfg.env_config, 'reacher_name'):
+            raise ValueError(f"Unknown reacher_name: {cfg.env_config.reacher_name}")
+        else:
+            raise ValueError("Neither walker_name nor reacher_name found in config")
 
     mj_model.opt.solver = {
         "cg": mujoco.mjtSolver.mjSOL_CG,
@@ -156,7 +180,7 @@ def make_rollout_renderer(
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=512, width=512)
+    renderer = mujoco.Renderer(mj_model, height=480, width=640)
 
     return renderer, mj_model, mj_data, scene_option
 

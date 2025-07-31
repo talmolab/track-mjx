@@ -89,19 +89,24 @@ def make_ghost_pair(
     # Deep‑copy the spec to obtain the second (ghost) body
     ghost = base.copy()
 
+    model_path = Path(xml_path).as_posix().lower()
+
     # recolour the ghost body
     for top in ghost.worldbody.bodies:
         _recolour_tree(top, rgba=[0.8, 0.8, 0.8, 0.2])
-    
-    # add a frame to the worldbody to attach the ghost body
-    frame = base.worldbody.add_frame(pos=[0.0, 0.0, 0.0],
-                                 euler=[0, -15, 0])
-    
-    if not ghost.worldbody.bodies:
-        raise ValueError("No bodies found in ghost model.")
 
-    ghost_body = ghost.worldbody.bodies[0]
-    frame.attach_body(ghost_body, prefix="ghost_") ### try this!
+    if "reacher" in model_path:
+        # Reacher: rotate slightly for visibility
+        frame = base.worldbody.add_frame(pos=[0.0, 0.0, 0.0],
+                                 euler=[0, -15, 0])
+        ghost_body = ghost.worldbody.bodies[0]
+        frame.attach_body(ghost_body, prefix="ghost_") ### try this!
+    elif "walker" in model_path:
+        # Walker: shift to the left to compare side-by-side
+        frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0], quat=[0, 0, 0, 0])
+        frame.attach_body(ghost.body("walker"), str(0), str(0))
+    else:
+        raise ValueError(f"Unrecognized model type in path: {xml_path}")
     
     # E) Compile & write out
     model = base.compile()

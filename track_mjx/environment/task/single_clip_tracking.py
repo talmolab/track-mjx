@@ -400,12 +400,26 @@ class SingleClipTracking(PipelineEnv):
             data.qpos,
         )
 
+        # compute velocity-based differences
+        track_vel_local = self.walker.compute_local_track_velocities_with_qpos(
+            ref_traj.velocity, data.qvel, data.qpos
+        )
+        angular_vel_dist = self.walker.compute_angular_velocity_distances(
+            ref_traj.angular_velocity, data.qvel
+        )
+        joint_vel_dist = self.walker.compute_joint_velocity_distances(
+            ref_traj.joints_velocity, data.qvel
+        )
+
         reference_obs = jp.concatenate(
             [
                 track_pos_local,
                 quat_dist,
                 joint_dist,
                 body_pos_dist_local,
+                track_vel_local,
+                angular_vel_dist,
+                joint_vel_dist,
             ]
         )
 

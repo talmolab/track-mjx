@@ -1,11 +1,11 @@
 <?xml version='1.0' encoding='utf-8'?>
-<mujoco model="swimmer">
+<mujoco model="celegans">
   <visual>
     <quality shadowsize="2048" />
     <global offwidth="1920" offheight="1200" elevation="-20" azimuth="120" />
   </visual>
-  <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="/home/aaprasad/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/meshes" />
-  <option density="1.2" integrator="RK4" timestep="0.01" viscosity="0.1" cone="pyramidal" />
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="/home/aaprasad/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/meshes_decimated" />
+  <option density="1.2" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="0.1" cone="pyramidal" />
   <default>
     <geom conaffinity="1" condim="1" contype="1" material="geom" rgba="0.8 0.6 .4 1" />
     <joint armature="0.1" />
@@ -471,6 +471,31 @@
     <pair geom1="floor" geom2="torso23" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
     <pair geom1="floor" geom2="torso24" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
     <pair geom1="floor" geom2="torso25" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    
+    <exclude name="torso1_torso2" body1="torso1_body" body2="torso2_body"/>
+    <exclude name="torso2_torso3" body1="torso2_body" body2="torso3_body"/>
+    <exclude name="torso3_torso4" body1="torso3_body" body2="torso4_body"/>
+    <exclude name="torso4_torso5" body1="torso4_body" body2="torso5_body"/>
+    <exclude name="torso5_torso6" body1="torso5_body" body2="torso6_body"/>
+    <exclude name="torso6_torso7" body1="torso6_body" body2="torso7_body"/>
+    <exclude name="torso7_torso8" body1="torso7_body" body2="torso8_body"/>
+    <exclude name="torso8_torso9" body1="torso8_body" body2="torso9_body"/>
+    <exclude name="torso9_torso10" body1="torso9_body" body2="torso10_body"/>
+    <exclude name="torso10_torso11" body1="torso10_body" body2="torso11_body"/>
+    <exclude name="torso11_torso12" body1="torso11_body" body2="torso12_body"/>
+    <exclude name="torso12_torso13" body1="torso12_body" body2="torso13_body"/>
+    <exclude name="torso13_torso14" body1="torso13_body" body2="torso14_body"/>
+    <exclude name="torso14_torso15" body1="torso14_body" body2="torso15_body"/>
+    <exclude name="torso15_torso16" body1="torso15_body" body2="torso16_body"/>
+    <exclude name="torso16_torso17" body1="torso16_body" body2="torso17_body"/>
+    <exclude name="torso17_torso18" body1="torso17_body" body2="torso18_body"/>
+    <exclude name="torso18_torso19" body1="torso18_body" body2="torso19_body"/>
+    <exclude name="torso19_torso20" body1="torso19_body" body2="torso20_body"/>
+    <exclude name="torso20_torso21" body1="torso20_body" body2="torso21_body"/>
+    <exclude name="torso21_torso22" body1="torso21_body" body2="torso22_body"/>
+    <exclude name="torso22_23" body1="torso22_body" body2="torso23_body"/>
+    <exclude name="torso23_24" body1="torso23_body" body2="torso24_body"/>
+    <exclude name="torso24_25" body1="torso24_body" body2="torso25_body"/>
   </contact>
   <tendon>
     <spatial name="tendon_dbwml1" width="0.002" rgba="0.95 0.3 0.3 1">
@@ -1050,7 +1075,7 @@
     <accelerometer name="accelerometer" site="sidesite1_central" />
     <velocimeter name="velocimeter" site="sidesite1_central" />
     <gyro name="gyro" site="sidesite1_central" />
-    <tendonpos tendon="tendon_dbwml1" />
+    <!-- <tendonpos tendon="tendon_dbwml1" />
     <tendonpos tendon="tendon_dbwml2" />
     <tendonpos tendon="tendon_dbwml3" />
     <tendonpos tendon="tendon_dbwml4" />
@@ -1241,7 +1266,7 @@
     <tendonvel tendon="tendon_vbwmr21" />
     <tendonvel tendon="tendon_vbwmr22" />
     <tendonvel tendon="tendon_vbwmr23" />
-    <tendonvel tendon="tendon_vbwmr24" />
+    <tendonvel tendon="tendon_vbwmr24" /> -->
     <subtreecom body="torso1_body" />
     <framepos objtype="xbody" objname="torso1_body" />
   </sensor>

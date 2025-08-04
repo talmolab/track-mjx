@@ -68,11 +68,11 @@ def main(cfg: DictConfig):
     envs.register_environment("fly_multi_clip", MultiClipTracking)
     envs.register_environment("celegans_multi_clip", MultiClipTracking)
 
-    # Generate a new run_id and associated checkpoint path
-    run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
+    # Generate a new timestamp and associated checkpoint path
+    timestamp = run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
     # TODO: Use a base path given by the config
     checkpoint_path = hydra.utils.to_absolute_path(
-        f"./{cfg.logging_config.model_path}/{run_id}"
+        f"./{cfg.logging_config.model_path}/{timestamp}"
     )
 
     # Load the checkpoint's config
@@ -104,7 +104,6 @@ def main(cfg: DictConfig):
 
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
-    logging.info(f"run_id: {run_id}")
     logging.info(f"Training checkpoint path: {checkpoint_path}")
 
     env_args = cfg.env_config["env_args"]
@@ -234,11 +233,22 @@ def main(cfg: DictConfig):
         ),
     )
 
-    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+    if cfg.logging_config.run_id is not None:
+        run_id = f"{cfg.logging_config.run_id}_{timestamp}"
+    else:
+        run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+
+    logging.info(f"run_id: {run_id}")
+
+    if cfg.logging_config.notes is not None:
+        notes = cfg.logging_config.notes
+    else:
+        notes = ""
+        
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
-        notes=f"",
+        notes=notes,
         id=run_id,
         resume="allow",
         group=cfg.logging_config.group_name,

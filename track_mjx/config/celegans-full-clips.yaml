@@ -17,19 +17,19 @@ env_config:
     mocap_hz: 50
 
   reward_weights:
-    too_far_dist: 0.01
-    bad_pose_dist: 20
-    bad_quat_dist: 1
-    ctrl_cost_weight: 0.02
-    ctrl_diff_cost_weight: 0.02
-    energy_cost_weight: 0.001
+    # too_far_dist: 0.01
+    # bad_pose_dist: 20
+    # bad_quat_dist: 1
+    ctrl_cost_weight: 0 #.02
+    ctrl_diff_cost_weight: 0 #.02
+    energy_cost_weight: 0 #.001
     pos_reward_weight: 1.0
     quat_reward_weight: 1.0
     joint_reward_weight: 1.0
     angvel_reward_weight: 0.0
-    bodypos_reward_weight: 0.0
-    endeff_reward_weight: 1.0
-    healthy_z_range: [0.0325, 0.5]
+    bodypos_reward_weight: 1.0
+    endeff_reward_weight: 0.0 #1.0
+    healthy_z_range: [0.0, 1.0]
     pos_reward_exp_scale: 400.0
     quat_reward_exp_scale: 4.0
     joint_reward_exp_scale: 0.25
@@ -48,7 +48,7 @@ network_config:
   encoder_layer_sizes: [512,512,512]
   decoder_layer_sizes: [512,512,512]
   critic_layer_sizes: [512,512,512]
-  intention_size: 60
+  intention_size: 64
   kl_schedule: True # Whether to use a ramping KL schedule
   kl_weight: 1e-4 # The maximum weight if schedule is True
   hidden_state_size: 512
@@ -88,10 +88,11 @@ train_setup:
 
 logging_config:
   project_name: con3trol
-  group_name: 
+  group_name: "intention_size"
   clip_id: -1
   model_path: model_checkpoints
   algo_name: ppo
+  run_id: celegans_intention=64
   rollout_metrics:
     - pos_reward
     - quat_reward
@@ -111,7 +112,7 @@ logging_config:
     - fall
 
 walker_config:
-  torque_actuators: False 
+  torque_actuators: False  # Changed from False for better performance
   rescale_factor: 1.0
   joint_names:
     - motor1_rot 

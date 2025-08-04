@@ -70,8 +70,14 @@ def main(cfg: DictConfig):
     envs.register_environment("fly_multi_clip", MultiClipTracking)
     envs.register_environment("celegans_multi_clip", MultiClipTracking)
 
-    # Check for existing run state (preemption handling)
     existing_run_state = preemption.discover_existing_run_state(cfg)
+    # Check for existing run state (preemption handling)
+    # Generate a new timestamp and associated checkpoint path
+    timestamp = run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
+    # TODO: Use a base path given by the config
+    checkpoint_path = hydra.utils.to_absolute_path(
+        f"./{cfg.logging_config.model_path}/{timestamp}"
+    )
 
     # Auto-preemption resume logic
     if existing_run_state:
@@ -316,6 +322,27 @@ def main(cfg: DictConfig):
         ),
         checkpoint_callback=checkpoint_callback,
     )
+
+    if cfg.logging_config.run_id is not None:
+        run_id = f"{cfg.logging_config.run_id}_{timestamp}"
+    else:
+        run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.algo_name}_{run_id}"
+
+    logging.info(f"run_id: {run_id}")
+
+    if cfg.logging_config.notes is not None:
+        notes = cfg.logging_config.notes
+    else:
+        notes = ""
+        
+    wandb.init(
+        project=cfg.logging_config.project_name,
+    )
+        config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
+        notes=notes,
+        id=run_id,
+        resume="allow",
+        group=cfg.logging_config.group_name,
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps

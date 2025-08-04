@@ -10,7 +10,7 @@ from track_mjx.environment.walker.base import BaseWalker  # type: ignore
 from track_mjx.environment.walker import spec_utils
 
 
-_XML_PATH = "assets/celegans/celegans.xml"  # relative to this file
+_XML_PATH = "assets/celegans/celegans_fast.xml"  # relative to this file
 
 
 class C_Elegans(BaseWalker):
@@ -66,19 +66,18 @@ class C_Elegans(BaseWalker):
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):
-            for motor in spec.actuator.motors:  # type: ignore[attr-defined]
+            print("Converting to torque actuators")
+            for actuator in spec.actuators:  # type: ignore[attr-defined]
                 # Set gain to max force; remove bias terms if present
-                if motor.forcerange.size >= 2:
-                    motor.gainprm[0] = motor.forcerange[1]
-                # Safely delete attributes that may not exist in spec version
-                for attr in ("biastype", "biasprm"):
-                    if hasattr(motor, attr):
-                        delattr(motor, attr)
+                if actuator.forcerange.size >= 2:
+                    actuator.gainprm[0] = actuator.forcerange[1]
+                # reset custom bias terms
+                actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
+                actuator.biasprm = np.zeros((10, 1))
 
         # b) Uniform rescale (geometry + body positions)
         if abs(rescale_factor - 1.0) > 1e-6:
-            for top in spec.worldbody.find_child("torso1_body"):
-                _scale_body_tree(top, rescale_factor)
+            spec = spec_utils.dm_scale_spec(spec, rescale_factor, "torso1_body")
 
         return spec
 

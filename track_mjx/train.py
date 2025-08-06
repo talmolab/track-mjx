@@ -61,7 +61,7 @@ _WALKERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="fly-mc-intention")
+@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:

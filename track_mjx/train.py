@@ -123,7 +123,7 @@ def main(cfg: DictConfig):
         if not checkpoint_to_restore_path.is_absolute():
             checkpoint_to_restore_path = Path.cwd() / checkpoint_to_restore_path
         checkpoint_to_restore = str(checkpoint_to_restore_path)
-        
+
         # Load the checkpoint's config and update the run_id and checkpoint path
         cfg = OmegaConf.create(
             checkpointing.load_config_from_checkpoint(checkpoint_to_restore)
@@ -317,7 +317,7 @@ def main(cfg: DictConfig):
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
-        wandb.log(metrics, commit=False)
+        wandb.log(metrics)
 
     if cfg.train_setup.train_config.use_lstm:
         rollout_env = render_wrapper(

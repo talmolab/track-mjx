@@ -6,15 +6,17 @@ env_config:
   task_name: imitation
   walker_name: fly
   render_camera_name: track1
-  render_fps: 50
+  render_fps: 10
+  render_interval: 5 # Render every 5 iterations at 10 FPS
+
 
   env_args:
     solver: "cg"
-    iterations: 6
-    ls_iterations: 6
+    iterations: 4
+    ls_iterations: 4
     physics_steps_per_control_step: 10
     reset_noise_scale: 1e-3
-    mj_model_timestep: 2e-4
+    mj_model_timestep: 0.0002
     mocap_hz: 500
 
   reward_weights:
@@ -40,15 +42,15 @@ env_config:
     penalty_pos_distance_scale: [1.0, 1.0, 0.2]
 
 reference_config:
-  clip_length: 1000
+  clip_length: 600
   random_init_range: 50
   traj_length: 5
 
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [2048,1024,1024]
-  decoder_layer_sizes: [1024,1024,512]
-  critic_layer_sizes: [2048,1024,1024,1024,1024,512]
+  encoder_layer_sizes: [256, 256]
+  decoder_layer_sizes: [256, 256]
+  critic_layer_sizes: [256, 256]
   intention_size: 60
   kl_schedule: True
   kl_weight: 1e-1
@@ -57,8 +59,8 @@ train_setup:
   agent_name: fly
   run_name: imitation_debug
   eval_every: 20_000_000
-  reset_every: 5_000_000
-  episode_length: 1000
+  reset_every: 20_000_000
+  episode_length: 600
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
@@ -73,7 +75,7 @@ train_setup:
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2     
-    discounting: 0.95        
+    discounting: 0.95
     action_repeat: 1
     entropy_cost: 1e-2
     reward_scaling: 1
@@ -110,7 +112,7 @@ logging_config:
     - fall
 
 walker_config:
-  torque_actuators: True 
+  torque_actuators: False 
   rescale_factor: 1.0
   joint_names:
     - coxa_flexion_T1_left

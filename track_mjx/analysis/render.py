@@ -214,6 +214,10 @@ def render_rollout(
     render_fps = (
         1.0 / mj_model.opt.timestep
     ) / cfg.env_config.env_args.physics_steps_per_control_step
+    
+    if cfg.env_config.render_fps is not None:
+        render_fps = cfg.env_config.render_fps  # Override with config if specified
+    # TODO: make it configurable also maybe with the ratio of the speed of the real life.
 
     # Warm up kinematics and reset renderer
     mujoco.mj_kinematics(mj_model, mj_data)

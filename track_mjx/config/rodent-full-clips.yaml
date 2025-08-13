@@ -6,6 +6,7 @@ env_config:
   walker_name: rodent
   render_camera_name: close_profile
   render_fps: 50
+  render_interval: 5
 
   env_args:
     solver: "cg"

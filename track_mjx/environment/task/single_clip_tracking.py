@@ -85,12 +85,7 @@ class SingleClipTracking(PipelineEnv):
 
         self._mocap_hz = mocap_hz
         self._reward_config = reward_config
-        # windowed variance penalty settings
-        self._var_window_size = getattr(reward_config, "var_window_size", 50)
-        # coefficient for windowed variance penalty
-        self._var_coeff = getattr(reward_config, "var_coeff", 5e-2)
-        # integrated jerk penalty coefficient
-        self._jerk_coeff = getattr(reward_config, "jerk_coeff", 5e-4)
+
         self._reference_clip = reference_clip
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
@@ -226,6 +221,14 @@ class SingleClipTracking(PipelineEnv):
             lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
         info["reference_frame"] = reference_frame
+        info["prev_ctrl"] = action
+        # update action buffer for windowed variance penalty
+        buffer = info["action_buffer"]
+        idx = info["buffer_index"]
+        buffer = buffer.at[idx].set(action)
+        idx = (idx + 1) % self._var_window_size
+        info["action_buffer"] = buffer
+        info["buffer_index"] = idx
         # reward calculation
         # TODO: Make it so that a list of rewards is returned and a
         # list of terminiation values are returned (distances)
@@ -247,6 +250,8 @@ class SingleClipTracking(PipelineEnv):
             joint_distance,
             summed_pos_distance,
             quat_distance,
+            var_cost,
+            jerk_cost
         ) = compute_tracking_rewards(
             data=data,
             reference_frame=reference_frame,
@@ -256,29 +261,6 @@ class SingleClipTracking(PipelineEnv):
             reward_config=self._reward_config,
         )
 
-        info["prev_ctrl"] = action
-
-        # update action buffer for windowed variance penalty
-        buffer = info["action_buffer"]
-        idx = info["buffer_index"]
-        buffer = buffer.at[idx].set(action)
-        idx = (idx + 1) % self._var_window_size
-        info["action_buffer"] = buffer
-        info["buffer_index"] = idx
-
-        # compute windowed variance penalty
-        mean_act = jp.mean(buffer, axis=0)
-        var_act = jp.mean((buffer - mean_act) ** 2, axis=0)
-        var_cost = self._var_coeff * jp.sum(var_act)
-
-        # compute integrated jerk window penalty using JAX-compatible rotation
-        buffer = info["action_buffer"]
-        idx = info["buffer_index"]
-        # rotate buffer via doubling and dynamic slice to avoid dynamic slicing errors
-        doubled = jp.concatenate([buffer, buffer], axis=0)
-        ordered = jax.lax.dynamic_slice(doubled, (idx, 0), (self._var_window_size, self.sys.nu))
-        jerks = ordered[2:] - 2 * ordered[1:-1] + ordered[:-2]
-        jerk_cost = self._jerk_coeff * jp.sum(jerks ** 2)
 
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
         obs = jp.concatenate([reference_obs, proprioceptive_obs])

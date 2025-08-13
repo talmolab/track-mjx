@@ -84,6 +84,7 @@ class SingleClipTracking(PipelineEnv):
 
         self._mocap_hz = mocap_hz
         self._reward_config = reward_config
+
         self._reference_clip = reference_clip
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
@@ -189,7 +190,13 @@ class SingleClipTracking(PipelineEnv):
             "joint_distance": zero,
             "summed_pos_distance": zero,
             "quat_distance": zero,
+            "var_cost": zero,
+            "jerk_cost": zero,
         }
+
+        # initialize action history buffer for windowed variance penalty
+        info["action_buffer"] = jp.zeros((self._var_window_size, self.sys.nu))
+        info["buffer_index"] = 0
 
         return State(data, obs, reward, done, metrics, info)
 
@@ -213,6 +220,14 @@ class SingleClipTracking(PipelineEnv):
             lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
         info["reference_frame"] = reference_frame
+        info["prev_ctrl"] = action
+        # update action buffer for windowed variance penalty
+        buffer = info["action_buffer"]
+        idx = info["buffer_index"]
+        buffer = buffer.at[idx].set(action)
+        idx = (idx + 1) % self._var_window_size
+        info["action_buffer"] = buffer
+        info["buffer_index"] = idx
         # reward calculation
         # TODO: Make it so that a list of rewards is returned and a
         # list of terminiation values are returned (distances)
@@ -234,6 +249,8 @@ class SingleClipTracking(PipelineEnv):
             joint_distance,
             summed_pos_distance,
             quat_distance,
+            var_cost,
+            jerk_cost
         ) = compute_tracking_rewards(
             data=data,
             reference_frame=reference_frame,
@@ -243,7 +260,7 @@ class SingleClipTracking(PipelineEnv):
             reward_config=self._reward_config,
         )
 
-        info["prev_ctrl"] = action
+
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
         reward = (
@@ -256,6 +273,8 @@ class SingleClipTracking(PipelineEnv):
             - ctrl_cost
             - ctrl_diff_cost
             - energy_cost
+            - var_cost
+            - jerk_cost
         )
 
         # Raise done flag if terminating
@@ -289,6 +308,8 @@ class SingleClipTracking(PipelineEnv):
             joint_distance=joint_distance,
             summed_pos_distance=summed_pos_distance,
             quat_distance=quat_distance,
+            var_cost=-var_cost,
+            jerk_cost=-jerk_cost,
         )
 
         return state.replace(

@@ -759,12 +759,23 @@ def train(
             )
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
-            policy_params_fn(
-                current_step=it,
-                jit_logging_inference_fn=jit_logging_inference_fn,
-                params=policy_param,
-                policy_params_fn_key=policy_params_fn_key,
-            )
+            if it % config_dict["env_config"]["render_interval"] == 0:
+                # Render video every `render_interval` iterations.
+                policy_params_fn(
+                    current_step=it,
+                    jit_logging_inference_fn=jit_logging_inference_fn,
+                    params=policy_param,
+                    policy_params_fn_key=policy_params_fn_key,
+                    render_video=True,
+                )
+            else:
+                policy_params_fn(
+                    current_step=it,
+                    jit_logging_inference_fn=jit_logging_inference_fn,
+                    params=policy_param,
+                    policy_params_fn_key=policy_params_fn_key,
+                    render_video=False,
+                )
             # Save checkpoint
             if ckpt_mgr is not None:
                 checkpointing.save(

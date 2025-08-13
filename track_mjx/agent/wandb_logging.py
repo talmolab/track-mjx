@@ -60,6 +60,7 @@ def rollout_logging_fn(
         jit_logging_inference_fn: Jitted policy inference function.
         params: Parameters for the policy model.
         policy_params_fn_key: PRNG key.
+        render_video: Whether to render the video of the rollout, defaults to True.
     """
     train_config = cfg["train_setup"]["train_config"]
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
@@ -218,5 +219,5 @@ def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: 
                 title=title,
             )
         },
-        commit=False,
+        commit=True,
     )

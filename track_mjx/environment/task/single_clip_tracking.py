@@ -19,7 +19,6 @@ from track_mjx.environment.walker import spec_utils
 from jax.flatten_util import ravel_pytree
 
 
-
 class SingleClipTracking(PipelineEnv):
     """Tracking task for a continuous reference clip."""
 
@@ -101,21 +100,23 @@ class SingleClipTracking(PipelineEnv):
         Returns:
             State: The reset environment state.
         """
-        _, start_rng, rng = jax.random.split(rng, 3)
+        pass
+        ## TODO: FIX THIS 
+        # _, start_rng, rng = jax.random.split(rng, 3)
 
-        episode_length = (
-            clip_length - random_init_range - traj_length
-        ) * self._steps_for_cur_frame
+        # episode_length = (
+        #     clip_length - random_init_range - traj_length
+        # ) * self._steps_for_cur_frame
 
-        frame_range = clip_length - episode_length - traj_length
-        start_frame = jax.random.randint(start_rng, (), 0, frame_range)
+        # frame_range = clip_length - episode_length - traj_length
+        # start_frame = jax.random.randint(start_rng, (), 0, frame_range)
 
-        info = {
-            "start_frame": start_frame,
-            "prev_ctrl": jp.zeros((self.sys.nv,)),
-        }
+        # info = {
+        #     "start_frame": start_frame,
+        #     "prev_ctrl": jp.zeros((self.sys.nv,)),
+        # }
 
-        return self.reset_from_clip(rng, info, noise=True)
+        # return self.reset_from_clip(rng, info, noise=True)
 
     def reset_from_clip(
         self, rng: jp.ndarray, info: dict[str, Any], noise: bool = True
@@ -196,7 +197,9 @@ class SingleClipTracking(PipelineEnv):
         }
 
         # initialize action history buffer for windowed variance penalty
-        info["action_buffer"] = jp.zeros((self._var_window_size, self.sys.nu))
+        info["action_buffer"] = jp.zeros(
+            (self._reward_config.var_window_size, self.sys.nu)
+        )
         info["buffer_index"] = 0
 
         return State(data, obs, reward, done, metrics, info)
@@ -226,7 +229,7 @@ class SingleClipTracking(PipelineEnv):
         buffer = info["action_buffer"]
         idx = info["buffer_index"]
         buffer = buffer.at[idx].set(action)
-        idx = (idx + 1) % self._var_window_size
+        idx = (idx + 1) % self._reward_config.var_window_size
         info["action_buffer"] = buffer
         info["buffer_index"] = idx
         # reward calculation
@@ -260,7 +263,6 @@ class SingleClipTracking(PipelineEnv):
             info=info,
             reward_config=self._reward_config,
         )
-
 
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
         obs = jp.concatenate([reference_obs, proprioceptive_obs])

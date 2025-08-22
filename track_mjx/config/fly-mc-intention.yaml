@@ -1,20 +1,22 @@
-data_path:
+data_path: ./data/fly_reference_clip.h5
 walker_type: fly
 
 env_config:
   env_name: fly_multi_clip
   task_name: imitation
   walker_name: fly
-  render_camera_name: track1-0
-  render_fps: 5
+  render_camera_name: track1
+  render_fps: 10
+  render_interval: 5 # Render every 5 iterations at 10 FPS
+
 
   env_args:
     solver: "cg"
-    iterations: 6
-    ls_iterations: 6
+    iterations: 4
+    ls_iterations: 4
     physics_steps_per_control_step: 10
     reset_noise_scale: 1e-3
-    mj_model_timestep: 2e-4
+    mj_model_timestep: 0.0002
     mocap_hz: 500
 
   reward_weights:
@@ -23,6 +25,7 @@ env_config:
     bad_quat_dist: 0.075 
     ctrl_cost_weight: 0.02
     ctrl_diff_cost_weight: 0.02
+    energy_cost_weight: 0.005
     pos_reward_weight: 1.0
     quat_reward_weight: 1.0
     joint_reward_weight: 1.0
@@ -39,7 +42,7 @@ env_config:
     penalty_pos_distance_scale: [1.0, 1.0, 0.2]
 
 reference_config:
-  clip_length: 1000
+  clip_length: 600
   random_init_range: 50
   traj_length: 5
 
@@ -49,40 +52,64 @@ network_config:
   decoder_layer_sizes: [256, 256]
   critic_layer_sizes: [256, 256]
   intention_size: 60
-  kl_weight: 1e-4
+  kl_schedule: True
+  kl_weight: 1e-1
 
 train_setup:
   agent_name: fly
   run_name: imitation_debug
-  eval_every: 1_000_000
-  reset_every: 500_000
-  episode_length: 1000
+  eval_every: 20_000_000
+  reset_every: 20_000_000
+  episode_length: 600
   checkpoint_to_restore:
   checkpoint_max_to_keep: 
   checkpoint_keep_period: 
+  train_test_split_info:
+  restore_from_run_state:
+  train_subset_ratio: 0.8
   train_config:
-    num_envs: 2048
-    num_timesteps: 1_000_000_000
-    batch_size: 512
-    num_minibatches: 4
+    num_envs: 4096
+    num_timesteps: 2_000_000_000
+    batch_size: 1024
+    num_minibatches: 16
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2     
-    discounting: 0.95        
+    discounting: 0.95
     action_repeat: 1
     entropy_cost: 1e-2
     reward_scaling: 1
     normalize_observations: True
     unroll_length: 20
     seed: 0
-    get_activation: True
-    use_lstm: True
+    get_activation: False
+    use_lstm: False
+    deterministic_eval: True
 
 logging_config:
   project_name: vnl_fly_debug
+  group_name: fly_imitation
+  exp_name: reproduce_fly
   clip_id: -1
-  model_path: model_checkpoints
+  model_path: model_checkpoints/flybody
   algo_name: ppo
+  rollout_metrics:
+    - pos_reward
+    - quat_reward
+    - joint_reward
+    - angvel_reward
+    - bodypos_reward
+    - endeff_reward
+    - summed_pos_distance
+    - joint_distance
+    - quat_distance
+    - ctrl_cost
+    - ctrl_diff_cost
+    - energy_cost
+    - too_far
+    - bad_pose
+    - bad_quat
+    - fall
 
 walker_config:
   torque_actuators: False 

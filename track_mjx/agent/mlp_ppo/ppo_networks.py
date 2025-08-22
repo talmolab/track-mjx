@@ -51,12 +51,12 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             activations = None
             if get_activation:
                 logits, latent_mean, latent_logvar, activations = policy_network.apply(
-                    *params, observations, key_network, get_activation=True
+                    *params, observations, key_network, deterministic=deterministic, get_activation=True
                 )
                 # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
                 logits, latent_mean, latent_logvar = policy_network.apply(
-                    *params, observations, key_network
+                    *params, observations, key_network, deterministic=deterministic
                 )
             if deterministic:
                 if get_activation:

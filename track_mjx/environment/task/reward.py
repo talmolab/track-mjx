@@ -1,12 +1,13 @@
 """All reward calculation and reward calculation helper functions"""
 
 from jax import numpy as jp
+import jax
 import numpy as np
 from typing import Union
 from omegaconf import ListConfig
 from track_mjx.environment.walker.base import BaseWalker
 from track_mjx.io.load import ReferenceClip
-from mujoco import MjData
+import mujoco
 
 from flax import struct
 
@@ -38,6 +39,9 @@ class RewardConfig:
     bodypos_reward_exp_scale: float
     endeff_reward_exp_scale: float
     penalty_pos_distance_scale: jp.ndarray
+    var_window_size: int = 50
+    var_coeff: float = 5e-2
+    jerk_coeff: float = 5e-4
 
     def __post_init__(self):
         if isinstance(self.penalty_pos_distance_scale, list) or isinstance(
@@ -307,8 +311,53 @@ def compute_penalty_terms(
     return too_far, bad_pose, bad_quat, summed_pos_distance
 
 
+def compute_action_variance_cost(info: dict, var_weight: float) -> jp.ndarray:
+    """
+    Computes the action variance cost based on the action buffer.
+
+    Args:
+        info (dict): Information dictionary containing the action buffer.
+        var_weight (float): Weighting factor for the variance cost.
+
+    Returns:
+        float: Computed action variance cost.
+    """
+    # compute windowed variance penalty
+    buffer = info["action_buffer"]
+    mean_act = jp.mean(buffer, axis=0)
+    var_act = jp.mean((buffer - mean_act) ** 2, axis=0)
+    var_cost = var_weight * jp.sum(var_act)
+    return var_cost
+
+
+def compute_jerk_cost(
+    info: dict, var_window_size: int, jerk_cost_weight: float
+) -> jp.ndarray:
+    """
+    Computes the jerk cost based on the action buffer.
+
+    Args:
+        info (dict): dictionary contain additional info about the state
+        var_window_size (int): size of the window for variance calculation
+        jerk_cost_weight (float): weighting factor for the jerk cost
+
+    Returns:
+        float: Computed jerk cost.
+    """
+    # compute integrated jerk window penalty using JAX-compatible rotation
+    buffer = info["action_buffer"]
+    action_size = buffer.shape[-1]
+    idx = info["buffer_index"]
+    # rotate buffer via doubling and dynamic slice to avoid dynamic slicing errors
+    doubled = jp.concatenate([buffer, buffer], axis=0)
+    ordered = jax.lax.dynamic_slice(doubled, (idx, 0), (var_window_size, action_size))
+    jerks = ordered[2:] - 2 * ordered[1:-1] + ordered[:-2]
+    jerk_cost = jerk_cost_weight * jp.sum(jerks**2)
+    return jerk_cost
+
+
 def compute_tracking_rewards(
-    data: MjData,
+    data: mujoco.MjData,
     reference_frame: ReferenceClip,
     walker: BaseWalker,
     action: jp.ndarray,
@@ -406,6 +455,11 @@ def compute_tracking_rewards(
         reward_config.penalty_pos_distance_scale,
     )
 
+    action_variance_cost = compute_action_variance_cost(info, reward_config.var_coeff)
+    jerk_cost = compute_jerk_cost(
+        info, reward_config.var_window_size, reward_config.jerk_coeff
+    )
+
     # TODO: return a structured dict
     return (
         pos_reward,
@@ -424,4 +478,6 @@ def compute_tracking_rewards(
         joint_distance,
         summed_pos_distance,
         quat_distance,
+        action_variance_cost,
+        jerk_cost,
     )

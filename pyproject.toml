@@ -16,11 +16,11 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12"]
 dependencies = [
-    "brax",
+    "brax==0.12.3",
     "wandb",
-    "mujoco",
-    "dm_control",
-    "mujoco-mjx",
+    "mujoco==3.3.2",
+    "dm_control==1.0.30",
+    "mujoco-mjx==3.3.2",
     "mediapy",
     "jax[cuda12]==0.4.34",
     "flax",
@@ -68,7 +68,7 @@ dev = [
 Repository = "https://github.com/talmolab/track-mjx"
 
 [tool.setuptools.packages.find]
-exclude = ["site", "model_checkpoints*"]
+exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 
 [tool.black]
 line-length = 88

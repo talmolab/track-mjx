@@ -309,7 +309,9 @@
   </asset>
 
   <worldbody>
-    <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.13"/>
+    <body name="floor">
+      <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.13" />
+    </body>
     <body name="thorax" childclass="body">
       <freejoint name="free"/>
       <light name="right" mode="trackcom" pos="0 -1 1" dir="0 1 -1" diffuse="0.3 0.3 0.3"/>
@@ -795,7 +797,7 @@
   </contact>
 
   <!-- <tendon> -->
-    <!-- <fixed name="abduct_abdomen">
+  <!-- <fixed name="abduct_abdomen">
       <joint joint="abdomen_abduct" coef="1"/>
       <joint joint="abdomen_abduct_2" coef="1"/>
       <joint joint="abdomen_abduct_3" coef="1"/>
@@ -804,7 +806,7 @@
       <joint joint="abdomen_abduct_6" coef="1"/>
       <joint joint="abdomen_abduct_7" coef="1"/>
     </fixed> -->
-    <!-- <fixed name="abdomen">
+  <!-- <fixed name="abdomen">
       <joint joint="abdomen" coef="1"/>
       <joint joint="abdomen_2" coef="1"/>
       <joint joint="abdomen_3" coef="1"/>
@@ -813,7 +815,7 @@
       <joint joint="abdomen_6" coef="1"/>
       <joint joint="abdomen_7" coef="1"/>
     </fixed> -->
-    <!-- <fixed name="tarsus2_T1_left" class="extend_tarsus">
+  <!-- <fixed name="tarsus2_T1_left" class="extend_tarsus">
       <joint joint="tarsus2_T1_left" coef="1"/>
       <joint joint="tarsus3_T1_left" coef="0.5"/>
       <joint joint="tarsus4_T1_left" coef="0.5"/>
@@ -911,9 +913,9 @@
   </actuator>
 
   <sensor>
-    <!-- <accelerometer name="accelerometer" site="thorax"/> -->
-    <!-- <gyro name="gyro" site="thorax"/>
-    <velocimeter name="velocimeter" site="thorax"/> -->
+    <accelerometer name="accelerometer" site="thorax" />
+    <gyro name="gyro" site="thorax" />
+    <velocimeter name="velocimeter" site="thorax" />
     <!-- <force name="force_tarsus_T1_left" site="claw_T1_left"/>
     <force name="force_tarsus_T1_right" site="claw_T1_right"/>
     <force name="force_tarsus_T2_left" site="claw_T2_left"/>
@@ -928,7 +930,7 @@
     <touch name="touch_claw_T3_right" site="tracking[claw_T3_right]"/> -->
   </sensor>
 
-<!-- <keyframe>
+  <!-- <keyframe>
     <key name="home" qpos="0.006792709231376648 0.0034985796082764864 0.0024463613517582417 0.9927980303764343 -0.02143842913210392 0.11559582501649857 0.023025181144475937 -0.19891785085201263 0.0763564482331276 -0.018897827714681625 0.19258560240268707 0.37113359570503235 0.48125794529914856 -0.17970441281795502 0.37890949845314026 -0.2604788839817047 0.27135875821113586 0.45077815651893616 0.5159262418746948 -0.13648448884487152 0.029758283868432045 -0.1461937576532364 0.21017812192440033 0.3122818171977997 0.07778739184141159 -0.3632395565509796 -0.3251155614852905 0.14896735548973083 0.491696834564209 0.3275758922100067 0.1312159299850464 -0.04050684720277786 0.33762800693511963 -0.030173664912581444 0.04713206738233566 0.08270945399999619 -0.015508891083300114 0.009800096973776817 0.3457980155944824 0.10647561401128769 -0.09080053865909576 -0.06966248899698257 -0.09077364206314087"/>
 </keyframe> -->
 </mujoco>

@@ -76,6 +76,7 @@ def create_rollout_generator(
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
+    log_intentions: bool = False,
 ) -> Callable[[int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
@@ -144,7 +145,7 @@ def create_rollout_generator(
             sensor_reading = (
                 next_state.pipeline_state.sensordata if log_sensor_data else None
             )
-            activations = extras["activations"] if log_activations else None
+            activations = extras["activations"] if log_activations or log_intentions else None
 
             return (next_state, new_rng), (
                 next_state,
@@ -168,7 +169,7 @@ def create_rollout_generator(
             sensor_reading = (
                 next_state.pipeline_state.sensordata if log_sensor_data else None
             )
-            activations = extras["activations"] if log_activations else None
+            activations = extras["activations"] if log_activations or log_intentions else None
 
             return (next_state, new_rng, new_hidden), (
                 next_state,
@@ -253,7 +254,9 @@ def create_rollout_generator(
                 )(rollout_states)
             result["rollout_metrics"] = rollout_metrics
 
-        if log_activations and activations is not None:
+        if log_intentions and activations is not None:
+            result["intentions"] = activations["intention"]
+        elif log_activations and activations is not None:
             result["activations"] = activations
 
         if log_sensor_data:

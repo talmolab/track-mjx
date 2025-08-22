@@ -19,7 +19,6 @@ from track_mjx.environment.walker import spec_utils
 from jax.flatten_util import ravel_pytree
 
 
-
 class SingleClipTracking(PipelineEnv):
     """Tracking task for a continuous reference clip."""
 
@@ -311,11 +310,15 @@ class SingleClipTracking(PipelineEnv):
 
     def _get_proprioception(self, data: mjx.Data) -> jp.ndarray:
         """Get proprioception data from the environment."""
-        qpos = data.qpos[7:] # skip the root joint
-        qvel = data.qvel[6:] # skip the root joint velocity
+        qpos = data.qpos[7:]  # skip the root joint
+        qvel = data.qvel[6:]  # skip the root joint velocity
         actuator_ctrl = data.qfrc_actuator
-        _, body_height, _ = data.bind(self._mjx_model, self._mj_spec.body(f"torso")).xpos
-        world_zaxis = data.bind(self._mjx_model, self._mj_spec.body(f"torso")).xmat.flatten()[6:]
+        _, body_height, _ = data.bind(
+            self._mjx_model, self._mj_spec.body(f"torso")
+        ).xpos
+        world_zaxis = data.bind(
+            self._mjx_model, self._mj_spec.body(f"torso")
+        ).xmat.flatten()[6:]
         appendages_pos = self._get_appendages_pos(data)
         proprioception = jp.concatenate(
             [
@@ -331,8 +334,12 @@ class SingleClipTracking(PipelineEnv):
 
     def _get_kinematic_sensors(self, data: mjx.Data) -> jp.ndarray:
         """Get kinematic sensors data from the environment."""
-        accelerometer = data.bind(self._mjx_model, self._mj_spec.sensor("accelerometer")).sensordata
-        velocimeter = data.bind(self._mjx_model, self._mj_spec.sensor("velocimeter")).sensordata
+        accelerometer = data.bind(
+            self._mjx_model, self._mj_spec.sensor("accelerometer")
+        ).sensordata
+        velocimeter = data.bind(
+            self._mjx_model, self._mj_spec.sensor("velocimeter")
+        ).sensordata
         gyro = data.bind(self._mjx_model, self._mj_spec.sensor("gyro")).sensordata
         sensors = jp.concatenate(
             [

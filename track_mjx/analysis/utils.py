@@ -42,6 +42,9 @@ def recursive_dict_to_h5py(file, data, group_path="/"):
     elif isinstance(data, (int, float, str, bool, np.ndarray)):
         file.create_dataset(group_path, data=data)
 
+    elif isinstance(data, (np.bytes_, bytes)):  # For numpy.bytes_ and bytes
+        file.create_dataset(group_path, data=data)
+
     elif hasattr(data, "numpy"):  # For NumPy arrays or PyTorch tensors
         file.create_dataset(group_path, data=data.numpy())
 

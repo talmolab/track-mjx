@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="sungaya_fast">
+  <!-- Disable all collision generation via contype/conaffinity so we only compute the explicit pairs below. -->
+  <default>
+    <geom contype="0" conaffinity="0"/>
+  </default>
+
+  <!-- Bring in the full Sungaya model definition -->
+  <include file="sungaya_inexpectata_box.xml"/>
+
+  <!-- Only compute contacts between the floor and specific distal foot/claw geoms for speed. -->
+  <contact>
+    <pair geom1="floor" geom2="20-f-l-claws"/>
+    <pair geom1="floor" geom2="25-m-l-claws"/>
+    <pair geom1="floor" geom2="30-h-l-claws"/>
+    <pair geom1="floor" geom2="36-f-r-claws"/>
+    <pair geom1="floor" geom2="41-m-r-claws"/>
+    <pair geom1="floor" geom2="46-h-r-claws"/>
+  </contact>
+</mujoco>

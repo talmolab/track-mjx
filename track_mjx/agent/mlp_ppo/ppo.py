@@ -276,7 +276,6 @@ def train(
         )
     ).astype(int)
 
-<<<<<<< HEAD
     key = jax.random.PRNGKey(seed)
     global_key, local_key = jax.random.split(key)
     del key
@@ -368,8 +367,6 @@ def train(
         loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
     )
 
-=======
->>>>>>> main
     def minibatch_step(
         carry,
         data: types.Transition,

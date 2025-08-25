@@ -324,14 +324,14 @@
       <camera name="hero" mode="track" pos="0.271 0.27 -0.044" xyaxes="-0.641 0.767 0 -0.045 -0.037 0.998"/>
       <light name="left" mode="trackcom" pos="0 1 1" dir="0 -1 -1" diffuse="0.3 0.3 0.3"/>
       <light name="tracking" mode="trackcom" pos="0 0 1"/>
-      <site name="thorax"/>
-      <site name="hover_up_dir" pos="0.0262 0 0.0262" quat="0.915 0 0.403 0"/>
+      <!-- <site name="thorax"/> -->
+      <site name="thorax_site" pos="0.0262 0 0.0262" quat="0.915 0 0.403 0"/>
       <geom name="thorax" mass="0.00034" pos="-0.00791 0 -0.123" quat="0 0 0 -1" mesh="thorax"/>
       <geom name="thorax_collision" class="collision" type="ellipsoid" size="0.0437 0.0437 0.0551" pos="0.00168 0 -0.00262" quat="0 -0.479 0 -0.878" contype="0" conaffinity="0"/>
       <geom name="thorax_collision2" class="collision" type="ellipsoid" size="0.0499 0.028 0.0114" pos="-0.00445 0 0.0219" quat="0 -0.199 0 -0.98" contype="0" conaffinity="0"/>
       <geom name="thorax_black" material="black" mass="0" pos="-0.00791 0 -0.123" quat="0 0 0 -1" mesh="thorax_black"/>
       <body name="head" childclass="head" pos="0.0567 3.81e-07 -0.00305" quat="0.702 -0.087 0.087 -0.702">
-        <site name="head" pos="0 0.015 0" quat="0 0 0 1"/>
+        <!-- <site name="head" pos="0 0.015 0" quat="0 0 0 1"/> -->
         <!-- <joint name="head_abduct" axis="0 0 1" range="-0.2 0.2"/>
         <joint name="head_twist" axis="0 1 0" range="-3 3"/>
         <joint name="head" axis="1 0 0" range="-0.5 0.3"/> -->
@@ -467,7 +467,7 @@
       <body name="coxa_T1_left" childclass="leg" pos="0.0317 0.0209 -0.0272" quat="-0.532 0.787 -0.311 -0.0229">
         <joint name="coxa_flexion_T1_left" class="flexion_coxa_T1"/>
         <joint name="coxa_twist_T1_left" class="twist_coxa_T1"/>
-        <!-- <joint name="coxa_T1_left" class="extend_coxa_T1"/> -->
+        <joint name="coxa_T1_left" class="extend_coxa_T1"/>
         <geom name="coxa_T1_left" pos="0.0131 0.104 0.0119" quat="0.0229 -0.311 -0.787 0.532" mesh="coxa_T1_left"/>
         <geom name="coxa_T1_left_collision" class="collision" type="ellipsoid" size="0.00679 0.00752 0.0208" pos="-2.04e-05 0.0261 -0.000454" quat="-0.417 -0.383 -0.532 0.63"/>
         <site name="tracking[coxa_T1_left]" pos="0 0 0" size="0.005" group="3" rgba="0 1 0 1"/>
@@ -516,7 +516,7 @@
       <body name="coxa_T1_right" childclass="leg" pos="0.0317 -0.0209 -0.0272" quat="0.319 0.011 -0.543 -0.777">
         <joint name="coxa_flexion_T1_right" class="flexion_coxa_T1"/>
         <joint name="coxa_twist_T1_right" class="twist_coxa_T1"/>
-        <!-- <joint name="coxa_T1_right" class="extend_coxa_T1"/> -->
+        <joint name="coxa_T1_right" class="extend_coxa_T1"/>
         <geom name="coxa_T1_right" pos="-0.0104 -0.105 -0.00761" quat="-0.777 0.543 0.011 0.319" mesh="coxa_T1_right"/>
         <geom name="coxa_T1_right_collision" class="collision" type="ellipsoid" size="0.00679 0.00752 0.0208" pos="0.00061 -0.026 0.00153" quat="-0.508 0.628 0.447 0.385"/>
         <site name="tracking[coxa_T1_right]" pos="0 0 0" size="0.005" group="3" rgba="0 1 0 1"/>
@@ -565,7 +565,7 @@
       <body name="coxa_T2_left" childclass="leg" pos="-0.0144 0.0241 -0.0425" quat="-0.371 0.917 -0.126 -0.0722">
         <joint name="coxa_flexion_T2_left" class="flexion_coxa_T2"/>
         <joint name="coxa_twist_T2_left" class="twist_coxa_T2"/>
-        <!-- <joint name="coxa_T2_left" class="extend_coxa_T2"/> -->
+        <joint name="coxa_T2_left" class="extend_coxa_T2"/>
         <geom name="coxa_T2_left" pos="0.0287 0.0682 0.0404" quat="0.0722 -0.126 -0.917 0.371" mesh="coxa_T2_left"/>
         <geom name="coxa_T2_left_collision" class="collision" type="ellipsoid" size="0.00788 0.007 0.0149" pos="0.000349 0.0143 -0.00216" quat="0.707 -0.707 0 0"/>
         <site name="tracking[coxa_T2_left]" pos="0 0 0" size="0.005" group="3" rgba="0 1 0 1"/>
@@ -614,7 +614,7 @@
       <body name="coxa_T2_right" childclass="leg" pos="-0.0144 -0.0241 -0.0425" quat="0.126 -0.0709 -0.374 -0.916">
         <joint name="coxa_flexion_T2_right" class="flexion_coxa_T2"/>
         <joint name="coxa_twist_T2_right" class="twist_coxa_T2"/>
-        <!-- <joint name="coxa_T2_right" class="extend_coxa_T2"/> -->
+        <joint name="coxa_T2_right" class="extend_coxa_T2"/>
         <geom name="coxa_T2_right" pos="-0.0285 -0.0685 -0.0403" quat="-0.916 0.374 -0.0709 0.126" mesh="coxa_T2_right"/>
         <geom name="coxa_T2_right_collision" class="collision" type="ellipsoid" size="0.00788 0.007 0.0149" pos="-0.000335 -0.0143 0.00206" quat="0.707 0.707 0 0"/>
         <site name="tracking[coxa_T2_right]" pos="0 0 0" size="0.005" group="3" rgba="0 1 0 1"/>
@@ -663,7 +663,7 @@
       <body name="coxa_T3_left" childclass="leg" pos="-0.0377 0.0192 -0.0402" quat="0.681 -0.529 -0.0882 0.498">
         <joint name="coxa_flexion_T3_left" class="flexion_coxa_T3"/>
         <joint name="coxa_twist_T3_left" class="twist_coxa_T3"/>
-        <!-- <joint name="coxa_T3_left" class="extend_coxa_T3"/> -->
+        <joint name="coxa_T3_left" class="extend_coxa_T3"/>
         <geom name="coxa_T3_left" pos="0.0335 0.0507 -0.0666" quat="-0.498 -0.0882 0.529 -0.681" mesh="coxa_T3_left"/>
         <geom name="coxa_T3_left_collision" class="collision" type="ellipsoid" size="0.007 0.00875 0.0166" pos="-0.00348 0.0116 -0.00687" quat="0.603 -0.786 -0.135 0"/>
         <site name="tracking[coxa_T3_left]" pos="0 0 0" size="0.005" group="3" rgba="0 1 0 1"/>
@@ -712,7 +712,7 @@
       <body name="coxa_T3_right" childclass="leg" pos="-0.0377 -0.0192 -0.0402" quat="-0.0854 -0.505 -0.673 -0.534">
         <joint name="coxa_flexion_T3_right" class="flexion_coxa_T3"/>
         <joint name="coxa_twist_T3_right" class="twist_coxa_T3"/>
-        <!-- <joint name="coxa_T3_right" class="extend_coxa_T3"/> -->
+        <joint name="coxa_T3_right" class="extend_coxa_T3"/>
         <geom name="coxa_T3_right" pos="-0.0344 -0.0507 0.0661" quat="0.534 -0.673 0.505 0.0854" mesh="coxa_T3_right"/>
         <geom name="coxa_T3_right_collision" class="collision" type="ellipsoid" size="0.007 0.00875 0.0166" pos="0.00338 -0.0117 0.00678" quat="0.797 0.596 0.0983 0"/>
         <site name="tracking[coxa_T3_right]" pos="0 0 0" size="0.005" group="3" rgba="0 1 0 1"/>
@@ -797,7 +797,7 @@
   </contact>
 
   <!-- <tendon> -->
-  <!-- <fixed name="abduct_abdomen">
+    <!-- <fixed name="abduct_abdomen">
       <joint joint="abdomen_abduct" coef="1"/>
       <joint joint="abdomen_abduct_2" coef="1"/>
       <joint joint="abdomen_abduct_3" coef="1"/>
@@ -806,7 +806,7 @@
       <joint joint="abdomen_abduct_6" coef="1"/>
       <joint joint="abdomen_abduct_7" coef="1"/>
     </fixed> -->
-  <!-- <fixed name="abdomen">
+    <!-- <fixed name="abdomen">
       <joint joint="abdomen" coef="1"/>
       <joint joint="abdomen_2" coef="1"/>
       <joint joint="abdomen_3" coef="1"/>
@@ -815,7 +815,7 @@
       <joint joint="abdomen_6" coef="1"/>
       <joint joint="abdomen_7" coef="1"/>
     </fixed> -->
-  <!-- <fixed name="tarsus2_T1_left" class="extend_tarsus">
+    <!-- <fixed name="tarsus2_T1_left" class="extend_tarsus">
       <joint joint="tarsus2_T1_left" coef="1"/>
       <joint joint="tarsus3_T1_left" coef="0.5"/>
       <joint joint="tarsus4_T1_left" coef="0.5"/>
@@ -913,15 +913,18 @@
   </actuator>
 
   <sensor>
-    <accelerometer name="accelerometer" site="thorax" />
-    <gyro name="gyro" site="thorax" />
-    <velocimeter name="velocimeter" site="thorax" />
-    <!-- <force name="force_tarsus_T1_left" site="claw_T1_left"/>
+    <accelerometer name="accelerometer" site="thorax_site"/>
+    <gyro name="gyro" site="thorax_site"/>
+    <velocimeter name="velocimeter" site="thorax_site"/>
+    <force name="force_tarsus_T1_left" site="claw_T1_left"/>
     <force name="force_tarsus_T1_right" site="claw_T1_right"/>
     <force name="force_tarsus_T2_left" site="claw_T2_left"/>
     <force name="force_tarsus_T2_right" site="claw_T2_right"/>
     <force name="force_tarsus_T3_left" site="claw_T3_left"/>
-    <force name="force_tarsus_T3_right" site="claw_T3_right"/> -->
+    <force name="force_tarsus_T3_right" site="claw_T3_right"/>
+    <torque name="torque_coxa_T1_left" site="tracking[coxa_T1_left]"/>
+    <torque name="torque_coxa_T1_right" site="tracking[coxa_T1_right]"/>
+
     <!-- <touch name="touch_claw_T1_left" site="tracking[claw_T1_left]"/>
     <touch name="touch_claw_T1_right" site="tracking[claw_T1_right]"/>
     <touch name="touch_claw_T2_left" site="tracking[claw_T2_left]"/>
@@ -930,7 +933,7 @@
     <touch name="touch_claw_T3_right" site="tracking[claw_T3_right]"/> -->
   </sensor>
 
-  <!-- <keyframe>
+<!-- <keyframe>
     <key name="home" qpos="0.006792709231376648 0.0034985796082764864 0.0024463613517582417 0.9927980303764343 -0.02143842913210392 0.11559582501649857 0.023025181144475937 -0.19891785085201263 0.0763564482331276 -0.018897827714681625 0.19258560240268707 0.37113359570503235 0.48125794529914856 -0.17970441281795502 0.37890949845314026 -0.2604788839817047 0.27135875821113586 0.45077815651893616 0.5159262418746948 -0.13648448884487152 0.029758283868432045 -0.1461937576532364 0.21017812192440033 0.3122818171977997 0.07778739184141159 -0.3632395565509796 -0.3251155614852905 0.14896735548973083 0.491696834564209 0.3275758922100067 0.1312159299850464 -0.04050684720277786 0.33762800693511963 -0.030173664912581444 0.04713206738233566 0.08270945399999619 -0.015508891083300114 0.009800096973776817 0.3457980155944824 0.10647561401128769 -0.09080053865909576 -0.06966248899698257 -0.09077364206314087"/>
 </keyframe> -->
 </mujoco>

@@ -10,11 +10,17 @@
 
   <!-- Only compute contacts between the floor and specific distal foot/claw geoms for speed. -->
   <contact>
+    <pair geom1="floor" geom2="19-f-l-tarsus"/>
     <pair geom1="floor" geom2="20-f-l-claws"/>
+    <pair geom1="floor" geom2="24-m-l-tarsus"/>
     <pair geom1="floor" geom2="25-m-l-claws"/>
+    <pair geom1="floor" geom2="29-h-l-tarsus"/>
     <pair geom1="floor" geom2="30-h-l-claws"/>
+    <pair geom1="floor" geom2="35-f-r-tarsus"/>
     <pair geom1="floor" geom2="36-f-r-claws"/>
+    <pair geom1="floor" geom2="40-m-r-tarsus"/>
     <pair geom1="floor" geom2="41-m-r-claws"/>
+    <pair geom1="floor" geom2="45-h-r-tarsus"/>
     <pair geom1="floor" geom2="46-h-r-claws"/>
   </contact>
 </mujoco>

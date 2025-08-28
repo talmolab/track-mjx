@@ -111,7 +111,7 @@ def rollout_logging_fn(
                 f"latents/latent_logvars_mean{i}": latent_logvars_means[i],
                 f"latents/latent_logvars_std{i}": latent_logvars_stds[i],
             },
-            commit=True,
+            commit=False,
         )
     if render_video:
         video_path = f"{model_path}/{current_step}.mp4"
@@ -121,7 +121,9 @@ def rollout_logging_fn(
                 log_lineplot_to_wandb(
                     f"eval/rollout_{rollout_metric}",
                     rollout_metric,
-                    list(enumerate([state.metrics[rollout_metric] for state in rollout])),
+                    list(
+                        enumerate([state.metrics[rollout_metric] for state in rollout])
+                    ),
                     title=f"{rollout_metric} for each rollout frame",
                 )
 
@@ -158,7 +160,10 @@ def rollout_logging_fn(
                 width=640,
             )
             media.write_video(video_path, frames, fps=fps, qp=18)
-        wandb.log({"videos/rollout": wandb.Video(video_path, format="mp4")})
+        wandb.log(
+            {"videos/rollout": wandb.Video(video_path, format="mp4")},
+            commit=False,
+        )
 
 
 def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):
@@ -191,5 +196,5 @@ def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: 
                 title=title,
             )
         },
-        commit=True,
+        commit=False,
     )

@@ -365,7 +365,7 @@ def compute_tracking_rewards(
         reward_config.angvel_reward_exp_scale,
     )
 
-    bodypos_array = walker.get_body_positions(data.xpos)
+    bodypos_array = walker.get_body_positions(data.xpos[1:])
     reference_frame_bodypos = reference_frame.body_positions[walker.body_idxs]
     bodypos_reward = compute_bodypos_reward(
         bodypos_array,
@@ -374,7 +374,7 @@ def compute_tracking_rewards(
         reward_config.bodypos_reward_exp_scale,
     )
 
-    endeff_array = walker.get_end_effector_positions(data.xpos)
+    endeff_array = walker.get_end_effector_positions(data.xpos[1:])
     reference_frame_endeff = reference_frame.body_positions[walker.endeff_idxs]
     endeff_reward = compute_endeff_reward(
         endeff_array,

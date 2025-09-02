@@ -414,7 +414,6 @@ def compute_tracking_rewards(
         reward_config.angvel_reward_exp_scale,
     )
 
-
     ######### TODO (Scott): change the access to named access using mj_spec
     bodypos_array = walker.get_body_positions(data.xpos[1:])
     reference_frame_bodypos = reference_frame.body_positions[walker.body_idxs]

@@ -4,7 +4,7 @@
     <quality shadowsize="2048" />
     <global offwidth="1920" offheight="1200" elevation="-20" azimuth="120" />
   </visual>
-  <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="/home/aaprasad/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/meshes_decimated" />
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="/home/aaprasad/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/meshes" />
   <option density="1.2" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="0.1" cone="pyramidal" />
   <default>
     <geom conaffinity="1" condim="3" contype="1" material="geom" rgba="0.8 0.6 .4 1" />

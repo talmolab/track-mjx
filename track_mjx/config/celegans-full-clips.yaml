@@ -1,11 +1,11 @@
-data_path: data/transform_snips.h5
+data_path: /home/aaprasad/mnt/projects/con3trol/run/results/stac/celegans_ik_only_04182019am_centerline_0-500.h5
 
 env_config:
   env_name: celegans_multi_clip
   task_name: imitation
   walker_name: celegans
   render_camera_name: track
-  render_fps: 5
+  render_fps: 20
 
   env_args:
     solver: "cg"
@@ -13,30 +13,30 @@ env_config:
     ls_iterations: 4
     physics_steps_per_control_step: 5
     reset_noise_scale: 1e-3
-    mj_model_timestep: 0.002
-    mocap_hz: 50
+    mj_model_timestep: 0.005
+    mocap_hz: 20
 
   reward_weights:
-    # too_far_dist: 0.01
-    # bad_pose_dist: 20
-    # bad_quat_dist: 1
-    ctrl_cost_weight: 0 #.02
-    ctrl_diff_cost_weight: 0 #.02
-    energy_cost_weight: 0 #.001
+    too_far_dist: 0.01
+    bad_pose_dist: 20
+    bad_quat_dist: 1
+    ctrl_cost_weight: 0.02
+    ctrl_diff_cost_weight: 0.02
+    energy_cost_weight: 0.0
     pos_reward_weight: 1.0
     quat_reward_weight: 1.0
     joint_reward_weight: 1.0
     angvel_reward_weight: 0.0
-    bodypos_reward_weight: 1.0
-    endeff_reward_weight: 0.0 #1.0
+    bodypos_reward_weight: 0.0
+    endeff_reward_weight: 1.0
     healthy_z_range: [0.0, 1.0]
-    pos_reward_exp_scale: 400.0
-    quat_reward_exp_scale: 4.0
-    joint_reward_exp_scale: 0.25
-    angvel_reward_exp_scale: 0.5
+    pos_reward_exp_scale: 100.0
+    quat_reward_exp_scale: 500.0
+    joint_reward_exp_scale: 0.5
+    angvel_reward_exp_scale: 20
     bodypos_reward_exp_scale: 8.0
-    endeff_reward_exp_scale: 500.0
-    penalty_pos_distance_scale: [1.0, 1.0, 0.2]
+    endeff_reward_exp_scale: 1
+    penalty_pos_distance_scale: [1.0, 1.0, 0.5]
 
 reference_config:
   clip_length: 250
@@ -48,7 +48,7 @@ network_config:
   encoder_layer_sizes: [512,512,512]
   decoder_layer_sizes: [512,512,512]
   critic_layer_sizes: [512,512,512]
-  intention_size: 64
+  intention_size: 8
   kl_schedule: True # Whether to use a ramping KL schedule
   kl_weight: 1e-4 # The maximum weight if schedule is True
   hidden_state_size: 512
@@ -77,7 +77,7 @@ train_setup:
     clipping_epsilon: 0.2     
     discounting: 0.95
     action_repeat: 1
-    entropy_cost: 5e-2
+    entropy_cost: 2e-3
     reward_scaling: 1
     normalize_observations: True
     unroll_length: 20
@@ -88,11 +88,12 @@ train_setup:
 
 logging_config:
   project_name: con3trol
-  group_name: "intention_size"
+  group_name: "physics"
   clip_id: -1
   model_path: model_checkpoints
   algo_name: ppo
-  run_id: celegans_intention=64
+  run_id: viscosity=1000
+  notes: "training with viscosity=1000"
   rollout_metrics:
     - pos_reward
     - quat_reward
@@ -112,6 +113,7 @@ logging_config:
     - fall
 
 walker_config:
+  xml_path: /home/aaprasad/mnt/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/celegans_fast.xml
   torque_actuators: False  # Changed from False for better performance
   rescale_factor: 1.0
   joint_names:
@@ -167,4 +169,12 @@ walker_config:
     - torso25_body
   end_eff_names:
     - torso1_body
+    - torso2_body
+    - torso3_body
+    - torso4_body
+    - torso5_body
+    - torso21_body
+    - torso22_body
+    - torso23_body
+    - torso24_body
     - torso25_body

@@ -40,7 +40,7 @@ import functools
 _BASE_XML_PATHS = {
     "rodent": str(Path(__file__).parent.parent / "environment/walker/assets/rodent/rodent.xml"),
     "fly": str(Path(__file__).parent.parent / "environment/walker/assets/fruitfly/fruitfly_force.xml"),
-    "celegans": str(Path(__file__).parent.parent / "environment/walker/assets/celegans/celegans.xml"),
+    "celegans": str(Path(__file__).parent.parent / "environment/walker/assets/celegans/celegans_fast.xml"),
 }
 
 _ROOT_NAME = {
@@ -126,12 +126,17 @@ def make_rollout_renderer(
     """
 
     if cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
-        xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
+        if "xml_path" in cfg.walker_config.keys():
+                xml_path = cfg.walker_config.xml_path
+        else:
+            xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
+        print(f"Using XML path: {xml_path}")
         if render_ghost:
             _, mj_model, _ = make_ghost_pair(
                 xml_path, root_name=_ROOT_NAME[cfg.env_config.walker_name], scale=cfg.walker_config.rescale_factor
             )
         else:
+
             base = mujoco.MjSpec.from_file(xml_path)
             for top in base.worldbody.bodies:
                 _scale_body_tree(top, cfg.walker_config.rescale_factor)

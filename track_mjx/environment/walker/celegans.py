@@ -10,7 +10,7 @@ from track_mjx.environment.walker.base import BaseWalker  # type: ignore
 from track_mjx.environment.walker import spec_utils
 
 
-_XML_PATH = "assets/celegans/celegans_fast.xml"  # relative to this file
+_XML_PATH = Path(__file__).parent / "assets/celegans/celegans_fast.xml"  # relative to this file
 
 
 class C_Elegans(BaseWalker):
@@ -22,6 +22,7 @@ class C_Elegans(BaseWalker):
         body_names: Sequence[str],
         end_eff_names: Sequence[str],
         *,
+        xml_path: str = _XML_PATH,
         torque_actuators: bool = False,
         rescale_factor: float = 1.0,
     ):
@@ -40,6 +41,7 @@ class C_Elegans(BaseWalker):
         self._body_names = body_names
         self._end_eff_names = end_eff_names
         self._torso_name = "torso13_body"
+        self._xml_path = xml_path
         # 1) Build the physics model via MjSpec
         self._mj_spec = self._build_spec(torque_actuators, rescale_factor)
         self._mj_model = self._mj_spec.compile()  # mujoco.mjx.Model wrapper
@@ -60,9 +62,11 @@ class C_Elegans(BaseWalker):
         Returns:
             mujoco.MjSpec: mujoco spec that contains the model
         """
-        path = Path(__file__).with_suffix("").parent / _XML_PATH
-        xml_str = path.read_text()
-        spec = mujoco.MjSpec.from_string(xml_str)
+        path = Path(self._xml_path)
+        print(f"Building spec from XML path: {path}")
+        # reading the xml locally will destroy the relative path
+        # use mj_spec from file instead of directly reading the text
+        spec = mujoco.MjSpec.from_file(str(path))
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):

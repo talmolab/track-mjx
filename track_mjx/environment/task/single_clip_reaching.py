@@ -17,6 +17,8 @@ from track_mjx.environment.reacher import spec_utils
 
 from jax.flatten_util import ravel_pytree
 
+from track_mjx.environment.reacher.emg_utils import EMGProcessor  
+
 
 class SingleClipReaching(PipelineEnv):
     """Reaching task for a continuous reference clip."""
@@ -36,6 +38,7 @@ class SingleClipReaching(PipelineEnv):
         clip_length: int,
         random_init_range: int,
         traj_length: int,
+        use_emg: bool = False, 
         **kwargs: Any,
     ):
         """Initializes the SingleReaching environment.
@@ -87,6 +90,27 @@ class SingleClipReaching(PipelineEnv):
         self._reset_noise_scale = reset_noise_scale
         self._mjx_model = mjx.put_model(self.sys.mj_model)
         self._mj_spec = self.reacher._mj_spec
+
+        # EMG data handling
+        self._use_emg = use_emg
+        self._emg_processor = None
+
+        if use_emg:
+            # Define muscle configurations
+            MUSCLE_CONFIGS = [
+                (3, "Anterior Deltoid", "/root/vast/eric/CVAT_mouse_reach/csvs/emg_trap_fixed_A36-1_2023-07-18_16-54-01_lightOff_tone_on.csv", "Anterior Deltoid"),
+                (5, "Triceps Lateral", "/root/vast/eric/CVAT_mouse_reach/csvs/emg_triceps_fixed_A36-1_2023-07-18_16-54-01_lightOff_tone_on.csv", "Triceps"),
+                (8, "Biceps Long", "/root/vast/eric/CVAT_mouse_reach/csvs/emg_biceps_fixed_A36-1_2023-07-18_16-54-01_lightOff_tone_on.csv", "Biceps"),
+            ]
+            
+            self._emg_processor = EMGProcessor(
+                MUSCLE_CONFIGS,
+                "/root/vast/eric/CVAT_mouse_reach/csvs/A36-1_2023-07-18_16-54-01_lightOff_tone_on_off_trials_edited.csv"
+            )
+
+            # Add this code right here, after initializing the EMG processor
+            # Create static arrays for JAX compatibility
+            self._static_actuator_indices, self._static_emg_values, self._static_valid_mask = self._emg_processor.prepare_static_arrays()
 
     def reset(self, rng: jp.ndarray) -> State:
         """Resets the environment to an initial state.
@@ -168,6 +192,7 @@ class SingleClipReaching(PipelineEnv):
             "ctrl_cost": zero,
             "ctrl_diff_cost": zero,
             "energy_cost": zero,
+            "emg_cost": zero,
             "done": zero,
             "bad_pose": zero,
             "nan": zero,
@@ -186,16 +211,28 @@ class SingleClipReaching(PipelineEnv):
         Returns:
             State: The updated environment state.
         """
-
+        
         data0 = state.pipeline_state
         data = self.pipeline_step(data0, action)
         info = state.info.copy()
 
         # Gets reference clip and indexes to current frame
+        cur_frame = self._get_cur_frame(info, data)
         reference_frame = jax.tree.map(
-            lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
+            lambda x: x[cur_frame], self._get_reference_clip(info)
         )
         info["reference_frame"] = reference_frame
+
+        clip_idx = info.get("clip_idx", 0)
+        # Get JAX-compatible arrays
+        if hasattr(self, '_use_emg') and self._use_emg and hasattr(self, '_static_actuator_indices'):
+            actuator_indices = self._static_actuator_indices
+            emg_values = self._static_emg_values
+            valid_mask = self._static_valid_mask
+        else:
+            actuator_indices = jp.array([0], dtype=jp.int32)
+            emg_values = jp.array([0.0], dtype=jp.float32)
+            valid_mask = jp.array([0.0], dtype=jp.float32)
         
         # reward calculation
         (
@@ -206,6 +243,7 @@ class SingleClipReaching(PipelineEnv):
             energy_cost,
             joint_distance,
             joint_penalty,
+            emg_cost,  # Add this
         ) = compute_reaching_rewards(
             data=data,
             reference_frame=reference_frame,
@@ -213,6 +251,9 @@ class SingleClipReaching(PipelineEnv):
             action=action,
             info=info,
             reward_config=self._reward_config,
+            actuator_indices=actuator_indices,
+            emg_values=emg_values,
+            valid_mask=valid_mask,
         )
 
         info["prev_ctrl"] = action
@@ -225,6 +266,7 @@ class SingleClipReaching(PipelineEnv):
             - ctrl_diff_cost
             - energy_cost
             - joint_penalty  # Subtract the penalty
+            - emg_cost
         )
 
         # Raise done flag if terminating
@@ -245,6 +287,7 @@ class SingleClipReaching(PipelineEnv):
             ctrl_cost=-ctrl_cost,
             ctrl_diff_cost=-ctrl_diff_cost,
             energy_cost=-energy_cost,
+            emg_cost=-emg_cost,
             done=done,
             bad_pose=joint_penalty,  # Changed from bad_pose to joint_penalty
             nan=nan,

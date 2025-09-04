@@ -426,6 +426,7 @@ def compute_tracking_rewards(
         quat_distance,
     )
 
+
 @struct.dataclass
 class RewardConfigReach:
     """Weights and scales for the reaching reward terms.
@@ -441,7 +442,7 @@ class RewardConfigReach:
     endeff_reward_exp_scale: float
     joint_penalty_threshold: float  # Threshold for joint distance penalty
     joint_penalty_weight: float  # Threshold for joint distance penalty
-
+    emg_cost_weight: float  # Weight for emg cost
 
 def compute_penalty_terms_reach(
     joint_distance: jp.ndarray,
@@ -462,6 +463,43 @@ def compute_penalty_terms_reach(
     penalty = joint_penalty_weight * bad_pose
     return penalty, joint_distance
 
+def compute_emg_cost(
+    action: jp.ndarray, 
+    actuator_indices: jp.ndarray,
+    emg_values: jp.ndarray,
+    valid_mask: jp.ndarray,
+    emg_cost_weight: float
+) -> jp.ndarray:
+    """Compute EMG cost in a fully JAX-compatible way.
+    
+    Args:
+        action: Control actions (muscle activations) for all actuators
+        actuator_indices: Indices of actuators that have EMG data (e.g., [3, 5, 8])
+        emg_values: EMG values for those specific actuators at the current frame
+        valid_mask: Binary mask indicating valid comparisons (1=valid, 0=invalid)
+        emg_cost_weight: Weight for EMG cost
+    
+    Returns:
+        jp.ndarray: Weighted EMG cost
+    """
+    # Get action values for the muscles with EMG data
+    action_values = action[actuator_indices]
+    
+    # Normalize actions to [0,1] to match EMG normalization
+    action_values = jp.clip(action_values, 0, 1)
+    
+    # Calculate squared differences between actions and EMG values
+    squared_diffs = jp.square(action_values - emg_values)
+    
+    # Apply mask to zero out invalid comparisons
+    masked_diffs = squared_diffs * valid_mask
+    
+    # Compute average cost (avoiding division by zero)
+    valid_count = jp.maximum(jp.sum(valid_mask), 1.0)
+    mean_cost = jp.sum(masked_diffs) / valid_count
+    
+    # Apply weight
+    return emg_cost_weight * mean_cost
 
 def compute_reaching_rewards(
     data: MjData,
@@ -470,7 +508,12 @@ def compute_reaching_rewards(
     action: jp.ndarray,
     info: dict[str, jp.ndarray],
     reward_config: RewardConfigReach,
-) -> tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
+    actuator_indices: jp.ndarray = None,
+    emg_values: jp.ndarray = None,
+    valid_mask: jp.ndarray = None,
+) -> tuple[
+    jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray
+]:
     """Computes reaching rewards and penalties for motion imitation.
 
     Args:
@@ -480,10 +523,13 @@ def compute_reaching_rewards(
         action: Current action.
         info: Dictionary of information for logging
         reward_config: Reward configuration object.
+        actuator_indices: Indices of actuators that have EMG data
+        emg_values: EMG values for those actuators at the current frame
+        valid_mask: Binary mask indicating valid comparisons (1=valid, 0=invalid)
 
     Returns:
-        Tuple containing: joint_reward, endeff_reward, ctrl_cost, ctrl_diff_cost, 
-        energy_cost, joint_distance, joint_penalty
+        Tuple containing: joint_reward, endeff_reward, ctrl_cost, ctrl_diff_cost,
+        energy_cost, joint_distance, joint_penalty, emg_cost
     """
 
     joint_array = data.qpos
@@ -521,6 +567,22 @@ def compute_reaching_rewards(
         reward_config.joint_penalty_weight,
     )
 
+    # EMG cost calculation with safe defaults
+    emg_cost = jp.array(0.0)
+    
+    # Use default zero arrays if None was provided
+    safe_indices = jp.array([0], dtype=jp.int32) if actuator_indices is None else actuator_indices
+    safe_values = jp.array([0.0]) if emg_values is None else emg_values
+    safe_mask = jp.array([0.0]) if valid_mask is None else valid_mask
+
+    emg_cost = compute_emg_cost(
+            action=action,
+            actuator_indices= actuator_indices,
+            emg_values=safe_values,
+            valid_mask=safe_mask,
+            emg_cost_weight=reward_config.emg_cost_weight
+        )
+
     return (
         joint_reward,
         endeff_reward,
@@ -529,4 +591,5 @@ def compute_reaching_rewards(
         energy_cost,
         joint_distance,
         joint_penalty,
+        emg_cost,  # Add this
     )

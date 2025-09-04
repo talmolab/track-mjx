@@ -28,27 +28,10 @@ class MultiClipReaching(SingleClipReaching):
         clip_length: int = 100,
         random_init_range: int = 5,
         traj_length: int = 5,
+        use_emg: bool = False,  # Add this parameter
         **kwargs: Any,
     ):
-        """Initializes the MultiTracking environment.
-
-        Args:
-            reference_clip (ReferenceClip, Optional): The reference trajectory data. None is used when in pure rendering mode.
-            walker: The base walker model.
-            torque_actuators: Whether to use torque actuators.
-            reward_config: Reward configuration.
-            physics_steps_per_control_step: Number of physics steps per control step.
-            reset_noise_scale: Scale of noise for reset.
-            solver: Solver type for Mujoco.
-            iterations: Maximum number of solver iterations.
-            ls_iterations: Maximum number of line search iterations.
-            mj_model_timestep: fundamental time increment of the MuJoCo physics simulation
-            mocap_hz: cycles per second for the reference data
-            clip_length: clip length of the tracking clips
-            random_init_range: the initiated range
-            traj_length: one trajectory length
-            **kwargs: Additional arguments for the PipelineEnv initialization.
-        """
+        # Pass use_emg to the parent constructor
         super().__init__(
             None,
             reacher,
@@ -63,6 +46,7 @@ class MultiClipReaching(SingleClipReaching):
             clip_length,
             random_init_range,
             traj_length,
+            use_emg=use_emg,  # Pass this parameter
             **kwargs,
         )
         if reference_clip is not None:

@@ -330,13 +330,17 @@ def create_environment(cfg, agent, reward_config, clips, **kwargs):
     """Create environment based on task type."""
     task_type = cfg.env_config.get("task_type", "tracking")
     
+    # Add the use_emg parameter
+    use_emg = cfg.env_config.get("use_emg", False)
+    
     if task_type == "reaching":
         # For reaching tasks, use reaching environments
         return envs.get_environment(
             env_name=cfg.env_config.env_name,
             reference_clip=clips,
-            reacher=agent,  # Note: using reacher instead of walker
+            reacher=agent,
             reward_config=reward_config,
+            use_emg=use_emg,  # Add this line
             **kwargs,
         )
     else:

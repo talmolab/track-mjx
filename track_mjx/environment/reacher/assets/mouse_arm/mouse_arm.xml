@@ -3,9 +3,9 @@
 	<compiler angle="degree">
 		<lengthrange mode="muscle" timestep="0"/>
 	</compiler>
-	<option integrator="RK4" timestep="0.001" solver="CG" iterations="30" ls_iterations="30"></option>
+	<option integrator="RK4" timestep="0.001" solver="CG" iterations="6" ls_iterations="6"></option>
 	<default>
-	<joint limited="true" solreflimit="0.01 1" solimplimit="0.99 0.9999 0" armature="4e-7" damping="1e-5" stiffness="1e-6"/>
+	<joint limited="true" solreflimit="0.01 1" solimplimit="0.99 0.9999 0" armature="1e-7" damping="2e-5" stiffness="1e-12"/>
 	<muscle ctrllimited="true" ctrlrange="0 1"/>
 	</default>
 	<size njmax="1000" nconmax="400" nkey="1" nuser_jnt="1"/>
@@ -18,8 +18,8 @@
 	<asset>
 		<material name="target" rgba="0.59999999999999998 0.29999999999999999 0.29999999999999999 0.29999999999999999"/>
 		<texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="0.6 0.8 1" width="256" height="1536"/>
-		<texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
-		<material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+		<!-- <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+		<material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/> -->
 		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Scapula_right_v3.stl"/>
 		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Humerus_right_v3.stl"/>
 		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Clavicle_right_v3.stl"/>
@@ -58,6 +58,9 @@
 				<body name="scapula" pos="-0.0001 -0.0001 0.0005" euler="-30 -15 0">
 					<!--Mesh Geom-->
 					<geom type="mesh" mesh="Bone_Scapula_right_v3" pos="0.0 0.0 0.0" contype="0" conaffinity="0"/>
+					
+					<!-- TRACKING SITE: Shoulder/Clavicle landmark -->
+                	<site name="shoulder_track" pos="0 0 0.0" rgba="1 0 0 1" size="0.0005"/>
 					
 					<!--Muscle Attachement-->
 					<!--Latissimus Dorsi-->
@@ -126,6 +129,9 @@
 							<!--Mesh Geom-->
 							<geom type="mesh" mesh="Bone_Ulna_right_v3" pos="0.0 0.0 0.0" contype="0" conaffinity="0"/>
 							
+							<!-- TRACKING SITE: Elbow joint center -->
+                            <site name="elbow_track" pos="0 0 0" rgba="0 1 0 1" size="0.0005"/>
+
 							<!-- Elbow Joint -->
 							<joint name="elbow" pos="0 0 0" axis="1 0 0"  range="-80 90" limited="true"/>
 							<inertial pos="-0.0009 0.004 0.0005" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
@@ -155,10 +161,13 @@
 						
 							</body>
 							<body name="wrist_body" pos="-0.002 0.0065 0.0005" euler="0 0 0">
-										<geom name="wrist_marker" type="sphere" size="0.0003" pos="0.0 0.003 0.0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
-										<geom name="hand_mesh_geom" type="mesh" mesh="Bone_Segments_Hand_fixed" pos="0 0 0"/>					
-										<inertial pos="0.0 0.0 0.0" mass=" 0.00071" diaginertia="7e-08 7e-08 7e-08"/> 
-									</body>
+								<!-- TRACKING SITE: Wrist/Hand endpoint -->
+								<site name="wrist_track" pos="0.0 0.0 0.0" rgba="0 0 1 1" size="0.0005"/>
+								
+								<geom name="wrist_marker" type="sphere" size="0.0003" pos="0.0 0.003 0.0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
+								<geom name="hand_mesh_geom" type="mesh" mesh="Bone_Segments_Hand_fixed" pos="0 0 0"/>					
+								<inertial pos="0.0 0.0 0.0" mass=" 0.00071" diaginertia="7e-08 7e-08 7e-08"/> 
+							</body>
 						</body>
 
 					</body>
@@ -240,13 +249,13 @@
 		<muscle name="Pec_C" tendon="Pec_C" force=".8" vmax="15" range="0.5 1.2"/>
 		<muscle name="Lat" tendon="Lat" force=".8" vmax="15" range="0.75 1.05"/>
 		<muscle name="PD" tendon="PD" force=".87" vmax="15" range="0.6 1.1"/>
-		<muscle name="AD" tendon="AD" force="1.2" vmax="15" range="0.5  1"/>
-		<muscle name="MD" tendon="MD" force=".9" vmax="15" range="0.55 1.2"/>
+		<muscle name="AD" tendon="AD" force="1.2" vmax="15" range="0.7  1.1"/>
+		<muscle name="MD" tendon="MD" force=".9" vmax="15" range="0.55 0.8"/>
 
 		<!--Elbow muscles-->
 		<muscle name="Triceps_Lateral" tendon="Triceps_Lateral" force=".6" vmax="15" range="0.82 1.05"/>
 		<muscle name="Triceps_Long" tendon="Triceps_Long" force=".9" vmax="15" range="0.7 1.1"/>
-		<muscle name="Brachialis" tendon="Brachialis" force=".6" vmax="15" range="0.7 1.2"/>
+		<muscle name="Brachialis" tendon="Brachialis" force=".7" vmax="15" range="0.7 1.2"/>
 		<muscle name="Biceps_Long" tendon="Biceps_Long" force=".52" vmax="15" range="0.7 1.05"/>
 		<!-- <muscle name="Biceps_Short" tendon="Biceps_Short" force=".5" vmax="15" range="0.7 1.05"/> -->
 	</actuator>

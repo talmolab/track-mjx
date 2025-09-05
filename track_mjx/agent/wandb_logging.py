@@ -24,6 +24,7 @@ from brax.envs.base import Env, PipelineEnv
 from mujoco_playground._src.mjx_env import MjxEnv
 import numpy as np
 from jax import numpy as jp
+from mujoco_playground._src.mjx_env import MjxEnv
 
 # TODO: Use MjSpec to generate the mjcf with ghost
 
@@ -79,6 +80,10 @@ def rollout_logging_fn(
     if "reference_config" in cfg:
         episode_length = int(
             cfg["reference_config"].clip_length * env._steps_for_cur_frame
+        )
+    elif "clip_length" in cfg.env_config.env_args:
+        episode_length = int(
+            cfg.env_config.env_args.clip_length * 1/(env._config.mocap_hz * env._config.ctrl_dt)
         )
     elif "clip_length" in cfg.env_config.env_args:
         episode_length = int(

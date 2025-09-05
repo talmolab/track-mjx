@@ -23,6 +23,7 @@ from brax.io import model
 from brax.envs.base import Env
 import numpy as np
 from jax import numpy as jp
+from mujoco_playground._src.mjx_env import MjxEnv
 
 # TODO: Use MjSpec to generate the mjcf with ghost
 
@@ -74,6 +75,10 @@ def rollout_logging_fn(
         episode_length = int(
             cfg["reference_config"].clip_length * env._steps_for_cur_frame
         )
+    elif "clip_length" in cfg.env_config.env_args:
+        episode_length = int(
+            cfg.env_config.env_args.clip_length * 1/(env._config.mocap_hz * env._config.ctrl_dt)
+        )
     else:
         episode_length = int(cfg["train_setup"]["train_config"]["episode_length"])
     for i in range(episode_length):
@@ -123,15 +128,25 @@ def rollout_logging_fn(
             )
 
         # Render the walker with the reference expert demonstration trajectory
-        qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
-        ref_traj = env._get_reference_clip(rollout[0].info)
-        qposes_ref = np.repeat(
-            np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-            env._steps_for_cur_frame,
-            axis=0,
-        )
 
-        with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
+        if isinstance(env, MjxEnv):
+            qposes_rollout = np.array([state.data.qpos for state in rollout])
+            ref_traj = env._get_reference_clip(rollout[0].data, rollout[0].info)
+            qposes_ref = np.repeat(ref_traj.qpos, env._steps_per_curr_frame, axis=0)
+        else:
+            qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
+            ref_traj = env._get_reference_clip(rollout[0].info)
+            qposes_ref = np.repeat(
+                np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+                env._steps_for_cur_frame,
+                axis=0,
+            )
+
+        if "render_fps" in cfg["env_config"]:
+            render_fps = cfg["env_config"]["render_fps"]
+        else:
+            render_fps = 1.0 / env.dt
+        with imageio.get_writer(video_path, fps=int(render_fps)) as video:
             for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
                 mj_data.qpos = np.append(qpos1, qpos2)
                 mujoco.mj_forward(mj_model, mj_data)

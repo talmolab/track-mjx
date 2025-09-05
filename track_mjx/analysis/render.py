@@ -128,6 +128,8 @@ def make_rollout_renderer(
     if cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
         if "xml_path" in cfg.walker_config.keys():
                 xml_path = cfg.walker_config.xml_path
+        elif "xml_path" in cfg.env_config.env_args.keys():
+            xml_path = cfg.env_config.env_args.xml_path
         else:
             xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
         print(f"Using XML path: {xml_path}")
@@ -181,6 +183,7 @@ def render_rollout(
     height: int = 480,
     width: int = 640,
     render_ghost: bool = True,
+    render_fps: int = -1
 ) -> Tuple[List[np.ndarray], float]:
     """Render a rollout from saved qposes.
 
@@ -211,7 +214,8 @@ def render_rollout(
     )
 
     # Compute real-time fps
-    render_fps = (
+    if render_fps == -1:
+        render_fps = (
         1.0 / mj_model.opt.timestep
     ) / cfg.env_config.env_args.physics_steps_per_control_step
 

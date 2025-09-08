@@ -114,6 +114,10 @@ def rollout_logging_fn(
             commit=True,
         )
     if render_video:
+        if cfg["env_config"].get("render_fps") is not None:
+            render_fps = cfg["env_config"].get("render_fps")
+        else:
+            render_fps = int(1.0 / env.dt)
         video_path = f"{model_path}/{current_step}.mp4"
         if cfg["env_config"]["task_name"] == "imitation":
             # track-mjx envs
@@ -134,7 +138,7 @@ def rollout_logging_fn(
                 axis=0,
             )
 
-            with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
+            with imageio.get_writer(video_path, fps=render_fps) as video:
                 for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
                     mj_data.qpos = np.append(qpos1, qpos2)
                     mujoco.mj_forward(mj_model, mj_data)
@@ -148,8 +152,9 @@ def rollout_logging_fn(
         else:
             # mujoco playground envs
             render_every = 2
-            fps = 1.0 / env.dt / render_every
+            fps = render_fps / render_every
             traj = rollout[::render_every]
+            # TODO: make the camera configurable via yaml config
             frames = env.render(
                 traj,
                 camera="close_profile-rodent",

@@ -122,6 +122,10 @@ def rollout_logging_fn(
         commit=False,
     )
     if render_video:
+        if cfg["env_config"].get("render_fps") is not None:
+            render_fps = cfg["env_config"].get("render_fps")
+        else:
+            render_fps = int(1.0 / env.dt)
         video_path = f"{model_path}/{current_step}.mp4"
         if "render_fps" in cfg["env_config"]:
                 render_fps = cfg["env_config"]["render_fps"]
@@ -175,8 +179,9 @@ def rollout_logging_fn(
         else:
             # mujoco playground envs
             render_every = 2
-            fps = 1.0 / env.dt / render_every
+            fps = render_fps / render_every
             traj = rollout[::render_every]
+            # TODO: make the camera configurable via yaml config
             frames = env.render(
                 traj,
                 camera="close_profile-rodent",

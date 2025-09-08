@@ -7,6 +7,7 @@ import jax
 from brax.envs.base import Env
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
+from track_mjx.environment.walker.stick import Stick
 from brax import envs
 from typing import Dict, Callable
 import hydra
@@ -47,6 +48,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     walker_map = {
         "rodent": Rodent,
         "fly": Fly,
+        "stick": Stick,
     }
     walker_class = walker_map[cfg_dict["env_config"]["walker_name"]]
     walker = walker_class(**walker_config)

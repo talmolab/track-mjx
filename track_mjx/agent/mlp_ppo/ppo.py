@@ -756,8 +756,6 @@ def train(
                     metrics,
                     data_split="test_set",
                 )
-            logging.info(metrics)
-            progress_fn(current_step, metrics)
 
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
@@ -781,6 +779,10 @@ def train(
                     policy_params_fn_key=policy_params_fn_key,
                     render_video=False,
                 )
+
+            # log metrics
+            logging.info(metrics)
+            progress_fn(current_step, metrics)
             # Save checkpoint
             if ckpt_mgr is not None:
                 checkpointing.save(

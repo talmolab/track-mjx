@@ -2,9 +2,8 @@
   <compiler autolimits="true" angle="radian"/>
 
   <option timestep="0.0001" gravity="0 0 -981" density="0.00128" viscosity="0.000185" cone="elliptic" noslip_iterations="3"/>
-  <!-- <option timestep="0.0001" gravity="0 0 -981" density="0.00128" viscosity="0.000185" cone="pyramidal" noslip_iterations="3"/> -->
 
-  <size nkey="1"/>
+  <size njmax="300" nconmax="100" nkey="1"/>
 
   <default>
     <mesh scale="0.1 0.1 0.1"/>
@@ -17,6 +16,7 @@
       <default class="collision">
         <geom type="capsule" contype="0" conaffinity="0" condim="1" group="4" material="blue" density="0"/>
         <default class="adhesion-collision">
+          <!-- <geom material="pink" friction="2.0" margin="0.0005" gap="0.0005" contype="1" conaffinity="1" condim="3"/> -->
           <geom material="pink" friction="0.6" margin="0.0005" gap="0.0005" contype="1" conaffinity="1" condim="3"/>
           <site type="capsule"/>
         </default>
@@ -38,12 +38,12 @@
         <geom density="0.713"/>
         <general forcerange="-0.1 0.1" biastype="affine" gainprm="0.1" biasprm="0 -0.1"/>
         <default class="labrum">
-          <general forcerange="-0.01 0.01" gainprm="0.01"/>
+          <general forcerange="-0.01 0.01" biastype="affine" gainprm="0.01" biasprm="0 -0.01"/>
         </default>
       </default>
       <default class="antenna">
         <joint damping="0.0003"/>
-        <general forcerange="-0.01 0.01" gainprm="0.01"/>
+        <general forcerange="-0.01 0.01" biastype="affine" gainprm="0.01" biasprm="0 -0.01"/>
         <default class="antenna_extend">
           <joint axis="1 0 0" range="-0.2 0.5"/>
         </default>
@@ -79,7 +79,7 @@
       <default class="abdomen">
         <joint group="3" stiffness="0.05" damping="0.01"/>
         <geom density="0.555"/>
-        <general gainprm="0.1"/>
+        <general biastype="affine" gainprm="0.1" biasprm="0 -0.1"/>
         <default class="abduct_abdomen">
           <joint axis="0 0 1" range="-0.1 0.1"/>
         </default>
@@ -94,102 +94,103 @@
         <joint stiffness="0.01" damping="0.01"/>
         <geom density="1.18"/>
         <default class="coxa">
-          <!-- <general gainprm="0.8"/> -->
+          <general biastype="affine" gainprm="0.8" biasprm="0 -0.8"/>
           <default class="twist_coxa_T1">
             <joint axis="0 1 0" range="-0.8 0.8"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <general ctrlrange="-0.8 0.8"/>
           </default>
           <default class="flexion_coxa_T1">
             <joint axis="0 0 1" range="-1 0.7"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <general ctrlrange="-1 0.7"/>
           </default>
           <default class="extend_coxa_T1">
-            <joint axis="1 0 0" range="-0.2 1.7"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint axis="1 0 0" range="-0.2 1.7" springref="0.0584"/>
+            <general ctrlrange="-0.2 1.7"/>
           </default>
           <default class="twist_coxa_T2">
-            <joint axis="0 1 0" range="-0.75 0.8"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint axis="0 1 0" range="-0.75 0.8" springref="-0.742"/>
+            <general ctrlrange="-0.75 0.8"/>
           </default>
           <default class="flexion_coxa_T2">
-            <joint axis="0 0 1" range="-0.5 0.3"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint axis="0 0 1" range="-0.5 0.3" springref="-0.292"/>
+            <general ctrlrange="-0.5 0.3"/>
           </default>
           <default class="extend_coxa_T2">
-            <joint axis="1 0 0" range="-0.2 0.9"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint axis="1 0 0" range="-0.2 0.9" springref="0.408"/>
+            <general ctrlrange="-0.2 0.9"/>
           </default>
           <default class="twist_coxa_T3">
-            <joint axis="0 1 0" range="-0.15 0.8"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint axis="0 1 0" range="-0.15 0.8" springref="0.00841"/>
+            <general ctrlrange="-0.15 0.8"/>
           </default>
           <default class="flexion_coxa_T3">
             <joint axis="0 0 1" range="-0.9 0.25"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <general ctrlrange="-0.9 0.25"/>
           </default>
           <default class="extend_coxa_T3">
-            <joint axis="1 0 0" range="-0.3 1.3"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint axis="1 0 0" range="-0.3 1.3" springref="0.158"/>
+            <general ctrlrange="-0.3 1.3"/>
           </default>
         </default>
         <default class="femur">
-          <!-- <general gainprm="0.8"/> -->
+          <general biastype="affine" gainprm="0.8" biasprm="0 -0.8"/>
           <default class="twist_femur">
             <joint axis="0 1 0" range="-1 1"/>
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <general ctrlrange="-1 1"/>
             <default class="twist_femur_T2">
-              <general ctrlrange="-10 10" ctrllimited="true"/>
+              <joint springref="0.608"/>
             </default>
             <default class="twist_femur_T3">
-              <general ctrlrange="-10 10" ctrllimited="true"/>
+              <joint springref="0.558"/>
             </default>
           </default>
           <default class="extend_femur">
-            <joint axis="1 0 0" range="-0.15 2" /> <!--damping="0.001"-->
+            <joint axis="1 0 0" range="-0.15 2"/>
+            <general ctrlrange="-0.15 2"/>
             <default class="extend_femur_T1">
-              <general ctrlrange="-10 10" ctrllimited="true"/>
+              <joint springref="-0.142"/>
             </default>
             <default class="extend_femur_T2">
-              <general ctrlrange="-10 10" ctrllimited="true"/>
+              <joint springref="0.208"/>
             </default>
           </default>
           <default class="extend_femur_T3">
-            <joint axis="1 0 0" range="-0.7 1.5" /> <!--damping="0.001"-->
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint axis="1 0 0" range="-0.7 1.5" springref="0.258"/>
+            <general ctrlrange="-0.7 1.5"/>
           </default>
         </default>
         <default class="tibia">
           <joint damping="0.004"/>
-          <general gainprm="0.4"/>
+          <general biastype="affine" gainprm="0.4" biasprm="0 -0.4"/>
           <default class="extend_tibia">
-            <joint axis="1 0 0" range="-1.35 1.3" /> <!--damping="0.001"-->
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint axis="1 0 0" range="-1.35 1.3" springref="-1.29"/>
+            <general ctrlrange="-1.35 1.3"/>
             <default class="extend_tibia_T2">
-              <general ctrlrange="-10 10" ctrllimited="true"/>
+              <joint springref="-1.34"/>
             </default>
             <default class="extend_tibia_T3">
-              <general ctrlrange="-10 10" ctrllimited="true"/>
+              <joint springref="-0.292"/>
             </default>
           </default>
         </default>
         <default class="tarsus">
           <joint axis="1 0 0"/>
-          <!-- <general gainprm="0.4"/> -->
+          <general biastype="affine" gainprm="0.4" biasprm="0 -0.4"/>
           <default class="extend_tarsus_T1">
-            <joint range="-0.7 1.2" /> <!--damping="0.001"-->
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint range="-0.7 1.2" springref="-0.242"/>
+            <general ctrlrange="-0.7 1.2"/>
           </default>
           <default class="extend_tarsus_T2">
-            <joint range="-1 1.8" /> <!--damping="0.001"-->
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint range="-1 1.8" springref="0.608"/>
+            <general ctrlrange="-1 1.8"/>
           </default>
           <default class="extend_tarsus_T3">
-            <joint range="-0.8 1.2" /> <!--damping="0.001"-->
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint range="-0.8 1.2" springref="0.258"/>
+            <general ctrlrange="-0.8 1.2"/>
           </default>
           <default class="extend_tarsus">
-            <joint group="3" stiffness="0.1" range="-0.36 0.36" /> <!--damping=".002"-->
-            <general ctrlrange="-10 10" ctrllimited="true"/>
+            <joint group="3" stiffness="0.1" range="-0.36 0.36" damping="0.002"/>
+            <general ctrlrange="-0.36 0.36"/>
           </default>
         </default>
       </default>
@@ -198,7 +199,7 @@
 
   <visual>
     <global offwidth="3840" offheight="2160"/>
-    <quality shadowsize="2048" offsamples="24"/>
+    <quality shadowsize="8192" offsamples="24"/>
     <headlight ambient="0.4 0.4 0.4" diffuse="0.8 0.8 0.8" specular="0.1 0.1 0.1"/>
     <map stiffness="1e+04" stiffnessrot="5e+04" force="2e-05"/>
     <scale jointwidth="0.01" framewidth="0.01"/>
@@ -309,9 +310,7 @@
   </asset>
 
   <worldbody>
-    <body name="floor">
-      <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.13" />
-    </body>
+    <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.13"/>
     <body name="thorax" childclass="body">
       <freejoint name="free"/>
       <light name="right" mode="trackcom" pos="0 -1 1" dir="0 1 -1" diffuse="0.3 0.3 0.3"/>
@@ -796,8 +795,8 @@
     <exclude name="rostrum_labrum_right" body1="rostrum" body2="labrum_right"/>
   </contact>
 
-  <!-- <tendon> -->
-  <!-- <fixed name="abduct_abdomen">
+  <!-- <tendon>
+    <fixed name="abduct_abdomen">
       <joint joint="abdomen_abduct" coef="1"/>
       <joint joint="abdomen_abduct_2" coef="1"/>
       <joint joint="abdomen_abduct_3" coef="1"/>
@@ -805,8 +804,8 @@
       <joint joint="abdomen_abduct_5" coef="1"/>
       <joint joint="abdomen_abduct_6" coef="1"/>
       <joint joint="abdomen_abduct_7" coef="1"/>
-    </fixed> -->
-  <!-- <fixed name="abdomen">
+    </fixed>
+    <fixed name="abdomen">
       <joint joint="abdomen" coef="1"/>
       <joint joint="abdomen_2" coef="1"/>
       <joint joint="abdomen_3" coef="1"/>
@@ -814,8 +813,8 @@
       <joint joint="abdomen_5" coef="1"/>
       <joint joint="abdomen_6" coef="1"/>
       <joint joint="abdomen_7" coef="1"/>
-    </fixed> -->
-  <!-- <fixed name="tarsus2_T1_left" class="extend_tarsus">
+    </fixed>
+    <fixed name="tarsus2_T1_left" class="extend_tarsus">
       <joint joint="tarsus2_T1_left" coef="1"/>
       <joint joint="tarsus3_T1_left" coef="0.5"/>
       <joint joint="tarsus4_T1_left" coef="0.5"/>
@@ -850,58 +849,58 @@
       <joint joint="tarsus3_T3_right" coef="0.5"/>
       <joint joint="tarsus4_T3_right" coef="0.5"/>
       <joint joint="tarsus5_T3_right" coef="0.5"/>
-    </fixed> -->
-  <!-- </tendon> -->
+    </fixed>
+  </tendon> -->
 
   <actuator>
-    <motor name="coxa_flexion_T1_left"   class="flexion_coxa_T1" joint="coxa_flexion_T1_left"/>
-    <motor name="coxa_twist_T1_left"    class="twist_coxa_T1" joint="coxa_twist_T1_left"/>
-    <!-- <motor name="coxa_T1_left"          class="extend_coxa_T1" joint="coxa_T1_left"/> -->
-    <motor name="femur_T1_left"         class="extend_femur_T1" joint="femur_T1_left"/>
-    <motor name="femur_twist_T1_left"   class="twist_femur" joint="femur_twist_T1_left"/>
-    <motor name="tibia_T1_left"         class="extend_tibia" joint="tibia_T1_left"/>
-    <motor name="tarsus_T1_left"        class="extend_tarsus_T1" joint="tarsus_T1_left"/>
-    <!-- <motor name="tarsus2_T1_left"       class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T1_left"/> -->
-    <motor name="coxa_flexion_T1_right"  class="flexion_coxa_T1" joint="coxa_flexion_T1_right"/>
-    <motor name="coxa_twist_T1_right"   class="twist_coxa_T1" joint="coxa_twist_T1_right"/>
-    <!-- <motor name="coxa_T1_right"         class="extend_coxa_T1" joint="coxa_T1_right"/> -->
-    <motor name="femur_T1_right"        class="extend_femur_T1" joint="femur_T1_right"/>
-    <motor name="femur_twist_T1_right"  class="twist_femur" joint="femur_twist_T1_right"/>
-    <motor name="tibia_T1_right"        class="extend_tibia" joint="tibia_T1_right"/>
-    <motor name="tarsus_T1_right"       class="extend_tarsus_T1" joint="tarsus_T1_right"/>
-    <!-- <motor name="tarsus2_T1a_right"     class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T1_right"/> -->
-    <motor name="coxa_flexion_T2_left"   class="flexion_coxa_T2" joint="coxa_flexion_T2_left"/>
-    <motor name="coxa_twist_T2_left"    class="twist_coxa_T2" joint="coxa_twist_T2_left"/>
-    <!-- <motor name="coxa_T2_left"          class="extend_coxa_T2" joint="coxa_T2_left"/> -->
-    <motor name="femur_T2_left"         class="extend_femur_T2" joint="femur_T2_left"/>
-    <motor name="femur_twist_T2_left"   class="twist_femur_T2" joint="femur_twist_T2_left"/>
-    <motor name="tibia_T2_left"         class="extend_tibia_T2" joint="tibia_T2_left"/>
-    <motor name="tarsus_T2_left"        class="extend_tarsus_T2" joint="tarsus_T2_left"/>
-    <!-- <motor name="tarsus2_T2_left"       class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T2_left"/> -->
-    <motor name="coxa_flexion_T2_right"  class="flexion_coxa_T2" joint="coxa_flexion_T2_right"/>
-    <motor name="coxa_twist_T2_right"   class="twist_coxa_T2" joint="coxa_twist_T2_right"/>
-    <!-- <motor name="coxa_T2_right"         class="extend_coxa_T2" joint="coxa_T2_right"/> -->
-    <motor name="femur_T2_right"        class="extend_femur_T2" joint="femur_T2_right"/>
-    <motor name="femur_twist_T2_right"  class="twist_femur_T2" joint="femur_twist_T2_right"/>
-    <motor name="tibia_T2_right"        class="extend_tibia_T2" joint="tibia_T2_right"/>
-    <motor name="tarsus_T2_right"       class="extend_tarsus_T2" joint="tarsus_T2_right"/>
-    <!-- <motor name="tarsus2_T2_right"      class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T2_right"/> -->
-    <motor name="coxa_flexion_T3_left"   class="flexion_coxa_T3" joint="coxa_flexion_T3_left"/>
-    <motor name="coxa_twist_T3_left"    class="twist_coxa_T3" joint="coxa_twist_T3_left"/>
-    <!-- <motor name="coxa_T3_left"          class="extend_coxa_T3" joint="coxa_T3_left"/> -->
-    <motor name="femur_T3_left"         class="extend_femur_T3" joint="femur_T3_left"/>
-    <motor name="femur_twist_T3_left"   class="twist_femur_T3" joint="femur_twist_T3_left"/>
-    <motor name="tibia_T3_left"         class="extend_tibia_T3" joint="tibia_T3_left"/>
-    <motor name="tarsus_T3_left"        class="extend_tarsus_T3" joint="tarsus_T3_left"/>
-    <!-- <motor name="tarsus2_T3_left"       class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T3_left"/> -->
-    <motor name="coxa_flexion_T3_right"  class="flexion_coxa_T3" joint="coxa_flexion_T3_right"/>
-    <motor name="coxa_twist_T3_right"   class="twist_coxa_T3" joint="coxa_twist_T3_right"/>
-    <!-- <motor name="coxa_T3_right"         class="extend_coxa_T3" joint="coxa_T3_right"/> -->
-    <motor name="femur_T3_right"        class="extend_femur_T3" joint="femur_T3_right"/>
-    <motor name="femur_twist_T3_right"  class="twist_femur_T3" joint="femur_twist_T3_right"/>
-    <motor name="tibia_T3_right"        class="extend_tibia_T3" joint="tibia_T3_right"/>
-    <motor name="tarsus_T3_right"       class="extend_tarsus_T3" joint="tarsus_T3_right"/>
-    <!-- <motor name="tarsus2_T3_right"      class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T3_right"/> -->
+    <general name="coxa_flexion_T1_left"   class="flexion_coxa_T1" joint="coxa_flexion_T1_left"/>
+    <general name="coxa_twist_T1_left"    class="twist_coxa_T1" joint="coxa_twist_T1_left"/>
+    <!-- <general name="coxa_T1_left"          class="extend_coxa_T1" joint="coxa_T1_left"/> -->
+    <general name="femur_T1_left"         class="extend_femur_T1" joint="femur_T1_left"/>
+    <general name="femur_twist_T1_left"   class="twist_femur" joint="femur_twist_T1_left"/>
+    <general name="tibia_T1_left"         class="extend_tibia" joint="tibia_T1_left"/>
+    <general name="tarsus_T1_left"        class="extend_tarsus_T1" joint="tarsus_T1_left"/>
+    <!-- <general name="tarsus2_T1_left"       class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T1_left"/> -->
+    <general name="coxa_flexion_T1_right"  class="flexion_coxa_T1" joint="coxa_flexion_T1_right"/>
+    <general name="coxa_twist_T1_right"   class="twist_coxa_T1" joint="coxa_twist_T1_right"/>
+    <!-- <general name="coxa_T1_right"         class="extend_coxa_T1" joint="coxa_T1_right"/> -->
+    <general name="femur_T1_right"        class="extend_femur_T1" joint="femur_T1_right"/>
+    <general name="femur_twist_T1_right"  class="twist_femur" joint="femur_twist_T1_right"/>
+    <general name="tibia_T1_right"        class="extend_tibia" joint="tibia_T1_right"/>
+    <general name="tarsus_T1_right"       class="extend_tarsus_T1" joint="tarsus_T1_right"/>
+    <!-- <general name="tarsus2_T1a_right"     class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T1_right"/> -->
+    <general name="coxa_flexion_T2_left"   class="flexion_coxa_T2" joint="coxa_flexion_T2_left"/>
+    <general name="coxa_twist_T2_left"    class="twist_coxa_T2" joint="coxa_twist_T2_left"/>
+    <!-- <general name="coxa_T2_left"          class="extend_coxa_T2" joint="coxa_T2_left"/> -->
+    <general name="femur_T2_left"         class="extend_femur_T2" joint="femur_T2_left"/>
+    <general name="femur_twist_T2_left"   class="twist_femur_T2" joint="femur_twist_T2_left"/>
+    <general name="tibia_T2_left"         class="extend_tibia_T2" joint="tibia_T2_left"/>
+    <general name="tarsus_T2_left"        class="extend_tarsus_T2" joint="tarsus_T2_left"/>
+    <!-- <general name="tarsus2_T2_left"       class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T2_left"/> -->
+    <general name="coxa_flexion_T2_right"  class="flexion_coxa_T2" joint="coxa_flexion_T2_right"/>
+    <general name="coxa_twist_T2_right"   class="twist_coxa_T2" joint="coxa_twist_T2_right"/>
+    <!-- <general name="coxa_T2_right"         class="extend_coxa_T2" joint="coxa_T2_right"/> -->
+    <general name="femur_T2_right"        class="extend_femur_T2" joint="femur_T2_right"/>
+    <general name="femur_twist_T2_right"  class="twist_femur_T2" joint="femur_twist_T2_right"/>
+    <general name="tibia_T2_right"        class="extend_tibia_T2" joint="tibia_T2_right"/>
+    <general name="tarsus_T2_right"       class="extend_tarsus_T2" joint="tarsus_T2_right"/>
+    <!-- <general name="tarsus2_T2_right"      class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T2_right"/> -->
+    <general name="coxa_flexion_T3_left"   class="flexion_coxa_T3" joint="coxa_flexion_T3_left"/>
+    <general name="coxa_twist_T3_left"    class="twist_coxa_T3" joint="coxa_twist_T3_left"/>
+    <!-- <general name="coxa_T3_left"          class="extend_coxa_T3" joint="coxa_T3_left"/> -->
+    <general name="femur_T3_left"         class="extend_femur_T3" joint="femur_T3_left"/>
+    <general name="femur_twist_T3_left"   class="twist_femur_T3" joint="femur_twist_T3_left"/>
+    <general name="tibia_T3_left"         class="extend_tibia_T3" joint="tibia_T3_left"/>
+    <general name="tarsus_T3_left"        class="extend_tarsus_T3" joint="tarsus_T3_left"/>
+    <!-- <general name="tarsus2_T3_left"       class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T3_left"/> -->
+    <general name="coxa_flexion_T3_right"  class="flexion_coxa_T3" joint="coxa_flexion_T3_right"/>
+    <general name="coxa_twist_T3_right"   class="twist_coxa_T3" joint="coxa_twist_T3_right"/>
+    <!-- <general name="coxa_T3_right"         class="extend_coxa_T3" joint="coxa_T3_right"/> -->
+    <general name="femur_T3_right"        class="extend_femur_T3" joint="femur_T3_right"/>
+    <general name="femur_twist_T3_right"  class="twist_femur_T3" joint="femur_twist_T3_right"/>
+    <general name="tibia_T3_right"        class="extend_tibia_T3" joint="tibia_T3_right"/>
+    <general name="tarsus_T3_right"       class="extend_tarsus_T3" joint="tarsus_T3_right"/>
+    <!-- <general name="tarsus2_T3_right"      class="extend_tarsus" ctrlrange="-0.9 0.9" tendon="tarsus2_T3_right"/> -->
     <!-- <adhesion name="adhere_labrum_left" class="adhesion_labrum" body="labrum_left"/>
     <adhesion name="adhere_labrum_right" class="adhesion_labrum" body="labrum_right"/>
     <adhesion name="adhere_claw_T1_left" class="adhesion_claw" body="claw_T1_left"/>
@@ -913,24 +912,21 @@
   </actuator>
 
   <sensor>
-    <accelerometer name="accelerometer" site="thorax" />
-    <gyro name="gyro" site="thorax" />
-    <velocimeter name="velocimeter" site="thorax" />
-    <force name="force_tarsus_T1_left" site="claw_T1_left"/>
-    <force name="force_tarsus_T1_right" site="claw_T1_right"/>
-    <force name="force_tarsus_T2_left" site="claw_T2_left"/>
-    <force name="force_tarsus_T2_right" site="claw_T2_right"/>
-    <force name="force_tarsus_T3_left" site="claw_T3_left"/>
-    <force name="force_tarsus_T3_right" site="claw_T3_right"/>
-    <touch name="touch_claw_T1_left" site="tracking[claw_T1_left]"/>
+    <!-- <accelerometer name="accelerometer" site="thorax"/>
+    <gyro name="gyro" site="thorax"/>
+    <velocimeter name="velocimeter" site="thorax"/> -->
+    <!-- <force name="force_tarsus_T1_left" site="tracking[claw_T1_left]"/>
+    <force name="force_tarsus_T1_right" site="tracking[claw_T1_right]"/>
+    <force name="force_tarsus_T2_left" site="tracking[claw_T2_left]"/>
+    <force name="force_tarsus_T2_right" site="tracking[claw_T2_right]"/>
+    <force name="force_tarsus_T3_left" site="tracking[claw_T3_left]"/>
+    <force name="force_tarsus_T3_right" site="tracking[claw_T3_right]"/> -->
+    <!-- <touch name="touch_claw_T1_left" site="tracking[claw_T1_left]"/>
     <touch name="touch_claw_T1_right" site="tracking[claw_T1_right]"/>
     <touch name="touch_claw_T2_left" site="tracking[claw_T2_left]"/>
     <touch name="touch_claw_T2_right" site="tracking[claw_T2_right]"/>
     <touch name="touch_claw_T3_left" site="tracking[claw_T3_left]"/>
-    <touch name="touch_claw_T3_right" site="tracking[claw_T3_right]"/>
+    <touch name="touch_claw_T3_right" site="tracking[claw_T3_right]"/> -->
   </sensor>
 
-  <!-- <keyframe>
-    <key name="home" qpos="0.006792709231376648 0.0034985796082764864 0.0024463613517582417 0.9927980303764343 -0.02143842913210392 0.11559582501649857 0.023025181144475937 -0.19891785085201263 0.0763564482331276 -0.018897827714681625 0.19258560240268707 0.37113359570503235 0.48125794529914856 -0.17970441281795502 0.37890949845314026 -0.2604788839817047 0.27135875821113586 0.45077815651893616 0.5159262418746948 -0.13648448884487152 0.029758283868432045 -0.1461937576532364 0.21017812192440033 0.3122818171977997 0.07778739184141159 -0.3632395565509796 -0.3251155614852905 0.14896735548973083 0.491696834564209 0.3275758922100067 0.1312159299850464 -0.04050684720277786 0.33762800693511963 -0.030173664912581444 0.04713206738233566 0.08270945399999619 -0.015508891083300114 0.009800096973776817 0.3457980155944824 0.10647561401128769 -0.09080053865909576 -0.06966248899698257 -0.09077364206314087"/>
-</keyframe> -->
 </mujoco>

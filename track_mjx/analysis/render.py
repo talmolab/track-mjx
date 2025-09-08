@@ -1,8 +1,8 @@
 # imports
 import os
 
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "osmesa")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "osmesa")
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
 from typing import List, Tuple, Callable, Any, Dict
 import numpy as np
@@ -38,16 +38,36 @@ import functools
 
 # TODO: should this be part of config?
 _BASE_XML_PATHS = {
-    "rodent": str(Path(__file__).parent.parent / "environment/walker/assets/rodent/rodent.xml"),
-    "fly": str(Path(__file__).parent.parent / "environment/walker/assets/fruitfly/fruitfly_force.xml"),
+    "rodent": str(
+        Path(__file__).parent.parent / "environment/walker/assets/rodent/rodent.xml"
+    ),
+    "fly": str(
+        Path(__file__).parent.parent
+        / "environment/walker/assets/fruitfly/fruitfly_force_fast.xml"
+    ),
+    "stick": str(
+        Path(__file__).parent.parent
+        / "environment/walker/assets/stick/sungaya_inexpectata_box.xml"
+    ),
+    "celegans": str(
+        Path(__file__).parent.parent
+        / "environment/walker/assets/celegans/celegans_fast.xml"
+    ),
+}
+
+_ROOT_BODY_NAMES = {
+    "rodent": "walker",
+    "fly": "thorax",
+    "stick": "reference_base",
     "celegans": str(Path(__file__).parent.parent / "environment/walker/assets/celegans/celegans_fast.xml"),
 }
 
 _ROOT_NAME = {
     "rodent": "walker",
     "fly": "thorax",
+    "stick": "reference_base",
     "celegans": "torso1_body",
-    }
+}
 
 def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to switch to a headless backend during function execution.
@@ -77,6 +97,7 @@ def make_ghost_pair(
     *,
     root_name: str = "walker",
     scale: float = 1.0,
+    root_body_name="root",
 ) -> Tuple[mujoco.MjSpec, mujoco.MjModel, str]:
     """Build output XML containing the original model plus a ghost copy.
 
@@ -93,19 +114,19 @@ def make_ghost_pair(
     base = mujoco.MjSpec.from_file(xml_path)
     for top in base.worldbody.bodies:
         _scale_body_tree(top, scale)
-    
+
     # Deep‑copy the spec to obtain the second (ghost) body
     ghost = base.copy()
 
     # recolour the ghost body
     for top in ghost.worldbody.bodies:
         _recolour_tree(top, rgba=[0.8, 0.8, 0.8, 0.2])
-    
+
     # add a frame to the worldbody to attach the ghost body
     frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0],
                                  quat=[0,0,0,0])
-    frame.attach_body(ghost.body(root_name), str(0), str(0))
-    
+    frame.attach_body(ghost.body(root_body_name), "", "ghost")
+
     # E) Compile & write out
     model = base.compile()
     xml = base.to_xml()

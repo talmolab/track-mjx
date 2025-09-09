@@ -40,7 +40,6 @@ from brax.training.types import PRNGKey
 from brax.training.types import Metrics
 from brax.training.types import Policy
 from brax.training.types import Transition
-from brax.v1 import envs as envs_v1
 import flax
 import flax.struct
 import jax
@@ -87,7 +86,7 @@ def _strip_weak_type(tree):
 
 
 def train(
-    environment: Union[envs_v1.Env, envs.Env],
+    environment: envs.Env,
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,

@@ -32,7 +32,6 @@ from brax.training.acme import running_statistics
 from brax.training.acme import specs
 from brax.training.types import Params
 from brax.training.types import PRNGKey
-from brax.v1 import envs as envs_v1
 from track_mjx.agent import network_masks
 from track_mjx.agent.mlp_ppo import losses, ppo_networks
 from track_mjx.environment import wrappers
@@ -126,7 +125,7 @@ acting.Evaluator.run_evaluation = run_evaluation
 
 # TODO: Pass in a loss-specific config instead of throwing them all in individually.
 def train(
-    environment: Union[envs_v1.Env, envs.Env],
+    environment: envs.Env,
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,

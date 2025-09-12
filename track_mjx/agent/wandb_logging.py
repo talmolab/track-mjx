@@ -24,7 +24,6 @@ from brax.envs.base import Env, PipelineEnv
 from mujoco_playground._src.mjx_env import MjxEnv
 import numpy as np
 from jax import numpy as jp
-from mujoco_playground._src.mjx_env import MjxEnv
 
 # TODO: Use MjSpec to generate the mjcf with ghost
 
@@ -127,10 +126,6 @@ def rollout_logging_fn(
         commit=False,
     )
     if render_video:
-        if cfg["env_config"].get("render_fps") is not None:
-            render_fps = cfg["env_config"].get("render_fps")
-        else:
-            render_fps = int(1.0 / env.dt)
         video_path = f"{model_path}/{current_step}.mp4"
         if "render_fps" in cfg["env_config"]:
                 render_fps = cfg["env_config"]["render_fps"]
@@ -142,9 +137,7 @@ def rollout_logging_fn(
                 log_lineplot_to_wandb(
                     f"eval/rollout_{rollout_metric}",
                     rollout_metric,
-                    list(
-                        enumerate([state.metrics[rollout_metric] for state in rollout])
-                    ),
+                    list(enumerate([state.metrics[rollout_metric] for state in rollout])),
                     title=f"{rollout_metric} for each rollout frame",
                 )
 
@@ -158,49 +151,35 @@ def rollout_logging_fn(
                     axis=0,
                 )
 
-                with imageio.get_writer(video_path, fps=int(render_fps)) as video:
-                    for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-                        try:
-                            mj_data.qpos = np.append(qpos1, qpos2)
-                        except Exception as e:
-                            print(f"render_qpos: {mj_data.qpos.shape}, model qpos: {qpos1.shape}, ref qpos: {qpos2.shape}")
-                            raise e
-                        mujoco.mj_forward(mj_model, mj_data)
-                        renderer.update_scene(
-                            mj_data,
-                            camera=cfg["env_config"].render_camera_name,
-                            scene_option=scene_option,
-                        )
-                        pixels = renderer.render()
-                        video.append_data(pixels)
-            elif isinstance(env, MjxEnv):  # mujoco playground envs
-                with imageio.get_writer(video_path, fps=int(render_fps)) as video:
-                    for frame in env.render(rollout,
-                                            height=512, # TODO: make configurable
-                                            width=512, # TODO: make configurable
-                                            camera=cfg["env_config"].render_camera_name,
-                                            scene_option=scene_option,
-                                            add_labels=False, # TODO: make configurable
-                                            termination_extra_frames=0):
-                        video.append_data(frame)
+        if "render_fps" in cfg["env_config"]:
+            render_fps = cfg["env_config"]["render_fps"]
         else:
-            # mujoco playground envs
-            render_every = 2
-            fps = render_fps / render_every
-            traj = rollout[::render_every]
-            # TODO: make the camera configurable via yaml config
-            frames = env.render(
-                traj,
-                camera="close_profile-rodent",
-                scene_option=scene_option,
-                height=480,
-                width=640,
-            )
-            media.write_video(video_path, frames, fps=fps, qp=18)
-        wandb.log(
-            {"videos/rollout": wandb.Video(video_path, format="mp4")},
-            commit=False,
+            render_fps = 1.0 / env.dt
+        with imageio.get_writer(video_path, fps=int(render_fps)) as video:
+            for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
+                mj_data.qpos = np.append(qpos1, qpos2)
+                mujoco.mj_forward(mj_model, mj_data)
+                renderer.update_scene(
+                    mj_data,
+                    camera=cfg["env_config"].render_camera_name,
+                    scene_option=scene_option,
+                )
+                pixels = renderer.render()
+                video.append_data(pixels)
+    else:
+        # mujoco playground envs
+        render_every = 2
+        fps = 1.0 / env.dt / render_every
+        traj = rollout[::render_every]
+        frames = env.render(
+            traj,
+            camera="close_profile-rodent",
+            scene_option=scene_option,
+            height=480,
+            width=640,
         )
+        media.write_video(video_path, frames, fps=fps, qp=18)
+    wandb.log({"videos/rollout": wandb.Video(video_path, format="mp4")})
 
 
 def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):

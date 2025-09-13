@@ -20,6 +20,7 @@ class MultiClipTracking(SingleClipTracking):
         reward_config: RewardConfig | None,
         physics_steps_per_control_step: int,
         reset_noise_scale: float,
+        max_start_frame: int,
         solver: str = "cg",
         iterations: int = 4,
         ls_iterations: int = 4,
@@ -39,6 +40,7 @@ class MultiClipTracking(SingleClipTracking):
             reward_config: Reward configuration.
             physics_steps_per_control_step: Number of physics steps per control step.
             reset_noise_scale: Scale of noise for reset.
+            max_start_frame: Maximum start frame.
             solver: Solver type for Mujoco.
             iterations: Maximum number of solver iterations.
             ls_iterations: Maximum number of line search iterations.
@@ -55,6 +57,7 @@ class MultiClipTracking(SingleClipTracking):
             reward_config,
             physics_steps_per_control_step,
             reset_noise_scale,
+            max_start_frame,
             solver,
             iterations,
             ls_iterations,
@@ -84,7 +87,7 @@ class MultiClipTracking(SingleClipTracking):
         """
         _, start_rng, clip_rng = jax.random.split(rng, 3)
 
-        start_frame = jax.random.randint(start_rng, (), 0, 44)
+        start_frame = jax.random.randint(start_rng, (), 0, self._max_start_frame)
         if clip_idx is None:
             clip_idx = jax.random.randint(clip_rng, (), 0, self._n_clips)  # type: ignore
         info = {

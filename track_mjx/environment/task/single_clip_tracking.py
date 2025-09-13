@@ -29,6 +29,7 @@ class SingleClipTracking(PipelineEnv):
         reward_config: RewardConfig,
         physics_steps_per_control_step: int,
         reset_noise_scale: float,
+        max_start_frame: int,
         solver: str,
         iterations: int,
         ls_iterations: int,
@@ -88,6 +89,7 @@ class SingleClipTracking(PipelineEnv):
         self._reference_clip = reference_clip
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
+        self._max_start_frame = max_start_frame
         self._mjx_model = mjx.put_model(self.sys.mj_model)
         self._mj_spec = self.walker._mj_spec
 
@@ -101,7 +103,7 @@ class SingleClipTracking(PipelineEnv):
             State: The reset environment state.
         """
         pass
-        ## TODO: FIX THIS 
+        ## TODO: FIX THIS
         # _, start_rng, rng = jax.random.split(rng, 3)
 
         # episode_length = (
@@ -254,7 +256,7 @@ class SingleClipTracking(PipelineEnv):
             summed_pos_distance,
             quat_distance,
             var_cost,
-            jerk_cost
+            jerk_cost,
         ) = compute_tracking_rewards(
             data=data,
             reference_frame=reference_frame,
@@ -335,11 +337,15 @@ class SingleClipTracking(PipelineEnv):
 
     def _get_proprioception(self, data: mjx.Data) -> jp.ndarray:
         """Get proprioception data from the environment."""
-        qpos = data.qpos[7:] # skip the root joint
-        qvel = data.qvel[6:] # skip the root joint velocity
+        qpos = data.qpos[7:]  # skip the root joint
+        qvel = data.qvel[6:]  # skip the root joint velocity
         actuator_ctrl = data.qfrc_actuator
-        _, body_height, _ = data.bind(self._mjx_model, self._mj_spec.body(self.walker._torso_name)).xpos
-        world_zaxis = data.bind(self._mjx_model, self._mj_spec.body(self.walker._torso_name)).xmat.flatten()[6:]
+        _, body_height, _ = data.bind(
+            self._mjx_model, self._mj_spec.body(self.walker._torso_name)
+        ).xpos
+        world_zaxis = data.bind(
+            self._mjx_model, self._mj_spec.body(self.walker._torso_name)
+        ).xmat.flatten()[6:]
         appendages_pos = self._get_appendages_pos(data)
         proprioception = jp.concatenate(
             [
@@ -355,8 +361,12 @@ class SingleClipTracking(PipelineEnv):
 
     def _get_kinematic_sensors(self, data: mjx.Data) -> jp.ndarray:
         """Get kinematic sensors data from the environment."""
-        accelerometer = data.bind(self._mjx_model, self._mj_spec.sensor("accelerometer")).sensordata
-        velocimeter = data.bind(self._mjx_model, self._mj_spec.sensor("velocimeter")).sensordata
+        accelerometer = data.bind(
+            self._mjx_model, self._mj_spec.sensor("accelerometer")
+        ).sensordata
+        velocimeter = data.bind(
+            self._mjx_model, self._mj_spec.sensor("velocimeter")
+        ).sensordata
         gyro = data.bind(self._mjx_model, self._mj_spec.sensor("gyro")).sensordata
         sensors = jp.concatenate(
             [

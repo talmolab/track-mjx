@@ -10,7 +10,7 @@
     <geom conaffinity="1" condim="3" contype="1" material="geom" rgba="0.8 0.6 .4 1" />
     <joint armature="0.1" />
     <site type="sphere" size="0.00416572"/>
-    <muscle ctrllimited="true" ctrlrange="0 1" />
+    <muscle ctrllimited="true" ctrlrange="-1 1" />
     <default class="mesh">
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="1000"/>
     </default>

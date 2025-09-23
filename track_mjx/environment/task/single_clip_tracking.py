@@ -19,7 +19,6 @@ from track_mjx.environment.walker import spec_utils
 from jax.flatten_util import ravel_pytree
 
 
-
 class SingleClipTracking(PipelineEnv):
     """Tracking task for a continuous reference clip."""
 
@@ -85,6 +84,7 @@ class SingleClipTracking(PipelineEnv):
 
         self._mocap_hz = mocap_hz
         self._reward_config = reward_config
+
         self._reference_clip = reference_clip
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
@@ -100,21 +100,23 @@ class SingleClipTracking(PipelineEnv):
         Returns:
             State: The reset environment state.
         """
-        _, start_rng, rng = jax.random.split(rng, 3)
+        pass
+        ## TODO: FIX THIS 
+        # _, start_rng, rng = jax.random.split(rng, 3)
 
-        episode_length = (
-            clip_length - random_init_range - traj_length
-        ) * self._steps_for_cur_frame
+        # episode_length = (
+        #     clip_length - random_init_range - traj_length
+        # ) * self._steps_for_cur_frame
 
-        frame_range = clip_length - episode_length - traj_length
-        start_frame = jax.random.randint(start_rng, (), 0, frame_range)
+        # frame_range = clip_length - episode_length - traj_length
+        # start_frame = jax.random.randint(start_rng, (), 0, frame_range)
 
-        info = {
-            "start_frame": start_frame,
-            "prev_ctrl": jp.zeros((self.sys.nv,)),
-        }
+        # info = {
+        #     "start_frame": start_frame,
+        #     "prev_ctrl": jp.zeros((self.sys.nv,)),
+        # }
 
-        return self.reset_from_clip(rng, info, noise=True)
+        # return self.reset_from_clip(rng, info, noise=True)
 
     def reset_from_clip(
         self, rng: jp.ndarray, info: dict[str, Any], noise: bool = True
@@ -190,7 +192,15 @@ class SingleClipTracking(PipelineEnv):
             "joint_distance": zero,
             "summed_pos_distance": zero,
             "quat_distance": zero,
+            "var_cost": zero,
+            "jerk_cost": zero,
         }
+
+        # initialize action history buffer for windowed variance penalty
+        info["action_buffer"] = jp.zeros(
+            (self._reward_config.var_window_size, self.sys.nu)
+        )
+        info["buffer_index"] = 0
 
         return State(data, obs, reward, done, metrics, info)
 
@@ -214,6 +224,14 @@ class SingleClipTracking(PipelineEnv):
             lambda x: x[self._get_cur_frame(info, data)], self._get_reference_clip(info)
         )
         info["reference_frame"] = reference_frame
+        info["prev_ctrl"] = action
+        # update action buffer for windowed variance penalty
+        buffer = info["action_buffer"]
+        idx = info["buffer_index"]
+        buffer = buffer.at[idx].set(action)
+        idx = (idx + 1) % self._reward_config.var_window_size
+        info["action_buffer"] = buffer
+        info["buffer_index"] = idx
         # reward calculation
         # TODO: Make it so that a list of rewards is returned and a
         # list of terminiation values are returned (distances)
@@ -235,6 +253,8 @@ class SingleClipTracking(PipelineEnv):
             joint_distance,
             summed_pos_distance,
             quat_distance,
+            var_cost,
+            jerk_cost
         ) = compute_tracking_rewards(
             data=data,
             reference_frame=reference_frame,
@@ -244,7 +264,6 @@ class SingleClipTracking(PipelineEnv):
             reward_config=self._reward_config,
         )
 
-        info["prev_ctrl"] = action
         reference_obs, proprioceptive_obs = self._get_obs(data, info)
         obs = jp.concatenate([reference_obs, proprioceptive_obs])
         reward = (
@@ -257,6 +276,8 @@ class SingleClipTracking(PipelineEnv):
             - ctrl_cost
             - ctrl_diff_cost
             - energy_cost
+            - var_cost
+            - jerk_cost
         )
 
         # Raise done flag if terminating
@@ -290,6 +311,8 @@ class SingleClipTracking(PipelineEnv):
             joint_distance=joint_distance,
             summed_pos_distance=summed_pos_distance,
             quat_distance=quat_distance,
+            var_cost=-var_cost,
+            jerk_cost=-jerk_cost,
         )
 
         return state.replace(
@@ -298,7 +321,8 @@ class SingleClipTracking(PipelineEnv):
 
     def _get_appendages_pos(self, data: mjx.Data) -> jp.ndarray:
         """Get appendages positions from the environment."""
-        torso = data.bind(self._mjx_model, self._mj_spec.body("torso"))
+        # this is hardcoded
+        torso = data.bind(self._mjx_model, self._mj_spec.body(self.walker._torso_name))
         positions = jp.vstack(
             [
                 data.bind(self._mjx_model, self._mj_spec.body(f"{name}")).xpos
@@ -314,8 +338,8 @@ class SingleClipTracking(PipelineEnv):
         qpos = data.qpos[7:] # skip the root joint
         qvel = data.qvel[6:] # skip the root joint velocity
         actuator_ctrl = data.qfrc_actuator
-        _, body_height, _ = data.bind(self._mjx_model, self._mj_spec.body(f"torso")).xpos
-        world_zaxis = data.bind(self._mjx_model, self._mj_spec.body(f"torso")).xmat.flatten()[6:]
+        _, body_height, _ = data.bind(self._mjx_model, self._mj_spec.body(self.walker._torso_name)).xpos
+        world_zaxis = data.bind(self._mjx_model, self._mj_spec.body(self.walker._torso_name)).xmat.flatten()[6:]
         appendages_pos = self._get_appendages_pos(data)
         proprioception = jp.concatenate(
             [

@@ -7,6 +7,7 @@ import jax
 from brax.envs.base import Env
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
+from track_mjx.environment.walker.stick import Stick
 from track_mjx.environment.reacher.mouse_arm import MouseArm
 from brax import envs
 from typing import Dict, Callable
@@ -56,7 +57,7 @@ def create_environment(cfg_dict: Dict | DictConfig) -> Env:
             reference_clip = load.load_reference_clip_data(reference_data_path)
 
     # Body setup
-    walker_map = {"rodent": Rodent, "fly": Fly}
+    walker_map = {"rodent": Rodent, "fly": Fly, "stick": Stick,}
     reacher_map = {"mouse_arm": MouseArm}
 
     if "walker_config" in cfg_dict:

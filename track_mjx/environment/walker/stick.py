@@ -10,11 +10,11 @@ from track_mjx.environment.walker.base import BaseWalker  # type: ignore
 from track_mjx.environment.walker import spec_utils
 
 
-_XML_PATH = "assets/rodent/rodent.xml"  # relative to this file
+_XML_PATH = "assets/stick/stick_fast.xml"  # relative to this file
 
 
-class Rodent(BaseWalker):
-    """Rodent walker using MuJoCo **MjSpec**"""
+class Stick(BaseWalker):
+    """Stick walker using MuJoCo **MjSpec**"""
 
     def __init__(
         self,
@@ -36,7 +36,7 @@ class Rodent(BaseWalker):
             torque_actuators (bool, optional): whether modify the model to use torque actuators. Defaults to False.
             rescale_factor (float, optional): the rescale factor for the body model. Defaults to 0.9.
         """
-        self._torso_name = "torso"
+        self._torso_name = "reference_base"
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
@@ -67,15 +67,8 @@ class Rodent(BaseWalker):
         spec = mujoco.MjSpec.from_file(str(path))
 
         # a) Convert motors to torque‑mode if requested
-        if torque_actuators and hasattr(spec, "actuator"):
-            print("Converting to torque actuators")
-            for actuator in spec.actuators:  # type: ignore[attr-defined]
-                # Set gain to max force; remove bias terms if present
-                if actuator.forcerange.size >= 2:
-                    actuator.gainprm[0] = actuator.forcerange[1]
-                # reset custom bias terms
-                actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
-                actuator.biasprm = np.zeros((10, 1))
+        if torque_actuators:
+            raise ValueError("actuator modification for stick is not supported")
 
         # b) Uniform rescale (geometry + body positions)
         if rescale_factor != 1.0:

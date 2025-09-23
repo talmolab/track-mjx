@@ -252,7 +252,14 @@ class BaseWalker(ABC):
             Joint distances Shape (num_joints,).
         """
         joints = self.get_all_loc_joints(qpos)
-        joint_dist = (ref_joints - joints)[:, self._joint_idxs].flatten()
+        # joint_dist = (ref_joints - joints)[:, self._joint_idxs].flatten()
+
+        # Hot fix for OB1 error
+        joint_indices = self._joint_idxs - 1
+        joint_dist = (ref_joints - joints)[:, joint_indices].flatten()
+
+        # Include all joints
+        # joint_dist = (ref_joints - joints).flatten()
 
         return joint_dist
 

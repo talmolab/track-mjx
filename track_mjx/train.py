@@ -34,8 +34,11 @@ import json
 import fcntl
 
 from track_mjx.io import load
+from track_mjx.io.load import load_reaching_data, ReferenceClipReach
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+from track_mjx.environment.task.multi_clip_reaching import MultiClipReaching
+from track_mjx.environment.task.single_clip_reaching import SingleClipReaching
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
@@ -43,7 +46,8 @@ from track_mjx.agent import preemption
 from track_mjx.analysis import render
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
-from track_mjx.environment.task.reward import RewardConfig
+from track_mjx.environment.reacher.mouse_arm import MouseArm
+from track_mjx.environment.task.reward import RewardConfig, RewardConfigReach
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -52,8 +56,12 @@ _WALKERS = {
     "fly": Fly,
 }
 
+_REACHERS = {
+    "mouse_arm": MouseArm,
+}
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+
+@hydra.main(version_base=None, config_path="config", config_name="mouse-arm")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -63,6 +71,9 @@ def main(cfg: DictConfig):
         n_devices = 1
         logging.info("Not using GPUs")
 
+    # Register environments
+    envs.register_environment("mouse_arm_multi_clip", MultiClipReaching)
+    envs.register_environment("mouse_arm_single_clip", SingleClipReaching)
     envs.register_environment("rodent_single_clip", SingleClipTracking)
     envs.register_environment("rodent_multi_clip", MultiClipTracking)
     envs.register_environment("fly_multi_clip", MultiClipTracking)
@@ -152,17 +163,58 @@ def main(cfg: DictConfig):
     env_args = cfg.env_config["env_args"]
     env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
-    walker_config = cfg["walker_config"]
+    if cfg.env_config.get("task_type", "tracking") == "reaching":
+        agent_config = cfg["reacher_config"]
+    else:
+        agent_config = cfg["walker_config"]
     traj_config = cfg["reference_config"]
 
     logging.info(f"Loading data: {cfg.data_path}")
 
-    walker = _WALKERS[cfg.env_config.walker_name](**walker_config)
-    reward_config = RewardConfig(**env_rewards)
+    # Create agent and reward config based on task type
+    task_type = cfg.env_config.get("task_type", "tracking")
+    logging.info(f"Task type: {task_type}")
+    
+    if task_type == "reaching":
+        # Use reacher for reaching tasks
+        if "reacher_name" not in cfg.env_config:
+            raise ValueError("reacher_name must be specified for reaching tasks")
+        reacher_name = cfg.env_config.reacher_name
+        if reacher_name not in _REACHERS:
+            raise ValueError(f"Unknown reacher: {reacher_name}")
+        agent = _REACHERS[reacher_name](**agent_config)
+        if "joint_penalty_weight" not in env_rewards:
+            env_rewards["joint_penalty_weight"] = 1.0
+        if "joint_penalty_threshold" not in env_rewards:
+            env_rewards["joint_penalty_threshold"] = 1.0
+        
+        reward_config = RewardConfigReach(**env_rewards)
+        logging.info(f"Created reacher: {reacher_name}")
+        
+        # Load reaching data
+        train_clips = load_reaching_data(cfg.data_path)
+        logging.info(f"Loaded reaching data: {train_clips.joints.shape=}, {train_clips.body_positions.shape=}")
+    else:
+        # Use walker for tracking tasks
+        if "walker_name" not in cfg.env_config:
+            raise ValueError("walker_name must be specified for tracking tasks")
+        walker_name = cfg.env_config.walker_name
+        if walker_name not in _WALKERS:
+            raise ValueError(f"Unknown walker: {walker_name}")
+        agent = _WALKERS[walker_name](**agent_config)
+        reward_config = RewardConfig(**env_rewards)
+        logging.info(f"Created walker: {walker_name}")
+        
+        # Load tracking data
+        train_clips = load.load_data(cfg.data_path)
+        logging.info(f"Loaded tracking data: {train_clips.position.shape=}, {train_clips.quaternion.shape=}")
 
     # setup test set evaluator
     if cfg.train_setup["train_test_split_info"] is not None:
-        all_clips = load.load_data(cfg.data_path)
+        if task_type == "reaching":
+            all_clips = load_reaching_data(cfg.data_path)
+        else:
+            all_clips = load.load_data(cfg.data_path)
         # load the train/test split data from the disk
         with open(cfg.train_setup["train_test_split_info"], "r") as f:
             split_info = json.load(f)
@@ -175,47 +227,37 @@ def main(cfg: DictConfig):
             ]
         test_clips = load.select_clips(all_clips, test_idx)
         train_clips = load.select_clips(all_clips, train_idx)
-        logging.info(
-            f"Train set length:{train_clips.position.shape[0]}, Test set length: {test_clips.quaternion.shape[0]}"
-        )
-        test_env = envs.get_environment(
-            env_name=cfg.env_config.env_name,
-            reference_clip=test_clips,
-            walker=walker,
-            reward_config=reward_config,
-            **env_args,
-            **traj_config,
-        )
+        if task_type == "reaching":
+            logging.info(
+                f"Train set length:{train_clips.joints.shape[0]}, Test set length: {test_clips.joints.shape[0]}"
+            )
+        else:
+            logging.info(
+                f"Train set length:{train_clips.position.shape[0]}, Test set length: {test_clips.quaternion.shape[0]}"
+            )
+        test_env = create_environment(cfg, agent, reward_config, test_clips, **env_args, **traj_config)
     elif cfg.train_setup["train_subset_ratio"] is not None:
-        all_clips = load.load_data(cfg.data_path)
+        if task_type == "reaching":
+            all_clips = load_reaching_data(cfg.data_path)
+        else:
+            all_clips = load.load_data(cfg.data_path)
         train_clips, test_clips = load.generate_train_test_split(
             all_clips, test_ratio=1 - cfg.train_setup["train_subset_ratio"]
         )
-        logging.info(
-            f"Train set length:{train_clips.position.shape[0]}, Test set length: {test_clips.quaternion.shape[0]}"
-        )
-        test_env = envs.get_environment(
-            env_name=cfg.env_config.env_name,
-            reference_clip=test_clips,
-            walker=walker,
-            reward_config=reward_config,
-            **env_args,
-            **traj_config,
-        )
+        if task_type == "reaching":
+            logging.info(
+                f"Train set length:{train_clips.joints.shape[0]}, Test set length: {test_clips.joints.shape[0]}"
+            )
+        else:
+            logging.info(
+                f"Train set length:{train_clips.position.shape[0]}, Test set length: {test_clips.quaternion.shape[0]}"
+            )
+        test_env = create_environment(cfg, agent, reward_config, test_clips, **env_args, **traj_config)
     else:
         # eval with the train set
-        train_clips = load.load_data(cfg.data_path)
-        logging.info(f"{train_clips.position.shape=}, {train_clips.quaternion.shape=}")
         test_env = None
 
-    env = envs.get_environment(
-        env_name=cfg.env_config.env_name,
-        reference_clip=train_clips,
-        walker=walker,
-        reward_config=reward_config,
-        **env_args,
-        **traj_config,
-    )
+    env = create_environment(cfg, agent, reward_config, train_clips, **env_args, **traj_config)
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     episode_length = (
@@ -230,7 +272,10 @@ def main(cfg: DictConfig):
         print("Using LSTM Pipeline Now")
         ppo = lstm_ppo
         ppo_networks = lstm_ppo_networks
-        render_wrapper = wrappers.RenderRolloutWrapperTrackingLSTM
+        if task_type == "reaching":
+            render_wrapper = wrappers.RenderRolloutWrapperTrackingLSTM  # You may need to create a reaching-specific wrapper
+        else:
+            render_wrapper = wrappers.RenderRolloutWrapperTrackingLSTM
         network_factory = functools.partial(
             ppo_networks.make_intention_ppo_networks,
             intention_latent_size=cfg.network_config.intention_size,
@@ -245,7 +290,10 @@ def main(cfg: DictConfig):
         print("Using MLP Pipeline Now")
         ppo = mlp_ppo
         ppo_networks = mlp_ppo_networks
-        render_wrapper = wrappers.RenderRolloutWrapperMulticlipTracking
+        if task_type == "reaching":
+            render_wrapper = wrappers.RenderRolloutWrapperMulticlipTracking  # You may need to create a reaching-specific wrapper
+        else:
+            render_wrapper = wrappers.RenderRolloutWrapperMulticlipTracking
         network_factory = functools.partial(
             ppo_networks.make_intention_ppo_networks,
             intention_latent_size=cfg.network_config.intention_size,
@@ -357,6 +405,30 @@ def main(cfg: DictConfig):
         logging.info("Training completed successfully, cleaned up run state")
     except Exception as e:
         logging.warning(f"Failed to cleanup run state: {e}")
+
+
+def create_environment(cfg, agent, reward_config, clips, **kwargs):
+    """Create environment based on task type."""
+    task_type = cfg.env_config.get("task_type", "tracking")
+    
+    if task_type == "reaching":
+        # For reaching tasks, use reaching environments
+        return envs.get_environment(
+            env_name=cfg.env_config.env_name,
+            reference_clip=clips,
+            reacher=agent,  # Note: using reacher instead of walker
+            reward_config=reward_config,
+            **kwargs,
+        )
+    else:
+        # For tracking tasks, use tracking environments
+        return envs.get_environment(
+            env_name=cfg.env_config.env_name,
+            reference_clip=clips,
+            walker=agent,
+            reward_config=reward_config,
+            **kwargs,
+        )
 
 
 if __name__ == "__main__":

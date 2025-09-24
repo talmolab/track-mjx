@@ -1,0 +1,116 @@
+data_path: "data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial01_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial04_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial09_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial10_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial13_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial15_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial16_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial17_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial19_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial20_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial23_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial24_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial25_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial27_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial29_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial34_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial35_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial36_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial38_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial40_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial42_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial43_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial44_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial45_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial46_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial47_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial49_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial52_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial53_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial55_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial56_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial57_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial58_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial59_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial60_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial61_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial62_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial63_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial65_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial66_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial70_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial71_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial73_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial74_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial75_ik.h5,data/mouse_arm/A36-1_2023-07-18_16-54-01_lightOff_trial76_ik.h5"
+
+env_config:
+  task_type: reaching
+  env_name: mouse_arm_multi_clip
+  task_name: imitation
+  reacher_name: mouse_arm
+  render_camera_name: close-profile
+  render_fps: 12
+  render_interval: 1
+
+  env_args:
+    solver: "cg"
+    iterations: 6
+    ls_iterations: 6
+    physics_steps_per_control_step: 2
+    reset_noise_scale: 1e-5
+    mj_model_timestep: 0.00125
+    mocap_hz: 200
+
+  reward_weights:
+    ctrl_cost_weight: 0.00
+    ctrl_diff_cost_weight: 0.00
+    energy_cost_weight: 0.00
+    joint_reward_weight: 5.0
+    endeff_reward_weight: 0.0
+    joint_reward_exp_scale: 0.2
+    endeff_reward_exp_scale: 0.0
+    joint_penalty_threshold: 0.0   
+    joint_penalty_weight: 0.0 
+
+reference_config:
+  clip_length: 60
+  random_init_range: 0
+  traj_length: 1
+
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [512,512,512]
+  decoder_layer_sizes: [512,512,512]
+  critic_layer_sizes: [512,512,512]
+  intention_size: 4
+  kl_schedule: True
+  kl_weight: 1e-5
+  hidden_state_size: 512
+  hidden_layer_num: 3
+
+train_setup:
+  agent_name: mouse_arm
+  run_name: imitation_debug
+  checkpoint_to_restore:
+  restore_from_run_state: 
+  train_test_split_info: # "data/train_test_split_rodent.json" # Path to the train/test split file, records the index
+  # Ratio of training data of the whole training dataset. Needs to be in the train_test_split_info["train_subset"] key. 
+  # If not, please run the `notebooks/sample_efficiency_dev.ipynb` notebook to generate the train/test split file.
+  train_subset_ratio: 0.8
+  checkpoint_max_to_keep: 
+
+  checkpoint_keep_period: 
+  eval_every: 5_000_000
+  episode_length: 60
+  reset_every: 50_000_000
+  train_config:
+    num_envs: 4096
+    num_timesteps: 600_000_000
+    batch_size: 1024
+    num_minibatches: 8
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2     
+    discounting: 0.95
+    action_repeat: 1
+    entropy_cost: .001 
+    reward_scaling: 1
+    normalize_observations: True
+    unroll_length: 20
+    seed: 0
+    get_activation: True
+    use_lstm: False
+    deterministic_eval: True
+
+logging_config:
+  project_name: ctrl_cost_ctrl_diff_energy_cost_sweep_three
+  group_name: 
+  exp_name: reaching_task
+  clip_id: -1
+  model_path: model_checkpoints
+  algo_name: ppo
+  rollout_metrics:
+    - joint_reward
+    - endeff_reward
+    - joint_distance
+    - ctrl_cost
+    - ctrl_diff_cost
+    - energy_cost
+
+reacher_config:
+  torque_actuators: False 
+  rescale_factor: 1.0
+  joint_names:
+    - sh_elv
+    - sh_rotation
+    - sh_extension
+    - elbow
+  body_names:
+    - world
+    - ground
+    - clavicle
+    - scapula
+    - humerus
+    - ulna
+    - elbow
+    - radius
+    - wrist_body
+  end_eff_names:
+    - wrist_body

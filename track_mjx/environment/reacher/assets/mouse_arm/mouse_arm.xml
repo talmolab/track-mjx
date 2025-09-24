@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="mouse">
+	<compiler angle="degree">
+		<lengthrange mode="muscle" timestep="0"/>
+	</compiler>
+	<option integrator="RK4" timestep="0.001" solver="CG" iterations="30" ls_iterations="30"></option>
+	<default>
+	<joint limited="true" solreflimit="0.01 1" solimplimit="0.99 0.9999 0"  armature="4e-8" damping="1e-5" stiffness="1e-12"/>
+	<muscle ctrllimited="true" ctrlrange="0 1"/>
+	</default>
+	<size njmax="1000" nconmax="400" nkey="1" nuser_jnt="1"/>
+
+	<visual>
+		<scale framelength="0.5" framewidth="0.01"/>
+	</visual>
+
+
+	<asset>
+		<material name="target" rgba="0.59999999999999998 0.29999999999999999 0.29999999999999999 0.29999999999999999"/>
+		<texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="0.6 0.8 1" width="256" height="1536"/>
+		<texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+		<material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Scapula_right_v3.stl"/>
+		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Humerus_right_v3.stl"/>
+		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Clavicle_right_v3.stl"/>
+		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Ulna_right_v3.stl"/>
+		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Radius_right_v3.stl"/>
+		<mesh file="/root/vast/eric/track-mjx/track_mjx/environment/reacher/assets/mouse_arm/assets/Bone_Segments_Hand_fixed.stl"/>
+
+	</asset>
+	<!--This stuff can all be left alone-->
+	<worldbody>
+		<light directional="true"/>
+		<body name="ground" euler="0 0 0">
+			<camera name="my_camera" pos="0.04 .004 0.037" fovy="20" quat="0.6532815 0.2705981 0.2705981 0.6532815"/>
+			<camera name="close-profile" pos="0.04 .004 0.037" fovy="20" quat="0.6532815 0.2705981 0.2705981 0.6532815"/>
+			<!-- <geom name="target1" type="sphere" size="0.001" material="target" pos="0.007 0.010 -0.006" contype="0" conaffinity="0"/>
+			<geom name="target2" type="sphere" size="0.001" material="target" pos="0.0055355 0.010 -0.0024645" contype="0" conaffinity="0"/>
+			<geom name="target3" type="sphere" size="0.001" material="target" pos="0.002 0.010 -0.001" contype="0" conaffinity="0"/>
+			<geom name="target4" type="sphere" size="0.001" material="target" pos="-0.0015355 0.010 -0.0024645" contype="0" conaffinity="0"/>
+			<geom name="target5" type="sphere" size="0.001" material="target" pos="-0.003 0.010 -0.006" contype="0" conaffinity="0"/>
+			<geom name="target6" type="sphere" size="0.001" material="target" pos="-0.0015355 0.010 -0.0095355" contype="0" conaffinity="0"/>
+			<geom name="target7" type="sphere" size="0.001" material="target" pos="0.002 0.010 -0.011" contype="0" conaffinity="0"/>
+			<geom name="target8" type="sphere" size="0.001" material="target" pos="0.0055355 0.010 -0.0095355" contype="0" conaffinity="0"/> -->
+
+			<!--SOB Clavicle-->
+			<body name="clavicle" pos="0 0 0" euler="0 0 0">
+				<!--Mesh Geom-->
+				<geom type="mesh" mesh="Bone_Clavicle_right_v3" pos="0 0 0.0005" contype="0" conaffinity="0"/>
+				
+				<!--Muscle Attachment-->
+				<!--Pec Clavicular Head-->
+				<site name="Pec_C_Origin" pos="-0.002 0 0.0005" rgba=".1 .2 .6 .5" size="0.0002"/>				
+				<!--Anterior Deltoid-->
+				<site name="AD_Origin" pos="-0.000 0.0013 0.0007" rgba=".1 .2 .6 .5" size="0.0002"/>
+				
+				<!--SOB Scapula-->
+				<body name="scapula" pos="-0.0001 -0.0001 0.0005" euler="-30 -15 0">
+					<!--Mesh Geom-->
+					<geom type="mesh" mesh="Bone_Scapula_right_v3" pos="0.0 0.0 0.0" contype="0" conaffinity="0"/>
+					
+					<!--Muscle Attachement-->
+					<!--Latissimus Dorsi-->
+					<site name="Lat_Origin" pos="-0.0005 -0.004 -0.0035" rgba=".1 .2 .6 .5" size="0.0002"/>
+					<!--Posterior Deltoid-->
+					<site name="PD_Origin" pos="0.0004 -0.0007 0.0006" rgba=".1 .2 .6 .5" size="0.0002"/>
+					<!--Middle Deltoid-->
+					<site name="MD_Origin" pos="0.0007 0.0005 0.0005" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+					<!--Triceps Lateral Head-->
+					<site name="Triceps_Long_Origin" pos="0 -0.0003 -0.0005" rgba=".1 .2 .6 .5" size="0.0002"/>
+					<!--Biceps Long Head-->
+					<site name="Biceps_Long_Origin" pos=".0001 0.0003 0.0007" rgba=".1 .2 .6 .5" size="0.0002"/>
+					
+
+					<!--SOB Humerus-->
+					<body name="humerus" pos="0 0.0007 -0.0002" euler="-15 0 0">						
+						<!-- Glenohumeral (aka shoulder) Joint-->					
+						<!-- <site name="shoulder_joint_viz_large" pos="0 0 0" rgba="1 .2 .6 .2" size="0.0010"/> -->
+						<inertial pos="-0.0005 0.0003 -0.004" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
+						<!-- <site name="interial_center_humerus" pos="-0.0005 0.0003 -0.004" rgba=".6 .6 .6 .6" size="0.0005"/>	 -->
+												<!--Mesh Geom-->
+
+						<site name="Biceps_Short_Origin" pos="0.0 0.0013 -0.0029" rgba=".9 .2 .2 .5" size="0.0001"/>						
+						<geom type="mesh" mesh="Bone_Humerus_right_v3" pos="0.0 0.0 0.0" contype="0" conaffinity="0"/>
+
+						<joint name="sh_elv" type="hinge" pos="0 0 0" axis="0 1 0" range="-70 0" limited="true"/>
+						<!-- Extension Joint: Yaw around Z-axis -->
+						<joint name="sh_extension" type="hinge" pos="0 0 0" axis="0 0 1" range="-70 40" limited="true"/>
+						<!-- Rotation Joint: Roll around X-axis -->
+						<joint name="sh_rotation" type="hinge" pos="0 0 0" axis="1 0 0" range="-25 89" limited="true"/>
+
+						<!--Attachement-->
+						<!--Pec Clavicular Head-->
+						<site name="Pec_C_P2" pos="-0.0005 0.0009 -0.0003" rgba=".1 .2 .6 .5" size="0.0002"/>
+						<site name="Pec_C_Insertion" pos="-0.000 0.001 -0.0005" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+						<!--Latissimus Dorsi-->
+						<site name="Lat_P2" pos="-0.001 0.000 -0.0006" rgba=".1 .2 .6 .5" size="0.0002"/>
+						<site name="Lat_Insertion" pos="-0.0004 0.0008 -0.0006" rgba=".1 .2 .6 .5" size="0.0002"/>
+											
+						<!--Anterior Deltoid-->
+						<site name="AD_P2" pos="0.0003 0.0012 -0.0003" rgba=".1 .2 .6 .5" size="0.0002"/>
+						<site name="AD_Insertion" pos="0.0003 0.0012 -0.0021" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+						<!--Posterior Deltoid-->
+						<site name="PD_P2" pos="0.0003 -0.0003 -0.0006" rgba=".1 .2 .6 .5" size="0.0002"/>
+						<site name="PD_Insertion" pos="0.0003 0.001 -0.001" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+						<!--Middle Deltoid-->
+						<site name="MD_P2" pos="0.0008 0.0003 -0.0003" rgba=".1 .2 .6 .5" size="0.0002"/>
+						<site name="MD_Insertion" pos="0.0003 0.001 -0.0016" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+						<!--Triceps Lateral Head-->
+						<site name="Triceps_Lateral_Origin" pos="0.000 -0.000 -0.0018" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+						<!--Brachialis-->
+						<site name="Brachialis_Origin" pos="-0.0005 0.0005 -0.0045" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+						<!--Biceps Long Head-->
+						<site name="Biceps_Long_P2" pos="-0.0002 0.0009 0.0005" rgba=".1 .2 .6 .5" size="0.0002"/>
+						<site name="Biceps_Long_P3" pos="-0.0002 0.0012 -0.0005" rgba=".1 .2 .6 .5" size="0.0002"/>
+						
+						<!--SOB Ulna-->
+						<body name="ulna" pos="-0.0005 0.0003 -0.0068" euler="-15 0 0" >
+							<!--Mesh Geom-->
+							<geom type="mesh" mesh="Bone_Ulna_right_v3" pos="0.0 0.0 0.0" contype="0" conaffinity="0"/>
+							
+							<!-- Elbow Joint -->
+							<joint name="elbow" pos="0 0 0" axis="1 0 0"  range="-80 90" limited="true"/>
+							<inertial pos="-0.0009 0.004 0.0005" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
+							<!-- <site name="elbow_joint_viz_large" pos="0 0 0" rgba="1 .2 .6 .2" size="0.0005"/> -->
+							<!-- <site name="interial_center_ulna" pos="-0.0009 0.004 0.0005" rgba=".6 .6 .6 .6" size="0.0005"/> -->
+
+							<!--Attachement-->
+							<!--Triceps Lateral Head-->
+							<site name="Triceps_Long_Insertion" pos="0.0002 -0.0008 0.0002" rgba=".1 .2 .6 .5" size="0.0002"/>
+							
+							<!--Triceps Lateral Head-->
+							<site name="Triceps_Lateral_Insertion" pos="0.0002 -0.0008 0.0002" rgba=".1 .2 .6 .5" size="0.0002"/>
+							
+							<!--Brachialis-->
+							<site name="Brachialis_Insertion" pos="-0.0002 0.001 0.0001" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+							<site name="Biceps_Short_Insertion" pos="-0.0003 0.001 0.0" rgba=".1 .2 .6 .5" size="0.0002"/>
+
+							<!--SOB Radius-->
+							<body name="radius" pos="0.00035 0.0002 0.0002" euler="0 0 0">
+								<!--Mesh Geom-->
+								<geom type="mesh" mesh="Bone_Radius_right_v3" pos="0.0 0.0 0.0" contype="0" conaffinity="0"/>
+
+								<!--Attachement-->
+								<!--Biceps Long Head-->
+								<site name="Biceps_Long_Insertion" pos="-0.0002 0.0001 0.0001" rgba=".1 .2 .6 .5" size="0.0002"/>
+						
+							</body>
+							<body name="wrist_body" pos="-0.002 0.0065 0.0005" euler="0 0 0">
+										<geom name="wrist_marker" type="sphere" size="0.0003" pos="0.0 0.003 0.0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
+										<geom name="hand_mesh_geom" type="mesh" mesh="Bone_Segments_Hand_fixed" pos="0 0 0"/>					
+										<inertial pos="0.0 0.0 0.0" mass=" 0.00071" diaginertia="7e-08 7e-08 7e-08"/> 
+									</body>
+						</body>
+
+					</body>
+
+				</body>
+				<!--EOB Ground-->
+			</body>
+		</body>
+	</worldbody>
+
+	<tendon>
+		<!--Shoulder Muscles-->
+		<!--Pectoralis Major Clavicular Head (shoulder internal rotator + adductor(?) + flexor(?))-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="Pec_C">
+			<site site="Pec_C_Insertion"/>
+			<site site="Pec_C_P2"/>
+			<site site="Pec_C_Origin"/>
+		</spatial>
+
+		<!--Latissimus Dorsi (shoulder internal rotator + adductor(?) + extensor(?))-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="Lat">
+			<site site="Lat_Insertion"/>
+			<site site="Lat_P2"/>
+			<site site="Lat_Origin"/>
+		</spatial>
+
+		<!--Anterior Deltoid (shoulder flexor + internal rotator)-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="AD">
+			<site site="AD_Insertion"/>						
+			<site site="AD_P2"/>
+			<site site="AD_Origin"/>
+		</spatial>
+
+		<!--Posterior Deltoid (shoulder extensor + external rotator)-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="PD">
+			<site site="PD_Insertion"/>
+			<site site="PD_P2"/>
+			<site site="PD_Origin"/>
+		</spatial>
+
+		<!--Middle Deltoid (shoulder abductor)-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="MD">
+			<site site="MD_Insertion"/>
+			<site site="MD_P2"/>
+			<site site="MD_Origin"/>
+		</spatial>
+
+		<!--Elbow Muscles-->
+		<!--Triceps Lateral Head (mono-articular elbow extensor)-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="Triceps_Lateral">
+			<site site="Triceps_Lateral_Insertion"/>
+			<site site="Triceps_Lateral_Origin"/>
+		</spatial>
+
+		<!--Triceps Long Head (bi-articular shoulder and elbow extensor)-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="Triceps_Long">
+			<site site="Triceps_Long_Insertion"/>
+			<site site="Triceps_Long_Origin"/>
+		</spatial>
+
+		<!--Brachialis (mono-articular elbow flexor)-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="Brachialis">
+			<site site="Brachialis_Insertion"/>
+			<site site="Brachialis_Origin"/>
+		</spatial>
+
+		<!--Biceps Long Head (bi-articular shoulder and elbow flexor)-->
+		<spatial width=".0001" rgba=".9 0 0 .5" name="Biceps_Long">
+			<site site="Biceps_Long_Insertion"/>
+			<site site="Biceps_Long_P3"/>
+			<site site="Biceps_Long_P2"/>
+			<site site="Biceps_Long_Origin"/>
+		</spatial>
+		
+	</tendon>	
+	<actuator>
+		<!--Muscle operating range ("range") was adjusted for each joint such that 1) optimal muscle length falls within the minimum and maximum muscle lengths determined by Mujoco & 2) tendon length is positive-->
+		<!--Shoulder muscles-->
+		<muscle name="Pec_C" tendon="Pec_C" force=".8" vmax="15" range="0.5 1.2"/>
+		<muscle name="Lat" tendon="Lat" force=".8" vmax="15" range="0.75 1.05"/>
+		<muscle name="PD" tendon="PD" force=".87" vmax="15" range="0.6 1.1"/>
+		<muscle name="AD" tendon="AD" force="1.2" vmax="15" range="0.5  1"/>
+		<muscle name="MD" tendon="MD" force=".9" vmax="15" range="0.55 1.2"/>
+
+		<!--Elbow muscles-->
+		<muscle name="Triceps_Lateral" tendon="Triceps_Lateral" force=".6" vmax="15" range="0.82 1.05"/>
+		<muscle name="Triceps_Long" tendon="Triceps_Long" force=".9" vmax="15" range="0.7 1.1"/>
+		<muscle name="Brachialis" tendon="Brachialis" force=".6" vmax="15" range="0.7 1.2"/>
+		<muscle name="Biceps_Long" tendon="Biceps_Long" force=".52" vmax="15" range="0.7 1.05"/>
+		<!-- <muscle name="Biceps_Short" tendon="Biceps_Short" force=".5" vmax="15" range="0.7 1.05"/> -->
+	</actuator>
+
+	<sensor>
+		<!-- Muscle forces -->
+		<!-- <actuatorfrc name="Pec_C_force" actuator="Pec_C"/>
+		<actuatorfrc name="Lat_force" actuator="Lat"/>
+		<actuatorfrc name="PD_force" actuator="PD"/>
+		<actuatorfrc name="AD_force" actuator="AD"/>
+		<actuatorfrc name="MD_force" actuator="MD"/>
+		<actuatorfrc name="Triceps_Lateral_force" actuator="Triceps_Lateral"/>
+		<actuatorfrc name="Triceps_Long_force" actuator="Triceps_Long"/>
+		<actuatorfrc name="Brachialis_force" actuator="Brachialis"/>
+		<actuatorfrc name="Biceps_Long_force" actuator="Biceps_Long"/> -->
+		
+		<!-- Tendon lengths -->
+		<!-- <tendonpos name="Pec_C_length" tendon="Pec_C"/>
+		<tendonpos name="Lat_length" tendon="Lat"/>
+		<tendonpos name="PD_length" tendon="PD"/>
+		<tendonpos name="AD_length" tendon="AD"/>
+		<tendonpos name="MD_length" tendon="MD"/>
+		<tendonpos name="Triceps_Lateral_length" tendon="Triceps_Lateral"/>
+		<tendonpos name="Triceps_Long_length" tendon="Triceps_Long"/>
+		<tendonpos name="Brachialis_length" tendon="Brachialis"/>
+		<tendonpos name="Biceps_Long_length" tendon="Biceps_Long"/> -->
+		
+		<!-- Tendon velocities -->
+		<!-- <tendonvel name="Pec_C_velocity" tendon="Pec_C"/>
+		<tendonvel name="Lat_velocity" tendon="Lat"/>
+		<tendonvel name="PD_velocity" tendon="PD"/>
+		<tendonvel name="AD_velocity" tendon="AD"/>
+		<tendonvel name="MD_velocity" tendon="MD"/>
+		<tendonvel name="Triceps_Lateral_velocity" tendon="Triceps_Lateral"/>
+		<tendonvel name="Triceps_Long_velocity" tendon="Triceps_Long"/>
+		<tendonvel name="Brachialis_velocity" tendon="Brachialis"/>
+		<tendonvel name="Biceps_Long_velocity" tendon="Biceps_Long"/> -->
+		
+		<!-- Joint positions -->
+		<!-- <jointpos name="elbow_angle" joint="elbow"/>
+		<jointpos name="sh_rotation_angle" joint="sh_rotation"/>
+		<jointpos name="sh_elv_angle" joint="sh_elv"/>
+		<jointpos name="sh_extension_angle" joint="sh_extension"/> -->
+	</sensor>
+
+</mujoco>

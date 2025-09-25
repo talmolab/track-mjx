@@ -23,7 +23,7 @@ from typing import Callable, Optional, Tuple, Union, Sequence
 
 from absl import logging
 from brax import base
-from brax import envs
+from brax import envs as brax_env
 from brax.training import gradients
 from brax.training import pmap
 from brax.training import types
@@ -40,7 +40,6 @@ from brax.training.types import PRNGKey
 from brax.training.types import Metrics
 from brax.training.types import Policy
 from brax.training.types import Transition
-from brax.v1 import envs as envs_v1
 import flax
 import flax.struct
 import jax
@@ -87,7 +86,7 @@ def _strip_weak_type(tree):
 
 
 def train(
-    environment: Union[envs_v1.Env, envs.Env],
+    environment: Union[mjx_env.Env, brax_env.Env],
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
@@ -118,8 +117,8 @@ def train(
     ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
-    eval_env: Optional[envs.Env] = None,
-    eval_env_test_set: Optional[envs.Env] = None,
+    eval_env: Optional[brax_env.Env] = None,
+    eval_env_test_set: Optional[brax_env.Env] = None,
     policy_params_fn: Callable[..., None] = lambda *args: None,
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
@@ -249,10 +248,10 @@ def train(
         randomization_rng = jax.random.split(key_env, randomization_batch_size)
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
-    if isinstance(environment, envs.Env):
+    if isinstance(environment, brax_env.Env):
         wrap_for_training = wrappers.wrap
     else:
-        wrap_for_training = envs_v1.wrappers.wrap_for_training
+        wrap_for_training = mjx_env.wrappers.wrap_for_training
 
     env = wrap_for_training(
         environment,
@@ -377,8 +376,8 @@ def train(
         ), metrics  # carry shape maintains, now updated
 
     def training_step(
-        carry: Tuple[TrainingState, envs.State, PRNGKey], unused_t
-    ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey], Metrics]:
+        carry: Tuple[TrainingState, brax_env.State, PRNGKey], unused_t
+    ) -> Tuple[Tuple[TrainingState, brax_env.State, PRNGKey], Metrics]:
 
         training_state, state, key = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
@@ -462,8 +461,8 @@ def train(
         return (new_training_state, state, new_key), metrics
 
     def training_epoch(
-        training_state: TrainingState, state: envs.State, key: PRNGKey
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
+        training_state: TrainingState, state: brax_env.State, key: PRNGKey
+    ) -> Tuple[TrainingState, brax_env.State, Metrics]:
         (training_state, state, _), loss_metrics = jax.lax.scan(
             training_step,
             (training_state, state, key),
@@ -478,8 +477,8 @@ def train(
 
     # Note that this is NOT a pure jittable method.
     def training_epoch_with_timing(
-        training_state: TrainingState, env_state: envs.State, key: PRNGKey
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
+        training_state: TrainingState, env_state: brax_env.State, key: PRNGKey
+    ) -> Tuple[TrainingState, brax_env.State, Metrics]:
         nonlocal training_walltime
         t = time.time()
         training_state, env_state = _strip_weak_type((training_state, env_state))

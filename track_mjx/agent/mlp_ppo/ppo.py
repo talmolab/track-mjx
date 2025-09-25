@@ -23,7 +23,7 @@ from typing import Callable, Optional, Tuple, Union
 
 from absl import logging
 from brax import base
-from brax import envs
+from brax import envs as brax_env
 from brax.training import acting
 from brax.training import pmap
 from brax.training import types
@@ -32,12 +32,12 @@ from brax.training.acme import running_statistics
 from brax.training.acme import specs
 from brax.training.types import Params
 from brax.training.types import PRNGKey
-from brax.v1 import envs as envs_v1
 from track_mjx.agent import network_masks
 from track_mjx.agent.mlp_ppo import losses, ppo_networks
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
 from mujoco_playground import wrapper as mp_wrapper
+from mujoco_playground._src import mjx_env
 
 import flax
 from flax import traverse_util
@@ -126,7 +126,7 @@ acting.Evaluator.run_evaluation = run_evaluation
 
 # TODO: Pass in a loss-specific config instead of throwing them all in individually.
 def train(
-    environment: Union[envs_v1.Env, envs.Env],
+    environment: Union[mjx_env.MjxEnv, brax_env.Env],
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
@@ -157,8 +157,8 @@ def train(
     ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
-    eval_env: Optional[envs.Env] = None,
-    eval_env_test_set: Optional[envs.Env] = None,
+    eval_env: Optional[brax_env.Env] = None,
+    eval_env_test_set: Optional[brax_env.Env] = None,
     policy_params_fn: Callable[..., None] = lambda *args: None,
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
@@ -312,8 +312,8 @@ def train(
         return (optimizer_state, params, key, it), metrics
 
     def training_step(
-        carry: Tuple[TrainingState, envs.State, PRNGKey, int], unused_t
-    ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey, int], Metrics]:
+        carry: Tuple[TrainingState, brax_env.State, PRNGKey, int], unused_t
+    ) -> Tuple[Tuple[TrainingState, brax_env.State, PRNGKey, int], Metrics]:
         training_state, state, key, it = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
@@ -389,8 +389,8 @@ def train(
         return (new_training_state, state, new_key, it), metrics
 
     def training_epoch(
-        training_state: TrainingState, state: envs.State, key: PRNGKey, it: int
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
+        training_state: TrainingState, state: brax_env.State, key: PRNGKey, it: int
+    ) -> Tuple[TrainingState, brax_env.State, Metrics]:
         (training_state, state, _, _), loss_metrics = jax.lax.scan(
             training_step,
             (training_state, state, key, it),
@@ -404,8 +404,8 @@ def train(
 
     # Note that this is NOT a pure jittable method.
     def training_epoch_with_timing(
-        training_state: TrainingState, env_state: envs.State, key: PRNGKey, it: int
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
+        training_state: TrainingState, env_state: brax_env.State, key: PRNGKey, it: int
+    ) -> Tuple[TrainingState, brax_env.State, Metrics]:
         nonlocal training_walltime
         t = time.time()
         training_state, env_state = _strip_weak_type((training_state, env_state))
@@ -453,7 +453,7 @@ def train(
         randomization_rng = jax.random.split(key_env, randomization_batch_size)
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
-    if isinstance(environment, envs.Env):
+    if isinstance(environment, brax_env.Env):
         wrap_for_training = wrappers.wrap
     else:
         # adapt to mujoco_playground wrapper

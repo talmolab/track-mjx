@@ -128,18 +128,23 @@ def make_rollout_renderer(
     if cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
         if "xml_path" in cfg.walker_config.keys():
                 xml_path = cfg.walker_config.xml_path
+                scale_factor = cfg.walker_config.rescale_factor
+        # elif "walker_xml_path" in cfg.env_config.env_args.keys():
+        #     xml_path = cfg.env_config.env_args.walker_xml_path
+        #     scale_factor = cfg.env_config.env_args.rescale_factor
         else:
             xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
-        print(f"Using XML path: {xml_path}")
+            scale_factor = 1.0
+        print(f"Rendering from XML path: {xml_path}")
         if render_ghost:
             _, mj_model, _ = make_ghost_pair(
-                xml_path, root_name=_ROOT_NAME[cfg.env_config.walker_name], scale=cfg.walker_config.rescale_factor
+                xml_path, root_name=_ROOT_NAME[cfg.env_config.walker_name], scale=scale_factor
             )
         else:
 
             base = mujoco.MjSpec.from_file(xml_path)
             for top in base.worldbody.bodies:
-                _scale_body_tree(top, cfg.walker_config.rescale_factor)
+                _scale_body_tree(top, scale_factor)
             mj_model = base.compile()
     else:
         raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
@@ -181,6 +186,7 @@ def render_rollout(
     height: int = 480,
     width: int = 640,
     render_ghost: bool = True,
+    render_fps: int = -1
 ) -> Tuple[List[np.ndarray], float]:
     """Render a rollout from saved qposes.
 
@@ -211,7 +217,8 @@ def render_rollout(
     )
 
     # Compute real-time fps
-    render_fps = (
+    if render_fps == -1:
+        render_fps = (
         1.0 / mj_model.opt.timestep
     ) / cfg.env_config.env_args.physics_steps_per_control_step
 

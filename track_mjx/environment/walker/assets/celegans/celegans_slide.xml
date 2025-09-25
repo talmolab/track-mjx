@@ -5,17 +5,17 @@
     <global offwidth="1920" offheight="1200" elevation="-20" azimuth="120" />
   </visual>
   <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="/home/aaprasad/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/meshes" />
-  <option density="1000" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="1000" cone="pyramidal" />
+  <option density="1.2" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="0.1" cone="pyramidal" />
   <default>
     <geom conaffinity="1" condim="3" contype="1" material="geom" rgba="0.8 0.6 .4 1" />
     <joint armature="0.1" />
     <site type="sphere" size="0.00416572"/>
-    <muscle ctrllimited="true" ctrlrange="0 1" />
+    <muscle ctrllimited="true" ctrlrange="-1 1" />
     <default class="mesh">
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="1000"/>
     </default>
     <default class="collision">
-       <geom type="ellipsoid" contype="1" conaffinity="1" condim="3" group="4" density="0"/>
+       <geom type="ellipsoid" contype="1" conaffinity="1" condim="3" group="4" density="1000"/>
     </default>
   </default>
   <asset>
@@ -65,9 +65,9 @@
       <camera name="side_alt" mode="trackcom" pos="0.208286 -0.233697 0.0828978" xyaxes="0.766 0.643 0.000 -0.162 0.192 0.968" />
       <camera name="top" mode="trackcom" fovy="100.0" pos="0 0 0.416572" zaxis="0 -0.2 1" />
       <geom class="mesh" rgba="0.8 0.2 0.1 1" name="torso1" mesh="ellipsoid1" quat="0.99267578125 0.0 0.11907958984375 0.0" />
-      <joint axis="1 0 0" name="slider1" pos="0 0 0" type="slide"/>
-      <joint axis="0 1 0" name="slider2" pos="0 0 0" type="slide"/>
-      <joint axis="0 0 1" name="slider3" pos="0 0 0" type="slide"/>
+      <joint axis="1 0 0" name="rootx" pos="0 0 0" type="slide"/>
+      <joint axis="0 1 0" name="rooty" pos="0 0 0" type="slide"/>
+      <!-- <joint axis="0 0 1" name="rootz" pos="0 0 0" type="slide"/> -->
       <joint axis="0 0 1" name="free_body_rot" pos="0 0 0" type="hinge"/>
       <geom name="geom1" pos="-0.0148 0  0.0027" size="0.0084887" type="sphere" density="0"/>
       <!-- <geom class="collision" name="torso1_collision" pos="-0.02 0 0.005" size="0.018 0.013 0.009" quat="0.99267578125 0.0 0.11907958984375 0.0" /> -->
@@ -481,32 +481,6 @@
     </body>
   </worldbody>
   <contact>
-    <pair geom1="floor" geom2="geom1" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom2" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom3" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom4" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom5" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom6" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom7" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom8" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom9" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom10" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom11" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom12" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom13" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom14" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom15" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom16" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom17" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom18" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom19" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom20" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom21" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom22" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom23" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom24" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom25" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-
     <exclude name="torso1_torso2" body1="torso1_body" body2="torso2_body"/>
     <exclude name="torso2_torso3" body1="torso2_body" body2="torso3_body"/>
     <exclude name="torso3_torso4" body1="torso3_body" body2="torso4_body"/>

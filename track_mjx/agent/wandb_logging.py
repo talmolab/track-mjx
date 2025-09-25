@@ -20,7 +20,8 @@ from dm_control.locomotion.walkers import rescale
 from track_mjx.agent.mlp_ppo import losses
 
 from brax.io import model
-from brax.envs.base import Env
+from brax.envs.base import Env, PipelineEnv
+from mujoco_playground._src.mjx_env import MjxEnv
 import numpy as np
 from jax import numpy as jp
 
@@ -41,6 +42,7 @@ def rollout_logging_fn(
     jit_logging_inference_fn,
     params: losses.PPONetworkParams,
     policy_params_fn_key: jax.random.PRNGKey,
+    render_video: bool=True
 ) -> None:
     """Logs metrics and videos for a reinforcement learning training rollout.
 
@@ -61,8 +63,11 @@ def rollout_logging_fn(
     """
     train_config = cfg["train_setup"]["train_config"]
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
-
-    state = jit_reset(reset_rng)
+    
+    if isinstance(env, MjxEnv) and cfg.env_config.task_name == "imitation":
+        state = jit_reset(reset_rng, start_frame=0)
+    else:
+        state = jit_reset(reset_rng)
 
     if train_config.get("use_lstm", None):
         hidden_state = state.info["hidden_state"]
@@ -73,6 +78,10 @@ def rollout_logging_fn(
     if "reference_config" in cfg:
         episode_length = int(
             cfg["reference_config"].clip_length * env._steps_for_cur_frame
+        )
+    elif "clip_length" in cfg.env_config.env_args:
+        episode_length = int(
+            cfg.env_config.env_args.clip_length * 1/(env._config.mocap_hz * env._config.ctrl_dt)
         )
     else:
         episode_length = int(cfg["train_setup"]["train_config"]["episode_length"])
@@ -109,53 +118,74 @@ def rollout_logging_fn(
                 f"latents/latent_logvars_mean{i}": latent_logvars_means[i],
                 f"latents/latent_logvars_std{i}": latent_logvars_stds[i],
             },
-            commit=False,
-        )
-    video_path = f"{model_path}/{current_step}.mp4"
-    if cfg["env_config"]["task_name"] == "imitation":
-        # track-mjx envs
-        for rollout_metric in cfg.logging_config.rollout_metrics:
-            log_lineplot_to_wandb(
-                f"eval/rollout_{rollout_metric}",
-                rollout_metric,
-                list(enumerate([state.metrics[rollout_metric] for state in rollout])),
-                title=f"{rollout_metric} for each rollout frame",
-            )
-
-        # Render the walker with the reference expert demonstration trajectory
-        qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
-        ref_traj = env._get_reference_clip(rollout[0].info)
-        qposes_ref = np.repeat(
-            np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-            env._steps_for_cur_frame,
-            axis=0,
-        )
-
-        with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
-            for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-                mj_data.qpos = np.append(qpos1, qpos2)
-                mujoco.mj_forward(mj_model, mj_data)
-                renderer.update_scene(
-                    mj_data,
-                    camera=cfg["env_config"].render_camera_name,
-                    scene_option=scene_option,
+        commit=False,
+    )
+    if render_video:
+        video_path = f"{model_path}/{current_step}.mp4"
+        if "render_fps" in cfg["env_config"]:
+                render_fps = cfg["env_config"]["render_fps"]
+        else:
+            render_fps = 1.0 / env.dt
+        if cfg["env_config"]["task_name"] == "imitation":
+            # track-mjx envs
+            for rollout_metric in cfg.logging_config.rollout_metrics:
+                log_lineplot_to_wandb(
+                    f"eval/rollout_{rollout_metric}",
+                    rollout_metric,
+                    list(enumerate([state.metrics[rollout_metric] for state in rollout])),
+                    title=f"{rollout_metric} for each rollout frame",
                 )
-                pixels = renderer.render()
-                video.append_data(pixels)
-    else:
-        # mujoco playground envs
-        render_every = 2
-        fps = 1.0 / env.dt / render_every
-        traj = rollout[::render_every]
-        frames = env.render(
-            traj,
-            camera="close_profile-rodent",
-            scene_option=scene_option,
-            height=480,
-            width=640,
-        )
-        media.write_video(video_path, frames, fps=fps, qp=18)
-    wandb.log({"videos/rollout": wandb.Video(video_path, format="mp4")})
+
+            # Render the walker with the reference expert demonstration trajectory
+            if isinstance(env, PipelineEnv): # track-mjx envs
+                qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
+                ref_traj = env._get_reference_clip(rollout[0].info)
+                qposes_ref = np.repeat(
+                    np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+                    env._steps_for_cur_frame,
+                    axis=0,
+                )
+
+                with imageio.get_writer(video_path, fps=int(render_fps)) as video:
+                    for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
+                        try:
+                            mj_data.qpos = np.append(qpos1, qpos2)
+                        except Exception as e:
+                            print(f"render_qpos: {mj_data.qpos.shape}, model qpos: {qpos1.shape}, ref qpos: {qpos2.shape}")
+                            raise e
+                        mujoco.mj_forward(mj_model, mj_data)
+                        renderer.update_scene(
+                            mj_data,
+                            camera=cfg["env_config"].render_camera_name,
+                            scene_option=scene_option,
+                        )
+                        pixels = renderer.render()
+                        video.append_data(pixels)
+            elif isinstance(env, MjxEnv):  # mujoco playground envs
+                with imageio.get_writer(video_path, fps=int(render_fps)) as video:
+                    for frame in env.render(rollout,
+                                            height=512, # TODO: make configurable
+                                            width=512, # TODO: make configurable
+                                            camera=cfg["env_config"].render_camera_name,
+                                            scene_option=scene_option,
+                                            add_labels=False, # TODO: make configurable
+                                            termination_extra_frames=0):
+                        video.append_data(frame)
+        else:
+            # mujoco playground envs
+            render_every = 2
+            fps = 1.0 / env.dt / render_every
+            traj = rollout[::render_every]
+            frames = env.render(
+                traj,
+                camera="close_profile-rodent",
+                scene_option=scene_option,
+                height=480,
+                width=640,
+            )
+            media.write_video(video_path, frames, fps=fps, qp=18)
+        
+        wandb.log({"videos/rollout": wandb.Video(video_path, format="mp4")})
 
 
 def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):

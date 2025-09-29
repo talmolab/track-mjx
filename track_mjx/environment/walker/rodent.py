@@ -93,7 +93,7 @@ class Rodent(BaseWalker):
                 mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, j)
                 for j in self._joint_names
             ]
-        )
+        ) - 1 # hot fix so it lines up with qpos--not really joint idx anymore!  
 
         self._body_idxs = jp.array(
             [

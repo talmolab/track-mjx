@@ -16,11 +16,11 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12"]
 dependencies = [
-    "brax==0.12.3",
+    "brax==0.13.0",
     "wandb",
-    "mujoco==3.3.2",
+    "mujoco==3.3.5",
     "dm_control==1.0.30",
-    "mujoco-mjx==3.3.2",
+    "mujoco-mjx==3.3.5",
     "playground",
     "mediapy",
     "jax[cuda12]==0.6.2",

@@ -72,10 +72,12 @@ def rollout_logging_fn(
     rollout = [state]
     latent_means = []
     latent_logvars = []
+    env_args = cfg["env_config"]["env_args"]
+    steps_per_frame = (1 / env_args["mocap_hz"]) / (
+        env_args["mj_model_timestep"] * env_args["physics_steps_per_control_step"]
+    )
     if "reference_config" in cfg:
-        episode_length = int(
-            cfg["reference_config"].clip_length * env._steps_for_cur_frame
-        )
+        episode_length = int(cfg["reference_config"].clip_length * steps_per_frame)
     else:
         episode_length = int(cfg["train_setup"]["train_config"]["episode_length"])
     for i in range(episode_length):
@@ -119,52 +121,42 @@ def rollout_logging_fn(
         else:
             render_fps = int(1.0 / env.dt)
         video_path = f"{model_path}/{current_step}.mp4"
-        if cfg["env_config"]["task_name"] == "imitation":
-            # track-mjx envs
-            for rollout_metric in cfg.logging_config.rollout_metrics:
-                log_lineplot_to_wandb(
-                    f"eval/rollout_{rollout_metric}",
-                    rollout_metric,
-                    list(
-                        enumerate([state.metrics[rollout_metric] for state in rollout])
-                    ),
-                    title=f"{rollout_metric} for each rollout frame",
+        # Get list of reward and termination terms from env config to log
+        metric_names = env._config.reward_terms.keys()
+        metric_names = ["rewards/" + metric for metric in metric_names]
+        # TODO: the imitation task in vnl doesnt include termination info in metrics
+        # so we're missing those here
+        for rollout_metric in metric_names:
+            log_lineplot_to_wandb(
+                f"eval/rollout_{rollout_metric}",
+                rollout_metric,
+                list(enumerate([state.metrics[rollout_metric] for state in rollout])),
+                title=f"{rollout_metric} for each rollout frame",
+            )
+
+        # Render the walker with the reference expert demonstration trajectory
+        qposes_rollout = np.array([state.data.qpos for state in rollout])
+        ref_traj = env.reference_clips.slice(
+            clip=rollout[0].info["reference_clip"],
+            start_frame=0,
+            length=env._config.clip_length,
+        )
+        qposes_ref = np.repeat(ref_traj.qpos, steps_per_frame, axis=0)
+        print(
+            f"qposes_rollout.shape: {qposes_rollout.shape}, qposes_ref.shape: {qposes_ref.shape}"
+        )
+        with imageio.get_writer(video_path, fps=render_fps) as video:
+            for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
+                mj_data.qpos = np.append(qpos1, qpos2)
+                mujoco.mj_forward(mj_model, mj_data)
+                renderer.update_scene(
+                    mj_data,
+                    camera=cfg["env_config"].render_camera_name,
+                    scene_option=scene_option,
                 )
+                pixels = renderer.render()
+                video.append_data(pixels)
 
-            # Render the walker with the reference expert demonstration trajectory
-            qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
-            ref_traj = env._get_reference_clip(rollout[0].info)
-            qposes_ref = np.repeat(
-                np.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-                env._steps_for_cur_frame,
-                axis=0,
-            )
-
-            with imageio.get_writer(video_path, fps=render_fps) as video:
-                for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-                    mj_data.qpos = np.append(qpos1, qpos2)
-                    mujoco.mj_forward(mj_model, mj_data)
-                    renderer.update_scene(
-                        mj_data,
-                        camera=cfg["env_config"].render_camera_name,
-                        scene_option=scene_option,
-                    )
-                    pixels = renderer.render()
-                    video.append_data(pixels)
-        else:
-            # mujoco playground envs
-            render_every = 2
-            fps = render_fps / render_every
-            traj = rollout[::render_every]
-            # TODO: make the camera configurable via yaml config
-            frames = env.render(
-                traj,
-                camera="close_profile-rodent",
-                scene_option=scene_option,
-                height=480,
-                width=640,
-            )
-            media.write_video(video_path, frames, fps=fps, qp=18)
         wandb.log(
             {"videos/rollout": wandb.Video(video_path, format="mp4")},
             commit=False,

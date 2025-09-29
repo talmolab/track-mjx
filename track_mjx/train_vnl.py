@@ -12,12 +12,15 @@ import sys
 # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
 #     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
 # )
+xla_flags = os.environ.get("XLA_FLAGS", "")
+xla_flags += " --xla_gpu_triton_gemm_any=True"
+os.environ["XLA_FLAGS"] = xla_flags
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+
+os.environ["MUJOCO_GL"] = "osmesa"
+os.environ["PYOPENGL_PLATFORM"] = "osmesa"
 
 import jax
-
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import functools
@@ -25,8 +28,6 @@ import wandb
 from brax import envs
 import orbax.checkpoint as ocp
 from track_mjx.agent.mlp_ppo import ppo as mlp_ppo, ppo_networks as mlp_ppo_networks
-from track_mjx.agent.lstm_ppo import ppo as lstm_ppo, ppo_networks as lstm_ppo_networks
-import warnings
 from pathlib import Path
 from datetime import datetime
 import logging
@@ -34,23 +35,111 @@ import json
 import fcntl
 
 from track_mjx.io import load
-from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
-from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
 from track_mjx.agent import preemption
 from track_mjx.analysis import render
-from track_mjx.environment.walker.rodent import Rodent
-from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.task.reward import RewardConfig
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from vnl_mjx.tasks.rodent import imitation
+from vnl_mjx.tasks.rodent import wrappers as vnl_wrappers
+from mujoco_playground import wrapper as playground_wrappers
 
-_WALKERS = {
-    "rodent": Rodent,
-    "fly": Fly,
-}
+
+def _track_to_vnl_cfg(cfg):
+    """Replace the config values with the ones in our hydra cfg"""
+    env_cfg = imitation.default_config()
+
+    # Map environment parameters directly
+    env_args = cfg.env_config.env_args
+    env_cfg.solver = env_args.solver
+    env_cfg.iterations = env_args.iterations
+    env_cfg.ls_iterations = env_args.ls_iterations
+    env_cfg.sim_dt = env_args.mj_model_timestep
+    env_cfg.mocap_hz = env_args.mocap_hz
+    env_cfg.ctrl_dt = (
+        env_args.mj_model_timestep * env_args.physics_steps_per_control_step
+    )
+    # Map walker parameters directly
+    walker_cfg = cfg.walker_config
+    env_cfg.torque_actuators = walker_cfg.torque_actuators
+    env_cfg.rescale_factor = walker_cfg.rescale_factor
+
+    # Map reference parameters directly
+    ref_cfg = cfg.reference_config
+    env_cfg.clip_length = ref_cfg.clip_length
+    env_cfg.reference_length = ref_cfg.traj_length
+    env_cfg.start_frame_range = [0, ref_cfg.random_init_range]
+
+    # Map reward terms directly
+    reward_weights = cfg.env_config.reward_weights
+
+    # Map imitation rewards
+    env_cfg.reward_terms["root_pos"] = {
+        "exp_scale": 1.0 / (2 * reward_weights.pos_reward_exp_scale) ** 0.5,
+        "weight": reward_weights.pos_reward_weight,
+    }
+
+    env_cfg.reward_terms["root_quat"] = {
+        "exp_scale": 1.0 / (2 * reward_weights.quat_reward_exp_scale) ** 0.5,
+        "weight": reward_weights.quat_reward_weight,
+    }
+
+    env_cfg.reward_terms["joints"] = {
+        "exp_scale": 1.0 / (2 * reward_weights.joint_reward_exp_scale) ** 0.5,
+        "weight": reward_weights.joint_reward_weight,
+    }
+
+    env_cfg.reward_terms["joints_vel"] = {
+        "exp_scale": 1.0 / (2 * reward_weights.angvel_reward_exp_scale) ** 0.5,
+        "weight": reward_weights.angvel_reward_weight,
+    }
+
+    env_cfg.reward_terms["bodies_pos"] = {
+        "exp_scale": 1.0 / (2 * reward_weights.bodypos_reward_exp_scale) ** 0.5,
+        "weight": reward_weights.bodypos_reward_weight,
+    }
+
+    env_cfg.reward_terms["end_eff"] = {
+        "exp_scale": 1.0 / (2 * reward_weights.endeff_reward_exp_scale) ** 0.5,
+        "weight": reward_weights.endeff_reward_weight,
+    }
+
+    # Map cost terms (these exist in default config)
+    env_cfg.reward_terms["control_cost"] = {"weight": reward_weights.ctrl_cost_weight}
+
+    env_cfg.reward_terms["control_diff_cost"] = {
+        "weight": reward_weights.ctrl_diff_cost_weight
+    }
+
+    # Handle energy_cost properly - it exists in default config but has different structure
+    env_cfg.reward_terms["energy_cost"]["weight"] = reward_weights.energy_cost_weight
+
+    # Map healthy z range (exists in default config)
+    env_cfg.reward_terms["torso_z_range"] = {
+        "healthy_z_range": tuple(reward_weights.healthy_z_range),
+        "weight": 1.0,  # This doesnt exist in hydra cfg
+    }
+
+    # Map penalty parameters to termination criteria (these exist in default config)
+    # env_cfg.termination_criteria["root_too_far"] = {
+    #     "max_distance": reward_weights.too_far_dist
+    # }
+
+    # env_cfg.termination_criteria["pose_error"] = {
+    #     "max_l2_error": reward_weights.bad_pose_dist
+    # }
+
+    # env_cfg.termination_criteria["root_too_rotated"] = {
+    #     "max_degrees": reward_weights.bad_quat_dist
+    # }
+
+    # SET TO WARP
+    env_cfg.mujoco_impl = "warp"
+    # SET NCONMAX FOR WARP
+    env_cfg.nconmax = env_cfg.nconmax * cfg.train_setup.train_config.num_envs
+    return env_cfg
 
 
 @hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
@@ -62,10 +151,6 @@ def main(cfg: DictConfig):
     except:
         n_devices = 1
         logging.info("Not using GPUs")
-
-    envs.register_environment("rodent_single_clip", SingleClipTracking)
-    envs.register_environment("rodent_multi_clip", MultiClipTracking)
-    envs.register_environment("fly_multi_clip", MultiClipTracking)
 
     # Check for existing run state (preemption handling)
     existing_run_state = preemption.discover_existing_run_state(cfg)
@@ -149,110 +234,46 @@ def main(cfg: DictConfig):
     logging.info(f"run_id: {run_id}")
     logging.info(f"Training checkpoint path: {checkpoint_path}")
 
-    env_args = cfg.env_config["env_args"]
-    env_rewards = cfg.env_config["reward_weights"]
     train_config = cfg.train_setup["train_config"]
-    walker_config = cfg["walker_config"]
     traj_config = cfg["reference_config"]
 
     logging.info(f"Loading data: {cfg.data_path}")
 
-    walker = _WALKERS[cfg.env_config.walker_name](**walker_config)
-    reward_config = RewardConfig(**env_rewards)
+    # use this custom fn to set values in the vnl config with our hydra cfg
+    env_cfg = _track_to_vnl_cfg(cfg)
 
-    # setup test set evaluator
-    if cfg.train_setup["train_test_split_info"] is not None:
-        all_clips = load.load_data(cfg.data_path)
-        # load the train/test split data from the disk
-        with open(cfg.train_setup["train_test_split_info"], "r") as f:
-            split_info = json.load(f)
-        test_idx = split_info["test"]
-        if cfg.train_setup["train_subset_ratio"] is None:
-            train_idx = split_info["train"]
-        else:
-            train_idx = split_info["train_subset"][
-                f"{cfg.train_setup['train_subset_ratio']:.2f}"
-            ]
-        test_clips = load.select_clips(all_clips, test_idx)
-        train_clips = load.select_clips(all_clips, train_idx)
-        logging.info(
-            f"Train set length:{train_clips.position.shape[0]}, Test set length: {test_clips.quaternion.shape[0]}"
-        )
-        test_env = envs.get_environment(
-            env_name=cfg.env_config.env_name,
-            reference_clip=test_clips,
-            walker=walker,
-            reward_config=reward_config,
-            **env_args,
-            **traj_config,
-        )
-    elif cfg.train_setup["train_subset_ratio"] is not None:
-        all_clips = load.load_data(cfg.data_path)
-        train_clips, test_clips = load.generate_train_test_split(
-            all_clips, test_ratio=1 - cfg.train_setup["train_subset_ratio"]
-        )
-        logging.info(
-            f"Train set length:{train_clips.position.shape[0]}, Test set length: {test_clips.quaternion.shape[0]}"
-        )
-        test_env = envs.get_environment(
-            env_name=cfg.env_config.env_name,
-            reference_clip=test_clips,
-            walker=walker,
-            reward_config=reward_config,
-            **env_args,
-            **traj_config,
-        )
-    else:
-        # eval with the train set
-        train_clips = load.load_data(cfg.data_path)
-        logging.info(f"{train_clips.position.shape=}, {train_clips.quaternion.shape=}")
-        test_env = None
+    # Eval with the train set
+    # TODO: implement the train/test split for the vnl env (current init can only take data files)
+    train_clips = load.load_data(cfg.data_path)
+    logging.info(f"{train_clips.position.shape=}")
+    test_env = None
 
-    env = envs.get_environment(
-        env_name=cfg.env_config.env_name,
-        reference_clip=train_clips,
-        walker=walker,
-        reward_config=reward_config,
-        **env_args,
-        **traj_config,
-    )
+    logging.info(f"Environment config: {env_cfg}")
+    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg))
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
+    env_args = cfg.env_config.env_args
+    steps_per_frame = (1 / env_args["mocap_hz"]) / (
+        env_args["mj_model_timestep"] * env_args["physics_steps_per_control_step"]
+    )
     episode_length = (
         traj_config.clip_length
         - traj_config.random_init_range
         - traj_config.traj_length
-    ) * env._steps_for_cur_frame
+    ) * steps_per_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
-    if cfg.train_setup.train_config.use_lstm:
-        print("Using LSTM Pipeline Now")
-        ppo = lstm_ppo
-        ppo_networks = lstm_ppo_networks
-        render_wrapper = wrappers.RenderRolloutWrapperTrackingLSTM
-        network_factory = functools.partial(
-            ppo_networks.make_intention_ppo_networks,
-            intention_latent_size=cfg.network_config.intention_size,
-            hidden_state_size=cfg.network_config.hidden_state_size,
-            hidden_layer_num=cfg.network_config.hidden_layer_num,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        )
-
-    else:
-        print("Using MLP Pipeline Now")
-        ppo = mlp_ppo
-        ppo_networks = mlp_ppo_networks
-        render_wrapper = wrappers.RenderRolloutWrapperMulticlipTracking
-        network_factory = functools.partial(
-            ppo_networks.make_intention_ppo_networks,
-            intention_latent_size=cfg.network_config.intention_size,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        )
+    print("Using MLP Pipeline Now")
+    ppo = mlp_ppo
+    ppo_networks = mlp_ppo_networks
+    network_factory = functools.partial(
+        ppo_networks.make_intention_ppo_networks,
+        intention_latent_size=cfg.network_config.intention_size,
+        encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+    )
 
     run_id = f"{cfg.logging_config.exp_name}_{run_id}"
 
@@ -265,10 +286,13 @@ def main(cfg: DictConfig):
         wandb_run_id = run_id
         wandb_resume = "allow"  # Allow resuming if run exists
         logging.info(f"Starting new wandb run: {wandb_run_id}")
-
+    cfg_for_wandb = OmegaConf.to_container(
+        cfg, resolve=True, structured_config_mode=True
+    )
+    cfg_for_wandb["mjx_env_config"] = env_cfg.to_dict()
     wandb.init(
         project=cfg.logging_config.project_name,
-        config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
+        config=cfg_for_wandb,
         notes=f"",
         id=wandb_run_id,
         resume=wandb_resume,
@@ -313,20 +337,19 @@ def main(cfg: DictConfig):
             else cfg.train_setup.freeze_decoder
         ),
         checkpoint_callback=checkpoint_callback,
+        wrap_for_training=functools.partial(  # Testing full reset instead of setting to initial state
+            playground_wrappers.wrap_for_brax_training, full_reset=True
+        ),
     )
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics)
 
-    if cfg.train_setup.train_config.use_lstm:
-        rollout_env = render_wrapper(
-            env=env,
-            lstm_features=cfg.network_config.hidden_state_size,
-            hidden_layer_num=cfg.network_config.hidden_layer_num,
-        )
-    else:
-        rollout_env = render_wrapper(env=env)
+    # Set the render env start frame to always be 0
+    render_cfg = env_cfg.copy_and_resolve_references()
+    render_cfg.start_frame_range = [0, 0]
+    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=render_cfg))
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

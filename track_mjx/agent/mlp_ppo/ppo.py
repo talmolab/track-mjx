@@ -27,7 +27,9 @@ from brax import envs
 from brax.training import acting
 from brax.training import pmap
 from brax.training import types
-from brax.training import gradients
+
+# from brax.training import gradients
+from track_mjx.agent import gradients
 from brax.training.acme import running_statistics
 from brax.training.acme import specs
 from brax.training.types import Params
@@ -65,8 +67,10 @@ class TrainingState:
     env_steps: jnp.ndarray
 
 
+# MAKE THIS FN DO NOTHING TO TEST WITHOUT PMAP
 def _unpmap(v):
-    return jax.tree_util.tree_map(lambda x: x[0], v)
+    # return jax.tree_util.tree_map(lambda x: x[0], v)
+    return v
 
 
 def _strip_weak_type(tree):
@@ -168,6 +172,7 @@ def train(
     kl_ramp_up_frac: float = 0.25,
     freeze_decoder: bool = False,
     checkpoint_callback: Optional[Callable[[int], None]] = None,
+    wrap_for_training: Callable[[envs.Env], envs.Env] = wrappers.wrap,
 ):
     """PPO training.
 
@@ -228,6 +233,7 @@ def train(
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
       checkpoint_callback: a callback function that is called after checkpointing to update
         the json file which contains the run state for preemption handling
+      wrap_for_training: a function that wraps the environment for training
 
 
     Returns:
@@ -405,7 +411,8 @@ def train(
         loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
-    training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)
+    # training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)
+    training_epoch = training_epoch, axis_name = _PMAP_AXIS_NAME
 
     # Note that this is NOT a pure jittable method.
     def training_epoch_with_timing(
@@ -458,35 +465,22 @@ def train(
         randomization_rng = jax.random.split(key_env, randomization_batch_size)
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
-    if isinstance(environment, envs.Env):
-        wrap_for_training = wrappers.wrap
-    else:
-        # adapt to mujoco_playground wrapper
-        wrap_for_training = mp_wrapper.wrap_for_brax_training
+    reference_obs_size = int(environment.non_proprioceptive_obs_size)
+    proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
+    print(f"Reference observation size: {reference_obs_size}")
+    print(f"Proprioceptive observation size: {proprioceptive_obs_size}")
 
-    # TODO: playground env wrapper should be used here
     env = wrap_for_training(
         environment,
         episode_length=episode_length,
         action_repeat=action_repeat,
         randomization_fn=v_randomization_fn,
-        # use_lstm=use_lstm,
     )
 
     reset_fn = jax.jit(jax.vmap(env.reset))
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
     env_state = reset_fn(key_envs)
-
-    reference_obs_size = int(_unpmap(env_state.info["reference_obs_size"])[0])
-    # might be breaking change for old checkpoint
-    if "proprioceptive_obs_size" not in env_state.info:
-        proprioceptive_obs_size = 0
-    else:
-        proprioceptive_obs_size = int(
-            _unpmap(env_state.info["proprioceptive_obs_size"])[0]
-        )
-        logging.info("Proprioceptive observation size: %s", proprioceptive_obs_size)
 
     # TODO: reference_obs_size should be optional (network factory-dependent)
     config_dict["network_config"].update(
@@ -515,7 +509,7 @@ def train(
 
     optimizer = optax.chain(
         optax.clip_by_global_norm(10.0),
-        optax.adam(learning_rate=learning_rate),
+        optax.contrib.muon(learning_rate=learning_rate),
     )
 
     kl_schedule = None
@@ -523,7 +517,7 @@ def train(
         kl_schedule = losses.create_ramp_schedule(
             max_value=kl_weight,
             ramp_steps=int(num_evals * kl_ramp_up_frac),
-            schedule="linear",
+            schedule="sine",
         )
 
     loss_fn = functools.partial(

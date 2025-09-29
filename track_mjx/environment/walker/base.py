@@ -27,17 +27,15 @@ class BaseWalker(ABC):
     rescale_factor: float = 1.0
 
     # private fields that will be assigned later
-    _joint_names: list[str]         = field(init=False, repr=False)
-    _body_names:  Sequence[str]        = field(init=False, repr=False)
-    _end_eff_names: Sequence[str]      = field(init=False, repr=False)
-    _torso_name: str                   = field(init=False, repr=False)
-    _body_idxs:   jp.ndarray        = field(init=False, repr=False)
-    _endeff_idxs: jp.ndarray        = field(init=False, repr=False)
-    _torso_idx:   jp.ndarray        = field(init=False, repr=False)
-    _mjcf_model:  Any               = field(init=False, repr=False)
-    sys:          mujoco.MjModel    = field(init=False, repr=False)
-    _mj_model:    mujoco.MjModel    = field(init=False, repr=False)
-    _mj_spec:     mujoco.MjSpec     = field(init=False, repr=False)
+    _joint_names: Sequence[str] = field(init=False, repr=False)
+    _body_names: Sequence[str] = field(init=False, repr=False)
+    _end_eff_names: Sequence[str] = field(init=False, repr=False)
+    _body_idxs: jp.ndarray = field(init=False, repr=False)
+    _endeff_idxs: jp.ndarray = field(init=False, repr=False)
+    _torso_idx: jp.ndarray = field(init=False, repr=False)
+    _mjcf_model: Any = field(init=False, repr=False)
+    sys: mujoco.MjModel = field(init=False, repr=False)
+    _mj_model: mujoco.MjModel = field(init=False, repr=False)
 
     @abstractmethod
     def _build_spec(
@@ -253,7 +251,14 @@ class BaseWalker(ABC):
             Joint distances Shape (num_joints,).
         """
         joints = self.get_all_loc_joints(qpos)
-        joint_dist = (ref_joints - joints)[:, self._joint_idxs].flatten()
+        # joint_dist = (ref_joints - joints)[:, self._joint_idxs].flatten()
+
+        # Hot fix for OB1 error
+        joint_indices = self._joint_idxs - 1
+        joint_dist = (ref_joints - joints)[:, joint_indices].flatten()
+
+        # Include all joints
+        # joint_dist = (ref_joints - joints).flatten()
 
         return joint_dist
 

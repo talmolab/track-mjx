@@ -128,6 +128,7 @@ def train(
     use_lstm: bool = True,
     use_kl_schedule: bool = True,
     kl_ramp_up_frac: float = 0.25,
+    checkpoint_callback: Optional[Callable[[int], None]] = None,
 ):
     """PPO training.
 
@@ -187,6 +188,8 @@ def train(
       use_kl_schedule: whether to use a ramping schedule for the kl weight in the PPO loss
         (intention network variational layer)
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
+      checkpoint_callback: a callback function that is called after checkpointing to update
+        the json file which contains the run state for preemption handling
 
     Returns:
       Tuple of (make_policy function, network params, metrics)
@@ -609,6 +612,12 @@ def train(
                     config=ocp.args.JsonSave(config_dict),
                 ),
             )
+            # Call checkpoint callback for initial save
+            if checkpoint_callback is not None:
+                try:
+                    checkpoint_callback(0)
+                except Exception as e:
+                    logging.warning(f"Initial checkpoint callback failed: {e}")
         else:
             logging.info("Skipping checkpoint save as ckpt_mgr is None")
 
@@ -664,6 +673,12 @@ def train(
                         config=ocp.args.JsonSave(config_dict),
                     ),
                 )
+                # Call checkpoint callback after save
+                if checkpoint_callback is not None:
+                    try:
+                        checkpoint_callback(it)
+                    except Exception as e:
+                        logging.warning(f"Checkpoint callback failed: {e}")
 
     total_steps = current_step
     assert total_steps >= num_timesteps

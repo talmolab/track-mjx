@@ -5,6 +5,7 @@ wandb/
 outputs/
 rollouts/
 patch.ipynb
+jax_cache/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

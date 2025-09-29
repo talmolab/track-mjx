@@ -16,7 +16,7 @@ def _scale_vec(vec: list[float] | np.ndarray, s: float) -> None:
         vec[i] *= s
 
 
-def dm_scale_spec(spec, scale):
+def dm_scale_spec(spec, scale, root="walker"):
     scaled_spec = spec.copy()
 
     # Traverse the kinematic tree, scaling all geoms
@@ -48,7 +48,7 @@ def dm_scale_spec(spec, scale):
         keypoint.qpos = qpos
         keypoint.qpos[2] = keypoint.qpos[2] * scale
 
-    scale_bodies(scaled_spec.body("walker"), scale)
+    scale_bodies(scaled_spec.body(root), scale)
     return scaled_spec
 
 

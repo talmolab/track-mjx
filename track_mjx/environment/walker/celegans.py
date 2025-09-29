@@ -1,41 +1,47 @@
-import jax
-import logging
-from jax import numpy as jp
 from pathlib import Path
-from brax.io import mjcf as mjcf_brax
+from typing import Sequence
+
+import jax.numpy as jp
 import mujoco
-from track_mjx.environment.walker.base import BaseWalker
+from brax.io import mjcf as mjcf_brax
+import numpy as np
+import numpy as np
+from track_mjx.environment.walker.base import BaseWalker  # type: ignore
 from track_mjx.environment.walker import spec_utils
 
-_XML_PATH = "assets/fruitfly/fruitfly_force_fast.xml"
+
+_XML_PATH = Path(__file__).parent / "assets/celegans/celegans_fast.xml"  # relative to this file
 
 
-class Fly(BaseWalker):
-    """FlyBody class that manages the body structure, joint configurations, and model loading."""
+class C_Elegans(BaseWalker):
+    """C. Elegans walker using MuJoCo **MjSpec**"""
 
     def __init__(
         self,
-        joint_names: list[str],
-        body_names: list[str],
-        end_eff_names: list[str],
+        joint_names: Sequence[str],
+        body_names: Sequence[str],
+        end_eff_names: Sequence[str],
+        *,
+        xml_path: str = _XML_PATH,
         torque_actuators: bool = False,
         rescale_factor: float = 1.0,
     ):
         """
-        Initialize the fly body model with optional torque actuator settings and rescaling.
+
+        Parse XML → MjSpec, apply optional edits, and return the spec.
 
         Args:
-            joint_names: Names of the joints in the model.
-            body_names: Names of the bodies in the model.
-            end_eff_names: Names of the end effectors in the model.
-            torque_actuators: Whether to use torque actuators. Default is False.
-            rescale_factor: Factor to rescale the model. Default is 0.9.
+            joint_names (Sequence[str]): The names of the joints to be used in the model.
+            body_names (Sequence[str]): The names of the bodies to be used in the model.
+            end_eff_names (Sequence[str]): The names of the end effectors to be used in the model.
+            torque_actuators (bool, optional): whether modify the model to use torque actuators. Defaults to False.
+            rescale_factor (float, optional): the rescale factor for the body model. Defaults to 0.9.
         """
-        self._torso_name = "thorax"
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
-        self._torso_name = "thorax"
+        self._torso_name = "torso13_body"
+        self._xml_path = xml_path
         # 1) Build the physics model via MjSpec
         self._mj_spec = self._build_spec(torque_actuators, rescale_factor)
         self._mj_model = self._mj_spec.compile()  # mujoco.mjx.Model wrapper
@@ -56,53 +62,52 @@ class Fly(BaseWalker):
         Returns:
             mujoco.MjSpec: mujoco spec that contains the model
         """
-        path = Path(__file__).with_suffix("").parent / _XML_PATH
+        path = Path(self._xml_path)
+        print(f"Building spec from XML path: {path}")
         # reading the xml locally will destroy the relative path
         # use mj_spec from file instead of directly reading the text
         spec = mujoco.MjSpec.from_file(str(path))
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):
-            logging.info("Converting to torque actuators")
+            print("Converting to torque actuators")
             for actuator in spec.actuators:  # type: ignore[attr-defined]
                 # Set gain to max force; remove bias terms if present
                 if actuator.forcerange.size >= 2:
                     actuator.gainprm[0] = actuator.forcerange[1]
                 # reset custom bias terms
                 actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
-                actuator.biasprm = jp.zeros((10, 1))
+                actuator.biasprm = np.zeros((10, 1))
 
         # b) Uniform rescale (geometry + body positions)
-        if rescale_factor != 1.0:
-            logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
-            spec = spec_utils.dm_scale_spec(spec, rescale_factor)
+        if abs(rescale_factor - 1.0) > 1e-6:
+            spec = spec_utils.dm_scale_spec(spec, rescale_factor, "torso1_body")
 
         return spec
 
     def _initialize_indices(self) -> None:
-        """Initialize indices for joints, bodies, end-effectors, and thorax."""
+        """Create immutable JAX arrays of IDs for joints, bodies, end-effectors."""
         self._joint_idxs = jp.array(
             [
                 mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, j)
-                for j in self._joint_names
+                for j in self.joint_names
             ]
         )
 
         self._body_idxs = jp.array(
             [
                 mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, b)
-                for b in self._body_names
+                for b in self.body_names
             ]
         )
 
         self._endeff_idxs = jp.array(
             [
                 mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_BODY, e)
-                for e in self._end_eff_names
+                for e in self.end_eff_names
             ]
         )
 
-        # Treat thorax as torso
         self._torso_idx = mujoco.mj_name2id(
-            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, self._torso_name
+            self._mj_model, mujoco.mjtObj.mjOBJ_BODY, self.torso_name
         )

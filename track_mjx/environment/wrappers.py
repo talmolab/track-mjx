@@ -10,7 +10,6 @@ from brax.envs.wrappers.training import (
 import jax
 from jax import numpy as jp
 from mujoco import mjx
-from brax.v1.envs import env as brax_env
 from mujoco.mjx._src import smooth
 from flax import linen as nn
 
@@ -208,7 +207,7 @@ class RenderRolloutWrapperTrackingLSTM(Wrapper):
 
 
 # TODO: Rename these wrappers to be more concise/descriptive
-class RenderRolloutVmapWrapper(brax_env.Wrapper):
+class RenderRolloutVmapWrapper(Wrapper):
     """Vectorizes Brax env given a clip index, used with RenderRolloutWrapperMulticlipTracking."""
 
     def __init__(self, env: Env, batch_size: Optional[int] = None):

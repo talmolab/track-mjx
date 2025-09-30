@@ -17,20 +17,20 @@
 import time
 from typing import Callable, Sequence, Tuple, Union
 
-from brax import envs
+from brax import envs as brax_env
+from mujoco_playground._src import mjx_env 
 from brax.training.types import Metrics
 from brax.training.types import Policy
 from brax.training.types import PolicyParams
 from brax.training.types import PRNGKey
 from brax.training.types import Transition
-from brax.v1 import envs as envs_v1
 import jax
 import numpy as np
 import jax.numpy as jnp
 from flax import linen as nn
 
-State = Union[envs.State, envs_v1.State]
-Env = Union[envs.Env, envs_v1.Env, envs_v1.Wrapper]
+State = Union[brax_env.State, mjx_env.State]
+Env = Union[brax_env.Env, mjx_env.Env, mjx_env.Wrapper]
 
 
 def actor_step(
@@ -115,7 +115,7 @@ class Evaluator:
 
     def __init__(
         self,
-        eval_env: envs.Env,
+        eval_env: brax_env.Env,
         eval_policy_fn: Callable[[PolicyParams], Policy],
         num_eval_envs: int,
         episode_length: int,
@@ -135,7 +135,7 @@ class Evaluator:
         self._key = key
         self._eval_walltime = 0.0
 
-        eval_env = envs.training.EvalWrapper(eval_env)
+        eval_env = brax_env.training.EvalWrapper(eval_env)
 
         def generate_eval_unroll(
             policy_params: PolicyParams, key: PRNGKey

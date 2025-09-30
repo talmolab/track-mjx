@@ -174,20 +174,20 @@ def rollout_logging_fn(
                     scene_option=scene_option,
                 )
                 media.write_video(video_path, frames, fps=render_fps)
-    else:
-        # mujoco playground envs
-        render_every = 2
-        fps = 1.0 / env.dt / render_every
-        traj = rollout[::render_every]
-        frames = env.render(
-            traj,
-            camera="close_profile-rodent",
-            scene_option=scene_option,
-            height=480,
-            width=640,
-        )
-        media.write_video(video_path, frames, fps=fps, qp=18)
-    wandb.log({"videos/rollout": wandb.Video(video_path, format="mp4")})
+        else:
+            # mujoco playground envs
+            render_every = 2
+            fps = 1.0 / env.dt / render_every
+            traj = rollout[::render_every]
+            frames = env.render(
+                traj,
+                camera="close_profile-rodent",
+                scene_option=scene_option,
+                height=480,
+                width=640,
+            )
+            media.write_video(video_path, frames, fps=fps, qp=18)
+        wandb.log({"videos/rollout": wandb.Video(video_path, format="mp4")})
 
 
 def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):

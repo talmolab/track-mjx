@@ -68,6 +68,8 @@ _ROOT_NAME = {
     "stick": "reference_base",
     "celegans": "torso1_body",
 }
+
+
 def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to switch to a headless backend during function execution.
 
@@ -122,8 +124,7 @@ def make_ghost_pair(
         _recolour_tree(top, rgba=[0.8, 0.8, 0.8, 0.2])
 
     # add a frame to the worldbody to attach the ghost body
-    frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0],
-                                 quat=[0,0,0,0])
+    frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0], quat=[0, 0, 0, 0])
     frame.attach_body(ghost.body(root_body_name), "", "ghost")
     # E) Compile & write out
     model = base.compile()
@@ -146,8 +147,8 @@ def make_rollout_renderer(
 
     if cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
         if "xml_path" in cfg.walker_config.keys():
-                xml_path = cfg.walker_config.xml_path
-                scale_factor = cfg.walker_config.rescale_factor
+            xml_path = cfg.walker_config.xml_path
+            scale_factor = cfg.walker_config.rescale_factor
         # elif "walker_xml_path" in cfg.env_config.env_args.keys():
         #     xml_path = cfg.env_config.env_args.walker_xml_path
         #     scale_factor = cfg.env_config.env_args.rescale_factor
@@ -157,10 +158,11 @@ def make_rollout_renderer(
         print(f"Rendering from XML path: {xml_path}")
         if render_ghost:
             _, mj_model, _ = make_ghost_pair(
-                xml_path, root_name=_ROOT_NAME[cfg.env_config.walker_name], scale=scale_factor
+                xml_path,
+                root_body_name=_ROOT_BODY_NAMES[cfg.env_config.walker_name],
+                scale=scale_factor,
             )
         else:
-
             base = mujoco.MjSpec.from_file(xml_path)
             for top in base.worldbody.bodies:
                 _scale_body_tree(top, scale_factor)
@@ -205,7 +207,7 @@ def render_rollout(
     height: int = 480,
     width: int = 640,
     render_ghost: bool = True,
-    render_fps: int = -1
+    render_fps: int = -1,
 ) -> Tuple[List[np.ndarray], float]:
     """Render a rollout from saved qposes.
 
@@ -238,9 +240,9 @@ def render_rollout(
     # Compute real-time fps
     if render_fps == -1:
         render_fps = (
-        1.0 / mj_model.opt.timestep
-    ) / cfg.env_config.env_args.physics_steps_per_control_step
-    
+            1.0 / mj_model.opt.timestep
+        ) / cfg.env_config.env_args.physics_steps_per_control_step
+
     if cfg.env_config.render_fps is not None:
         render_fps = cfg.env_config.render_fps  # Override with config if specified
     # TODO: make it configurable also maybe with the ratio of the speed of the real life.
@@ -298,7 +300,7 @@ def plot_pca_intention(
         # Plot the PCA projection of the episode
         plt.plot(
             pca_projections[episode_start:idx, pc_ind],
-            label=f"PC {pc_ind} ({pca.explained_variance_ratio_[pc_ind]*100:.1f}%)",
+            label=f"PC {pc_ind} ({pca.explained_variance_ratio_[pc_ind] * 100:.1f}%)",
         )
         plt.scatter(idx - episode_start, pca_projections[idx - 1, pc_ind])
     if terminated:

@@ -122,19 +122,6 @@ def _track_to_vnl_cfg(cfg):
         "weight": 1.0,  # This doesnt exist in hydra cfg
     }
 
-    # Map penalty parameters to termination criteria (these exist in default config)
-    # env_cfg.termination_criteria["root_too_far"] = {
-    #     "max_distance": reward_weights.too_far_dist
-    # }
-
-    # env_cfg.termination_criteria["pose_error"] = {
-    #     "max_l2_error": reward_weights.bad_pose_dist
-    # }
-
-    # env_cfg.termination_criteria["root_too_rotated"] = {
-    #     "max_degrees": reward_weights.bad_quat_dist
-    # }
-
     # # SET TO WARP
     # env_cfg.mujoco_impl = "warp"
     # # SET NCONMAX FOR WARP

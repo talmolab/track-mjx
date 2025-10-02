@@ -135,10 +135,10 @@ def _track_to_vnl_cfg(cfg):
     #     "max_degrees": reward_weights.bad_quat_dist
     # }
 
-    # SET TO WARP
-    env_cfg.mujoco_impl = "warp"
-    # SET NCONMAX FOR WARP
-    env_cfg.nconmax = env_cfg.nconmax * cfg.train_setup.train_config.num_envs
+    # # SET TO WARP
+    # env_cfg.mujoco_impl = "warp"
+    # # SET NCONMAX FOR WARP
+    # env_cfg.nconmax = env_cfg.nconmax * cfg.train_setup.train_config.num_envs
     return env_cfg
 
 

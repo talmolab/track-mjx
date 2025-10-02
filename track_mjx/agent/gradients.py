@@ -58,9 +58,11 @@ def gradient_update_fn(
         loss_fn, pmap_axis_name=pmap_axis_name, has_aux=has_aux
     )
 
-    def f(*args, optimizer_state):
+    def f(*args, optimizer_state, params):
         value, grads = loss_and_pgrad_fn(*args)
-        params_update, optimizer_state = optimizer.update(grads, optimizer_state)
+        params_update, optimizer_state = optimizer.update(
+            grads, optimizer_state, params
+        )
         params = optax.apply_updates(args[0], params_update)
         return value, params, optimizer_state
 

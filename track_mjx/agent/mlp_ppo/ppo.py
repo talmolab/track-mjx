@@ -67,10 +67,8 @@ class TrainingState:
     env_steps: jnp.ndarray
 
 
-# MAKE THIS FN DO NOTHING TO TEST WITHOUT PMAP
 def _unpmap(v):
-    # return jax.tree_util.tree_map(lambda x: x[0], v)
-    return v
+    return jax.tree_util.tree_map(lambda x: x[0], v)
 
 
 def _strip_weak_type(tree):
@@ -295,6 +293,7 @@ def train(
             key_loss,
             it,
             optimizer_state=optimizer_state,
+            params=params,
         )
 
         return (optimizer_state, params, key, it), metrics
@@ -411,8 +410,7 @@ def train(
         loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
-    # training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)
-    training_epoch = training_epoch, axis_name = _PMAP_AXIS_NAME
+    training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)
 
     # Note that this is NOT a pure jittable method.
     def training_epoch_with_timing(
@@ -510,6 +508,7 @@ def train(
     optimizer = optax.chain(
         optax.clip_by_global_norm(10.0),
         optax.contrib.muon(learning_rate=learning_rate),
+        # optax.adam(learning_rate=learning_rate),
     )
 
     kl_schedule = None
@@ -517,7 +516,7 @@ def train(
         kl_schedule = losses.create_ramp_schedule(
             max_value=kl_weight,
             ramp_steps=int(num_evals * kl_ramp_up_frac),
-            schedule="sine",
+            schedule="linear",
         )
 
     loss_fn = functools.partial(

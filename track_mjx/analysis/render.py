@@ -6,8 +6,7 @@ os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
 from typing import List, Tuple, Callable, Any, Dict
 import numpy as np
-import pandas as pd
-import seaborn as sns
+
 import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -22,15 +21,10 @@ from PIL import Image
 from IPython.display import HTML
 
 
-from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
-from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.spec_utils import _scale_body_tree, _recolour_tree
 
 import mujoco
 from pathlib import Path
-from dm_control import mjcf as mjcf_dm
-from dm_control.locomotion.walkers import rescale
-import imageio
 import numpy as np
 
 import multiprocessing as mp
@@ -56,6 +50,7 @@ _ROOT_BODY_NAMES = {
     "fly": "thorax",
     "stick": "reference_base",
 }
+
 
 def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to switch to a headless backend during function execution.
@@ -109,8 +104,7 @@ def make_ghost_pair(
         _recolour_tree(top, rgba=[0.8, 0.8, 0.8, 0.2])
 
     # add a frame to the worldbody to attach the ghost body
-    frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0],
-                                 quat=[0,0,0,0])
+    frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0], quat=[0, 0, 0, 0])
     frame.attach_body(ghost.body(root_body_name), "", "ghost")
 
     # E) Compile & write out
@@ -218,7 +212,7 @@ def render_rollout(
     render_fps = (
         1.0 / mj_model.opt.timestep
     ) / cfg.env_config.env_args.physics_steps_per_control_step
-    
+
     if cfg.env_config.render_fps is not None:
         render_fps = cfg.env_config.render_fps  # Override with config if specified
     # TODO: make it configurable also maybe with the ratio of the speed of the real life.

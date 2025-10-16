@@ -144,6 +144,10 @@ def rollout_logging_fn(
 
             # Render the walker with the reference expert demonstration trajectory
             if isinstance(env, PipelineEnv):  # track-mjx envs
+                clip_idx = env._reference_clips.original_clip_idx[
+                    rollout[0].info["clip_idx"]
+                ]
+                wandb.log({"rollout/clip_idx": clip_idx}, commit=False)
                 qposes_rollout = np.array(
                     [state.pipeline_state.qpos for state in rollout]
                 )
@@ -155,7 +159,7 @@ def rollout_logging_fn(
                     env._steps_for_cur_frame,
                     axis=0,
                 )
-
+                video_path = video_path.replace(".mp4", f"_clip={clip_idx}.mp4")
                 with imageio.get_writer(video_path, fps=int(render_fps)) as video:
                     for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
                         mj_data.qpos = np.append(qpos1, qpos2)
@@ -171,12 +175,13 @@ def rollout_logging_fn(
                 clip_idx = env.reference_clips.clip_indices[
                     rollout[0].info["reference_clip"]
                 ]
-                wandb.log({"clip_idx": clip_idx}, commit=False)
+                wandb.log({"rollout/clip_idx": clip_idx}, commit=False)
                 frames = env.render(
                     rollout,
                     camera=cfg["env_config"].render_camera_name,
                     scene_option=scene_option,
                 )
+                video_path = video_path.replace(".mp4", f"_clip={clip_idx}.mp4")
                 media.write_video(video_path, frames, fps=render_fps)
         else:
             # mujoco playground envs

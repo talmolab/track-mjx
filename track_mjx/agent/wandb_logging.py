@@ -168,6 +168,10 @@ def rollout_logging_fn(
                         pixels = renderer.render()
                         video.append_data(pixels)
             elif isinstance(env, MjxEnv):
+                clip_idx = env.reference_clips.clip_indices[
+                    rollout[0].info["reference_clip"]
+                ]
+                wandb.log({"clip_idx": clip_idx}, commit=False)
                 frames = env.render(
                     rollout,
                     camera=cfg["env_config"].render_camera_name,
@@ -187,7 +191,9 @@ def rollout_logging_fn(
                 width=640,
             )
             media.write_video(video_path, frames, fps=fps, qp=18)
-        wandb.log({"videos/rollout": wandb.Video(video_path, format="mp4")})
+        wandb.log(
+            {"videos/rollout": wandb.Video(video_path, format="mp4")}, commit=False
+        )
 
 
 def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):

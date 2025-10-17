@@ -325,7 +325,7 @@ def main(cfg: DictConfig):
         ),
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(  # Testing full reset instead of setting to initial state
-            playground_wrappers.wrap_for_brax_training, full_reset=True
+            playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
     )
 

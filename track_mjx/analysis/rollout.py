@@ -7,6 +7,7 @@ import jax
 from brax.envs.base import Env
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.walker.stick import Stick
+from track_mjx.environment.walker.rodent import Rodent
 from brax import envs
 from typing import Dict, Callable
 import hydra

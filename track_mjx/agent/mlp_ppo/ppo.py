@@ -506,9 +506,9 @@ def train(
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     optimizer = optax.chain(
-        optax.clip_by_global_norm(10.0),
-        optax.contrib.muon(learning_rate=learning_rate),
-        # optax.adam(learning_rate=learning_rate),
+        optax.clip_by_global_norm(0.5),
+        # optax.contrib.muon(learning_rate=learning_rate),
+        optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
     kl_schedule = None

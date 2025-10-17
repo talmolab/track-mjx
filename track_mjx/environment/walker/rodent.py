@@ -21,6 +21,7 @@ class Rodent(BaseWalker):
         joint_names: Sequence[str],
         body_names: Sequence[str],
         end_eff_names: Sequence[str],
+        exclude_joints_reward: Sequence[str],
         *,
         torque_actuators: bool = False,
         rescale_factor: float = 0.9,
@@ -40,6 +41,7 @@ class Rodent(BaseWalker):
         self._joint_names = joint_names
         self._body_names = body_names
         self._end_eff_names = end_eff_names
+        self._exclude_joints_reward = exclude_joints_reward 
 
         # 1) Build the physics model via MjSpec
         self._mj_spec = self._build_spec(torque_actuators, rescale_factor)
@@ -111,4 +113,11 @@ class Rodent(BaseWalker):
 
         self._torso_idx = mujoco.mj_name2id(
             self._mj_model, mujoco.mjtObj.mjOBJ_BODY, self._torso_name
+        )
+
+        self._exclude_joints_reward_idxs = jp.array(
+            [
+                mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, j)
+                for j in self._exclude_joints_reward
+            ]
         )

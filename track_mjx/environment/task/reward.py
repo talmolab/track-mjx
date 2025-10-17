@@ -128,6 +128,7 @@ def compute_joint_reward(
     reference_clip_joint: jp.ndarray,
     weight: float,
     joint_reward_exp_scale: float,
+    rewarded_joints: list[int],
 ) -> tuple[jp.ndarray, jp.ndarray]:
     """Joint-based reward.
 
@@ -136,10 +137,24 @@ def compute_joint_reward(
         reference_clip_joint: Reference trajectory joint position data.
         weight: Weight for the reward.
         joint_reward_exp_scale: Scaling factor for joint rewards.
+        indices_to_remove: List of joint indices to exclude from joint reward calculation.
 
     Returns:
         Tuple[jp.ndarray, jp.ndarray]: Weighted joint reward and joint distance.
     """
+
+    joint_array = joint_array[..., rewarded_joints]
+    reference_clip_joint = reference_clip_joint[..., rewarded_joints]
+
+    # Pre-computed keep indices (all indices except the remove_indices)
+    # keep_indices = jp.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 
+    #                         42, 43, 44, 45, 46, 47, 48, 49, 51, 52, 53, 54, 55, 56, 57, 
+    #                         59, 60, 61, 62, 63, 64, 65, 67])
+    
+    # # Use explicit integer indexing instead of boolean masking
+    # joint_array_sliced = joint_array[..., keep_indices]
+    # reference_clip_joint_sliced = reference_clip_joint[..., keep_indices]
+
     joint_distance = jp.sum((joint_array - reference_clip_joint) ** 2)
     weighted_joint_reward = weight * jp.exp(-joint_reward_exp_scale * joint_distance)
     return weighted_joint_reward, joint_distance
@@ -363,6 +378,7 @@ def compute_tracking_rewards(
     action: jp.ndarray,
     info: dict[str, jp.ndarray],
     reward_config: RewardConfig,
+    rewarded_joints: list[int],
 ) -> tuple[Union[jp.ndarray, dict[str, jp.ndarray]], ...]:
     """Computes tracking rewards and penalties for motion imitation.
 
@@ -373,6 +389,7 @@ def compute_tracking_rewards(
         action: Current action.
         info: Dictionary of information for logging
         reward_config: Reward configuration object.
+        rewarded_joints: List of joint indices to include in the joint reward calculation.
 
     Returns:
         Tuple[float, Dict[str, float]]: Total reward and detailed info dictionary.
@@ -403,6 +420,7 @@ def compute_tracking_rewards(
         reference_frame_joint,
         reward_config.joint_reward_weight,
         reward_config.joint_reward_exp_scale,
+        rewarded_joints,
     )
 
     angvel_array = data.qvel[3:6]

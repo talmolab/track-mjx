@@ -91,6 +91,9 @@ class SingleClipTracking(PipelineEnv):
         self._mjx_model = mjx.put_model(self.sys.mj_model)
         self._mj_spec = self.walker._mj_spec
 
+        keep_indices = jp.arange(mj_model.nq - 7)  # exclude root joints
+        self._rewarded_joints = keep_indices[~jp.isin(keep_indices, jp.array(walker._exclude_joints_reward_idxs))]
+
     def reset(self, rng: jp.ndarray) -> State:
         """Resets the environment to an initial state.
 
@@ -262,6 +265,7 @@ class SingleClipTracking(PipelineEnv):
             action=action,
             info=info,
             reward_config=self._reward_config,
+            rewarded_joints=self._rewarded_joints,
         )
 
         reference_obs, proprioceptive_obs = self._get_obs(data, info)

@@ -78,6 +78,7 @@ def create_rollout_generator(
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
+    log_done: bool = False,
 ) -> Callable[[int | None], Dict]:
     """
     Creates a rollout generator with JIT-compiled functions.
@@ -263,6 +264,10 @@ def create_rollout_generator(
                 result["joint_forces"] = joint_forces
             if sensor_readings is not None:
                 result["sensor_readings"] = sensor_readings
+
+        if log_done:
+            dones = jax.vmap(lambda s: s.done)(rollout_states)
+            result["dones"] = dones
 
         return result
 

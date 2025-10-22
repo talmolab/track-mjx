@@ -13,9 +13,6 @@ import wandb
 import imageio
 import mediapy as media
 import mujoco
-from brax import envs
-from dm_control import mjcf as mjcf_dm
-from dm_control.locomotion.walkers import rescale
 
 from track_mjx.agent.mlp_ppo import losses
 

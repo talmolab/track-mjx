@@ -27,16 +27,16 @@ from brax import envs
 from brax.training import acting
 from brax.training import pmap
 from brax.training import types
-from brax.training import gradients
 from brax.training.acme import running_statistics
 from brax.training.acme import specs
 from brax.training.types import Params
 from brax.training.types import PRNGKey
-from brax.v1 import envs as envs_v1
 from track_mjx.agent import network_masks
 from track_mjx.agent.mlp_ppo import losses, ppo_networks
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
+from track_mjx.agent import gradients
+
 from mujoco_playground import wrapper as mp_wrapper
 
 import flax
@@ -126,7 +126,7 @@ acting.Evaluator.run_evaluation = run_evaluation
 
 # TODO: Pass in a loss-specific config instead of throwing them all in individually.
 def train(
-    environment: Union[envs_v1.Env, envs.Env],
+    environment: envs.Env,
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
@@ -290,6 +290,7 @@ def train(
             key_loss,
             it,
             optimizer_state=optimizer_state,
+            params=params,
         )
 
         return (optimizer_state, params, key, it), metrics
@@ -514,9 +515,15 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
+    # optimizer = optax.chain(
+    #     optax.clip_by_global_norm(10.0),
+    #     optax.adam(learning_rate=learning_rate),
+    # )
+
+    # TEST SETUP
     optimizer = optax.chain(
-        optax.clip_by_global_norm(10.0),
-        optax.adam(learning_rate=learning_rate),
+        optax.clip_by_global_norm(0.5),
+        optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
     kl_schedule = None

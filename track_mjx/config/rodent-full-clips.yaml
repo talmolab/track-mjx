@@ -16,6 +16,7 @@ env_config:
     reset_noise_scale: 1e-3
     mj_model_timestep: 0.002
     mocap_hz: 50
+    max_start_frame: 40
 
   reward_weights:
     too_far_dist: 0.01

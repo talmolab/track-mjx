@@ -16,20 +16,22 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12"]
 dependencies = [
-    # JAX with CUDA 12 support (works with CUDA 13.0)
+    # JAX core (both platforms)
     "jax==0.6.2",
     "jaxlib==0.6.2",
-    "jax-cuda12-plugin==0.6.2",
-    "jax-cuda12-pjrt==0.6.2",
-    # NVIDIA CUDA libraries (required for JAX GPU)
-    "nvidia-cublas-cu12>=12.0",
-    "nvidia-cuda-cupti-cu12>=12.0",
-    "nvidia-cuda-nvrtc-cu12>=12.0",
-    "nvidia-cuda-runtime-cu12>=12.0",
-    "nvidia-cudnn-cu12>=9.0",
-    "nvidia-cufft-cu12>=11.0",
-    "nvidia-cusolver-cu12>=11.0",
-    "nvidia-cusparse-cu12>=12.0",
+    # JAX CUDA 12 support (Linux only - works with CUDA 13.0)
+    "jax-cuda12-plugin==0.6.2 ; sys_platform == 'linux'",
+    "jax-cuda12-pjrt==0.6.2 ; sys_platform == 'linux'",
+    # Note: macOS uses CPU-only JAX (jax-metal 0.1.1 incompatible with JAX 0.6.2)
+    # NVIDIA CUDA libraries (Linux only - required for JAX GPU)
+    "nvidia-cublas-cu12>=12.0 ; sys_platform == 'linux'",
+    "nvidia-cuda-cupti-cu12>=12.0 ; sys_platform == 'linux'",
+    "nvidia-cuda-nvrtc-cu12>=12.0 ; sys_platform == 'linux'",
+    "nvidia-cuda-runtime-cu12>=12.0 ; sys_platform == 'linux'",
+    "nvidia-cudnn-cu12>=9.0 ; sys_platform == 'linux'",
+    "nvidia-cufft-cu12>=11.0 ; sys_platform == 'linux'",
+    "nvidia-cusolver-cu12>=11.0 ; sys_platform == 'linux'",
+    "nvidia-cusparse-cu12>=12.0 ; sys_platform == 'linux'",
     # Core ML dependencies
     "brax==0.13.0",
     "flax==0.10.2",

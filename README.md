@@ -61,9 +61,8 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
 [`uv`](https://docs.astral.sh/uv/) is a fast Python package manager that handles dependencies and virtual environments.
 
 **Tested on:**
-- Ubuntu 24.04 (headless)
-- System CUDA 13.0
-- EGL rendering (no X11 required)
+- **Linux**: Ubuntu 24.04 (headless) with CUDA 13.0, EGL rendering (no X11 required)
+- **macOS**: Apple Silicon (M2 Pro) with CPU-only JAX, GLFW rendering
 
 1. Install `uv` if you haven't already:
     ```bash
@@ -85,13 +84,16 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
     uv run python notebooks/download_and_run_rodent.py
     ```
 
-5. Verify GPU detection:
+5. Verify GPU/CPU detection:
     ```bash
     uv run python -c "import jax; print('Devices:', jax.devices())"
     ```
-    You should see your CUDA devices listed (e.g., `[CudaDevice(id=0), CudaDevice(id=1)]`).
+    - **Linux**: You should see your CUDA devices (e.g., `[CudaDevice(id=0), CudaDevice(id=1)]`)
+    - **macOS**: You will see `[CpuDevice(id=0)]` (GPU acceleration not supported with JAX 0.6.2)
 
-**Note:** The `pyproject.toml` includes all necessary NVIDIA CUDA libraries for JAX GPU support. No additional system packages are required beyond CUDA drivers.
+**Platform-specific notes:**
+- **Linux**: The `pyproject.toml` includes all necessary NVIDIA CUDA libraries for JAX GPU support. No additional system packages are required beyond CUDA drivers.
+- **macOS**: Uses CPU-only JAX as `jax-metal` 0.1.1 is incompatible with JAX 0.6.2. Platform markers ensure CUDA dependencies are not installed on macOS.
 
 **Troubleshooting:**
 

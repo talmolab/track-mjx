@@ -58,7 +58,7 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
 
 #### Option 1: uv (Recommended)
 
-[`uv`](https://docs.astral.sh/uv/) is a fast Python package manager that handles dependencies and virtual environments.
+[`uv`](https://docs.astral.sh/uv/) is a fast Python package manager that handles dependencies and virtual environments. **This is the recommended method for CPU-only development on macOS and other non-Linux platforms**, as well as GPU-enabled Linux systems.
 
 **Tested on:**
 - **Linux**: Ubuntu 24.04 (headless) with CUDA 13.0, EGL rendering (no X11 required)
@@ -82,6 +82,11 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
 4. Run scripts with `uv run`:
     ```bash
     uv run python notebooks/download_and_run_rodent.py
+    ```
+
+    Or run the notebook (overwrites with outputs):
+    ```bash
+    uv run jupyter nbconvert --execute --to notebook --inplace notebooks/download_and_run_rodent.ipynb
     ```
 
 5. Verify GPU/CPU detection:

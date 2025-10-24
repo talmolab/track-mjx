@@ -93,6 +93,16 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
 
 **Note:** The `pyproject.toml` includes all necessary NVIDIA CUDA libraries for JAX GPU support. No additional system packages are required beyond CUDA drivers.
 
+**Troubleshooting:**
+
+If you encounter EGL/OpenGL errors when rendering (e.g., `AttributeError: 'NoneType' object has no attribute 'glGetError'`), you may need to install system EGL libraries:
+
+```bash
+sudo apt update && sudo apt-get install libglapi-mesa libegl-mesa0 libegl1 libopengl0
+```
+
+After installing, try running your script again with `uv run`.
+
 #### Option 2: conda (Alternative)
 
 1. Clone the repository:

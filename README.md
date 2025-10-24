@@ -56,7 +56,46 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
 
 ### Installation
 
-1. Clone the repository with the following command:
+#### Option 1: uv (Recommended)
+
+[`uv`](https://docs.astral.sh/uv/) is a fast Python package manager that handles dependencies and virtual environments.
+
+**Tested on:**
+- Ubuntu 24.04 (headless)
+- System CUDA 13.0
+- EGL rendering (no X11 required)
+
+1. Install `uv` if you haven't already:
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+
+2. Clone the repository:
+    ```bash
+    git clone https://github.com/talmolab/track-mjx.git && cd track-mjx
+    ```
+
+3. Install all dependencies (creates `.venv` automatically):
+    ```bash
+    uv sync --all-extras
+    ```
+
+4. Run scripts with `uv run`:
+    ```bash
+    uv run python notebooks/download_and_run_rodent.py
+    ```
+
+5. Verify GPU detection:
+    ```bash
+    uv run python -c "import jax; print('Devices:', jax.devices())"
+    ```
+    You should see your CUDA devices listed (e.g., `[CudaDevice(id=0), CudaDevice(id=1)]`).
+
+**Note:** The `pyproject.toml` includes all necessary NVIDIA CUDA libraries for JAX GPU support. No additional system packages are required beyond CUDA drivers.
+
+#### Option 2: conda (Alternative)
+
+1. Clone the repository:
     ```bash
     git clone https://github.com/talmolab/track-mjx.git && cd track-mjx
     ```
@@ -66,7 +105,7 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
     ```
     This will install the necessary dependencies and install the package in editable mode.
 3. Test the environment.
-    Active the conda environment that was just installed:
+    Activate the conda environment that was just installed:
     ```bash
     conda activate track_mjx
     ```
@@ -85,9 +124,16 @@ To download data, you can call:
 gdown --id <google file id> -O data.h5
 ```
 
-After running `conda activate track_mjx`, you can run training with:
+Run training with:
 
+**Using uv:**
 ```bash
+uv run python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
+```
+
+**Using conda:**
+```bash
+conda activate track_mjx
 python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
 ```
 

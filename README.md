@@ -79,12 +79,7 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
     uv sync --all-extras
     ```
 
-4. Run scripts with `uv run`:
-    ```bash
-    uv run python notebooks/download_and_run_rodent.py
-    ```
-
-    Or run the notebook (overwrites with outputs):
+4. Run the example notebook (overwrites with outputs):
     ```bash
     uv run jupyter nbconvert --execute --to notebook --inplace notebooks/download_and_run_rodent.ipynb
     ```

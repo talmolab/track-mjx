@@ -12,6 +12,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# sbatch scripts
+sbatch/
+
 # C extensions
 *.so
 

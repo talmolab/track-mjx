@@ -2,7 +2,6 @@
 Functions to load environment and run a rollout with a given policy.
 """
 
-import numpy as np
 import jax
 from brax.envs.base import Env
 from track_mjx.environment.walker.rodent import Rodent

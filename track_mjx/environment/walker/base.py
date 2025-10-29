@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 import jax.numpy as jp
 import jax
 from brax import math as brax_math
-from brax.io import mjcf
 import mujoco
 from dataclasses import dataclass, field
 from typing import Any, Sequence

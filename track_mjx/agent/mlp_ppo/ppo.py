@@ -40,7 +40,6 @@ from track_mjx.agent import gradients
 from mujoco_playground import wrapper as mp_wrapper
 
 import flax
-from flax import traverse_util
 import flax.struct
 import jax
 import jax.numpy as jnp

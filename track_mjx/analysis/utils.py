@@ -2,7 +2,6 @@
 
 import h5py
 import jax
-import jax.numpy as jnp
 import numpy as np
 from pathlib import Path
 

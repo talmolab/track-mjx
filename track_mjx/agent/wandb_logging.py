@@ -21,8 +21,6 @@ from brax.envs.base import Env
 import numpy as np
 from jax import numpy as jp
 
-# TODO: Use MjSpec to generate the mjcf with ghost
-
 
 def rollout_logging_fn(
     env,

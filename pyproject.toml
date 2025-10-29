@@ -9,7 +9,7 @@ authors = [
     {name = "Scott Yang", email = "scyang@salk.com"},
     {name = "Talmo Pereira", email = "talmo@salk.edu"}]
 description=  "Track-MJX: A Python package for fast reinforcement learning-based imitation learning tracking for agents"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 keywords = ["tracking", "imitation learning", "deep learning"]
 license = {text = "BSD-3-Clause"}
 classifiers = [
@@ -17,11 +17,15 @@ classifiers = [
     "Programming Language :: Python :: 3.12"]
 dependencies = [
     # JAX core (both platforms)
-    "jax==0.6.2",
-    "jaxlib==0.6.2",
-    "jax[cuda12]==0.6.2 ; sys_platform == 'linux'",
-    ## If you are on CUDA 13, uncomment the following lines and comment out the above line
-    # "jax[cuda13]==0.6.2 ; sys_platform == 'linux'",
+    "jax==0.7.2",
+    "jaxlib==0.7.2",
+    # =========================================================================
+    # CUDA Dependencies
+    # If on CUDA 12, uncomment the following line
+    # "jax[cuda12]==0.7.2 ; sys_platform == 'linux'",
+    # If you are on CUDA 13, uncomment the following lines and comment out the above line
+    "jax[cuda13]==0.7.2 ; sys_platform == 'linux'",
+    # =========================================================================
     # Core ML dependencies
     "brax==0.13.0",
     "flax==0.10.2",
@@ -33,7 +37,7 @@ dependencies = [
     # Rendering (EGL/osmesa support)
     "PyOpenGL==3.1.9",
     # Data & ML utilities
-    "numpy==1.26.4",
+    "numpy==2.0.0",
     "h5py==3.12.1",
     "numba==0.61.0",
     "scikit-learn==1.7.2",

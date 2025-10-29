@@ -174,6 +174,7 @@ def render_rollout(
     height: int = 480,
     width: int = 640,
     render_ghost: bool = True,
+    render_only_realtime: bool = False,
 ) -> Tuple[List[np.ndarray], float]:
     """Render a rollout from saved qposes.
 
@@ -209,12 +210,23 @@ def render_rollout(
 
     frames = []
     print(render_msg)
-    n = int(
-        1.0 / 
-        (mj_model.opt.timestep * 
-         cfg.env_config.env_args.mocap_hz * 
-         cfg.env_config.env_args.physics_steps_per_control_step)
-    )
+
+    if render_only_realtime:
+        n = int(
+            1.0 / 
+            (mj_model.opt.timestep * 
+            cfg.env_config.env_args.mocap_hz * 
+            cfg.env_config.env_args.physics_steps_per_control_step)
+        )
+        realtime_fps = cfg.env_config.env_args.mocap_hz
+    else:
+        n = 1
+        realtime_fps = int(
+            1.0 / 
+            (mj_model.opt.timestep * 
+            cfg.env_config.env_args.physics_steps_per_control_step)
+        )
+
     print(f"Rendering every {n} steps")
     for qpos in tqdm(qpos_list[::n]):
         mj_data.qpos = qpos
@@ -224,7 +236,7 @@ def render_rollout(
         )
         frames.append(renderer.render())
 
-    return frames, cfg.env_config.env_args.mocap_hz
+    return frames, realtime_fps
 
 
 def plot_pca_intention(

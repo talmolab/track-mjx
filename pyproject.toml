@@ -93,7 +93,7 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 line-length = 88
 
 [tool.uv.sources]
-vnl-mjx = { path = "../vnl-playground", editable = true }
+vnl-mjx = { path = "/home/mila/a/aidan.sirbu/vnl-playground", editable = true }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground" }
 
 [pydocstyle]

@@ -9,6 +9,8 @@ from brax.envs.wrappers.training import (
 )
 import jax
 from jax import numpy as jp
+from mujoco import mjx
+from brax import envs as brax_env
 from mujoco.mjx._src import smooth
 from flax import linen as nn
 

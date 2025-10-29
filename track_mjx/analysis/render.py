@@ -6,6 +6,7 @@ os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
 from typing import List, Tuple, Callable, Any, Dict
 import numpy as np
+
 import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -17,10 +18,12 @@ from sklearn.decomposition import PCA
 from PIL import Image
 from IPython.display import HTML
 
+
 from track_mjx.environment.walker.spec_utils import _scale_body_tree, _recolour_tree
 
 import mujoco
 from pathlib import Path
+import numpy as np
 
 import multiprocessing as mp
 import functools
@@ -203,6 +206,15 @@ def render_rollout(
     renderer, mj_model, mj_data, scene_option = make_rollout_renderer(
         cfg, render_ghost=render_ghost
     )
+
+    # Compute real-time fps
+    render_fps = (
+        1.0 / mj_model.opt.timestep
+    ) / cfg.env_config.env_args.physics_steps_per_control_step
+
+    if cfg.env_config.render_fps is not None:
+        render_fps = cfg.env_config.render_fps  # Override with config if specified
+    # TODO: make it configurable also maybe with the ratio of the speed of the real life.
 
     # Warm up kinematics and reset renderer
     mujoco.mj_kinematics(mj_model, mj_data)

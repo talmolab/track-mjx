@@ -41,12 +41,14 @@ def gradient_update_fn(
     has_aux: bool = False,
 ):
     """Wrapper of the loss function that apply gradient updates.
+
     Args:
       loss_fn: The loss function.
       optimizer: The optimizer to apply gradients.
       pmap_axis_name: If relevant, the name of the pmap axis to synchronize
         gradients.
       has_aux: Whether the loss_fn has auxiliary data.
+
     Returns:
       A function that takes the same argument as the loss function plus the
       optimizer state. The output of this function is the loss, the new parameter,

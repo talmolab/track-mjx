@@ -90,6 +90,7 @@ class SingleClipTracking(PipelineEnv):
         self._reference_clip = reference_clip
         self._ref_len = traj_length
         self._reset_noise_scale = reset_noise_scale
+        self._max_start_frame = max_start_frame
         self._mjx_model = mjx.put_model(self.sys.mj_model)
         self._mj_spec = self.walker._mj_spec
         self._max_start_frame = max_start_frame

@@ -227,7 +227,7 @@ def render_rollout(
             cfg.env_config.env_args.physics_steps_per_control_step)
         )
 
-    print(f"Rendering every {n} steps")
+    print(f"Rendering every {n} steps; realtime fps: {realtime_fps}")
     for qpos in tqdm(qpos_list[::n]):
         mj_data.qpos = qpos
         mujoco.mj_forward(mj_model, mj_data)

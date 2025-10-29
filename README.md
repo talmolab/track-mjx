@@ -86,7 +86,7 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
 
 5. Verify GPU/CPU detection:
     ```bash
-    uv run python -c "import jax; print('Devices:', jax.devices())"
+    uv run python -c "import jax; print('Devices:', jax.devices()); jax.numpy.arange(10)"
     ```
     - **Linux**: You should see your CUDA devices (e.g., `[CudaDevice(id=0), CudaDevice(id=1)]`)
     - **macOS**: You will see `[CpuDevice(id=0)]` (GPU acceleration not supported with JAX 0.6.2)

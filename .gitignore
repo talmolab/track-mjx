@@ -18,6 +18,9 @@ sbatch/
 # slurm output folder
 slurm_outputs/
 
+# scratch notebooks
+scratch.ipynb
+
 # C extensions
 *.so
 

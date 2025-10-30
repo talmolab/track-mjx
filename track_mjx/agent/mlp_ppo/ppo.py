@@ -761,7 +761,7 @@ def train(
             )
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
-            if it % config_dict["env_config"]["render_interval"] == 0:
+            if it % config_dict["render_config"]["render_interval"] == 0:
                 # Render video every `render_interval` iterations.
                 policy_params_fn(
                     current_step=it,

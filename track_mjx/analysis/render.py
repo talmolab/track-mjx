@@ -124,13 +124,13 @@ def make_rollout_renderer(
         Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]: Renderer, model, data, and scene options.
     """
 
-    if cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
-        xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
+    if cfg.walker_config.walker_name in _BASE_XML_PATHS.keys():
+        xml_path = _BASE_XML_PATHS[cfg.walker_config.walker_name]
         if render_ghost:
             _, mj_model, _ = make_ghost_pair(
                 xml_path,
                 scale=cfg.walker_config.rescale_factor,
-                root_body_name=_ROOT_BODY_NAMES[cfg.env_config.walker_name],
+                root_body_name=_ROOT_BODY_NAMES[cfg.walker_config.walker_name],
             )
         else:
             base = mujoco.MjSpec.from_file(xml_path)
@@ -138,7 +138,7 @@ def make_rollout_renderer(
                 _scale_body_tree(top, cfg.walker_config.rescale_factor)
             mj_model = base.compile()
     else:
-        raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
+        raise ValueError(f"Unknown walker_name: {cfg.walker_config.walker_name}")
 
     mj_model.opt.solver = {
         "cg": mujoco.mjtSolver.mjSOL_CG,
@@ -207,13 +207,18 @@ def render_rollout(
         cfg, render_ghost=render_ghost
     )
 
+    # Calculate number of physics steps per control step
+    physics_steps_per_control_step = (
+        cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
+    )
+
     # Compute real-time fps
     render_fps = (
         1.0 / mj_model.opt.timestep
-    ) / cfg.env_config.env_args.physics_steps_per_control_step
+    ) / physics_steps_per_control_step
 
-    if cfg.env_config.render_fps is not None:
-        render_fps = cfg.env_config.render_fps  # Override with config if specified
+    if cfg.render_config.render_fps is not None:
+        render_fps = cfg.render_config.render_fps  # Override with config if specified
     # TODO: make it configurable also maybe with the ratio of the speed of the real life.
 
     # Warm up kinematics and reset renderer
@@ -227,16 +232,15 @@ def render_rollout(
         n = int(
             1.0 / 
             (mj_model.opt.timestep * 
-            cfg.env_config.env_args.mocap_hz * 
-            cfg.env_config.env_args.physics_steps_per_control_step)
+            cfg.env_config.mocap_hz * 
+            physics_steps_per_control_step)
         )
-        realtime_fps = cfg.env_config.env_args.mocap_hz
+        realtime_fps = cfg.env_config.mocap_hz
     else:
         n = 1
         realtime_fps = int(
             1.0 / 
-            (mj_model.opt.timestep * 
-            cfg.env_config.env_args.physics_steps_per_control_step)
+            (mj_model.opt.timestep * physics_steps_per_control_step)
         )
 
     print(f"Rendering every {n} steps; realtime fps: {realtime_fps}")
@@ -244,7 +248,7 @@ def render_rollout(
         mj_data.qpos = qpos
         mujoco.mj_forward(mj_model, mj_data)
         renderer.update_scene(
-            mj_data, camera=cfg.env_config.render_camera_name, scene_option=scene_option
+            mj_data, camera=cfg.render_config.render_camera_name, scene_option=scene_option
         )
         frames.append(renderer.render())
 

@@ -44,7 +44,9 @@ from track_mjx.environment.task.reward import RewardConfig
 
 from vnl_mjx.tasks.rodent import imitation
 from vnl_mjx.tasks.rodent import wrappers as vnl_wrappers
+from vnl_mjx.tasks.rodent import consts as rodent_consts
 from mujoco_playground import wrapper as playground_wrappers
+from ml_collections import config_dict
 
 
 def _track_to_vnl_cfg(cfg):
@@ -139,6 +141,25 @@ def main(cfg: DictConfig):
         n_devices = 1
         logging.info("Not using GPUs")
 
+    # Add constants and walker configs to env_config TODO: add other animals
+    OmegaConf.set_struct(cfg.env_config, False)
+    OmegaConf.update(cfg.env_config, "walker_xml_path", str(rodent_consts.RODENT_XML_PATH), merge=False)
+    OmegaConf.update(cfg.env_config, "arena_xml_path", str(rodent_consts.ARENA_XML_PATH), merge=False)
+    OmegaConf.update(cfg.env_config, "reference_data_path", str(rodent_consts.IMITATION_REFERENCE_PATH), merge=False)
+    OmegaConf.update(cfg.env_config, "walker_name", cfg.walker_config.walker_name, merge=False)
+    OmegaConf.update(cfg.env_config, "torque_actuators", cfg.walker_config.torque_actuators, merge=False)
+    OmegaConf.update(cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False)
+    OmegaConf.set_struct(cfg.env_config, True)
+
+    # Breakup config
+    env_cfg = cfg.env_config
+    render_cfg = cfg.render_config
+    network_cfg = cfg.network_config
+    train_setup = cfg.train_setup
+    train_cfg = cfg.train_setup.train_config
+    logging_cfg = cfg.logging_config
+    walker_cfg = cfg.walker_config
+
     # Check for existing run state (preemption handling)
     existing_run_state = preemption.discover_existing_run_state(cfg)
 
@@ -221,32 +242,33 @@ def main(cfg: DictConfig):
     logging.info(f"run_id: {run_id}")
     logging.info(f"Training checkpoint path: {checkpoint_path}")
 
-    train_config = cfg.train_setup["train_config"]
-    traj_config = cfg["reference_config"]
+    # train_config = cfg.train_setup["train_config"]
+    # traj_config = cfg["reference_config"]
 
     logging.info(f"Loading data: {cfg.data_path}")
 
     # use this custom fn to set values in the vnl config with our hydra cfg
-    env_cfg = _track_to_vnl_cfg(cfg)
+    # env_cfg = _track_to_vnl_cfg(cfg)
 
     # Eval with the train set
     # TODO: implement the train/test split for the vnl env (current init can only take data files)
     train_clips = load.load_data(cfg.data_path)
-    logging.info(f"{train_clips.position.shape=}")
+    logging.info(f"{train_clips.position.shape}")
     test_env = None
 
     logging.info(f"Environment config: {env_cfg}")
-    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg))
+    # Environment expects an ml_collections ConfigDict
+    env_cfg_dict = OmegaConf.to_container(env_cfg, resolve=True)
+    env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
+    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml))
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
-    env_args = cfg.env_config.env_args
-    steps_per_frame = (1 / env_args["mocap_hz"]) / (
-        env_args["mj_model_timestep"] * env_args["physics_steps_per_control_step"]
-    )
+    # env_args = cfg.env_config.env_args
+    steps_per_frame = (1 / env_cfg.mocap_hz) / (env_cfg.ctrl_dt)
     episode_length = (
-        traj_config.clip_length
-        - traj_config.random_init_range
-        - traj_config.traj_length
+        env_cfg.clip_length
+        - env_cfg.start_frame_range[-1]
+        - env_cfg.reference_length
     ) * steps_per_frame
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
@@ -256,13 +278,13 @@ def main(cfg: DictConfig):
     ppo_networks = mlp_ppo_networks
     network_factory = functools.partial(
         ppo_networks.make_intention_ppo_networks,
-        intention_latent_size=cfg.network_config.intention_size,
-        encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        intention_latent_size=network_cfg.intention_size,
+        encoder_hidden_layer_sizes=tuple(network_cfg.encoder_layer_sizes),
+        decoder_hidden_layer_sizes=tuple(network_cfg.decoder_layer_sizes),
+        value_hidden_layer_sizes=tuple(network_cfg.critic_layer_sizes),
     )
 
-    run_id = f"{cfg.logging_config.exp_name}_{run_id}"
+    run_id = f"{logging_cfg.exp_name}_{run_id}"
 
     # Determine wandb run ID for resuming
     if existing_run_state:
@@ -276,14 +298,14 @@ def main(cfg: DictConfig):
     cfg_for_wandb = OmegaConf.to_container(
         cfg, resolve=True, structured_config_mode=True
     )
-    cfg_for_wandb["mjx_env_config"] = env_cfg.to_dict()
+    # cfg_for_wandb["mjx_env_config"] = env_cfg.to_dict()
     wandb.init(
-        project=cfg.logging_config.project_name,
+        project=logging_cfg.project_name,
         config=cfg_for_wandb,
         notes=f"",
         id=wandb_run_id,
         resume=wandb_resume,
-        group=cfg.logging_config.group_name,
+        group=logging_cfg.group_name,
     )
 
     # Save initial run state after wandb initialization
@@ -305,23 +327,23 @@ def main(cfg: DictConfig):
 
     train_fn = functools.partial(
         ppo.train,
-        **train_config,
+        **train_cfg,
         num_evals=int(
-            cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
+            train_cfg.num_timesteps / train_setup.eval_every
         ),
-        num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
+        num_resets_per_eval=train_setup.eval_every // train_setup.reset_every,
         episode_length=episode_length,
-        kl_weight=cfg.network_config.kl_weight,
+        kl_weight=network_cfg.kl_weight,
         network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
-        checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
+        checkpoint_to_restore=train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
-        use_kl_schedule=cfg.network_config.kl_schedule,
+        use_kl_schedule=network_cfg.kl_schedule,
         eval_env_test_set=test_env,
         freeze_decoder=(
             False
-            if "freeze_decoder" not in cfg.train_setup
-            else cfg.train_setup.freeze_decoder
+            if "freeze_decoder" not in train_setup
+            else train_setup.freeze_decoder
         ),
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(  # Testing full reset instead of setting to initial state
@@ -334,9 +356,9 @@ def main(cfg: DictConfig):
         wandb.log(metrics)
 
     # Set the render env start frame to always be 0
-    render_cfg = env_cfg.copy_and_resolve_references()
-    render_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=render_cfg))
+    rollout_cfg = env_cfg_ml.copy_and_resolve_references()
+    rollout_cfg.start_frame_range = [0, 0]
+    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=rollout_cfg))
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

@@ -1,0 +1,210 @@
+data_path: data/transform_snips.h5 # ./data/transform_coltrane_2021_07_29_1.h5
+
+# VNL Environment Configuration (matches vnl_mjx.tasks.rodent.imitation.default_config())
+env_config:
+  # MuJoCo implementation
+  mujoco_impl: "jax"
+
+  # MuJoCo solver settings
+  solver: "cg"
+  iterations: 5
+  ls_iterations: 5
+  nconmax: 256
+  njmax: 128
+  noslip_iterations: 0
+  
+  # Timing settings
+  sim_dt: 0.002  # mj_model_timestep
+  ctrl_dt: 0.02  # sim_dt * physics_steps_per_control_step (0.002 * 10)
+  mocap_hz: 50
+  
+  # # Walker settings
+  # torque_actuators: true
+  # rescale_factor: 0.9
+  
+  # Reference clip settings
+  clip_length: 250
+  clip_set: "all"
+  reference_length: 5  # traj_length
+  start_frame_range: [0, 50]  # [0, random_init_range]
+  qvel_init: "zeros"
+  keep_clips_idx: null
+  
+  # Reward terms (VNL format with exp_scale and weight)
+  reward_terms:
+    # Imitation rewards - exp_scale = 1.0 / (2 * original_exp_scale)^0.5
+    root_pos:
+      exp_scale: 0.035
+      weight: 1.0
+    root_quat:
+      exp_scale: 0.35
+      weight: 1.0
+    joints:
+      exp_scale: 1.41
+      weight: 1.0
+    joints_vel:
+      exp_scale: 1.0
+      weight: 0.0
+    bodies_pos:
+      exp_scale: 0.25
+      weight: 0.0
+    end_eff:
+      exp_scale: 0.03
+      weight: 1.0
+    
+    # Costs / regularizers
+    torso_z_range:
+      healthy_z_range: [0.0325, 0.5]
+      weight: 1.0
+    control_cost:
+      weight: 0.02
+    control_diff_cost:
+      weight: 0.02
+    energy_cost:
+      max_value: 50.0
+      weight: 0.01
+  
+  # Termination criteria
+  termination_criteria:
+    root_too_far:
+      max_distance: 0.1
+    root_too_rotated:
+      max_degrees: 60.0
+    pose_error:
+      max_l2_error: 4.5
+    nan_termination: {}
+
+# Rendering settings (for track-mjx compatibility)
+render_config:
+  render_camera_name: close_profile
+  render_fps: 50
+  render_interval: 5
+
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [1024, 512, 512, 512, 512]
+  decoder_layer_sizes: [512, 512, 512, 256, 256]
+  critic_layer_sizes: [512, 512, 512, 512, 512, 256]
+  intention_size: 60
+  kl_schedule: true
+  kl_weight: 1e-1
+
+train_setup:
+  agent_name: rodent
+  run_name: vnl_debug
+  checkpoint_to_restore: null
+  train_test_split_info: null
+  restore_from_run_state: null
+  train_subset_ratio: 0.8
+  checkpoint_max_to_keep: null
+  checkpoint_keep_period: null
+  eval_every: 10_000_000
+  episode_length: 200
+  reset_every: 10_000_000
+  train_config:
+    num_envs: 4096
+    num_timesteps: 1_500_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2
+    discounting: 0.98
+    action_repeat: 1
+    entropy_cost: 1e-2
+    reward_scaling: 1
+    normalize_observations: true
+    unroll_length: 20
+    seed: 0
+    get_activation: false
+    use_lstm: false
+    deterministic_eval: true
+
+logging_config:
+  project_name: vnl_debug
+  group_name: repo-refactor
+  exp_name: config_conversion_test
+  clip_id: -1
+  model_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints
+  algo_name: ppo
+  rollout_metrics:
+    - pos_reward
+    - quat_reward
+    - joint_reward
+    - angvel_reward
+    - bodypos_reward
+    - endeff_reward
+    - summed_pos_distance
+    - joint_distance
+    - quat_distance
+    - ctrl_cost
+    - ctrl_diff_cost
+    - energy_cost
+    - too_far
+    - bad_pose
+    - bad_quat
+    - fall
+
+walker_config:
+  walker_name: "rodent"
+  torque_actuators: true
+  rescale_factor: 0.9
+  joint_names:
+    - vertebra_1_extend
+    - hip_L_supinate
+    - hip_L_abduct
+    - hip_L_extend
+    - knee_L
+    - ankle_L
+    - toe_L
+    - hip_R_supinate
+    - hip_R_abduct
+    - hip_R_extend
+    - knee_R
+    - ankle_R
+    - toe_R
+    - vertebra_C11_extend
+    - vertebra_cervical_1_bend
+    - vertebra_axis_twist
+    - atlas
+    - mandible
+    - scapula_L_supinate
+    - scapula_L_abduct
+    - scapula_L_extend
+    - shoulder_L
+    - shoulder_sup_L
+    - elbow_L
+    - wrist_L
+    - scapula_R_supinate
+    - scapula_R_abduct
+    - scapula_R_extend
+    - shoulder_R
+    - shoulder_sup_R
+    - elbow_R
+    - wrist_R
+    - finger_R
+  body_names:
+    - torso
+    - pelvis
+    - upper_leg_L
+    - lower_leg_L
+    - foot_L
+    - upper_leg_R
+    - lower_leg_R
+    - foot_R
+    - skull
+    - jaw
+    - scapula_L
+    - upper_arm_L
+    - lower_arm_L
+    - finger_L
+    - scapula_R
+    - upper_arm_R
+    - lower_arm_R
+    - finger_R
+  end_eff_names:
+    - foot_L
+    - foot_R
+    - hand_L
+    - hand_R
+    - skull

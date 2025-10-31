@@ -9,7 +9,7 @@ authors = [
     {name = "Scott Yang", email = "scyang@salk.com"},
     {name = "Talmo Pereira", email = "talmo@salk.edu"}]
 description=  "Track-MJX: A Python package for fast reinforcement learning-based imitation learning tracking for agents"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 keywords = ["tracking", "imitation learning", "deep learning"]
 license = {text = "BSD-3-Clause"}
 classifiers = [
@@ -17,33 +17,27 @@ classifiers = [
     "Programming Language :: Python :: 3.12"]
 dependencies = [
     # JAX core (both platforms)
-    "jax==0.6.2",
-    "jaxlib==0.6.2",
-    # JAX CUDA 12 support (Linux only - works with CUDA 13.0)
-    "jax-cuda12-plugin==0.6.2 ; sys_platform == 'linux'",
-    "jax-cuda12-pjrt==0.6.2 ; sys_platform == 'linux'",
-    # Note: macOS uses CPU-only JAX (jax-metal 0.1.1 incompatible with JAX 0.6.2)
-    # NVIDIA CUDA libraries (Linux only - required for JAX GPU)
-    "nvidia-cublas-cu12>=12.0 ; sys_platform == 'linux'",
-    "nvidia-cuda-cupti-cu12>=12.0 ; sys_platform == 'linux'",
-    "nvidia-cuda-nvrtc-cu12>=12.0 ; sys_platform == 'linux'",
-    "nvidia-cuda-runtime-cu12>=12.0 ; sys_platform == 'linux'",
-    "nvidia-cudnn-cu12>=9.0 ; sys_platform == 'linux'",
-    "nvidia-cufft-cu12>=11.0 ; sys_platform == 'linux'",
-    "nvidia-cusolver-cu12>=11.0 ; sys_platform == 'linux'",
-    "nvidia-cusparse-cu12>=12.0 ; sys_platform == 'linux'",
+    "jax==0.7.2",
+    "jaxlib==0.7.2",
+    # =========================================================================
+    # CUDA Dependencies
+    # If on CUDA 12, uncomment the following line
+    # "jax[cuda12]==0.7.2 ; sys_platform == 'linux'",
+    # If you are on CUDA 13, uncomment the following lines and comment out the above line
+    "jax[cuda13]==0.7.2 ; sys_platform == 'linux'",
+    # =========================================================================
     # Core ML dependencies
     "brax==0.13.0",
     "flax==0.10.2",
     "optax==0.2.6",
     "orbax-checkpoint",
     # MuJoCo
-    "mujoco==3.3.2",
-    "mujoco-mjx==3.3.2",
+    "mujoco==3.4.0.dev818719010",
+    "mujoco-mjx==3.3.8",
     # Rendering (EGL/osmesa support)
     "PyOpenGL==3.1.9",
     # Data & ML utilities
-    "numpy==1.26.4",
+    "numpy==2.0.0",
     "h5py==3.12.1",
     "numba==0.61.0",
     "scikit-learn==1.7.2",
@@ -61,7 +55,7 @@ dependencies = [
     # Other utilities
     "playground==0.0.5",
     "ipykernel",
-    ]
+]
 
 dynamic = ["version", "readme"]
 
@@ -96,6 +90,9 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 
 [tool.black]
 line-length = 88
+
+[tool.uv.sources]
+playground = { git = "https://github.com/google-deepmind/mujoco_playground" }
 
 [pydocstyle]
 convention = "google"

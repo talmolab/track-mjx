@@ -1,4 +1,4 @@
-data_path: data.h5
+data_path: rodent_reference_clips.h5
 
 env_config:
   env_name: rodent_multi_clip

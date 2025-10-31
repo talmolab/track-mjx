@@ -78,7 +78,7 @@ env_config:
 render_config:
   render_camera_name: close_profile
   render_fps: 50
-  render_interval: 5
+  render_interval: 1
 
 network_config:
   arch_name: intention

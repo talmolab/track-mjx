@@ -15,7 +15,7 @@ env_config:
   
   # Timing settings
   sim_dt: 0.002  # mj_model_timestep
-  ctrl_dt: 0.02  # sim_dt * physics_steps_per_control_step (0.002 * 10)
+  ctrl_dt: 0.01  # sim_dt * physics_steps_per_control_step (0.002 * 5)
   mocap_hz: 50
   
   # # Walker settings
@@ -82,9 +82,9 @@ render_config:
 
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [1024, 512, 512, 512, 512]
-  decoder_layer_sizes: [512, 512, 512, 256, 256]
-  critic_layer_sizes: [512, 512, 512, 512, 512, 256]
+  encoder_layer_sizes: [512,256,256]
+  decoder_layer_sizes: [512,512,256,256]
+  critic_layer_sizes: [512,512,256,256]
   intention_size: 60
   kl_schedule: true
   kl_weight: 1e-1
@@ -98,18 +98,18 @@ train_setup:
   train_subset_ratio: 0.8
   checkpoint_max_to_keep: null
   checkpoint_keep_period: null
-  eval_every: 10_000_000
+  eval_every: 20_000_000
   episode_length: 200
-  reset_every: 10_000_000
+  reset_every: 20_000_000
   train_config:
     num_envs: 4096
-    num_timesteps: 1_500_000_000
+    num_timesteps: 2_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2
-    discounting: 0.98
+    discounting: 0.95
     action_repeat: 1
     entropy_cost: 1e-2
     reward_scaling: 1

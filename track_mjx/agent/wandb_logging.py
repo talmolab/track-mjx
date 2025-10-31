@@ -67,14 +67,11 @@ def rollout_logging_fn(
     rollout = [state]
     latent_means = []
     latent_logvars = []
-    env_args = cfg["env_config"]["env_args"]
-    steps_per_frame = (1 / env_args["mocap_hz"]) / (
-        env_args["mj_model_timestep"] * env_args["physics_steps_per_control_step"]
+    physics_step_per_control_step = cfg.env_config.ctrl_dt/cfg.env_config.sim_dt
+    steps_per_frame = (1 / cfg.env_config.mocap_hz) / (
+        cfg.env_config.sim_dt * physics_step_per_control_step
     )
-    if "reference_config" in cfg:
-        episode_length = int(cfg["reference_config"].clip_length * steps_per_frame)
-    else:
-        episode_length = int(cfg["train_setup"]["train_config"]["episode_length"])
+    episode_length = int(cfg.env_config.clip_length * steps_per_frame)
     for i in range(episode_length):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
@@ -111,10 +108,7 @@ def rollout_logging_fn(
             commit=False,
         )
     if render_video:
-        if cfg["env_config"].get("render_fps") is not None:
-            render_fps = cfg["env_config"].get("render_fps")
-        else:
-            render_fps = int(1.0 / env.dt)
+        render_fps = cfg.render_config.render_fps
         video_path = f"{model_path}/{current_step}.mp4"
         # Get list of reward and termination terms from env config to log
         metric_names = env._config.reward_terms.keys()
@@ -146,7 +140,7 @@ def rollout_logging_fn(
                 mujoco.mj_forward(mj_model, mj_data)
                 renderer.update_scene(
                     mj_data,
-                    camera=cfg["env_config"].render_camera_name,
+                    camera=cfg.render_config.render_camera_name,
                     scene_option=scene_option,
                 )
                 pixels = renderer.render()

@@ -1,4 +1,4 @@
-data_path: data.h5 # ./data/transform_coltrane_2021_07_29_1.h5
+data_path: data.h5
 
 env_config:
   env_name: rodent_multi_clip
@@ -9,10 +9,10 @@ env_config:
   render_interval: 1
 
   env_args:
-    solver: "cg"
+    solver: "cg" # "newton" or "cg"
     iterations: 5
     ls_iterations: 5
-    physics_steps_per_control_step: 5 # reduce the action rate to 50 hz -> reduce tapping
+    physics_steps_per_control_step: 5
     reset_noise_scale: 1e-3
     mj_model_timestep: 0.002
     mocap_hz: 50
@@ -89,11 +89,11 @@ train_setup:
     deterministic_eval: True
 
 logging_config:
-  project_name: vnl_debug
-  group_name: repo-refactor
-  exp_name: rollback_traintrack_goldenconfig
+  project_name: mimic-mjx
+  group_name:
+  exp_name: rodent_training
   clip_id: -1
-  model_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints
+  model_path: model_checkpoints/
   algo_name: ppo
   rollout_metrics:
     - pos_reward

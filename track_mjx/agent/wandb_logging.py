@@ -132,11 +132,11 @@ def rollout_logging_fn(
             ref_traj = env._get_reference_clip(rollout[0].info)
 
             # Handle both ReferenceClip (tracking) and ReferenceClipReach (reaching)
-            if hasattr(ref_traj, "position") and hasattr(ref_traj, "quaternion"):
+            if hasattr(cfg.env_config, "walker_name"):
                 ref_qpos = np.hstack(
                     [ref_traj.position, ref_traj.quaternion, ref_traj.joints]
                 )
-            else:
+            elif hasattr(cfg.env_config, "reacher_name"):
                 # Reacher reference has only joints
                 ref_qpos = ref_traj.joints
 

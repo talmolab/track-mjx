@@ -1,4 +1,4 @@
-data_path: data/transform_snips.h5 # ./data/transform_coltrane_2021_07_29_1.h5
+data_path: rodent_reference_clips.h5
 
 env_config:
   env_name: rodent_multi_clip
@@ -6,13 +6,13 @@ env_config:
   walker_name: rodent
   render_camera_name: close_profile
   render_fps: 50
-  render_interval: 5
+  render_interval: 1
 
   env_args:
-    solver: "cg"
+    solver: "cg" # "newton" or "cg"
     iterations: 5
     ls_iterations: 5
-    physics_steps_per_control_step: 10 # reduce the action rate to 50 hz -> reduce tapping
+    physics_steps_per_control_step: 5
     reset_noise_scale: 1e-3
     mj_model_timestep: 0.002
     mocap_hz: 50
@@ -39,8 +39,8 @@ env_config:
     bodypos_reward_exp_scale: 8.0
     endeff_reward_exp_scale: 500.0
     var_window_size: 50
-    var_coeff: 5e-3
-    jerk_coeff: 5e-4
+    var_coeff: 1e-2
+    jerk_coeff: 1e-4
     penalty_pos_distance_scale: [1.0, 1.0, 0.5]
 
 reference_config:
@@ -50,9 +50,9 @@ reference_config:
 
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [1024,512,512,512,512]
-  decoder_layer_sizes: [512,512,512,256,256]
-  critic_layer_sizes: [512,512,512,512,512,256]
+  encoder_layer_sizes: [512,256,256]
+  decoder_layer_sizes: [512,512,256,256]
+  critic_layer_sizes: [512,512,256,256]
   intention_size: 60
   kl_schedule: True
   kl_weight: 1e-1
@@ -66,18 +66,18 @@ train_setup:
   train_subset_ratio: 0.8
   checkpoint_max_to_keep: 
   checkpoint_keep_period:
-  eval_every: 10_000_000
+  eval_every: 20_000_000
   episode_length: 200
-  reset_every: 10_000_000
+  reset_every: 20_000_000
   train_config:
     num_envs: 4096
-    num_timesteps: 1_500_000_000
+    num_timesteps: 2_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2
-    discounting: 0.98
+    discounting: 0.95
     action_repeat: 1
     entropy_cost: 1e-2
     reward_scaling: 1
@@ -89,11 +89,11 @@ train_setup:
     deterministic_eval: True
 
 logging_config:
-  project_name: vnl_debug
-  group_name: golden_checkpoint_explore
-  exp_name: jerk_cost_50hz
+  project_name: mimic-mjx
+  group_name:
+  exp_name: rodent_training
   clip_id: -1
-  model_path: model_checkpoints/golden_checkpoint
+  model_path: model_checkpoints/
   algo_name: ppo
   rollout_metrics:
     - pos_reward

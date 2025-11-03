@@ -12,6 +12,7 @@
 
 	<visual>
 		<scale framelength="0.5" framewidth="0.01"/>
+		<global offheight="512"/>
 	</visual>
 
 

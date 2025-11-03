@@ -32,8 +32,8 @@ dependencies = [
     "optax==0.2.6",
     "orbax-checkpoint",
     # MuJoCo
-    "mujoco==3.4.0.dev818719010",
-    "mujoco-mjx==3.3.8",
+    "mujoco==3.3.7",
+    "mujoco-mjx==3.3.7",
     # Rendering (EGL/osmesa support)
     "PyOpenGL==3.1.9",
     # Data & ML utilities
@@ -92,7 +92,7 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 line-length = 88
 
 [tool.uv.sources]
-playground = { git = "https://github.com/google-deepmind/mujoco_playground" }
+# None
 
 [pydocstyle]
 convention = "google"

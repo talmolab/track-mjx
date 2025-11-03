@@ -6,13 +6,9 @@ os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
 from typing import List, Tuple, Callable, Any, Dict
 import numpy as np
-import pandas as pd
-import seaborn as sns
 import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-import json
-import matplotlib.pyplot as plt
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.animation as animation
@@ -21,17 +17,10 @@ from sklearn.decomposition import PCA
 from PIL import Image
 from IPython.display import HTML
 
-
-from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
-from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.spec_utils import _scale_body_tree, _recolour_tree
 
 import mujoco
 from pathlib import Path
-from dm_control import mjcf as mjcf_dm
-from dm_control.locomotion.walkers import rescale
-import imageio
-import numpy as np
 
 import multiprocessing as mp
 import functools
@@ -50,7 +39,7 @@ _BASE_XML_PATHS = {
         / "environment/walker/assets/stick/sungaya_inexpectata_box.xml"
     ),
     "mouse_arm": str(
-        Path(__file__).parent.parent 
+        Path(__file__).parent.parent
         / "environment/reacher/assets/mouse_arm/mouse_arm.xml"
     ),
 }
@@ -60,6 +49,7 @@ _ROOT_BODY_NAMES = {
     "fly": "thorax",
     "stick": "reference_base",
 }
+
 
 def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to switch to a headless backend during function execution.
@@ -116,18 +106,17 @@ def make_ghost_pair(
 
     if "reacher" in model_path:
         # Reacher: rotate slightly for visibility
-        frame = base.worldbody.add_frame(pos=[0.0, 0.0, 0.0],
-                                 euler=[0, -15, 0])
+        frame = base.worldbody.add_frame(pos=[0.0, 0.0, 0.0], euler=[0, -15, 0])
         ghost_body = ghost.worldbody.bodies[0]
-        frame.attach_body(ghost_body, prefix="ghost_") ### try this!
+        frame.attach_body(ghost_body, prefix="ghost_")  ### try this!
     elif "walker" in model_path:
         # Walker: shift to the left to compare side-by-side
         frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0], quat=[0, 0, 0, 0])
         frame.attach_body(ghost.body(root_body_name), "", "ghost")
     else:
         raise ValueError(f"Unrecognized model type in path: {xml_path}")
-    
-    # E) Compile & write out
+
+    # Compile & write out
     model = base.compile()
     xml = base.to_xml()
     return base, model, xml
@@ -147,7 +136,10 @@ def make_rollout_renderer(
     """
 
     # Check for walker_name or reacher_name
-    if hasattr(cfg.env_config, 'walker_name') and cfg.env_config.walker_name in _BASE_XML_PATHS.keys():
+    if (
+        hasattr(cfg.env_config, "walker_name")
+        and cfg.env_config.walker_name in _BASE_XML_PATHS.keys()
+    ):
         xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
         if render_ghost:
             _, mj_model, _ = make_ghost_pair(
@@ -160,7 +152,10 @@ def make_rollout_renderer(
             for top in base.worldbody.bodies:
                 _scale_body_tree(top, cfg.walker_config.rescale_factor)
             mj_model = base.compile()
-    elif hasattr(cfg.env_config, 'reacher_name') and cfg.env_config.reacher_name in _BASE_XML_PATHS.keys():
+    elif (
+        hasattr(cfg.env_config, "reacher_name")
+        and cfg.env_config.reacher_name in _BASE_XML_PATHS.keys()
+    ):
         xml_path = _BASE_XML_PATHS[cfg.env_config.reacher_name]
         if render_ghost:
             _, mj_model, _ = make_ghost_pair(
@@ -173,9 +168,9 @@ def make_rollout_renderer(
             mj_model = base.compile()
     else:
         # Try to determine which name is available
-        if hasattr(cfg.env_config, 'walker_name'):
+        if hasattr(cfg.env_config, "walker_name"):
             raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
-        elif hasattr(cfg.env_config, 'reacher_name'):
+        elif hasattr(cfg.env_config, "reacher_name"):
             raise ValueError(f"Unknown reacher_name: {cfg.env_config.reacher_name}")
         else:
             raise ValueError("Neither walker_name nor reacher_name found in config")
@@ -206,7 +201,7 @@ def make_rollout_renderer(
 
     # save rendering and log to wandb
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=480, width=640)
+    renderer = mujoco.Renderer(mj_model, height=512, width=512)
 
     return renderer, mj_model, mj_data, scene_option
 
@@ -214,17 +209,18 @@ def make_rollout_renderer(
 def render_rollout(
     cfg: Any,
     rollout: Dict[str, Any],
-    height: int = 480,
-    width: int = 640,
+    height: int = None,
+    width: int = None,
     render_ghost: bool = True,
+    render_only_realtime: bool = False,
 ) -> Tuple[List[np.ndarray], float]:
     """Render a rollout from saved qposes.
 
     Args:
         cfg (Any): Configuration object with environment settings.
         rollout (Dict[str, Any]): A dictionary containing the qposes of the reference and rollout trajectories.
-        height (int, optional): Height of the rendered frames. Defaults to 480.
-        width (int, optional): Width of the rendered frames. Defaults to 640.
+        height (int, optional): Height of the rendered frames. If None, uses default based on agent type.
+        width (int, optional): Width of the rendered frames. If None, uses default based on agent type.
         render_ghost (bool, optional): Whether to render the ghost model. Defaults to True.
 
     Returns:
@@ -246,22 +242,38 @@ def render_rollout(
         cfg, render_ghost=render_ghost
     )
 
-    # Compute real-time fps
-    render_fps = (
-        1.0 / mj_model.opt.timestep
-    ) / cfg.env_config.env_args.physics_steps_per_control_step
-    
-    if cfg.env_config.render_fps is not None:
-        render_fps = cfg.env_config.render_fps  # Override with config if specified
-    # TODO: make it configurable also maybe with the ratio of the speed of the real life.
-
-    # Warm up kinematics and reset renderer
+    # Warm up kinematics and reset renderer with custom dimensions if provided
     mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=height, width=width)
+
+    if height is not None and width is not None:
+        renderer = mujoco.Renderer(mj_model, height=height, width=width)
+    # Otherwise use the default dimensions set by make_rollout_renderer
 
     frames = []
     print(render_msg)
-    for qpos in tqdm(qpos_list, total=len(qpos_list)):
+
+    if render_only_realtime:
+        n = int(
+            1.0
+            / (
+                mj_model.opt.timestep
+                * cfg.env_config.env_args.mocap_hz
+                * cfg.env_config.env_args.physics_steps_per_control_step
+            )
+        )
+        realtime_fps = cfg.env_config.env_args.mocap_hz
+    else:
+        n = 1
+        realtime_fps = int(
+            1.0
+            / (
+                mj_model.opt.timestep
+                * cfg.env_config.env_args.physics_steps_per_control_step
+            )
+        )
+
+    print(f"Rendering every {n} steps; realtime fps: {realtime_fps}")
+    for qpos in tqdm(qpos_list[::n]):
         mj_data.qpos = qpos
         mujoco.mj_forward(mj_model, mj_data)
         renderer.update_scene(
@@ -269,7 +281,7 @@ def render_rollout(
         )
         frames.append(renderer.render())
 
-    return frames, render_fps
+    return frames, realtime_fps
 
 
 def plot_pca_intention(

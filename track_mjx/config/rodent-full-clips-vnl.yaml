@@ -6,7 +6,7 @@ env_config:
   mujoco_impl: "jax"
 
   # MuJoCo solver settings
-  solver: "cg"
+  solver: "newton"
   iterations: 5
   ls_iterations: 5
   nconmax: 256
@@ -87,7 +87,7 @@ network_config:
   critic_layer_sizes: [512,512,256,256]
   intention_size: 60
   kl_schedule: true
-  kl_weight: 1e-1
+  kl_weight: 1e-3
 
 train_setup:
   agent_name: rodent

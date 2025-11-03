@@ -45,6 +45,7 @@ from track_mjx.environment.task.reward import RewardConfig
 from vnl_mjx.tasks.rodent import imitation
 from vnl_mjx.tasks.rodent import wrappers as vnl_wrappers
 from vnl_mjx.tasks.rodent import consts as rodent_consts
+from vnl_mjx.tasks.rodent.reference_clips import ReferenceClips
 from mujoco_playground import wrapper as playground_wrappers
 from ml_collections import config_dict
 
@@ -250,17 +251,31 @@ def main(cfg: DictConfig):
     # use this custom fn to set values in the vnl config with our hydra cfg
     # env_cfg = _track_to_vnl_cfg(cfg)
 
-    # Eval with the train set
-    # TODO: implement the train/test split for the vnl env (current init can only take data files)
-    train_clips = load.load_data(cfg.data_path)
-    logging.info(f"{train_clips.position.shape}")
-    test_env = None
+    # # Eval with the train set
+    # # TODO: implement the train/test split for the vnl env (current init can only take data files)
+    # train_clips = load.load_data(cfg.data_path)
+    # logging.info(f"{train_clips.position.shape}")
+    # test_env = None
 
-    logging.info(f"Environment config: {env_cfg}")
-    # Environment expects an ml_collections ConfigDict
+    # Create the reference clips
+    reference_clips = ReferenceClips(
+        data_path=env_cfg.reference_data_path,
+        n_frames_per_clip=env_cfg.clip_length,
+        keep_clips_idx=env_cfg.keep_clips_idx,
+    )
+    # Create train/test split
+    key_split, key = jax.random.split(jax.random.PRNGKey(train_cfg.seed))
+    train_clips, test_clips = reference_clips.split(
+        train_ratio=train_setup.train_subset_ratio,
+        seed=key_split,
+    )
+    # Create environments
     env_cfg_dict = OmegaConf.to_container(env_cfg, resolve=True)
     env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
-    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml))
+    env = env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
+    test_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=test_clips))
+
+    logging.info(f"Environment config: {env_cfg}")
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     # env_args = cfg.env_config.env_args

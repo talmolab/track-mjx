@@ -413,7 +413,6 @@ def compute_tracking_rewards(
         reward_config.angvel_reward_exp_scale,
     )
 
-
     ######### TODO (Scott): change the access to named access using mj_spec
     bodypos_array = walker.get_body_positions(data.xpos[1:])
     reference_frame_bodypos = reference_frame.body_positions[walker.body_idxs]
@@ -483,6 +482,7 @@ def compute_tracking_rewards(
         jerk_cost,
     )
 
+
 @struct.dataclass
 class RewardConfigReach:
     """Weights and scales for the reaching reward terms.
@@ -521,13 +521,15 @@ def compute_penalty_terms_reach(
 
 
 def compute_reaching_rewards(
-    data: MjData,
+    data: mujoco.MjData,
     reference_frame: ReferenceClip,
     walker: BaseWalker,
     action: jp.ndarray,
     info: dict[str, jp.ndarray],
     reward_config: RewardConfigReach,
-) -> tuple[jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray]:
+) -> tuple[
+    jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray
+]:
     """Computes reaching rewards and penalties for motion imitation.
 
     Args:
@@ -539,7 +541,7 @@ def compute_reaching_rewards(
         reward_config: Reward configuration object.
 
     Returns:
-        Tuple containing: joint_reward, endeff_reward, ctrl_cost, ctrl_diff_cost, 
+        Tuple containing: joint_reward, endeff_reward, ctrl_cost, ctrl_diff_cost,
         energy_cost, joint_distance, joint_penalty
     """
 

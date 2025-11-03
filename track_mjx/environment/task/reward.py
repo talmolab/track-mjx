@@ -24,7 +24,6 @@ class RewardConfig:
     ctrl_cost_weight: float
     ctrl_diff_cost_weight: float
     energy_cost_weight: float
-    energy_cost_weight: float
     pos_reward_weight: float
     quat_reward_weight: float
     joint_reward_weight: float

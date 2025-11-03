@@ -56,7 +56,58 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
 
 ### Installation
 
-1. Clone the repository with the following command:
+#### Option 1: uv (Recommended)
+
+[`uv`](https://docs.astral.sh/uv/) is a fast Python package manager that handles dependencies and virtual environments. **This is the recommended method for CPU-only development on macOS and other non-Linux platforms**, as well as GPU-enabled Linux systems.
+
+**Tested on:**
+- **Linux**: Ubuntu 24.04 (headless) with CUDA 13.0, EGL rendering (no X11 required)
+- **macOS**: Apple Silicon (M2 Pro) with CPU-only JAX, GLFW rendering
+
+1. Install `uv` if you haven't already:
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+
+2. Clone the repository:
+    ```bash
+    git clone https://github.com/talmolab/track-mjx.git && cd track-mjx
+    ```
+
+3. Install all dependencies (creates `.venv` automatically):
+    ```bash
+    uv sync --all-extras
+    ```
+
+4. Run the example notebook (overwrites with outputs):
+    ```bash
+    uv run jupyter nbconvert --execute --to notebook --inplace notebooks/download_and_run_rodent.ipynb
+    ```
+
+5. Verify GPU/CPU detection:
+    ```bash
+    uv run python -c "import jax; print('Devices:', jax.devices())"
+    ```
+    - **Linux**: You should see your CUDA devices (e.g., `[CudaDevice(id=0), CudaDevice(id=1)]`)
+    - **macOS**: You will see `[CpuDevice(id=0)]` (GPU acceleration not supported with JAX 0.6.2)
+
+**Platform-specific notes:**
+- **Linux**: The `pyproject.toml` includes all necessary NVIDIA CUDA libraries for JAX GPU support. No additional system packages are required beyond CUDA drivers.
+- **macOS**: Uses CPU-only JAX as `jax-metal` 0.1.1 is incompatible with JAX 0.6.2. Platform markers ensure CUDA dependencies are not installed on macOS.
+
+**Troubleshooting:**
+
+If you encounter EGL/OpenGL errors when rendering (e.g., `AttributeError: 'NoneType' object has no attribute 'glGetError'`), you may need to install system EGL libraries:
+
+```bash
+sudo apt update && sudo apt-get install libglapi-mesa libegl-mesa0 libegl1 libopengl0
+```
+
+After installing, try running your script again with `uv run`.
+
+#### Option 2: conda (Alternative)
+
+1. Clone the repository:
     ```bash
     git clone https://github.com/talmolab/track-mjx.git && cd track-mjx
     ```
@@ -66,7 +117,7 @@ Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mj
     ```
     This will install the necessary dependencies and install the package in editable mode.
 3. Test the environment.
-    Active the conda environment that was just installed:
+    Activate the conda environment that was just installed:
     ```bash
     conda activate track_mjx
     ```
@@ -85,9 +136,16 @@ To download data, you can call:
 gdown --id <google file id> -O data.h5
 ```
 
-After running `conda activate track_mjx`, you can run training with:
+Run training with:
 
+**Using uv:**
 ```bash
+uv run python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
+```
+
+**Using conda:**
+```bash
+conda activate track_mjx
 python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
 ```
 

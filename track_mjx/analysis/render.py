@@ -117,7 +117,7 @@ def make_ghost_pair(
 
 
 def make_rollout_renderer(
-    cfg: Any, render_ghost: bool = True
+    cfg: Any, render_ghost: bool = True, only_ghost: bool = False
 ) -> Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]:
     """Create a renderer and related MuJoCo model and data for rollout visualization.
 
@@ -141,6 +141,11 @@ def make_rollout_renderer(
             base = mujoco.MjSpec.from_file(xml_path)
             for top in base.worldbody.bodies:
                 _scale_body_tree(top, cfg.walker_config.rescale_factor)
+            if only_ghost:
+                # recolour the ghost body
+                print("recoloring!")
+                for top in base.worldbody.bodies:
+                    _recolour_tree(top, rgba=[0.8, 0.8, 0.8, 0.2])
             mj_model = base.compile()
     else:
         raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
@@ -208,7 +213,7 @@ def render_rollout(
 
     # Build renderer and MuJoCo data
     renderer, mj_model, mj_data, scene_option = make_rollout_renderer(
-        cfg, render_ghost=render_ghost
+        cfg, render_ghost=render_ghost, only_ghost=True
     )
 
     # Compute real-time fps

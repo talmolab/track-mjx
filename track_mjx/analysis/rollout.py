@@ -25,6 +25,7 @@ from omegaconf import DictConfig
 envs.register_environment("rodent_single_clip", SingleClipTracking)
 envs.register_environment("rodent_multi_clip", MultiClipTracking)
 envs.register_environment("fly_multi_clip", MultiClipTracking)
+envs.register_environment("multi_clip", MultiClipTracking)
 
 
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:

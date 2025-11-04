@@ -18,10 +18,6 @@ env_config:
   ctrl_dt: 0.01  # sim_dt * physics_steps_per_control_step (0.002 * 5)
   mocap_hz: 50
   
-  # # Walker settings
-  # torque_actuators: true
-  # rescale_factor: 0.9
-  
   # Reference clip settings
   clip_length: 250
   clip_set: "all"

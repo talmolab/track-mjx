@@ -41,6 +41,7 @@ from track_mjx.agent import wandb_logging
 from track_mjx.agent import preemption
 from track_mjx.analysis import render
 from track_mjx.environment.task.reward import RewardConfig
+from track_mjx import utils
 
 from vnl_mjx.tasks.rodent import imitation
 from vnl_mjx.tasks.rodent import wrappers as vnl_wrappers
@@ -142,24 +143,18 @@ def main(cfg: DictConfig):
         n_devices = 1
         logging.info("Not using GPUs")
 
-    # Add constants and walker configs to env_config TODO: add other animals
-    OmegaConf.set_struct(cfg.env_config, False)
-    OmegaConf.update(cfg.env_config, "walker_xml_path", str(rodent_consts.RODENT_XML_PATH), merge=False)
-    OmegaConf.update(cfg.env_config, "arena_xml_path", str(rodent_consts.ARENA_XML_PATH), merge=False)
-    OmegaConf.update(cfg.env_config, "reference_data_path", str(rodent_consts.IMITATION_REFERENCE_PATH), merge=False)
-    OmegaConf.update(cfg.env_config, "walker_name", cfg.walker_config.walker_name, merge=False)
-    OmegaConf.update(cfg.env_config, "torque_actuators", cfg.walker_config.torque_actuators, merge=False)
-    OmegaConf.update(cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False)
-    OmegaConf.set_struct(cfg.env_config, True)
-
-    # Breakup config
-    env_cfg = cfg.env_config
-    render_cfg = cfg.render_config
-    network_cfg = cfg.network_config
-    train_setup = cfg.train_setup
-    train_cfg = cfg.train_setup.train_config
-    logging_cfg = cfg.logging_config
-    walker_cfg = cfg.walker_config
+    # Prepare configs
+    (
+    cfg,
+    env_cfg,
+    env_cfg_ml,
+    render_cfg,
+    network_cfg,
+    train_setup,
+    train_cfg,
+    logging_cfg,
+    walker_cfg,
+    ) = utils.prepare_config(cfg)
 
     # Check for existing run state (preemption handling)
     existing_run_state = preemption.discover_existing_run_state(cfg)
@@ -270,9 +265,7 @@ def main(cfg: DictConfig):
         seed=key_split,
     )
     # Create environments
-    env_cfg_dict = OmegaConf.to_container(env_cfg, resolve=True)
-    env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
-    env = env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
+    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
     test_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=test_clips))
 
     logging.info(f"Environment config: {env_cfg}")

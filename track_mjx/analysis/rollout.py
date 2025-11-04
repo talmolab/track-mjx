@@ -19,61 +19,40 @@ from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
 from track_mjx.environment import wrappers
 from track_mjx.io import load
 
-from omegaconf import DictConfig
+from vnl_mjx.tasks.rodent import wrappers as vnl_wrappers
+from vnl_mjx.tasks.rodent import imitation
+from ml_collections import config_dict
 
-envs.register_environment("rodent_single_clip", SingleClipTracking)
-envs.register_environment("rodent_multi_clip", MultiClipTracking)
-envs.register_environment("fly_multi_clip", MultiClipTracking)
+from omegaconf import DictConfig, OmegaConf
 
 
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:
-    env_args = cfg_dict["env_config"]["env_args"]
-    env_rewards = cfg_dict["env_config"]["reward_weights"]
-    walker_config = cfg_dict["walker_config"]
-    traj_config = cfg_dict["reference_config"]
+    """
+    Creates the environment based on the provided configuration dictionary.
 
-    reference_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
-    logging.info(f"Loading data: {reference_data_path}")
-    try:
-        reference_clip = load.make_multiclip_data(
-            reference_data_path, n_frames_per_clip=traj_config.clip_length
+    Args:
+        cfg_dict (Dict | DictConfig): Configuration dictionary for the environment.
+    Returns:
+        Env: The created environment instance.
+    """
+    # If the config is the full config, extract the env_config
+    if "data_path" in cfg_dict:
+        env_cfg = cfg_dict["env_config"]
+        env_cfg_ml = config_dict.ConfigDict(
+            OmegaConf.to_container(env_cfg, resolve=True)
         )
-    except KeyError:
-        logging.info(
-            f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
-        )
-        reference_clip = load.load_reference_clip_data(reference_data_path)
+    else:
+        env_cfg_ml = config_dict.ConfigDict(cfg_dict)
+    
+    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml))
 
-    walker_map = {
-        "rodent": Rodent,
-        "fly": Fly,
-        "stick": Stick,
-    }
-    walker_class = walker_map[cfg_dict["env_config"]["walker_name"]]
-    walker = walker_class(**walker_config)
-
-    # TODO: Stop-gap to run checkpoint prior to adding energy cost, remove for release
-    if "energy_cost_weight" not in env_rewards:
-        env_rewards["energy_cost_weight"] = 0.0
-
-    reward_config = RewardConfig(**env_rewards)
-    # Automatically match dict keys and func needs
-    env = envs.get_environment(
-        env_name=cfg_dict["env_config"]["env_name"],
-        reference_clip=reference_clip,
-        walker=walker,
-        reward_config=reward_config,
-        **env_args,
-        **traj_config,
-    )
     return env
 
 
 def create_rollout_generator(
     cfg: Dict | DictConfig,
-    environment: Env,
+    env: Env,
     inference_fn: Callable,
-    model: str = "mlp",
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
@@ -82,29 +61,21 @@ def create_rollout_generator(
     Creates a rollout generator with JIT-compiled functions.
 
     Args:
-        environment (Env): The environment to generate rollouts for.
+        cfg (Dict | DictConfig): Configuration dictionary for the rollout.
+        env (Env): The environment to generate rollouts for.
         inference_fn (Callable): The inference function to compute controls.
+        log_activations (bool): Whether to log neural network activations.
+        log_metrics (bool): Whether to log rollout metrics.
+        log_sensor_data (bool): Whether to log sensor readings.
 
     Returns:
         Callable: A generate_rollout function that can be called with configuration.
     """
-    ref_traj_config = cfg["reference_config"]
-    # Wrap the environment
-    # TODO this logic is used in a few different places, make it a function?
-    rollout_env = environment  # Initialize with base environment
-
-    if type(environment) == MultiClipTracking:
-        rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(environment)
-    elif type(environment) == SingleClipTracking:
-        rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(environment)
-
-    if cfg["train_setup"]["train_config"]["use_lstm"]:
-        rollout_env = wrappers.RenderRolloutWrapperTrackingLSTM(environment)
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)
-    jit_reset = jax.jit(rollout_env.reset)
-    jit_step = jax.jit(rollout_env.step)
+    jit_reset = jax.jit(env.reset)
+    jit_step = jax.jit(env.step)
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> Dict:
         """
@@ -126,10 +97,13 @@ def create_rollout_generator(
         rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
         # Reset the environment
-        init_state = jit_reset(reset_rng, clip_idx=clip_idx)
+        init_state = jit_reset(reset_rng, clip_idx=clip_idx, start_frame=0)
 
-        num_steps = (
-            int(ref_traj_config.clip_length * environment._steps_for_cur_frame) - 1
+        # Calculate number of steps
+        mocap_dt = float(1 / int(cfg.env_config.mocap_hz))
+        steps_for_cur_frame = int(float(mocap_dt) / float(cfg.env_config.ctrl_dt))
+        num_steps = int(
+            int(cfg.env_config.clip_length) * steps_for_cur_frame - 1
         )
 
         def _step_fn_mlp(carry, _):
@@ -140,41 +114,16 @@ def create_rollout_generator(
 
             # Collect optional data based on logging flags
             joint_force = (
-                next_state.pipeline_state.cfrc_ext if log_sensor_data else None
+                next_state.data.cfrc_ext if log_sensor_data else None
             )
             sensor_reading = (
-                next_state.pipeline_state.sensordata if log_sensor_data else None
+                next_state.data.sensordata if log_sensor_data else None
             )
             activations = extras["activations"] if log_activations else None
 
             return (next_state, new_rng), (
                 next_state,
                 ctrl,
-                activations,
-                joint_force,
-                sensor_reading,
-            )
-
-        def _step_fn_lstm(carry, _):
-            state, act_rng, hidden = carry
-            act_rng, new_rng = jax.random.split(act_rng)
-            ctrl, extras, new_hidden = jit_inference_fn(state.obs, act_rng, hidden)
-            ctrl = jnp.squeeze(ctrl, axis=0)
-            next_state = jit_step(state, ctrl)
-
-            # Collect optional data based on logging flags
-            joint_force = (
-                next_state.pipeline_state.cfrc_ext if log_sensor_data else None
-            )
-            sensor_reading = (
-                next_state.pipeline_state.sensordata if log_sensor_data else None
-            )
-            activations = extras["activations"] if log_activations else None
-
-            return (next_state, new_rng, new_hidden), (
-                next_state,
-                ctrl,
-                hidden,
                 activations,
                 joint_force,
                 sensor_reading,
@@ -188,32 +137,15 @@ def create_rollout_generator(
         sensor_readings = None
         stacked_hidden = None
 
-        if model == "mlp":
-            # Run rollout for mlp
-            init_carry = (init_state, jax.random.PRNGKey(0))
-            (final_state, _), (
-                states,
-                ctrls,
-                activations,
-                joint_forces,
-                sensor_readings,
-            ) = jax.lax.scan(_step_fn_mlp, init_carry, None, length=num_steps)
-
-        elif model == "lstm":
-            # Run rollout for lstm
-            init_carry = (
-                init_state,
-                jax.random.PRNGKey(0),
-                init_state.info["hidden_state"],
-            )
-            (final_state, _, final_hidden_state), (
-                states,
-                ctrls,
-                stacked_hidden,
-                activations,
-                joint_forces,
-                sensor_readings,
-            ) = jax.lax.scan(_step_fn_lstm, init_carry, None, length=num_steps)
+        # Run rollout for mlp
+        init_carry = (init_state, jax.random.PRNGKey(0))
+        (final_state, _), (
+            states,
+            ctrls,
+            activations,
+            joint_forces,
+            sensor_readings,
+        ) = jax.lax.scan(_step_fn_mlp, init_carry, None, length=num_steps)
 
         def prepend(element, arr):
             # Scalar elements shouldn't be modified
@@ -223,16 +155,18 @@ def create_rollout_generator(
 
         rollout_states = jax.tree.map(prepend, init_state, states)
 
+        def _get_ref_qpos(state):
+            time_in_frames = state.data.time * env._config.mocap_hz
+            frame = jnp.floor(time_in_frames + state.info["start_frame"]).astype(int)
+            clip = state.info["reference_clip"]
+            ref = env.reference_clips.at(clip=clip, frame=frame)
+            return ref.qpos
+
         # Reference and rollout qposes (always logged)
-        ref_traj = rollout_env._get_reference_clip(init_state.info)
-        qposes_ref = jnp.repeat(
-            jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-            int(environment._steps_for_cur_frame),
-            axis=0,
-        )
+        qposes_ref = jax.vmap(_get_ref_qpos)(rollout_states)
 
         # Collect qposes from states (always logged)
-        qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)
+        qposes_rollout = jax.vmap(lambda s: s.data.qpos)(rollout_states)
 
         # Extract state rewards (always logged)
         state_rewards = jax.vmap(lambda s: s.reward)(rollout_states)

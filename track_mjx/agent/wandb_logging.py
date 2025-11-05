@@ -4,8 +4,9 @@ from absl import flags
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import uuid
-from typing import Callable, Any
+from typing import Callable, Any, Optional, Dict
 from types import ModuleType
+import logging
 
 import functools
 import jax
@@ -184,3 +185,59 @@ def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: 
         },
         commit=False,
     )
+
+def initialize_wandb_logging(
+    logging_cfg: DictConfig,
+    cfg: DictConfig,
+    run_id: str,
+    existing_run_state: Optional[DictConfig],
+) -> str:
+    """
+    Initialize wandb logging, handling resuming if necessary.
+    
+    Args:
+        logging_cfg (DictConfig): Logging configuration.
+        cfg (DictConfig): Full configuration.
+        run_id (str): Unique identifier for the run.
+        existing_run_state (Optional[DictConfig]): Existing run state if resuming.
+    Returns:
+        str: The wandb run ID.
+    """
+    # Determine wandb run ID for resuming
+    wandb_run_id = f"{logging_cfg.exp_name}_{run_id}"
+    if existing_run_state:
+        wandb_run_id = existing_run_state["wandb_run_id"]
+        wandb_resume = "must"  # Must resume the exact run
+        logging.info(f"Resuming wandb run: {wandb_run_id}")
+    else:
+        wandb_resume = "allow"  # Allow resuming if run exists
+        logging.info(f"Starting new wandb run: {wandb_run_id}")
+    
+    cfg_for_wandb = OmegaConf.to_container(
+        cfg, resolve=True, structured_config_mode=True
+    )
+    
+    wandb.init(
+        project=logging_cfg.project_name,
+        config=cfg_for_wandb,
+        notes=f"",
+        id=wandb_run_id,
+        resume=wandb_resume,
+        group=logging_cfg.group_name,
+    )
+    
+    return wandb_run_id
+
+def wandb_progress(
+        num_steps: int,
+        metrics: dict,
+) -> None:
+    """
+    Log training progress to wandb.
+
+    Args:
+        num_steps (int): Number of training steps completed.
+        metrics (dict): Dictionary of metrics to log.
+    """
+    metrics["num_steps_thousands"] = num_steps
+    wandb.log(metrics)

@@ -1,8 +1,9 @@
 from omegaconf import DictConfig, OmegaConf
 from vnl_mjx.tasks.rodent import consts as rodent_consts
 from ml_collections import config_dict
+import logging
 
-def prepare_config(cfg: DictConfig) -> tuple[DictConfig, DictConfig, config_dict.ConfigDict, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig]:
+def prepare_config(cfg: DictConfig) -> tuple[DictConfig, DictConfig, DictConfig, config_dict.ConfigDict, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig]:
 
     # Update env_config with paths and walker settings
     OmegaConf.set_struct(cfg.env_config, False)
@@ -27,4 +28,8 @@ def prepare_config(cfg: DictConfig) -> tuple[DictConfig, DictConfig, config_dict
     env_cfg_dict = OmegaConf.to_container(env_cfg, resolve=True)
     env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
 
-    return (cfg, env_cfg, env_cfg_ml, render_cfg, network_cfg, train_setup, train_cfg, logging_cfg, walker_cfg)
+    # Convert config to dict
+    logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+
+    return (cfg, cfg_dict, env_cfg, env_cfg_ml, render_cfg, network_cfg, train_setup, train_cfg, logging_cfg, walker_cfg)

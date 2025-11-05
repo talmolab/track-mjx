@@ -12,14 +12,16 @@ import os
 import socket
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, Tuple
 
 # Third-party imports
 import orbax.checkpoint as ocp
 from omegaconf import DictConfig, OmegaConf
-
 import orbax.checkpoint as ocp
+
+from track_mjx.agent import checkpointing
 
 def _hash_config(cfg: DictConfig) -> str:
     """Create a hash of the config for consistency checking."""
@@ -251,3 +253,82 @@ def create_checkpoint_callback(
             logging.warning(f"Failed to update run state after checkpoint save: {e}")
 
     return checkpoint_callback
+
+def load_from_run_state(cfg: DictConfig) -> Tuple[str, str, Optional[Dict[str, Any]]]:
+
+    existing_run_state = discover_existing_run_state(cfg)
+
+    # If existing run state found, adjust config for resuming (this handles preemption)
+    if existing_run_state:
+        # Resume existing run
+        run_id = existing_run_state["run_id"]
+        checkpoint_path = existing_run_state["checkpoint_path"]
+        
+        # Ensure checkpoint_path is absolute
+        checkpoint_path_obj = Path(checkpoint_path)
+        if not checkpoint_path_obj.is_absolute():
+            checkpoint_path_obj = Path.cwd() / checkpoint_path_obj
+        checkpoint_path = str(checkpoint_path_obj)
+
+        logging.info(f"Resuming from existing run: {run_id}")
+
+        # Add checkpoint path to config to use orbax for resuming
+        cfg.train_setup.checkpoint_to_restore = checkpoint_path
+
+    # If manually passing an existing run_state
+    elif cfg.train_setup.restore_from_run_state:
+        # Access file path
+        base_path = Path(cfg.logging_config.model_path).resolve()
+        full_path = base_path / cfg.train_setup.restore_from_run_state
+
+        # Read json with file locking to prevent concurrent access
+        with open(full_path, "r") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            existing_run_state = json.load(f)
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        
+        run_id = existing_run_state["run_id"]
+        checkpoint_path = existing_run_state["checkpoint_path"]
+
+        # Ensure checkpoint_path is absolute
+        checkpoint_path_obj = Path(checkpoint_path)
+        if not checkpoint_path_obj.is_absolute():
+            checkpoint_path_obj = Path.cwd() / checkpoint_path_obj
+        checkpoint_path = str(checkpoint_path_obj)
+
+        logging.info(f"Restoring from specified run state: {run_id}")
+
+        # Add checkpoint path to config to use orbax for resuming
+        cfg.train_setup.checkpoint_to_restore = checkpoint_path
+
+    # If no existing run state is found, generate a new run_if and checkpoint path
+    else:
+        run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
+        # Use a base path given by the config, ensure it's absolute
+        model_path = Path(cfg.logging_config.model_path)
+        if not model_path.is_absolute():
+            model_path = Path.cwd() / model_path
+        checkpoint_path = str(model_path / run_id)
+
+    # Load checkpoint's config
+    if cfg.train_setup.checkpoint_to_restore is not None:
+        checkpoint_to_restore = cfg.train_setup.checkpoint_to_restore
+
+        # Ensure checkpoint_to_restore is absolute
+        checkpoint_to_restore_obj = Path(checkpoint_to_restore)
+        if not checkpoint_to_restore_obj.is_absolute():
+            checkpoint_to_restore_obj = Path.cwd() / checkpoint_to_restore_obj
+        checkpoint_to_restore = str(checkpoint_to_restore_obj)
+
+        # Load the checkpoint's config and update the run_id and checkpoint_path
+        cfg = OmegaConf.create(
+            checkpointing.load_config_from_checkpoint(checkpoint_to_restore)
+        )
+        cfg.train_setup.checkpoint_to_restore = checkpoint_to_restore
+        checkpoint_path = checkpoint_to_restore
+        run_id = os.path.basename(checkpoint_path)
+
+    logging.info(f"Run ID: {run_id}")
+    logging.info(f"Training checkpoint path: {checkpoint_path}")
+
+    return (run_id, checkpoint_path, existing_run_state)

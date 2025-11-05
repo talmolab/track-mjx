@@ -92,8 +92,6 @@ train_setup:
   train_test_split_info: null
   restore_from_run_state: null
   train_subset_ratio: 0.8
-  checkpoint_max_to_keep: null
-  checkpoint_keep_period: null
   eval_every: 20_000_000
   episode_length: 200
   reset_every: 20_000_000

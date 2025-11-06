@@ -39,6 +39,7 @@ from track_mjx.agent.mlp_ppo import losses, ppo_networks
 from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent import gradients
+from track_mjx import utils
 
 from mujoco_playground import wrapper as mp_wrapper
 
@@ -670,16 +671,16 @@ def train(
     start_it = 0
     if ckpt_mgr is not None:
         if ckpt_mgr.latest_step() is not None:
-            # TODO: this is not correct, we need a way to overwrite somehow.
-            # num_evals_after_init -= ckpt_mgr.latest_step()
-            # start_it = ckpt_mgr.latest_step()
+            num_evals_after_init -= ckpt_mgr.latest_step()
+            start_it = ckpt_mgr.latest_step()
             pass
 
     print(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
 
     # Run initial eval
     metrics = {}
-    if process_id == 0 and num_evals > 1:
+    if process_id == 0 and num_evals > 1 and start_it == 0:
+        logging.info("Running initial evaluation")
         policy_param = _unpmap(
             (training_state.normalizer_params, training_state.params.policy)
         )

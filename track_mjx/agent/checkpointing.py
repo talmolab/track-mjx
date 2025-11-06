@@ -25,7 +25,7 @@ import jax
 
 
 def load_config_from_checkpoint(
-    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int = None
+    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None
 ):
     """Load the config from a checkpoint."""
     mgr_options = ocp.CheckpointManagerOptions(create=False, step_prefix=step_prefix)
@@ -524,11 +524,28 @@ def load_from_run_state(cfg: DictConfig) -> Tuple[str, str, Optional[Dict[str, A
             checkpoint_to_restore_obj = Path.cwd() / checkpoint_to_restore_obj
         checkpoint_to_restore = str(checkpoint_to_restore_obj)
 
+        # Get submitted config's num_timesteps
+        sub_timesteps = cfg.train_setup.train_config.num_timesteps
+
         # Load the checkpoint's config and update the run_id and checkpoint_path
         cfg = OmegaConf.create(
             load_config_from_checkpoint(checkpoint_to_restore)
         )
         cfg.train_setup.checkpoint_to_restore = checkpoint_to_restore
+
+        # Get restored config's num_timesteps
+        restored_timesteps = cfg.train_setup.train_config.num_timesteps
+
+        # This allows user to resume a run with an different num_timesteps
+        if sub_timesteps != restored_timesteps:
+            logging.info(
+                f"Original config num_timesteps: {restored_timesteps}, "
+                f"Submitted config num_timesteps: {sub_timesteps}, "
+                f"Updating restored config to use submitted num_timesteps."
+            )
+            cfg.train_setup.train_config.num_timesteps = sub_timesteps
+            
+
         checkpoint_path = checkpoint_to_restore
         run_id = os.path.basename(checkpoint_path)
 

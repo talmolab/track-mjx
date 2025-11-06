@@ -33,3 +33,11 @@ def prepare_config(cfg: DictConfig) -> tuple[DictConfig, DictConfig, DictConfig,
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
     return (cfg, cfg_dict, env_cfg, env_cfg_ml, render_cfg, network_cfg, train_setup, train_cfg, logging_cfg, walker_cfg)
+
+def update_config(cfg: DictConfig, overrides: dict) -> DictConfig:
+    
+    OmegaConf.set_struct(cfg, False)
+    for key, value in overrides.items():
+        OmegaConf.update(cfg, key, value, merge=False)
+    OmegaConf.set_struct(cfg, True)
+    return cfg

@@ -467,8 +467,8 @@ def train(
 
     reference_obs_size = int(environment.non_proprioceptive_obs_size)
     proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
-    print(f"Reference observation size: {reference_obs_size}")
-    print(f"Proprioceptive observation size: {proprioceptive_obs_size}")
+    logging.info(f"Reference observation size: {reference_obs_size}")
+    logging.info(f"Proprioceptive observation size: {proprioceptive_obs_size}")
 
     env = wrap_for_training(
         environment,

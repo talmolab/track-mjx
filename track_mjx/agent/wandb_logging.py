@@ -132,9 +132,7 @@ def rollout_logging_fn(
             length=env._config.clip_length,
         )
         qposes_ref = np.repeat(ref_traj.qpos, steps_per_frame, axis=0)
-        print(
-            f"qposes_rollout.shape: {qposes_rollout.shape}, qposes_ref.shape: {qposes_ref.shape}"
-        )
+
         with imageio.get_writer(video_path, fps=render_fps) as video:
             for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
                 mj_data.qpos = np.append(qpos1, qpos2)

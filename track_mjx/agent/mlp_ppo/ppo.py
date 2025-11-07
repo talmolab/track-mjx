@@ -155,9 +155,7 @@ def train(
     clipping_epsilon: float = 0.3,
     gae_lambda: float = 0.95,
     deterministic_eval: bool = False,
-    network_factory: types.NetworkFactory[
-        ppo_networks.PPOImitationNetworks
-    ] = ppo_networks.make_intention_ppo_networks,
+    network_factory: Callable[..., ppo_networks.PPOImitationNetworks] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
     eval_env: Optional[envs.Env] = None,
@@ -171,7 +169,8 @@ def train(
     kl_ramp_up_frac: float = 0.25,
     freeze_decoder: bool = False,
     checkpoint_callback: Optional[Callable[[int], None]] = None,
-    wrap_for_training: Callable[[envs.Env], envs.Env] = wrappers.wrap,
+    wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
+        mp_wrapper.wrap_for_brax_training, full_reset=False),
 ):
     """PPO training.
 

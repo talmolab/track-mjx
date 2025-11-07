@@ -22,24 +22,16 @@ os.environ["PYOPENGL_PLATFORM"] = "osmesa"
 
 import jax
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import functools
 import wandb
-from brax import envs
 import orbax.checkpoint as ocp
 from track_mjx.agent.mlp_ppo import ppo as mlp_ppo, ppo_networks as mlp_ppo_networks
-from pathlib import Path
-from datetime import datetime
 import logging
-import json
-import fcntl
 
-from track_mjx.io import load
-from track_mjx.environment import wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
 from track_mjx.analysis import render
-from track_mjx.environment.task.reward import RewardConfig
 from track_mjx import utils
 
 from vnl_mjx.tasks.rodent import imitation

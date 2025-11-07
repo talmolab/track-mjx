@@ -4,20 +4,8 @@ Functions to load environment and run a rollout with a given policy.
 
 import jax
 from brax.envs.base import Env
-from track_mjx.environment.walker.fly import Fly
-from track_mjx.environment.walker.stick import Stick
-from track_mjx.environment.walker.rodent import Rodent
-from brax import envs
 from typing import Dict, Callable
-import hydra
-import logging
-from track_mjx.environment.task.reward import RewardConfig
 from jax import numpy as jnp
-
-from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
-from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
-from track_mjx.environment import wrappers
-from track_mjx.io import load
 
 from vnl_mjx.tasks.rodent import wrappers as vnl_wrappers
 from vnl_mjx.tasks.rodent import imitation

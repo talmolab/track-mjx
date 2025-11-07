@@ -18,6 +18,11 @@ from sklearn.decomposition import PCA
 from PIL import Image
 from IPython.display import HTML
 
+# TODO: Add other walker consts
+from vnl_mjx.tasks.rodent import consts as rodent_consts
+from vnl_mjx.tasks.fruitfly import consts as fruitfly_consts
+from vnl_mjx.tasks.mouse import consts as mouse_consts
+
 
 from track_mjx.environment.walker.spec_utils import _scale_body_tree, _recolour_tree
 
@@ -28,25 +33,23 @@ import numpy as np
 import multiprocessing as mp
 import functools
 
-# TODO: should this be part of config?
+# TODO: Add other walker consts
 _BASE_XML_PATHS = {
     "rodent": str(
-        Path(__file__).parent.parent / "environment/walker/assets/rodent/rodent.xml"
+        rodent_consts.RODENT_XML_PATH
     ),
-    "fly": str(
-        Path(__file__).parent.parent
-        / "environment/walker/assets/fruitfly/fruitfly_force_fast.xml"
+    "fruitfly": str(
+        fruitfly_consts.FRUITFLY_XML_PATH
     ),
-    "stick": str(
-        Path(__file__).parent.parent
-        / "environment/walker/assets/stick/sungaya_inexpectata_box.xml"
+    "mouse": str(
+        mouse_consts.MOUSE_XML_PATH
     ),
 }
 
 _ROOT_BODY_NAMES = {
     "rodent": "walker",
-    "fly": "thorax",
-    "stick": "reference_base",
+    "fruitfly": "thorax",
+    "stickbug": "reference_base",
 }
 
 

@@ -62,9 +62,6 @@ def rollout_logging_fn(
 
     state = jit_reset(reset_rng)
 
-    if train_config.get("use_lstm", None):
-        hidden_state = state.info["hidden_state"]
-
     rollout = [state]
     latent_means = []
     latent_logvars = []
@@ -76,15 +73,10 @@ def rollout_logging_fn(
     for i in range(episode_length):
         _, act_rng = jax.random.split(act_rng)
         obs = state.obs
-        if train_config.get("use_lstm", None):
-            ctrl, extras, hidden_state = jit_logging_inference_fn(
-                params, obs, act_rng, hidden_state
-            )
-        else:
-            (
-                ctrl,
-                extras,
-            ) = jit_logging_inference_fn(params, obs, act_rng)
+        (
+            ctrl,
+            extras,
+        ) = jit_logging_inference_fn(params, obs, act_rng)
         ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
         latent_means.append(extras["latent_mean"])
         latent_logvars.append(extras["latent_logvar"])

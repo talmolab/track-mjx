@@ -111,7 +111,6 @@ train_setup:
     unroll_length: 20
     seed: 0
     get_activation: false
-    use_lstm: false
     deterministic_eval: true
 
 logging_config:

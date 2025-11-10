@@ -181,9 +181,6 @@ def main(cfg: DictConfig):
         jit_step,
         cfg,
         checkpoint_path,
-        renderer,
-        mj_model,
-        mj_data,
         scene_option,
     )
 

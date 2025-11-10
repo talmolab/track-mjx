@@ -29,9 +29,6 @@ def rollout_logging_fn(
     jit_step,
     cfg: DictConfig,
     model_path: str,
-    renderer,
-    mj_model,
-    mj_data,
     scene_option,
     current_step: int,  # all args above this one are passed in by functools.partial
     jit_logging_inference_fn,
@@ -47,9 +44,6 @@ def rollout_logging_fn(
         jit_step: Jitted env step function.
         cfg: Configuration dictionary for the environment and agent.
         model_path: The path to save the model parameters and videos.
-        renderer: A mujoco.Renderer object.
-        mj_model: A mujoco.Model object for rendering.
-        mj_data: A mujoco.Data object for rendering.
         scene_option: A mujoco.MjvOption object for rendering.
         current_step: The number of training steps completed.
         jit_logging_inference_fn: Jitted policy inference function.
@@ -116,26 +110,15 @@ def rollout_logging_fn(
                 title=f"{rollout_metric} for each rollout frame",
             )
 
-        # Render the walker with the reference expert demonstration trajectory
-        qposes_rollout = np.array([state.data.qpos for state in rollout])
-        ref_traj = env.reference_clips.slice(
-            clip=rollout[0].info["reference_clip"],
-            start_frame=0,
-            length=env._config.clip_length,
-        )
-        qposes_ref = np.repeat(ref_traj.qpos, steps_per_frame, axis=0)
-
-        with imageio.get_writer(video_path, fps=render_fps) as video:
-            for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-                mj_data.qpos = np.append(qpos1, qpos2)
-                mujoco.mj_forward(mj_model, mj_data)
-                renderer.update_scene(
-                    mj_data,
-                    camera=cfg.render_config.render_camera_name,
-                    scene_option=scene_option,
-                )
-                pixels = renderer.render()
-                video.append_data(pixels)
+        # Render the video
+        with imageio.get_writer(video_path, fps=render_fps) as writer:
+            video = env.render(
+                rollout,
+                camera=f"{cfg.render_config.render_camera_name}-ghost",
+                scene_option=scene_option,
+            )
+            for frame in video:
+                writer.append_data(frame)
 
         wandb.log(
             {"videos/rollout": wandb.Video(video_path, format="mp4")},

@@ -7,20 +7,30 @@ from brax.envs.base import Env
 from track_mjx.environment.walker.rodent import Rodent
 from track_mjx.environment.walker.fly import Fly
 from track_mjx.environment.walker.stick import Stick
+from track_mjx.environment.reacher.mouse_arm import MouseArm
 from brax import envs
 from typing import Dict, Callable
 import hydra
 import logging
-from track_mjx.environment.task.reward import RewardConfig
+from track_mjx.environment.task.reward import RewardConfig, RewardConfigReach
 from jax import numpy as jnp
 
 from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
 from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+from track_mjx.environment.task.multi_clip_reaching import MultiClipReaching
+from track_mjx.environment.task.single_clip_reaching import SingleClipReaching
 from track_mjx.environment import wrappers
 from track_mjx.io import load
+from track_mjx.io.load import (
+    load_reaching_data,
+    make_reaching_data,
+    make_multiclip_reaching_data,
+)
 
 from omegaconf import DictConfig
 
+envs.register_environment("mouse_arm_multi_clip", MultiClipReaching)
+envs.register_environment("mouse_arm_single_clip", SingleClipReaching)
 envs.register_environment("rodent_single_clip", SingleClipTracking)
 envs.register_environment("rodent_multi_clip", MultiClipTracking)
 envs.register_environment("fly_multi_clip", MultiClipTracking)
@@ -29,43 +39,91 @@ envs.register_environment("fly_multi_clip", MultiClipTracking)
 def create_environment(cfg_dict: Dict | DictConfig) -> Env:
     env_args = cfg_dict["env_config"]["env_args"]
     env_rewards = cfg_dict["env_config"]["reward_weights"]
-    walker_config = cfg_dict["walker_config"]
     traj_config = cfg_dict["reference_config"]
 
     reference_data_path = hydra.utils.to_absolute_path(cfg_dict["data_path"])
     logging.info(f"Loading data: {reference_data_path}")
-    try:
-        reference_clip = load.make_multiclip_data(
-            reference_data_path, n_frames_per_clip=traj_config.clip_length
-        )
-    except KeyError:
-        logging.info(
-            f"Loading from stac-mjx format failed. Loading from ReferenceClip format."
-        )
-        reference_clip = load.load_reference_clip_data(reference_data_path)
 
+    # Use walker type string directly from cfg_dict to determine task type
+    if "reacher_name" in cfg_dict["env_config"]:
+        # Reaching task - load_reaching_data handles everything
+        reference_clip = load_reaching_data(reference_data_path)
+        logging.info(
+            f"Loaded reaching data with joints shape: {reference_clip.joints.shape}"
+        )
+    else:
+        # Tracking task
+        try:
+            reference_clip = load.make_multiclip_data(
+                reference_data_path, n_frames_per_clip=traj_config.clip_length
+            )
+        except KeyError:
+            logging.info(
+                "Loading from stac-mjx format failed. Loading from ReferenceClip format."
+            )
+            reference_clip = load.load_reference_clip_data(reference_data_path)
+
+    # Body setup - use walker type string directly
     walker_map = {
         "rodent": Rodent,
         "fly": Fly,
         "stick": Stick,
     }
-    walker_class = walker_map[cfg_dict["env_config"]["walker_name"]]
-    walker = walker_class(**walker_config)
+    reacher_map = {"mouse_arm": MouseArm}
 
-    # TODO: Stop-gap to run checkpoint prior to adding energy cost, remove for release
+    if "walker_name" in cfg_dict["env_config"]:
+        body_config = cfg_dict["walker_config"]
+        body_class = walker_map[cfg_dict["env_config"]["walker_name"]]
+    elif "reacher_name" in cfg_dict["env_config"]:
+        body_config = cfg_dict["reacher_config"]
+        body_class = reacher_map[cfg_dict["env_config"]["reacher_name"]]
+    else:
+        raise KeyError("Expected 'walker_name' or 'reacher_name' in env_config.")
+
+    walker = body_class(**body_config)
+
+    # Reward config - use walker type string directly
     if "energy_cost_weight" not in env_rewards:
         env_rewards["energy_cost_weight"] = 0.0
 
-    reward_config = RewardConfig(**env_rewards)
-    # Automatically match dict keys and func needs
-    env = envs.get_environment(
-        env_name=cfg_dict["env_config"]["env_name"],
-        reference_clip=reference_clip,
-        walker=walker,
-        reward_config=reward_config,
-        **env_args,
-        **traj_config,
-    )
+    if "walker_name" in cfg_dict["env_config"]:
+        reward_config = RewardConfig(**env_rewards)
+    elif "reacher_name" in cfg_dict["env_config"]:
+        reward_config = RewardConfigReach(**env_rewards)
+    else:
+        raise KeyError("Expected 'walker_name' or 'reacher_name' in env_config.")
+
+    # Create environment - use walker type string directly
+    if "walker_name" in cfg_dict["env_config"]:
+        env = envs.get_environment(
+            env_name=cfg_dict["env_config"]["env_name"],
+            reference_clip=reference_clip,
+            walker=walker,
+            reward_config=reward_config,
+            **env_args,
+            **traj_config,
+        )
+    elif "reacher_name" in cfg_dict["env_config"]:
+        env = envs.get_environment(
+            env_name=cfg_dict["env_config"]["env_name"],
+            reference_clip=reference_clip,
+            reacher=walker,  # pass as reacher
+            reward_config=reward_config,
+            **env_args,
+            **traj_config,
+        )
+    else:
+        raise KeyError("Expected 'walker_name' or 'reacher_name' in env_config.")
+
+    # Debug logging
+    logging.info(f"Created environment: {type(env)}")
+    if hasattr(env, "_n_clips"):
+        logging.info(f"Environment _n_clips: {env._n_clips}")
+    if hasattr(env, "sys"):
+        logging.info(
+            f"Environment sys.nq: {env.sys.nq}, sys.nu: {env.sys.nu}, sys.nv: {env.sys.nv}"
+        )
+
     return env
 
 
@@ -93,9 +151,12 @@ def create_rollout_generator(
     # TODO this logic is used in a few different places, make it a function?
     rollout_env = environment  # Initialize with base environment
 
-    if type(environment) == MultiClipTracking:
+    if type(environment) == MultiClipTracking or type(environment) == MultiClipReaching:
         rollout_env = wrappers.RenderRolloutWrapperMulticlipTracking(environment)
-    elif type(environment) == SingleClipTracking:
+    elif (
+        type(environment) == SingleClipReaching
+        or type(environment) == SingleClipTracking
+    ):
         rollout_env = wrappers.RenderRolloutWrapperSingleclipTracking(environment)
 
     if cfg["train_setup"]["train_config"]["use_lstm"]:
@@ -103,7 +164,22 @@ def create_rollout_generator(
 
     # JIT-compile the necessary functions
     jit_inference_fn = jax.jit(inference_fn)
-    jit_reset = jax.jit(rollout_env.reset)
+
+    # Environment reset function with logging and error handling
+    def env_reset(rng, clip_idx=None):
+        logging.info(f"Environment reset called with clip_idx={clip_idx}")
+        logging.info(f"Environment type: {type(rollout_env)}")
+        if hasattr(rollout_env, "_n_clips"):
+            logging.info(f"Environment _n_clips: {rollout_env._n_clips}")
+        try:
+            result = rollout_env.reset(rng, clip_idx=clip_idx)
+            logging.info(f"Reset successful, state.obs.shape: {result.obs.shape}")
+            return result
+        except Exception as e:
+            logging.error(f"Reset failed with error: {e}")
+            raise
+
+    jit_reset = jax.jit(env_reset)
     jit_step = jax.jit(rollout_env.step)
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> Dict:
@@ -225,11 +301,24 @@ def create_rollout_generator(
 
         # Reference and rollout qposes (always logged)
         ref_traj = rollout_env._get_reference_clip(init_state.info)
-        qposes_ref = jnp.repeat(
-            jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
-            int(environment._steps_for_cur_frame),
-            axis=0,
-        )
+
+        # Use cfg to determine agent type instead of checking ref_traj attributes
+        if "reacher_name" in cfg["env_config"]:
+            # Reaching task - only has joints
+            qposes_ref = jnp.repeat(
+                ref_traj.joints,
+                int(environment._steps_for_cur_frame),
+                axis=0,
+            )
+        elif "walker_name" in cfg["env_config"]:
+            # Tracking task - has position, quaternion, and joints
+            qposes_ref = jnp.repeat(
+                jnp.hstack([ref_traj.position, ref_traj.quaternion, ref_traj.joints]),
+                int(environment._steps_for_cur_frame),
+                axis=0,
+            )
+        else:
+            raise KeyError("Expected 'walker_name' or 'reacher_name' in env_config.")
 
         # Collect qposes from states (always logged)
         qposes_rollout = jax.vmap(lambda s: s.pipeline_state.qpos)(rollout_states)

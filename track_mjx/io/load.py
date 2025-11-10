@@ -38,6 +38,26 @@ class ReferenceClip:
     original_clip_idx: jp.ndarray | None = None
 
 
+@struct.dataclass
+class ReferenceClipReach:
+    """Immutable dataclass defining the trajectory features used in the reaching task.
+    This is a simplified version focused on reaching targets rather than full body tracking.
+    """
+
+    # qpos - joint positions (no root body for reaching tasks)
+    joints: jp.ndarray
+
+    # xpos - body positions (for end effector tracking)
+    body_positions: jp.ndarray
+
+    # velocity - joint velocities (no root body for reaching tasks)
+    joints_velocity: jp.ndarray
+
+    # clip_idx based on the original clip order. Used to recover the metadata
+    # for the original clip.
+    original_clip_idx: jp.ndarray | None = None
+
+
 def load_configs(config_dir: Union[Path, str], config_name: str) -> DictConfig:
     """Initializes configs with hydra.
 
@@ -74,6 +94,26 @@ def load_data(data_path: str):
         return load_reference_clip_data(data_path)
 
 
+def load_reaching_data(data_path: str):
+    """Loads reaching data from the specified path.
+    If data_path contains multiple comma-separated file paths, loads them as separate clips.
+    """
+    # TODO: Use a base path given by the config
+    data_path = hydra.utils.to_absolute_path(data_path)
+    
+    # Check if data_path contains multiple files (comma-separated)
+    if ',' in data_path:
+        file_paths = [path.strip() for path in data_path.split(',')]
+        return load_multiple_reaching_files(file_paths)
+    else:
+        # Try multiclip format first, then single clip format
+        try:
+            return make_multiclip_reaching_data(data_path)
+        except (KeyError, ValueError):
+            # Fall back to single clip format
+            return make_reaching_data(data_path)
+
+
 def make_singleclip_data(traj_data_path):
     """Opens h5 file and makes ReferenceClip based on qpos, qvel, xpos, and xquat.
 
@@ -99,6 +139,36 @@ def make_singleclip_data(traj_data_path):
                 joints_velocity=qvel[:, 6:],
                 body_quaternions=xquat,
             ),
+        )
+
+
+def make_reaching_data(traj_data_path):
+    """Opens h5 file and makes ReferenceClipReach based on qpos, qvel, xpos.
+
+    Args:
+        traj_data_path: Path to the H5 file containing reaching data
+
+    Returns:
+        ReferenceClipReach: Reaching trajectory data
+    """
+    with h5py.File(traj_data_path, "r") as data:
+        qpos = jp.array(data["qpos"][()])
+        qvel = jp.array(data["qvel"][()])
+        xpos = jp.array(data["xpos"][()])
+        
+        # For reaching tasks, qpos contains only joint positions (no root)
+        joints = qpos  # All of qpos is joint positions
+        
+        # For reaching tasks, qvel contains only joint velocities (no root)
+        joints_velocity = qvel  # All of qvel is joint velocities
+        
+        # Get body positions (for end effector tracking)
+        body_positions = xpos
+        
+        return ReferenceClipReach(
+            joints=joints,
+            body_positions=body_positions,
+            joints_velocity=joints_velocity,
         )
 
 
@@ -135,6 +205,104 @@ def make_multiclip_data(traj_data_path, n_frames_per_clip: int | None = None):
             joints_velocity=batch_qvel[:, :, 6:],
             body_quaternions=batch_xquat,
         )
+
+def load_multiple_reaching_files(file_paths: list[str]) -> ReferenceClipReach:
+    """Loads reaching data from multiple H5 files and combines them as separate clips.
+    
+    Args:
+        file_paths: List of file paths to load
+        
+    Returns:
+        ReferenceClipReach: Combined data from all files as separate clips
+    """
+    all_clips = []
+    
+    for i, file_path in enumerate(file_paths):
+        file_path = file_path.strip()
+        try:
+            # Try multiclip format first, then single clip format
+            try:
+                clip_data = make_multiclip_reaching_data(file_path)
+            except (KeyError, ValueError):
+                # Fall back to single clip format
+                clip_data = make_reaching_data(file_path)
+            all_clips.append(clip_data)
+        except Exception as e:
+            logging.warning(f"Failed to load reaching file {file_path}: {e}")
+            continue
+    
+    if not all_clips:
+        raise ValueError("No valid reaching files could be loaded from the provided paths")
+    
+    # Combine all clips into a single ReferenceClipReach
+    return combine_reaching_clips(all_clips)
+
+def make_multiclip_reaching_data(traj_data_path, n_frames_per_clip: int | None = None):
+    """Creates ReferenceClipReach object with multiclip reaching data.
+    Features have shape = (clips, frames, dims)
+    """
+
+    def reshape_frames(arr, clip_len):
+        return jp.array(
+            arr[()].reshape(arr.shape[0] // clip_len, clip_len, *arr.shape[1:])
+        )
+
+    with h5py.File(traj_data_path, "r") as data:
+        # Read the config string as yaml in to dict if needed
+        if n_frames_per_clip is None:
+            try:
+                yaml_str = data["config"][()]
+                yaml_str = yaml_str.decode("utf-8")
+                config = yaml.safe_load(yaml_str)
+                n_frames_per_clip = config["stac"]["n_frames_per_clip"]
+            except (KeyError, ValueError):
+                # If no config, assume 100 frames per clip (common for reaching data)
+                n_frames_per_clip = 100
+
+        # Reshape the data to (clips, frames, dims)
+        batch_qpos = reshape_frames(data["qpos"], n_frames_per_clip)
+        batch_xpos = reshape_frames(data["xpos"], n_frames_per_clip)
+        batch_qvel = reshape_frames(data["qvel"], n_frames_per_clip)
+        
+        return ReferenceClipReach(
+            joints=batch_qpos,  # All of qpos is joint positions for reaching
+            body_positions=batch_xpos,
+            joints_velocity=batch_qvel,  # All of qvel is joint velocities for reaching
+        )
+
+def combine_reaching_clips(clips: list[ReferenceClipReach]) -> ReferenceClipReach:
+    """Combines multiple ReferenceClipReach objects into a single ReferenceClipReach.
+    
+    Args:
+        clips: List of ReferenceClipReach objects to combine
+        
+    Returns:
+        ReferenceClipReach: Combined clips with shape (total_clips, frames, dims)
+    """
+    if not clips:
+        raise ValueError("No reaching clips provided to combine")
+    
+    # Concatenate all clips along the first dimension (clip dimension)
+    combined_joints = jp.concatenate([clip.joints for clip in clips], axis=0)
+    combined_body_positions = jp.concatenate([clip.body_positions for clip in clips], axis=0)
+    combined_joints_velocity = jp.concatenate([clip.joints_velocity for clip in clips], axis=0)
+    
+    # Create original_clip_idx to track which file each clip came from
+    clip_indices = []
+    current_idx = 0
+    for i, clip in enumerate(clips):
+        num_clips_in_file = clip.joints.shape[0]
+        clip_indices.extend([i] * num_clips_in_file)
+        current_idx += num_clips_in_file
+    
+    original_clip_idx = jp.array(clip_indices)[:, jp.newaxis]
+    
+    return ReferenceClipReach(
+        joints=combined_joints,
+        body_positions=combined_body_positions,
+        joints_velocity=combined_joints_velocity,
+        original_clip_idx=original_clip_idx,
+    )
 
 
 def load_reference_clip_data(
@@ -185,22 +353,26 @@ def load_reference_clip_data(
 
 
 def generate_train_test_split(
-    data: ReferenceClip,
+    data: ReferenceClip | ReferenceClipReach,
     test_ratio: float = 0.1,
-) -> Tuple[ReferenceClip, ReferenceClip]:
+) -> Tuple[ReferenceClip | ReferenceClipReach, ReferenceClip | ReferenceClipReach]:
     """
     Generates a train-test split of the clips based on the provided ratio.
     The split is done by randomly sampling clips from the metadata list.
-    The function returns two ReferenceClip objects: one for training and one for testing.
+    The function returns two objects: one for training and one for testing.
 
     Args:
-        data (ReferenceClip): The ReferenceClip object containing the clips to be split.
+        data (ReferenceClip | ReferenceClipReach): The object containing the clips to be split.
         test_ratio (float, optional): ratio of the test set. Defaults to 0.1.
 
     Returns:
-        Tuple[ReferenceClip, ReferenceClip]: training set and testing set as ReferenceClip objects.
+        Tuple: training set and testing set as ReferenceClip or ReferenceClipReach objects.
     """
-    num_clips = data.position.shape[0]
+    if isinstance(data, ReferenceClipReach):
+        num_clips = data.joints.shape[0]
+    else:
+        num_clips = data.position.shape[0]
+    
     indices = np.arange(num_clips)
     test_idx = np.random.choice(
         indices, size=int(num_clips * test_ratio), replace=False
@@ -211,6 +383,38 @@ def generate_train_test_split(
     train_set = select_clips(data, train_idx)
     test_set = select_clips(data, test_idx)
     return train_set, test_set
+
+
+def select_clips(
+    clips: ReferenceClip | ReferenceClipReach,
+    indices: np.ndarray,
+) -> ReferenceClip | ReferenceClipReach:
+    """
+    Selects clips from the ReferenceClip or ReferenceClipReach object based on the provided indices.
+    The function returns a new object containing only the selected clips.
+    """
+    indices = np.array(indices)
+    
+    if isinstance(clips, ReferenceClipReach):
+        selected_clips = ReferenceClipReach(
+            joints=clips.joints[indices],
+            body_positions=clips.body_positions[indices],
+            joints_velocity=clips.joints_velocity[indices],
+            original_clip_idx=jp.array(indices[:, jp.newaxis]),
+        )
+    else:
+        selected_clips = ReferenceClip(
+            position=clips.position[indices],
+            quaternion=clips.quaternion[indices],
+            joints=clips.joints[indices],
+            body_positions=clips.body_positions[indices],
+            velocity=clips.velocity[indices],
+            angular_velocity=clips.angular_velocity[indices],
+            joints_velocity=clips.joints_velocity[indices],
+            body_quaternions=clips.body_quaternions[indices],
+            original_clip_idx=jp.array(indices[:, jp.newaxis]),
+        )
+    return selected_clips
 
 
 def load_clips_metadata(traj_data_path: str) -> list[Tuple[str, int]]:
@@ -253,26 +457,3 @@ def sub_sample_training_set(train_idx: np.ndarray, train_ratio: float = 0.1):
     sampled_idx = np.random.choice(train_idx, size=sample_size, replace=False)
     sampled_idx.sort()
     return sampled_idx
-
-
-def select_clips(
-    clips: ReferenceClip,
-    indices: np.ndarray,
-) -> ReferenceClip:
-    """
-    Selects clips from the ReferenceClip object based on the provided indices.
-    The function returns a new ReferenceClip object containing only the selected clips.
-    """
-    indices = np.array(indices)
-    selected_clips = ReferenceClip(
-        position=clips.position[indices],
-        quaternion=clips.quaternion[indices],
-        joints=clips.joints[indices],
-        body_positions=clips.body_positions[indices],
-        velocity=clips.velocity[indices],
-        angular_velocity=clips.angular_velocity[indices],
-        joints_velocity=clips.joints_velocity[indices],
-        body_quaternions=clips.body_quaternions[indices],
-        original_clip_idx=jp.array(indices[:, jp.newaxis]),
-    )
-    return selected_clips

@@ -29,7 +29,6 @@ def rollout_logging_fn(
     jit_step,
     cfg: DictConfig,
     model_path: str,
-    scene_option,
     current_step: int,  # all args above this one are passed in by functools.partial
     jit_logging_inference_fn,
     params: losses.PPONetworkParams,
@@ -44,7 +43,6 @@ def rollout_logging_fn(
         jit_step: Jitted env step function.
         cfg: Configuration dictionary for the environment and agent.
         model_path: The path to save the model parameters and videos.
-        scene_option: A mujoco.MjvOption object for rendering.
         current_step: The number of training steps completed.
         jit_logging_inference_fn: Jitted policy inference function.
         params: Parameters for the policy model.
@@ -115,7 +113,6 @@ def rollout_logging_fn(
             video = env.render(
                 rollout,
                 camera=f"{cfg.render_config.render_camera_name}-ghost",
-                scene_option=scene_option,
             )
             for frame in video:
                 writer.append_data(frame)

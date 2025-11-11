@@ -31,7 +31,6 @@ import logging
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
-from track_mjx.analysis import render
 from track_mjx import utils
 
 from vnl_mjx.tasks.rodent import imitation
@@ -173,7 +172,6 @@ def main(cfg: DictConfig):
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
-    renderer, mj_model, mj_data, scene_option = render.make_rollout_renderer(cfg)
     policy_params_fn = functools.partial(
         wandb_logging.rollout_logging_fn,
         rollout_env,
@@ -181,7 +179,6 @@ def main(cfg: DictConfig):
         jit_step,
         cfg,
         checkpoint_path,
-        scene_option,
     )
 
     make_inference_fn, params, _ = train_fn(

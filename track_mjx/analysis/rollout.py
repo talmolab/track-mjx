@@ -170,7 +170,8 @@ def create_rollout_generator(
         # Add optional data if requested
         if log_metrics:
             rollout_metrics = {}
-            for rollout_metric in cfg.logging_config.rollout_metrics:
+            metric_keys = rollout_states.metrics.keys()
+            for rollout_metric in metric_keys:
                 rollout_metrics[f"{rollout_metric}s"] = jax.vmap(
                     lambda s: s.metrics[rollout_metric]
                 )(rollout_states)

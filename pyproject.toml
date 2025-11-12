@@ -32,7 +32,6 @@ dependencies = [
     "optax==0.2.6",
     "orbax-checkpoint",
     # MuJoCo
-    "mujoco==3.4.0.dev818719010",
     "mujoco-mjx==3.3.8",
     # Rendering (EGL/osmesa support)
     "PyOpenGL==3.1.9",

@@ -99,3 +99,8 @@ playground = { git = "https://github.com/google-deepmind/mujoco_playground" }
 [pydocstyle]
 convention = "google"
 match-dir = "track_mjx"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.31.0",
+]

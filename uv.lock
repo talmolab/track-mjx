@@ -4219,6 +4219,11 @@ dev = [
     { name = "twine" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ipykernel" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'dev'" },
@@ -4263,6 +4268,9 @@ requires-dist = [
     { name = "wandb", specifier = "==0.19.5" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ipykernel", specifier = ">=6.31.0" }]
 
 [[package]]
 name = "traitlets"
@@ -4445,7 +4453,7 @@ requires-dist = [
     { name = "twine", marker = "extra == 'dev'" },
     { name = "vnl-mjx", extras = ["dev"], marker = "extra == 'with-cuda'" },
     { name = "wandb" },
-    { name = "warp-lang" },
+    { name = "warp-lang", specifier = ">=1.9.0" },
 ]
 provides-extras = ["dev", "with-cuda"]
 

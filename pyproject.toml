@@ -22,9 +22,9 @@ dependencies = [
     # =========================================================================
     # CUDA Dependencies
     # If on CUDA 12, uncomment the following line
-    # "jax[cuda12]==0.7.2 ; sys_platform == 'linux'",
+    "jax[cuda12]==0.7.2 ; sys_platform == 'linux'",
     # If you are on CUDA 13, uncomment the following lines and comment out the above line
-    "jax[cuda13]==0.7.2 ; sys_platform == 'linux'",
+    # "jax[cuda13]==0.7.2 ; sys_platform == 'linux'",
     # =========================================================================
     # Core ML dependencies
     "brax==0.13.0",
@@ -86,7 +86,19 @@ dev = [
 Repository = "https://github.com/talmolab/track-mjx"
 
 [tool.setuptools.packages.find]
-exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
+where = ["."]  # or wherever your packages are
+exclude = [
+    "site*",
+    "model_checkpoints*",
+    "wandb*",
+    "outputs*",
+    "notebooks*",
+    ".venv*",
+    ".cache*",
+    "__pycache__*",
+    "data*",
+    "build*",
+]
 
 [tool.black]
 line-length = 88

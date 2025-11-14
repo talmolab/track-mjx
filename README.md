@@ -4,7 +4,7 @@ This is a package for training control policies through motion capture tracking 
 
 ## Installation
 
-## Option 1: uv
+## Option 1: `uv`
 
 ### Prerequisites
 
@@ -12,7 +12,7 @@ This is a package for training control policies through motion capture tracking 
 - [uv](https://docs.astral.sh/uv/) package manager (recommended) or pip
 - CUDA 12.x or 13.x (for GPU support, optional)
 
-### Installing uv
+### Installing `uv`
 
 If you don't have uv installed:
 
@@ -27,51 +27,42 @@ pip install uv
 ### Installation Steps
 
 1. **Clone the repository:**
-
 ```bash
 git clone https://github.com/talmolab/track-mjx.git
 cd track-mjx
 ```
-
 2. **Create and activate a virtual environment:**
-
 ```bash
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
-
 3. **Install the package with your CUDA version:**
-
 **For CUDA 12.x:**
 ```bash
 uv pip install -e ".[cuda12]"
 ```
-
 **For CUDA 13.x:**
 ```bash
 uv pip install -e ".[cuda13]"
 ```
-
 **For CPU-only (no GPU):**
 ```bash
 uv pip install -e .
 ```
-
 **For development (includes testing and documentation tools):**
 ```bash
 uv pip install -e ".[cuda13,dev]"
 ```
-
 4. **Verify the installation:**
-
 ```bash
 python -c "import jax; print(f'JAX version: {jax.__version__}'); print(f'Available devices: {jax.devices()}')"
 ```
+5. **Test the environment:**
+    Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
 
-### Alternative: Using pip
+### Alternative: Using `pip`
 
 If you prefer using pip instead of uv:
-
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
@@ -98,20 +89,20 @@ Expected output:
 
 ## Option 2: conda
 
-1. Clone the repository:
+1. **Clone the repository:**
     ```bash
     git clone https://github.com/talmolab/track-mjx.git && cd track-mjx
     ```
-2. Create a new development environment via `conda`:
+2. **Create a new development environment via `conda`:**
     ```bash
     conda env create -f environment.yml
     ```
     This will create the necessary base environment.
-3. Activate the environment:
+3. **Activate the environment:**
     ```bash
     conda activate track-mjx
     ```
-4. Install the package with desired CUDA version:
+4. **Install the package with desired CUDA version:**
     If your machine supports up to CUDA 13:
         ```bash
         pip install -e ".[cuda12]"
@@ -120,8 +111,8 @@ Expected output:
         ```bash
         pip install -e ".[cuda13]"
     This will install the package with the desired CUDA version.
-3. Test the environment.
-    Run `jupyter lab` and execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
+5. **Test the environment:**
+    Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
 
 
 ## Usage

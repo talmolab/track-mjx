@@ -115,38 +115,26 @@ Expected output:
     Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
 
 
-## Usage
+## Training
 
-### Training
+### Rodent
 
-The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/train.py) and relies on the config in [`track_mjx/config/rodent-mc-intention.yaml`](track_mjx/config/rodent-mc-intention.yaml).
+The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/train.py) and relies on the config in [`track_mjx/config/rodent-full-clips.yaml`](track_mjx/config/rodent-full-clips.yaml).
 
-To download data, you can call:
-
-```bash
-gdown --id <google file id> -O data.h5
-```
+To download data, run `notebooks/download_and_run_rodent.ipynb`
 
 Run training with:
 
 **Using uv:**
 ```bash
-uv run python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
+uv run python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
 ```
 
 **Using conda:**
 ```bash
 conda activate track_mjx
-python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
+python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
 ```
-
-The `data_path` will need to point to a Pickle file with the outputs of [`stac-mjx`](https://github.com/talmolab/stac-mjx) (see [#23](https://github.com/talmolab/track-mjx/issues/23)).
-
-
-### `screen` based terminal
-
-This enables you to use persistent sessions even if you get disconnected from the Docker image. See [this issue](https://github.com/talmolab/track-mjx/issues/8#issuecomment-2469376476) for a workflow description.
-
 
 ## License
 This package is distributed under a BSD 3-Clause License and can be used without

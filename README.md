@@ -2,160 +2,150 @@
 
 This is a package for training control policies through motion capture tracking using deep reinforcement learning.
 
-## Quick start (development)
+## Installation
 
-We recommend using our Docker image for development. This image handles setting up the NVIDIA drivers with CUDA 12.6 support, EGL, miniforge and an SSH server for remote development.
+### Option 1: `uv`
 
-### Docker (local)
+#### Prerequisites
 
-> Make sure you have a NVIDIA GPU enabled Linux environment setup for this repo.
+- Python 3.11 or 3.12
+- [uv](https://docs.astral.sh/uv/) package manager (recommended) or pip
+- CUDA 12.x or 13.x (for GPU support, optional)
 
-<!-- Need to re-test the docker system locally in Linux/Windows -->
+#### Installing `uv`
 
-Pull and run the docker image from the DockerHub registry:
-
-```bash
-docker run --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all -p 8888:22 scottyang17/track-mjx:vscode
-```
-
-The `8888` is the local port that you want to forward to. Choose one that's unoccupied as you'll use this later to connect to the Docker container from VSCode.
-
-[See
-here](https://github.com/talmolab/internal-dockerfiles/tree/3245903ec48b633ae205eeab0583d6413c32530b/remote-dev)
-for more info on our Remote Dev Docker image.
-
-This will soon be defined through the [`Dockerfile`](Dockerfile) in this repo (see [#1](https://github.com/talmolab/track-mjx/issues/1)).
-
-
-### Run:AI (Salk)
-
-1. Create a **new Job (Legacy)** → **Interactive** → set **Project** to `talmo-lab`.
-2. Load the `remote-dev-track-mjx` template, or set this configuration:
-    - **Image:** `scottyang17/track-mjx:vscode`
-    - **Environment Variables:** `NVIDIA_DRIVER_CAPABILITIES` → `all`
-    - **Port:** `External Port (Auto-generate)` → `22`
-    - **Storage:** (see internal docs)
-3. Submit the job. Once it starts running, you'll be able to see an internal IP and port to connect to.
-
-
-### Setup VS Code Remote Dev
-
-First, install the `Remote Development` (with id: ms-vscode-remote.vscode-remote-extensionpack) extension on vscode. Bring up the command palette, search and choose `Remote-SSH: Connect to Host` -> `Configure SSH Hosts` -> `<your ssh config path>`, and put following config:
-
-```
-Host local-testing
-    HostName <ip>
-    Port <port>
-    User root
-```
-
-The `<ip>` will be `localhost` if running on the same machine, or the IP of the remote machine if running on a cluster.
-
-Bring up your command palette, choose `Remote-SSH: Connect to Host` -> `track-mjx-remote-dev`, type in the password `root`, you are now connecting to the image.
-
-
-### Installation
-
-#### Option 1: uv (Recommended)
-
-[`uv`](https://docs.astral.sh/uv/) is a fast Python package manager that handles dependencies and virtual environments. **This is the recommended method for CPU-only development on macOS and other non-Linux platforms**, as well as GPU-enabled Linux systems.
-
-**Tested on:**
-- **Linux**: Ubuntu 24.04 (headless) with CUDA 13.0, EGL rendering (no X11 required)
-- **macOS**: Apple Silicon (M2 Pro) with CPU-only JAX, GLFW rendering
-
-1. Install `uv` if you haven't already:
-    ```bash
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    ```
-
-2. Clone the repository:
-    ```bash
-    git clone https://github.com/talmolab/track-mjx.git && cd track-mjx
-    ```
-
-3. Install all dependencies (creates `.venv` automatically):
-    ```bash
-    uv sync --all-extras
-    ```
-
-4. Run the example notebook (overwrites with outputs):
-    ```bash
-    uv run jupyter nbconvert --execute --to notebook --inplace notebooks/download_and_run_rodent.ipynb
-    ```
-
-5. Verify GPU/CPU detection:
-    ```bash
-    uv run python -c "import jax; print('Devices:', jax.devices())"
-    ```
-    - **Linux**: You should see your CUDA devices (e.g., `[CudaDevice(id=0), CudaDevice(id=1)]`)
-    - **macOS**: You will see `[CpuDevice(id=0)]` (GPU acceleration not supported with JAX 0.6.2)
-
-**Platform-specific notes:**
-- **Linux**: The `pyproject.toml` includes all necessary NVIDIA CUDA libraries for JAX GPU support. No additional system packages are required beyond CUDA drivers.
-- **macOS**: Uses CPU-only JAX as `jax-metal` 0.1.1 is incompatible with JAX 0.6.2. Platform markers ensure CUDA dependencies are not installed on macOS.
-
-**Troubleshooting:**
-
-If you encounter EGL/OpenGL errors when rendering (e.g., `AttributeError: 'NoneType' object has no attribute 'glGetError'`), you may need to install system EGL libraries:
+If you don't have uv installed:
 
 ```bash
-sudo apt update && sudo apt-get install libglapi-mesa libegl-mesa0 libegl1 libopengl0
+# Linux/macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Or using pip
+pip install uv
 ```
 
-After installing, try running your script again with `uv run`.
+#### Installation Steps
 
-#### Option 2: conda (Alternative)
+1. Clone the repository:
+```bash
+git clone https://github.com/talmolab/track-mjx.git
+cd track-mjx
+```
+2. Create and activate a virtual environment:
+```bash
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+3. Install the package with your CUDA version:
+```bash
+# For CUDA 12.x:
+uv pip install -e ".[cuda12]"
+```
+```bash
+# For CUDA 13.x:
+uv pip install -e ".[cuda13]"
+```
+```bash
+# For CPU-only:
+uv pip install -e .
+```
+```bash
+# For development (includes testing and documentation tools):
+uv pip install -e ".[cuda13,dev]"
+```
+4. Verify the installation:
+```bash
+python -c "import jax; print(f'JAX version: {jax.__version__}'); print(f'Available devices: {jax.devices()}')"
+```
+5. Test the environment:
+    Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
+
+#### Alternative: Using `pip`
+
+If you prefer using pip instead of uv:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e ".[cuda13]"  # or cuda12
+```
+
+### Troubleshooting
+
+**CUDA version mismatch:**
+- Check your CUDA version: `nvcc --version` or `nvidia-smi`
+- Ensure you install the matching JAX CUDA version (cuda12 or cuda13)
+
+**Import errors:**
+- Verify the virtual environment is activated
+- Try reinstalling: `uv pip install --force-reinstall -e ".[cuda13]"`
+
+**GPU not detected:**
+- Verify CUDA installation: `nvidia-smi`
+- Check that JAX can see GPUs: `python -c "import jax; print(jax.devices())"`
+
+Expected output:
+- GPU: Should show `cuda` or `gpu` devices
+- CPU: Should show `cpu` device
+
+## Option 2: conda
+
+#### Installation steps
 
 1. Clone the repository:
     ```bash
     git clone https://github.com/talmolab/track-mjx.git && cd track-mjx
     ```
-2. Create a new development environment via `conda`:
+2. Create a new development environment via `conda` (this will create the necessary base environment):
     ```bash
     conda env create -f environment.yml
     ```
-    This will install the necessary dependencies and install the package in editable mode.
-3. Test the environment.
-    Activate the conda environment that was just installed:
+3. Activate the environment:
     ```bash
-    conda activate track_mjx
+    conda activate track-mjx
     ```
-    Then run `jupyter lab` and execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
+4. Install the package with desired CUDA version:
+    If your machine supports up to CUDA 13:
+        ```bash
+        pip install -e ".[cuda12]"
+        ```
+    If your machiine supports up to CUDA 12:
+        ```bash
+        pip install -e ".[cuda13]"
+        ```
+    This will install the package with the desired CUDA version.
+5. Test the environment:
+    Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
 
 
-## Usage
+## Training
 
-### Training
+### Rodent
 
-The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/train.py) and relies on the config in [`track_mjx/config/rodent-mc-intention.yaml`](track_mjx/config/rodent-mc-intention.yaml).
+The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/train.py) and relies on the config in [`track_mjx/config/rodent-full-clips.yaml`](track_mjx/config/rodent-full-clips.yaml).
 
-To download data, you can call:
+#### Download the data
 
+To download data, run `notebooks/download_and_run_rodent.ipynb`
+
+##### OR
+
+Execute the following command in terminal
 ```bash
-gdown --id <google file id> -O data.h5
+uv run python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='talmolab/MIMIC-MJX', repo_type='dataset', filename='data/rodent/rodent_reference_clips.h5', local_dir='.')"
 ```
 
-Run training with:
+#### Run training:
 
 **Using uv:**
 ```bash
-uv run python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
+uv run python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
 ```
 
 **Using conda:**
 ```bash
 conda activate track_mjx
-python -m track_mjx.train data_path="data/RodentReferenceClip.h5"
+python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
 ```
-
-The `data_path` will need to point to a Pickle file with the outputs of [`stac-mjx`](https://github.com/talmolab/stac-mjx) (see [#23](https://github.com/talmolab/track-mjx/issues/23)).
-
-
-### `screen` based terminal
-
-This enables you to use persistent sessions even if you get disconnected from the Docker image. See [this issue](https://github.com/talmolab/track-mjx/issues/8#issuecomment-2469376476) for a workflow description.
-
 
 ## License
 This package is distributed under a BSD 3-Clause License and can be used without

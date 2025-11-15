@@ -8,5 +8,3 @@ dependencies:
   - jupyterlab
   - mesalib
   - pip
-  - pip:
-    - "--editable=."

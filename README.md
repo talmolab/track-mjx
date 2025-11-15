@@ -123,9 +123,18 @@ Expected output:
 
 The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/train.py) and relies on the config in [`track_mjx/config/rodent-full-clips.yaml`](track_mjx/config/rodent-full-clips.yaml).
 
+#### Download the data
+
 To download data, run `notebooks/download_and_run_rodent.ipynb`
 
-Run training with:
+##### OR
+
+Execute the following command in terminal
+```bash
+uv run python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='talmolab/MIMIC-MJX', repo_type='dataset', filename='data/rodent/rodent_reference_clips.h5', local_dir='.')"
+```
+
+#### Run training:
 
 **Using uv:**
 ```bash

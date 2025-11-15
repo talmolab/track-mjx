@@ -89,6 +89,8 @@ Expected output:
 
 ## Option 2: conda
 
+#### Installation steps
+
 1. Clone the repository:
     ```bash
     git clone https://github.com/talmolab/track-mjx.git && cd track-mjx

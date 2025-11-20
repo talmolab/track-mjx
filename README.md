@@ -1,6 +1,6 @@
 # track-mjx
 
-This is a package for training control policies through motion capture tracking using deep reinforcement learning.
+This is a package for training control policies through motion imitation using deep reinforcement learning.
 
 ## Installation
 
@@ -36,21 +36,25 @@ cd track-mjx
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
-3. Install the package with your CUDA version:
+3. Install the package with optional dependencies based on your hardware. CUDA 12, CUDA 13, and CPU-only configurations are supported:
+
+For CUDA 12.x:
 ```bash
-# For CUDA 12.x:
 uv pip install -e ".[cuda12]"
 ```
+
+For CUDA 13.x:
 ```bash
-# For CUDA 13.x:
 uv pip install -e ".[cuda13]"
 ```
+
+For CPU-only:
 ```bash
-# For CPU-only:
 uv pip install -e .
 ```
+
+For development, include the `[dev]` extras in addition to the hardware optional dependencies:
 ```bash
-# For development (includes testing and documentation tools):
 uv pip install -e ".[cuda13,dev]"
 ```
 4. Verify the installation:
@@ -66,7 +70,7 @@ If you prefer using pip instead of uv:
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e ".[cuda13]"  # or cuda12
+pip install -e ".[cuda13]"  # or cuda12/no optional deps
 ```
 
 ### Troubleshooting
@@ -105,14 +109,17 @@ Expected output:
     ```
 4. Install the package with desired CUDA version:
     If your machine supports up to CUDA 13:
-        ```bash
-        pip install -e ".[cuda12]"
-        ```
-    If your machiine supports up to CUDA 12:
-        ```bash
-        pip install -e ".[cuda13]"
-        ```
-    This will install the package with the desired CUDA version.
+    ```bash
+    pip install -e ".[cuda12]"
+    ```
+    If your machine supports up to CUDA 12:
+    ```bash
+    pip install -e ".[cuda13]"
+    ```
+    If your machine only has a CPU:
+    ```bash
+    pip install -e .
+    ```
 5. Test the environment:
     Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
 
@@ -131,7 +138,7 @@ To download data, run `notebooks/download_and_run_rodent.ipynb`
 
 Execute the following command in terminal
 ```bash
-uv run python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='talmolab/MIMIC-MJX', repo_type='dataset', filename='data/rodent/rodent_reference_clips.h5', local_dir='.')"
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='talmolab/MIMIC-MJX', repo_type='dataset', filename='data/rodent/rodent_reference_clips.h5', local_dir='.')"
 ```
 
 #### Run training:
@@ -146,6 +153,24 @@ uv run python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h
 conda activate track_mjx
 python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
 ```
+
+
+## Citation
+
+If you use track-mjx in your research, please cite our paper:
+
+```bibtex
+@article{mimicmjx2024,
+  title={MIMIC-MJX: Neuromechanical Emulation of Animal Behavior},
+  author={Zhang, Charles Y. and Yang, Yuanjia and Sirbu, Aidan and Abe, Elliott T. T. and Warnberg, Emil and Leonardis, Eric J. and Aldarondo, Diego E. and Lee, Adam and Prasad, Aaditya and Foat, Jason and Bian, Kaiwen and Park, Joshua and Bhatt, Rusham and Saunders, Hutton and Nagamori, Akira and Thanawalla, Ayesha R. and Huang, Kee Wui and Plum, Fabian and Beck, Hendrik and Flavell, Steven W. and Labonte, David and Richards, Blake A. and Brunton, Bingni W. and Azim, Eiman and Ölveczky, Bence P. and Pereira, Talmo D.},
+  journal={Journal Name},
+  year={2024},
+  note={Preprint}
+}
+```
+
+
+
 
 ## License
 This package is distributed under a BSD 3-Clause License and can be used without

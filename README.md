@@ -61,7 +61,11 @@ uv pip install -e ".[cuda13,dev]"
 ```bash
 python -c "import jax; print(f'JAX version: {jax.__version__}'); print(f'Available devices: {jax.devices()}')"
 ```
-5. Test the environment:
+5. Register the environment as a Jupyter kernel:
+```bash
+python -m ipykernel install --user --name=track-mjx --display-name="Python (track-mjx)"
+```
+6. Test the environment:
     Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
 
 #### Alternative: Using `pip`

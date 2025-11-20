@@ -132,7 +132,7 @@ The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/trai
 
 #### Download the data
 
-To download data, run `notebooks/download_and_run_rodent.ipynb`
+To download data, run `notebooks/rodent_demo.ipynb`
 
 ##### OR
 
@@ -164,7 +164,7 @@ If you use track-mjx in your research, please cite our paper:
   title={MIMIC-MJX: Neuromechanical Emulation of Animal Behavior},
   author={Zhang, Charles Y. and Yang, Yuanjia and Sirbu, Aidan and Abe, Elliott T. T. and Warnberg, Emil and Leonardis, Eric J. and Aldarondo, Diego E. and Lee, Adam and Prasad, Aaditya and Foat, Jason and Bian, Kaiwen and Park, Joshua and Bhatt, Rusham and Saunders, Hutton and Nagamori, Akira and Thanawalla, Ayesha R. and Huang, Kee Wui and Plum, Fabian and Beck, Hendrik and Flavell, Steven W. and Labonte, David and Richards, Blake A. and Brunton, Bingni W. and Azim, Eiman and Ölveczky, Bence P. and Pereira, Talmo D.},
   journal={Journal Name},
-  year={2024},
+  year={2025},
   note={Preprint}
 }
 ```

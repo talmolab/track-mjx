@@ -91,7 +91,7 @@ Expected output:
 - GPU: Should show `cuda` or `gpu` devices
 - CPU: Should show `cpu` device
 
-## Option 2: conda
+### Option 2: `conda`
 
 #### Installation steps
 

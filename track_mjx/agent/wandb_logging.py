@@ -112,6 +112,9 @@ def rollout_logging_fn(
         with imageio.get_writer(video_path, fps=render_fps) as writer:
             video = env.render(
                 rollout,
+                camera=f"{cfg.render_config.render_camera_name}-ghost",
+                height=480,
+                width=640,
             )
             for frame in video:
                 writer.append_data(frame)

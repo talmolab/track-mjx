@@ -7,6 +7,7 @@ name = "track-mjx"
 authors = [
     {name = "Charles Zhang", email = "charleszhang@fas.harvard.edu"},
     {name = "Scott Yang", email = "scyang@salk.com"},
+    {name = "Aidan Sirbu", email = "aidan.sirbu@mail.mcgill.ca"},
     {name = "Talmo Pereira", email = "talmo@salk.edu"}]
 description=  "Track-MJX: A Python package for fast reinforcement learning-based imitation learning tracking for agents"
 requires-python = ">=3.11,<3.13"
@@ -19,13 +20,6 @@ dependencies = [
     # JAX core (both platforms)
     "jax==0.7.2",
     "jaxlib==0.7.2",
-    # =========================================================================
-    # CUDA Dependencies
-    # If on CUDA 12, uncomment the following line
-    # "jax[cuda12]==0.7.2 ; sys_platform == 'linux'",
-    # If you are on CUDA 13, uncomment the following lines and comment out the above line
-    "jax[cuda13]==0.7.2 ; sys_platform == 'linux'",
-    # =========================================================================
     # Core ML dependencies
     "brax==0.13.0",
     "flax==0.10.2",
@@ -64,6 +58,8 @@ version = {attr = "track_mjx.version.__version__"}
 readme = {file = ["README.md"], content-type="text/markdown"}
 
 [project.optional-dependencies]
+cuda12 = ["jax[cuda12]==0.7.2 ; sys_platform == 'linux'"]
+cuda13 = ["jax[cuda13]==0.7.2 ; sys_platform == 'linux'"]
 dev = [
     "pytest",
     "pytest-cov",

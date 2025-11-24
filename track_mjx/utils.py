@@ -49,24 +49,15 @@ def prepare_config(cfg: DictConfig) -> tuple[DictConfig, DictConfig, DictConfig,
     OmegaConf.update(cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False)
     OmegaConf.set_struct(cfg.env_config, True)
 
-    # Breakup config
-    env_cfg = cfg.env_config
-    render_cfg = cfg.render_config
-    network_cfg = cfg.network_config
-    train_setup = cfg.train_setup
-    train_cfg = cfg.train_setup.train_config
-    logging_cfg = cfg.logging_config
-    walker_cfg = cfg.walker_config
-
     # Create ml_collections env_config
-    env_cfg_dict = OmegaConf.to_container(env_cfg, resolve=True)
+    env_cfg_dict = OmegaConf.to_container(cfg.env_config, resolve=True)
     env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
 
     # Convert config to dict
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    return (cfg, cfg_dict, env_cfg, env_cfg_ml, render_cfg, network_cfg, train_setup, train_cfg, logging_cfg, walker_cfg)
+    return (cfg, cfg_dict, env_cfg_ml)
 
 def update_config(cfg: DictConfig, overrides: dict) -> DictConfig:
     

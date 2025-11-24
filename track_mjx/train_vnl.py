@@ -53,18 +53,7 @@ def main(cfg: DictConfig):
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
 
     # Prepare config
-    (
-    cfg,
-    cfg_dict,
-    env_cfg,
-    env_cfg_ml,
-    render_cfg,
-    network_cfg,
-    train_setup,
-    train_cfg,
-    logging_cfg,
-    walker_cfg,
-    ) = utils.prepare_config(cfg)
+    (cfg,cfg_dict,env_cfg_ml) = utils.prepare_config(cfg)
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
@@ -76,29 +65,29 @@ def main(cfg: DictConfig):
     # Create the reference clips
     logging.info(f"Loading data: {cfg.data_path}")
     reference_clips = ReferenceClips(
-        data_path=env_cfg.reference_data_path,
-        n_frames_per_clip=env_cfg.clip_length,
-        keep_clips_idx=env_cfg.keep_clips_idx,
+        data_path=cfg.env_config.reference_data_path,
+        n_frames_per_clip=cfg.env_config.clip_length,
+        keep_clips_idx=cfg.env_config.keep_clips_idx,
     )
     # Create train/test split
-    key_split, key = jax.random.split(jax.random.PRNGKey(train_cfg.seed))
+    key_split, key = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
     train_clips, test_clips = reference_clips.split(
-        train_ratio=train_setup.train_subset_ratio,
+        train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
     # Create environments
     env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
     test_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=test_clips))
 
-    logging.info(f"Environment config: {env_cfg}")
+    logging.info(f"Environment config: {cfg.env_config}")
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     # env_args = cfg.env_config.env_args
-    steps_per_frame = (1 / env_cfg.mocap_hz) / (env_cfg.ctrl_dt)
+    steps_per_frame = (1 / cfg.env_config.mocap_hz) / (cfg.env_config.ctrl_dt)
     episode_length = (
-        env_cfg.clip_length
-        - env_cfg.start_frame_range[-1]
-        - env_cfg.reference_length
+        cfg.env_config.clip_length
+        - cfg.env_config.start_frame_range[-1]
+        - cfg.env_config.reference_length
     ) * steps_per_frame
     logging.info(f"episode_length {episode_length}")
 
@@ -107,15 +96,15 @@ def main(cfg: DictConfig):
     ppo_networks = mlp_ppo_networks
     network_factory = functools.partial(
         ppo_networks.make_intention_ppo_networks,
-        intention_latent_size=network_cfg.intention_size,
-        encoder_hidden_layer_sizes=tuple(network_cfg.encoder_layer_sizes),
-        decoder_hidden_layer_sizes=tuple(network_cfg.decoder_layer_sizes),
-        value_hidden_layer_sizes=tuple(network_cfg.critic_layer_sizes),
+        intention_latent_size=cfg.network_config.intention_size,
+        encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
     )
 
     # Determine wandb run ID for resuming
     wandb_logging.initialize_wandb_logging(
-        logging_cfg=logging_cfg,
+        logging_cfg=cfg.logging_config,
         cfg=cfg,
         run_id=run_id,
         existing_run_state=existing_run_state,
@@ -140,23 +129,23 @@ def main(cfg: DictConfig):
 
     train_fn = functools.partial(
         ppo.train,
-        **train_cfg,
+        **cfg.train_setup.train_config,
         num_evals=int(
-            train_cfg.num_timesteps / train_setup.eval_every
+            cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
         ),
-        num_resets_per_eval=train_setup.eval_every // train_setup.reset_every,
+        num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         episode_length=episode_length,
-        kl_weight=network_cfg.kl_weight,
+        kl_weight=cfg.network_config.kl_weight,
         network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
-        checkpoint_to_restore=train_setup.checkpoint_to_restore,
+        checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
-        use_kl_schedule=network_cfg.kl_schedule,
+        use_kl_schedule=cfg.network_config.kl_schedule,
         eval_env_test_set=test_env,
         freeze_decoder=(
             False
-            if "freeze_decoder" not in train_setup
-            else train_setup.freeze_decoder
+            if "freeze_decoder" not in cfg.train_setup
+            else cfg.train_setup.freeze_decoder
         ),
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(  # Testing full reset instead of setting to initial state

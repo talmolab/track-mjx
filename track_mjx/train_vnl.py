@@ -33,10 +33,10 @@ from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
 from track_mjx import utils
 
-from vnl_mjx.tasks.rodent import imitation
-from vnl_mjx.tasks.rodent import wrappers as vnl_wrappers
-from vnl_mjx.tasks.rodent import consts as rodent_consts
-from vnl_mjx.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent import imitation
+from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
+from vnl_playground.tasks.rodent import consts as rodent_consts
+from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 from mujoco_playground import wrapper as playground_wrappers
 
 @hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")

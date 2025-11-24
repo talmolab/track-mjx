@@ -48,7 +48,7 @@ dependencies = [
     # Other utilities
     "playground==0.0.5",
     "ipykernel",
-    "vnl-mjx",
+    "vnl-playground",
 ]
 
 dynamic = ["version", "readme"]
@@ -88,7 +88,7 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 line-length = 88
 
 [tool.uv.sources]
-vnl-mjx = { path = "/home/mila/a/aidan.sirbu/vnl-playground", editable = true }
+vnl-playground = { path = "/home/mila/a/aidan.sirbu/vnl-playground", editable = true }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground" }
 
 [pydocstyle]

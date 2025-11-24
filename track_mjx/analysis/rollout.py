@@ -7,8 +7,8 @@ from brax.envs.base import Env
 from typing import Dict, Callable
 from jax import numpy as jnp
 
-from vnl_mjx.tasks.rodent import wrappers as vnl_wrappers
-from vnl_mjx.tasks.rodent import imitation
+from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
+from vnl_playground.tasks.rodent import imitation
 from ml_collections import config_dict
 
 from omegaconf import DictConfig, OmegaConf

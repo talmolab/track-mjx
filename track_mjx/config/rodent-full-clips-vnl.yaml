@@ -1,6 +1,6 @@
 data_path: data/transform_snips.h5 # ./data/transform_coltrane_2021_07_29_1.h5
 
-# VNL Environment Configuration (matches vnl_mjx.tasks.rodent.imitation.default_config())
+# VNL Environment Configuration (matches vnl_playground.tasks.rodent.imitation.default_config())
 env_config:
   # MuJoCo implementation
   mujoco_impl: "jax"

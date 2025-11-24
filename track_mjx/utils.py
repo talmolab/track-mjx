@@ -1,7 +1,7 @@
 from omegaconf import DictConfig, OmegaConf
-from vnl_mjx.tasks.rodent import consts as rodent_consts
-from vnl_mjx.tasks.fruitfly import consts as fruitfly_consts
-from vnl_mjx.tasks.mouse import consts as mouse_consts
+from vnl_playground.tasks.rodent import consts as rodent_consts
+from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
+from vnl_playground.tasks.mouse import consts as mouse_consts
 from ml_collections import config_dict
 import logging
 

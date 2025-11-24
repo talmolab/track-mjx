@@ -19,9 +19,9 @@ from PIL import Image
 from IPython.display import HTML
 
 # TODO: Add other walker consts
-from vnl_mjx.tasks.rodent import consts as rodent_consts
-from vnl_mjx.tasks.fruitfly import consts as fruitfly_consts
-from vnl_mjx.tasks.mouse import consts as mouse_consts
+from vnl_playground.tasks.rodent import consts as rodent_consts
+from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
+from vnl_playground.tasks.mouse import consts as mouse_consts
 
 import numpy as np
 

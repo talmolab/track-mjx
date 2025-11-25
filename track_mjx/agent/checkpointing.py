@@ -176,6 +176,9 @@ def make_ppo_network_from_cfg(cfg):
         normalize = running_statistics.normalize
 
     if cfg.network_config.arch_name == "intention":
+        # Handle backward compatibility for checkpoints without prior_layer_sizes
+        prior_layer_sizes = cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)
+        
         ppo_network = ppo_networks.make_intention_ppo_networks(
             observation_size=cfg.network_config.observation_size,
             reference_obs_size=cfg.network_config.reference_obs_size,
@@ -188,6 +191,7 @@ def make_ppo_network_from_cfg(cfg):
             decoder_hidden_layer_sizes=tuple(
                 cfg.network_config.decoder_layer_sizes
             ),
+            prior_hidden_layer_sizes=tuple(prior_layer_sizes),
             value_hidden_layer_sizes=tuple(
                 cfg.network_config.critic_layer_sizes
             ),

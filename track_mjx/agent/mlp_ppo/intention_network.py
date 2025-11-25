@@ -87,32 +87,82 @@ def reparameterize(rng, mean, logvar):
     return mean + eps * std
 
 
+class Prior(nn.Module):
+    """Prior network that outputs distributions in latent space from proprioceptive observations"""
+
+    layer_sizes: Sequence[int]
+    latents: int  # intention size
+    activation: networks.ActivationFn = nn.silu
+    kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform()
+    bias: bool = True
+
+    @nn.compact
+    def __call__(
+        self, x: jnp.ndarray, get_activation: bool = False
+    ) -> Union[
+        Tuple[jnp.ndarray, jnp.ndarray], Tuple[Tuple[jnp.ndarray, jnp.ndarray], dict]
+    ]:
+        activations = {}
+        # For each layer in the sequence
+        for i, hidden_size in enumerate(self.layer_sizes):
+            x = nn.Dense(
+                hidden_size,
+                name=f"hidden_{i}",
+                kernel_init=self.kernel_init,
+                use_bias=self.bias,
+            )(x)
+            x = self.activation(x)
+            x = nn.LayerNorm()(x)
+            if get_activation:
+                activations[f"layer_{i}"] = x
+
+        mean_x = nn.Dense(self.latents, name="fc2_mean")(x)
+        logvar_x = nn.Dense(self.latents, name="fc2_logvar")(x)
+
+        if get_activation:
+            activations["mean"] = mean_x
+            activations["logvar"] = logvar_x
+            return (mean_x, logvar_x), activations
+        return mean_x, logvar_x
+
+
 class IntentionNetwork(nn.Module):
-    """Full VAE model, encode -> decode with sampled actions"""
+    """Full VAE model with prior, encoder, and decoder"""
 
     encoder_layers: Sequence[int]
     decoder_layers: Sequence[int]
+    prior_layers: Sequence[int]
     reference_obs_size: int
     latents: int = 60
 
     def setup(self):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
+        self.prior = Prior(layer_sizes=self.prior_layers, latents=self.latents)
 
     def __call__(self, obs, key, deterministic: bool = False, get_activation: bool = False):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
+        egocentric_obs = obs[..., self.reference_obs_size :]
 
         if get_activation:
+            # Concatenate proprioceptive observations with trajectory for encoder
+            encoder_input = jnp.concatenate([traj, egocentric_obs], axis=-1)
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
-                traj, get_activation=True
+                encoder_input, get_activation=True
             )
+            
+            # Prior takes only proprioceptive observations
+            (prior_mean, prior_logvar), prior_activations = self.prior(
+                egocentric_obs, get_activation=True
+            )
+            
             # Uses mean in the case of deterministic evaluation
             if deterministic:
                 z = latent_mean
             else:
                 z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            egocentric_obs = obs[..., self.reference_obs_size :]
+            
             concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
             action, decoder_activations = self.decoder(
                 concatenated, get_activation=True
@@ -121,25 +171,37 @@ class IntentionNetwork(nn.Module):
                 action,
                 latent_mean,
                 latent_logvar,
+                prior_mean,
+                prior_logvar,
                 {
                     "encoder": encoder_activations,
                     "decoder": decoder_activations,
+                    "prior": prior_activations,
                     "egocentric_obs": egocentric_obs,
                     "traj_obs": traj,
                     "intention": z,
+                    "prior_mean": prior_mean,
+                    "prior_logvar": prior_logvar,
                 },
             )
         else:
-            latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
+            # Concatenate proprioceptive observations with trajectory for encoder
+            encoder_input = jnp.concatenate([traj, egocentric_obs], axis=-1)
+            latent_mean, latent_logvar = self.encoder(encoder_input, get_activation=False)
+            
+            # Prior takes only proprioceptive observations
+            prior_mean, prior_logvar = self.prior(egocentric_obs, get_activation=False)
+            
             # Uses mean in the case of deterministic evaluation
             if deterministic:
                 z = latent_mean
             else:
                 z = reparameterize(encoder_rng, latent_mean, latent_logvar)
+            
             action, _ = self.decoder(
-                jnp.concatenate([z, obs[..., self.reference_obs_size :]], axis=-1)
+                jnp.concatenate([z, egocentric_obs], axis=-1)
             )
-            return action, latent_mean, latent_logvar
+            return action, latent_mean, latent_logvar, prior_mean, prior_logvar
 
 
 def make_intention_policy(
@@ -150,9 +212,10 @@ def make_intention_policy(
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    prior_hidden_layer_sizes: Sequence[int] = (1024, 1024),
 ) -> networks.FeedForwardNetwork:
     """
-    Create a policy network with intention module.
+    Create a policy network with intention module including prior, encoder, and decoder.
 
     Args:
         action_param_size (int): the parameter size of the action space, usually double of the action size to model both the mean and variance of the action distribution
@@ -162,6 +225,7 @@ def make_intention_policy(
         preprocess_observations_fn (types.PreprocessObservationFn, optional): function to preprocess observations. Defaults to types.identity_observation_preprocessor.
         encoder_hidden_layer_sizes (Sequence[int], optional): sizes of encoder hidden layers. Defaults to (1024, 1024).
         decoder_hidden_layer_sizes (Sequence[int], optional): sizes of decoder hidden layers. Defaults to (1024, 1024).
+        prior_hidden_layer_sizes (Sequence[int], optional): sizes of prior hidden layers. Defaults to (1024, 1024).
 
     Returns:
         networks.FeedForwardNetwork: the created policy network
@@ -171,6 +235,7 @@ def make_intention_policy(
         encoder_layers=list(encoder_hidden_layer_sizes),
         decoder_layers=list(decoder_hidden_layer_sizes)
         + [action_param_size],  # add action size to the last layer
+        prior_layers=list(prior_hidden_layer_sizes),
         reference_obs_size=reference_obs_size,
         latents=latent_size,
     )

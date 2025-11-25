@@ -144,7 +144,7 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits, latent_mean, latent_logvar = policy_apply(
+    policy_logits, latent_mean, latent_logvar, _, _ = policy_apply(
         normalizer_params, params.policy, data.observation, policy_key
     )
 

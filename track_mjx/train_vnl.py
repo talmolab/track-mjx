@@ -99,6 +99,7 @@ def main(cfg: DictConfig):
         intention_latent_size=cfg.network_config.intention_size,
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+        prior_hidden_layer_sizes=tuple(cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)),
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
     )
 

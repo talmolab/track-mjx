@@ -17,13 +17,17 @@
 import jax
 from mujoco import mjx
 
-FLOOR_GEOM_ID = 0
-TORSO_BODY_ID = 1
+FLOOR_GEOM_ID = 1
+TORSO_BODY_ID = 3
 
 
 def domain_randomize(model: mjx.Model, rng: jax.Array):
   @jax.vmap
   def rand_dynamics(rng):
+
+    # Get the number of actuated joints
+    n_actuated = model.nv - 6  # Total DOFs minus free joints
+
     # Floor friction: =U(0.4, 1.0).
     rng, key = jax.random.split(rng)
     geom_friction = model.geom_friction.at[FLOOR_GEOM_ID, 0].set(
@@ -33,14 +37,14 @@ def domain_randomize(model: mjx.Model, rng: jax.Array):
     # Scale static friction: *U(0.9, 1.1).
     rng, key = jax.random.split(rng)
     frictionloss = model.dof_frictionloss[6:] * jax.random.uniform(
-        key, shape=(12,), minval=0.9, maxval=1.1
+        key, shape=(n_actuated,), minval=0.9, maxval=1.1
     )
     dof_frictionloss = model.dof_frictionloss.at[6:].set(frictionloss)
 
     # Scale armature: *U(1.0, 1.05).
     rng, key = jax.random.split(rng)
     armature = model.dof_armature[6:] * jax.random.uniform(
-        key, shape=(12,), minval=1.0, maxval=1.05
+        key, shape=(n_actuated,), minval=1.0, maxval=1.05
     )
     dof_armature = model.dof_armature.at[6:].set(armature)
 
@@ -58,9 +62,9 @@ def domain_randomize(model: mjx.Model, rng: jax.Array):
     )
     body_mass = model.body_mass.at[:].set(model.body_mass * dmass)
 
-    # Add mass to torso: +U(-1.0, 1.0).
+    # Add mass to torso: +U(-0.02, 0.02).
     rng, key = jax.random.split(rng)
-    dmass = jax.random.uniform(key, minval=-1.0, maxval=1.0)
+    dmass = jax.random.uniform(key, minval=-0.02, maxval=0.02)
     body_mass = body_mass.at[TORSO_BODY_ID].set(
         body_mass[TORSO_BODY_ID] + dmass
     )
@@ -70,7 +74,7 @@ def domain_randomize(model: mjx.Model, rng: jax.Array):
     qpos0 = model.qpos0
     qpos0 = qpos0.at[7:].set(
         qpos0[7:]
-        + jax.random.uniform(key, shape=(12,), minval=-0.05, maxval=0.05)
+        + jax.random.uniform(key, shape=(n_actuated,), minval=-0.05, maxval=0.05)
     )
 
     return (

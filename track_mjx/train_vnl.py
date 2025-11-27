@@ -32,6 +32,7 @@ import logging
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
 from track_mjx import utils
+from track_mjx.agent.domain_randomization import domain_randomize
 
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
@@ -151,6 +152,7 @@ def main(cfg: DictConfig):
         wrap_for_training=functools.partial(  # Testing full reset instead of setting to initial state
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
+        randomization_fn=domain_randomize,
     )
 
     # Set the render env start frame to always be 0

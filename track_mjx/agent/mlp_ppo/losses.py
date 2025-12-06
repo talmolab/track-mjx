@@ -145,7 +145,7 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits, latent_mean, latent_logvar, prior_mean, prior_logvar = policy_apply(
+    policy_logits, latent_mean, latent_logvar, priornetwork_mean, priornetwork_logvar = policy_apply(
         normalizer_params, params.policy, data.observation, policy_key
     )
 
@@ -239,9 +239,9 @@ def compute_ppo_loss(
         kl_latent_loss_unweighted = kl_0
         kl_latent_loss = current_kl_weight * kl_latent_loss_unweighted
 
-    var_ratio = jnp.exp(latent_logvar - prior_logvar)  # σ_q^2 / σ_p^2
-    mean_diff_sq = jnp.square(latent_mean - prior_mean) / jnp.exp(prior_logvar)  # (μ_q - μ_p)^2 / σ_p^2
-    log_var_diff = prior_logvar - latent_logvar  # log(σ_p^2) - log(σ_q^2)
+    var_ratio = jnp.exp(latent_logvar - priornetwork_logvar)  # σ_q^2 / σ_p^2
+    mean_diff_sq = jnp.square(latent_mean - priornetwork_mean) / jnp.exp(priornetwork_logvar)  # (μ_q - μ_p)^2 / σ_p^2
+    log_var_diff = priornetwork_logvar - latent_logvar  # log(σ_p^2) - log(σ_q^2)
     
     encoder_prior_kl = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_diff)
     encoder_prior_kl_loss = current_prior_kl_weight * encoder_prior_kl

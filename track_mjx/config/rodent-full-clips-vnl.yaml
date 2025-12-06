@@ -85,6 +85,7 @@ network_config:
   intention_size: 60
   kl_schedule: true
   kl_weight: 1e-3
+  prior_kl_weight: 1e-2
 
 train_setup:
   agent_name: rodent

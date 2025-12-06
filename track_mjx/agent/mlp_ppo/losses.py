@@ -109,6 +109,7 @@ def compute_ppo_loss(
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
     kl_weight: float = 1e-3,
+    prior_kl_weight: float = 1e-3,
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
@@ -144,7 +145,7 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits, latent_mean, latent_logvar, _, _ = policy_apply(
+    policy_logits, latent_mean, latent_logvar, prior_mean, prior_logvar = policy_apply(
         normalizer_params, params.policy, data.observation, policy_key
     )
 
@@ -194,8 +195,12 @@ def compute_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL Divergence for latent layer
+    current_kl_weight = kl_weight
+    current_prior_kl_weight = prior_kl_weight
     if kl_schedule is not None:
-        kl_weight = kl_schedule(step)
+        scheduled_weight = kl_schedule(step)
+        current_kl_weight = scheduled_weight
+        current_prior_kl_weight = (prior_kl_weight / kl_weight) * scheduled_weight
 
     # Use autoregressive Gaussian prior: p(z_t | z_t-1) = N(0.95 * z_t-1, (1-0.95^2) * I)
     alpha = 0.95
@@ -227,21 +232,32 @@ def compute_ppo_loss(
 
         # Combine KL losses (weighted by sequence length)
         total_timesteps = latent_mean.shape[0]
-        kl_latent_loss = kl_weight * (
-            (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
-        )
+        kl_latent_loss_unweighted = (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
+        kl_latent_loss = current_kl_weight * kl_latent_loss_unweighted
     else:
         # Only one timestep, use standard Gaussian prior
-        kl_latent_loss = kl_weight * kl_0
+        kl_latent_loss_unweighted = kl_0
+        kl_latent_loss = current_kl_weight * kl_latent_loss_unweighted
 
-    total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss
+    var_ratio = jnp.exp(latent_logvar - prior_logvar)  # σ_q^2 / σ_p^2
+    mean_diff_sq = jnp.square(latent_mean - prior_mean) / jnp.exp(prior_logvar)  # (μ_q - μ_p)^2 / σ_p^2
+    log_var_diff = prior_logvar - latent_logvar  # log(σ_p^2) - log(σ_q^2)
+    
+    encoder_prior_kl = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_diff)
+    encoder_prior_kl_loss = current_prior_kl_weight * encoder_prior_kl
+    
+    # Update total loss
+    total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss + encoder_prior_kl_loss  # NEW
+
     return total_loss, {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
-        "kl_latent_loss": kl_latent_loss,
         "entropy_loss": entropy_loss,
-        "kl_weight": kl_weight,
+        "encoder_kl_loss": kl_latent_loss_unweighted,
+        "encoder_prior_kl_loss": encoder_prior_kl,
+        "encoder_kl_weight": current_kl_weight,
+        "encoder_prior_kl_weight": current_prior_kl_weight,
     }
 
 

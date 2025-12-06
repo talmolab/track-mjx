@@ -670,7 +670,7 @@ def train(
             start_it = ckpt_mgr.latest_step()
             pass
 
-    print(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
+    logging.info(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
 
     # Run initial eval
     metrics = {}

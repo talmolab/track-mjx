@@ -32,7 +32,7 @@ import logging
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
 from track_mjx import utils
-from track_mjx.agent.domain_randomization import domain_randomize
+from track_mjx.agent.domain_randomization import domain_randomization_maker
 
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
@@ -152,7 +152,15 @@ def main(cfg: DictConfig):
         wrap_for_training=functools.partial(  # Testing full reset instead of setting to initial state
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
-        randomization_fn=domain_randomize,
+        randomization_fn=domain_randomization_maker(
+            floor_friction=cfg.env_config.domain_randomization.floor_friction,
+            static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
+            armature_scale=cfg.env_config.domain_randomization.armature_scale,
+            com_jitter=cfg.env_config.domain_randomization.com_jitter,
+            link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
+            torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
+            qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
+        ),
     )
 
     # Set the render env start frame to always be 0

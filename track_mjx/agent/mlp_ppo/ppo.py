@@ -634,7 +634,7 @@ def train(
         eval_env,
         episode_length=episode_length,
         action_repeat=action_repeat,
-        randomization_fn=v_randomization_fn,
+        randomization_fn=None,
     )
 
     evaluator = acting.Evaluator(
@@ -653,7 +653,7 @@ def train(
             eval_env_test_set,
             episode_length=episode_length,
             action_repeat=action_repeat,
-            randomization_fn=v_randomization_fn,
+            randomization_fn=None,
         )
         evaluator_test_set = acting.Evaluator(
             eval_env_test_set,
@@ -672,7 +672,7 @@ def train(
             start_it = ckpt_mgr.latest_step()
             pass
 
-    print(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
+    logging.info(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
 
     # Run initial eval
     metrics = {}

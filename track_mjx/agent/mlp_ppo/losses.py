@@ -108,14 +108,15 @@ def compute_ppo_loss(
     step: int,
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
-    kl_weight: float = 1e-3,
+    encoder_kl_weight: float = 1e-3,
     prior_kl_weight: float = 1e-3,
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
-    kl_schedule: Callable | None = None,
+    kl_schedule_encoder: Callable | None = None,
+    kl_schedule_prior: Callable | None = None,
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Computes PPO loss.
 
@@ -195,12 +196,14 @@ def compute_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL Divergence for latent layer
-    current_kl_weight = kl_weight
+    current_encoder_kl_weight = encoder_kl_weight
     current_prior_kl_weight = prior_kl_weight
-    if kl_schedule is not None:
-        scheduled_weight = kl_schedule(step)
-        current_kl_weight = scheduled_weight
-        current_prior_kl_weight = (prior_kl_weight / kl_weight) * scheduled_weight
+    if kl_schedule_encoder is not None:
+        scheduled_weight = kl_schedule_encoder(step)
+        current_encoder_kl_weight = scheduled_weight
+    if kl_schedule_prior is not None:
+        scheduled_weight = kl_schedule_prior(step)
+        current_prior_kl_weight = scheduled_weight
 
     # Use autoregressive Gaussian prior: p(z_t | z_t-1) = N(0.95 * z_t-1, (1-0.95^2) * I)
     alpha = 0.95
@@ -232,72 +235,93 @@ def compute_ppo_loss(
 
         # Combine KL losses (weighted by sequence length)
         total_timesteps = latent_mean.shape[0]
-        kl_latent_loss_unweighted = (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
-        kl_latent_loss = current_kl_weight * kl_latent_loss_unweighted
+        encoder_kl_loss_unweighted = (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
+        encoder_kl_loss = current_encoder_kl_weight * encoder_kl_loss_unweighted
     else:
         # Only one timestep, use standard Gaussian prior
-        kl_latent_loss_unweighted = kl_0
-        kl_latent_loss = current_kl_weight * kl_latent_loss_unweighted
+        encoder_kl_loss_unweighted = kl_0
+        encoder_kl_loss = current_encoder_kl_weight * encoder_kl_loss_unweighted
 
     var_ratio = jnp.exp(latent_logvar - priornetwork_logvar)  # σ_q^2 / σ_p^2
     mean_diff_sq = jnp.square(latent_mean - priornetwork_mean) / jnp.exp(priornetwork_logvar)  # (μ_q - μ_p)^2 / σ_p^2
     log_var_diff = priornetwork_logvar - latent_logvar  # log(σ_p^2) - log(σ_q^2)
     
-    encoder_prior_kl = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_diff)
-    encoder_prior_kl_loss = current_prior_kl_weight * encoder_prior_kl
-    
+    prior_kl_loss_unweighted = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_diff)
+    prior_kl_loss = current_prior_kl_weight * prior_kl_loss_unweighted
+
     # Update total loss
-    total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss + encoder_prior_kl_loss  # NEW
+    total_loss = policy_loss + v_loss + entropy_loss + encoder_kl_loss + prior_kl_loss  # NEW
 
     return total_loss, {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
         "entropy_loss": entropy_loss,
-        "encoder_kl_loss": kl_latent_loss_unweighted,
-        "encoder_prior_kl_loss": encoder_prior_kl,
-        "encoder_kl_weight": current_kl_weight,
+        "encoder_kl_loss": encoder_kl_loss_unweighted,
+        "encoder_prior_kl_loss": prior_kl_loss_unweighted,
+        "encoder_kl_weight": current_encoder_kl_weight,
         "encoder_prior_kl_weight": current_prior_kl_weight,
     }
 
 
 def create_ramp_schedule(
-    max_value: float = 0.1,
-    min_value: float = 0.0001,
+    start_value: float = 0.0001,
+    end_value: float = 0.1,
     ramp_steps: int = 1000,
-    warmup_steps: int = 0,
+    delay_steps: int = 0,
     schedule: str = "linear",
     period: int = 45,
 ) -> optax.Schedule:
     """
     Creates a schedule that can be either:
-    - A linear ramp from min_value to max_value
-    - A cyclic cosine schedule oscillating between min_value and max_value with given period
-    - A cyclic sine schedule oscillating between min_value and max_value with given period
+    - A linear ramp from start_value to end_value
+    - A cyclic cosine schedule oscillating between start_value and end_value with given period
+    - A cyclic sine schedule oscillating between start_value and end_value with given period
+    
+    Args:
+        start_value: The starting value of the schedule.
+        end_value: The ending value of the schedule. If end_value > start_value, ramps up.
+            If end_value < start_value, ramps down (anneals).
+        ramp_steps: Number of steps over which to ramp (for linear schedule).
+        delay_steps: Number of steps to wait before ramping begins. During this period,
+            the schedule returns the start_value.
+        schedule: Type of schedule - "linear", "cosine", or "sine".
+        period: Period for cyclic schedules (cosine/sine).
     """
 
     def schedule_fn(step):
         step = jnp.asarray(step, dtype=jnp.float32)
 
         if schedule == "linear":
-            progress = jnp.clip((step - warmup_steps) / ramp_steps, min_value, 1)
-            is_warmup = step < warmup_steps
-            return jnp.where(is_warmup, min_value, progress * max_value)
+            # Calculate progress after delay
+            effective_step = step - delay_steps
+            progress = jnp.clip(effective_step / ramp_steps, 0.0, 1.0)
+            is_delayed = step < delay_steps
+            ramped_value = start_value + progress * (end_value - start_value)
+            return jnp.where(is_delayed, start_value, ramped_value)
         elif schedule == "cosine":  # cosine cyclic
+            # Apply delay to cyclic schedules as well
+            effective_step = jnp.maximum(step - delay_steps, 0.0)
+            is_delayed = step < delay_steps
             # Convert step to angle in [0, 2π] based on period
-            angle = (2 * jnp.pi * step) / period
-            # Scale and shift to oscillate between min_value and max_value
-            amplitude = (max_value - min_value) / 2
-            midpoint = (max_value + min_value) / 2
-            return midpoint + min_value + amplitude * jnp.cos(angle)
+            angle = (2 * jnp.pi * effective_step) / period
+            # Scale and shift to oscillate between start_value and end_value
+            amplitude = (end_value - start_value) / 2
+            midpoint = (end_value + start_value) / 2
+            cyclic_value = midpoint + amplitude * jnp.cos(angle)
+            return jnp.where(is_delayed, start_value, cyclic_value)
         elif schedule == "sine":
+            # Apply delay to cyclic schedules as well
+            effective_step = jnp.maximum(step - delay_steps, 0.0)
+            is_delayed = step < delay_steps
             angle = (
-                2 * jnp.pi * step
+                2 * jnp.pi * effective_step
             ) / period - jnp.pi / 2  # Subtract π/2 to start at 0
-            # Scale and shift to oscillate between min_value and max_value
-            amplitude = (max_value - min_value) / 2
-            midpoint = (max_value + min_value) / 2
-            return midpoint + min_value + amplitude * jnp.sin(angle)
+            # Scale and shift to oscillate between start_value and end_value
+            amplitude = (end_value - start_value) / 2
+            midpoint = (end_value + start_value) / 2
+            cyclic_value = midpoint + amplitude * jnp.sin(angle)
+            return jnp.where(is_delayed, start_value, cyclic_value)
         else:
             raise ValueError(
                 f"schedule must be either 'linear' 'cosine', or 'sine', not {schedule}"

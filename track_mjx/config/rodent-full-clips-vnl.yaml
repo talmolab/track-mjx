@@ -93,9 +93,18 @@ network_config:
   prior_layer_sizes: [512,256,256]
   critic_layer_sizes: [512,512,256,256]
   intention_size: 60
-  kl_schedule: true
-  kl_weight: 1e-3
+  encoder_kl_weight: 1e-3
   prior_kl_weight: 1e-2
+  kl_schedule: true
+  kl_scheduler:
+    encoder_kl_start_weight: 0
+    encoder_kl_end_weight: 1e-3
+    encoder_kl_ramp_frac: 0.25
+    encoder_kl_delay_frac: 0
+    prior_kl_start_weight: 1e-2
+    prior_kl_end_weight: 1e-3
+    prior_kl_ramp_frac: 0.25
+    prior_kl_delay_frac: 0.25
 
 train_setup:
   agent_name: rodent

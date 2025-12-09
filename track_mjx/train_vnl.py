@@ -137,13 +137,14 @@ def main(cfg: DictConfig):
         ),
         num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         episode_length=episode_length,
-        kl_weight=cfg.network_config.kl_weight,
+        encoder_kl_weight=cfg.network_config.encoder_kl_weight,
         prior_kl_weight=cfg.network_config.prior_kl_weight,
         network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
         use_kl_schedule=cfg.network_config.kl_schedule,
+        kl_scheduler_params=cfg.network_config.kl_scheduler,
         eval_env_test_set=test_env,
         freeze_decoder=(
             False

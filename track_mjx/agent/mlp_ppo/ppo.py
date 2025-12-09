@@ -140,7 +140,7 @@ def train(
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,
-    kl_weight: float = 1e-3,
+    encoder_kl_weight: float = 1e-3,
     prior_kl_weight: float = 1e-2,
     discounting: float = 0.9,
     seed: int = 0,
@@ -166,7 +166,7 @@ def train(
     ] = None,
     get_activation: bool = True,
     use_kl_schedule: bool = True,
-    kl_ramp_up_frac: float = 0.25,
+    kl_scheduler_params: Optional[dict] = None,
     freeze_decoder: bool = False,
     checkpoint_callback: Optional[Callable[[int], None]] = None,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
@@ -516,11 +516,21 @@ def train(
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
-    kl_schedule = None
+    kl_schedule_function_encoder = None
+    kl_schedule_function_prior = None
     if use_kl_schedule:
-        kl_schedule = losses.create_ramp_schedule(
-            max_value=kl_weight,
-            ramp_steps=int(num_evals * kl_ramp_up_frac),
+        kl_schedule_function_encoder = losses.create_ramp_schedule(
+            start_value=kl_scheduler_params.encoder_kl_start_weight,
+            end_value=kl_scheduler_params.encoder_kl_end_weight,
+            ramp_steps=int(num_evals * kl_scheduler_params.encoder_kl_ramp_frac),
+            delay_steps=int(num_evals * kl_scheduler_params.encoder_kl_delay_frac),
+            schedule="linear",
+        )
+        kl_schedule_function_prior = losses.create_ramp_schedule(
+            start_value=kl_scheduler_params.prior_kl_start_weight,
+            end_value=kl_scheduler_params.prior_kl_end_weight,
+            ramp_steps=int(num_evals * kl_scheduler_params.prior_kl_ramp_frac),
+            delay_steps=int(num_evals * kl_scheduler_params.prior_kl_delay_frac),
             schedule="linear",
         )
 
@@ -528,14 +538,15 @@ def train(
         losses.compute_ppo_loss,
         ppo_network=ppo_network,
         entropy_cost=entropy_cost,
-        kl_weight=kl_weight,
+        encoder_kl_weight=encoder_kl_weight,
         prior_kl_weight=prior_kl_weight,
         discounting=discounting,
         reward_scaling=reward_scaling,
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
-        kl_schedule=kl_schedule,
+        kl_schedule_encoder=kl_schedule_function_encoder,
+        kl_schedule_prior=kl_schedule_function_prior,
     )
 
     init_params = losses.PPONetworkParams(

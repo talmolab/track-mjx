@@ -205,42 +205,20 @@ def compute_ppo_loss(
         scheduled_weight = kl_schedule_prior(step)
         current_prior_kl_weight = scheduled_weight
 
-    # Use autoregressive Gaussian prior: p(z_t | z_t-1) = N(0.95 * z_t-1, (1-0.95^2) * I)
-    alpha = 0.95
-    prior_variance = 1 - alpha**2  # = 0.0975
-
-    # For the first timestep, use standard Gaussian prior
-    # KL(q(z_0)||N(0,I))
-    kl_0 = -0.5 * jnp.mean(
-        1 + latent_logvar[0] - jnp.square(latent_mean[0]) - jnp.exp(latent_logvar[0])
-    )
-
-    # For subsequent timesteps, use autoregressive prior
-    # KL(q(z_t)||N(alpha * z_{t-1}, prior_variance * I))
+    # Temporal smoothness loss: MSE between consecutive latent means
+    # Encourages smooth transitions in the latent space
     if latent_mean.shape[0] > 1:  # If we have more than one timestep
-        # Get z_{t-1} and z_t
+        # Get consecutive latent means
         z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
-        mu_curr = latent_mean[1:]  # mu_1, ..., mu_{T-1}
-        logvar_curr = latent_logvar[1:]  # logvar_1, ..., logvar_{T-1}
+        z_curr = latent_mean[1:]   # z_1, ..., z_{T-1}
 
-        # Prior mean: alpha * z_{t-1}
-        prior_mean = alpha * z_prev
-
-        # KL divergence components
-        var_ratio = jnp.exp(logvar_curr) / prior_variance
-        mean_diff_sq = jnp.square(prior_mean - mu_curr) / prior_variance
-        log_var_ratio = jnp.log(prior_variance) - logvar_curr
-
-        kl_t = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_ratio)
-
-        # Combine KL losses (weighted by sequence length)
-        total_timesteps = latent_mean.shape[0]
-        encoder_kl_loss_unweighted = (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
+        # MSE between consecutive latent means
+        encoder_kl_loss_unweighted = jnp.mean(jnp.square(z_curr - z_prev))
         encoder_kl_loss = current_encoder_kl_weight * encoder_kl_loss_unweighted
     else:
-        # Only one timestep, use standard Gaussian prior
-        encoder_kl_loss_unweighted = kl_0
-        encoder_kl_loss = current_encoder_kl_weight * encoder_kl_loss_unweighted
+        # Only one timestep, no temporal smoothness loss
+        encoder_kl_loss_unweighted = jnp.array(0.0)
+        encoder_kl_loss = jnp.array(0.0)
 
     var_ratio = jnp.exp(latent_logvar - priornetwork_logvar)  # σ_q^2 / σ_p^2
     mean_diff_sq = jnp.square(latent_mean - priornetwork_mean) / jnp.exp(priornetwork_logvar)  # (μ_q - μ_p)^2 / σ_p^2

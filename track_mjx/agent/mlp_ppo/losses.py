@@ -245,8 +245,9 @@ def compute_ppo_loss(
 def create_ramp_schedule(
     start_value: float = 0.0001,
     end_value: float = 0.1,
-    ramp_steps: int = 1000,
-    delay_steps: int = 0,
+    total_steps: int = 100,
+    start_frac: float = 0.0,
+    end_frac: float = 1.0,
     schedule: str = "linear",
     period: int = 45,
 ) -> optax.Schedule:
@@ -260,12 +261,17 @@ def create_ramp_schedule(
         start_value: The starting value of the schedule.
         end_value: The ending value of the schedule. If end_value > start_value, ramps up.
             If end_value < start_value, ramps down (anneals).
-        ramp_steps: Number of steps over which to ramp (for linear schedule).
-        delay_steps: Number of steps to wait before ramping begins. During this period,
-            the schedule returns the start_value.
+        total_steps: The total number of evaluation steps (num_evals).
+        start_frac: The fraction of total_steps at which ramping should begin.
+            During the delay period (before start_frac * total_steps), returns start_value.
+        end_frac: The fraction of total_steps by which ramping should complete.
+            After end_frac * total_steps, returns end_value (for linear) or continues cycling.
         schedule: Type of schedule - "linear", "cosine", or "sine".
         period: Period for cyclic schedules (cosine/sine).
     """
+    delay_steps = int(start_frac * total_steps)
+    ramp_steps = int((end_frac - start_frac) * total_steps)
+    ramp_steps = max(ramp_steps, 1)  # Avoid division by zero
 
     def schedule_fn(step):
         step = jnp.asarray(step, dtype=jnp.float32)

@@ -99,12 +99,12 @@ network_config:
   kl_scheduler:
     encoder_kl_start_weight: 0
     encoder_kl_end_weight: 1e-3
-    encoder_kl_ramp_frac: 0.25
-    encoder_kl_delay_frac: 0
+    encoder_kl_start_ramp: 0
+    encoder_kl_end_ramp: 0.25
     prior_kl_start_weight: 1e-2
     prior_kl_end_weight: 1e-3
-    prior_kl_ramp_frac: 0.25
-    prior_kl_delay_frac: 0.25
+    prior_kl_start_ramp: 0.25
+    prior_kl_end_ramp: 0.25
 
 train_setup:
   agent_name: rodent

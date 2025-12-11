@@ -61,8 +61,8 @@ class MouseArm(BaseReacher):
             mujoco.MjSpec: mujoco spec that contains the model
         """
         path = Path(__file__).parent / _XML_PATH
-        xml_str = path.read_text()
-        spec = mujoco.MjSpec.from_string(xml_str)
+        # Load from file path instead of string to preserve working directory for assets
+        spec = mujoco.MjSpec.from_file(str(path))
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(spec, "actuator"):

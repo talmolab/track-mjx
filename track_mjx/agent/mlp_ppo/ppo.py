@@ -523,16 +523,16 @@ def train(
             start_value=kl_scheduler_params.encoder_kl_start_weight,
             end_value=kl_scheduler_params.encoder_kl_end_weight,
             total_steps=num_evals,
-            start_frac=kl_scheduler_params.encoder_kl_start_frac,
-            end_frac=kl_scheduler_params.encoder_kl_end_frac,
+            start_frac=kl_scheduler_params.encoder_kl_start_ramp,
+            end_frac=kl_scheduler_params.encoder_kl_end_ramp,
             schedule="linear",
         )
         kl_schedule_function_prior = losses.create_ramp_schedule(
             start_value=kl_scheduler_params.prior_kl_start_weight,
             end_value=kl_scheduler_params.prior_kl_end_weight,
             total_steps=num_evals,
-            start_frac=kl_scheduler_params.prior_kl_start_frac,
-            end_frac=kl_scheduler_params.prior_kl_end_frac,
+            start_frac=kl_scheduler_params.prior_kl_start_ramp,
+            end_frac=kl_scheduler_params.prior_kl_end_ramp,
             schedule="linear",
         )
 

@@ -83,7 +83,7 @@ def create_prior_policy(
     )
     
     def policy_fn(
-        proprioceptive_obs: jax.Array,
+        obs: jax.Array,
         rng_key: jax.Array,
     ) -> Tuple[jax.Array, Dict[str, Any]]:
         """
@@ -98,6 +98,9 @@ def create_prior_policy(
         """
         key_prior, key_sample, key_action = random.split(rng_key, 3)
         
+        # Get proprioceptive observations
+        proprioceptive_obs = obs[..., -proprioceptive_obs_size:]
+
         # Normalize observations
         normalized_obs = preprocess_observations_fn(proprioceptive_obs, normalizer_params)
         

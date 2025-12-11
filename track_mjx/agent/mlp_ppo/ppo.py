@@ -726,6 +726,17 @@ def train(
         policy_param = _unpmap(
             (training_state.normalizer_params, training_state.params.policy)
         )
+
+        # Run prior rollout evaluation during initial eval
+        if prior_rollout_evaluator is not None:
+            prior_metrics = prior_rollout_evaluator.run_evaluation(
+                policy_params=policy_param,
+                eval_step=0,
+            )
+            if prior_metrics is not None:
+                metrics.update(prior_metrics)
+                logging.info(f"Initial prior rollout metrics: {prior_metrics}")
+
         metrics = evaluator.run_evaluation(
             policy_param,
             training_metrics={},

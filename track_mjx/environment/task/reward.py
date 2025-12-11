@@ -172,7 +172,7 @@ def compute_bodypos_reward(
     reference_clip_bodypos: jp.ndarray,
     weight: float,
     bodypos_reward_exp_scale: float,
-) -> jp.ndarray:
+) -> tuple[jp.ndarray, jp.ndarray]:
     """Body position-based reward.
 
     Args:
@@ -182,13 +182,13 @@ def compute_bodypos_reward(
         bodypos_reward_exp_scale: Scaling factor for body position rewards.
 
     Returns:
-        jp.ndarray: Weighted body position reward.
+        Tuple[jp.ndarray, jp.ndarray]: Weighted body position reward and body position distance.
     """
+    bodypos_distance = jp.sum((bodypos_array - reference_clip_bodypos).flatten() ** 2)
     weighted_bodypos_reward = weight * jp.exp(
-        -bodypos_reward_exp_scale
-        * jp.sum((bodypos_array - reference_clip_bodypos).flatten() ** 2)
+        -bodypos_reward_exp_scale * bodypos_distance
     )
-    return weighted_bodypos_reward
+    return weighted_bodypos_reward, bodypos_distance
 
 
 def compute_endeff_reward(
@@ -494,8 +494,12 @@ class RewardConfigReach:
     energy_cost_weight: float
     joint_reward_weight: float
     endeff_reward_weight: float
+    bodypos_reward_weight: float
+    quat_reward_weight: float
     joint_reward_exp_scale: float
     endeff_reward_exp_scale: float
+    bodypos_reward_exp_scale: float
+    quat_reward_exp_scale: float
     joint_penalty_threshold: float  # Threshold for joint distance penalty
     joint_penalty_weight: float  # Threshold for joint distance penalty
 
@@ -528,7 +532,7 @@ def compute_reaching_rewards(
     info: dict[str, jp.ndarray],
     reward_config: RewardConfigReach,
 ) -> tuple[
-    jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray
+    jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray, jp.ndarray
 ]:
     """Computes reaching rewards and penalties for motion imitation.
 
@@ -541,8 +545,9 @@ def compute_reaching_rewards(
         reward_config: Reward configuration object.
 
     Returns:
-        Tuple containing: joint_reward, endeff_reward, ctrl_cost, ctrl_diff_cost,
-        energy_cost, joint_distance, joint_penalty
+        Tuple containing: joint_reward, endeff_reward, bodypos_reward, quat_reward,
+        ctrl_cost, ctrl_diff_cost, energy_cost, joint_distance, bodypos_distance, 
+        quat_distance, joint_penalty
     """
 
     joint_array = data.qpos
@@ -562,6 +567,33 @@ def compute_reaching_rewards(
         reward_config.endeff_reward_weight,
         reward_config.endeff_reward_exp_scale,
     )
+
+    # Body position reward - use body_idxs to get matching shapes
+    bodypos_array = data.xpos[walker.body_idxs]
+    reference_frame_bodypos = reference_frame.body_positions[walker.body_idxs]
+    bodypos_reward, bodypos_distance = compute_bodypos_reward(
+        bodypos_array,
+        reference_frame_bodypos,
+        reward_config.bodypos_reward_weight,
+        reward_config.bodypos_reward_exp_scale,
+    )
+
+    # Body quaternion reward - track orientation of all bodies
+    if hasattr(reference_frame, 'quaternion') and reference_frame.quaternion is not None:
+        # Track quaternions for all bodies indexed by body_idxs
+        quat_array = data.xquat[walker.body_idxs]
+        reference_frame_quat = reference_frame.quaternion[walker.body_idxs]
+        # Compute reward by summing over all body quaternions
+        quat_distances = jp.array([
+            jp.sum(_bounded_quat_dist(quat_array[i:i+1], reference_frame_quat[i:i+1]) ** 2)
+            for i in range(quat_array.shape[0])
+        ])
+        quat_distance = jp.sum(quat_distances)
+        quat_reward = reward_config.quat_reward_weight * jp.exp(-reward_config.quat_reward_exp_scale * quat_distance)
+    else:
+        # No quaternion tracking available
+        quat_reward = jp.array(0.0)
+        quat_distance = jp.array(0.0)
 
     ctrl_cost = compute_ctrl_cost(action, reward_config.ctrl_cost_weight)
     ctrl_diff_cost = compute_ctrl_diff_cost(
@@ -583,9 +615,13 @@ def compute_reaching_rewards(
     return (
         joint_reward,
         endeff_reward,
+        bodypos_reward,
+        quat_reward,
         ctrl_cost,
         ctrl_diff_cost,
         energy_cost,
         joint_distance,
+        bodypos_distance,
+        quat_distance,
         joint_penalty,
     )

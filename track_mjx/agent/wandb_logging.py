@@ -109,20 +109,23 @@ def rollout_logging_fn(
             )
 
         # Render the video
-        with imageio.get_writer(video_path, fps=render_fps) as writer:
-            video = env.render(
-                rollout,
-                camera=f"{cfg.render_config.render_camera_name}-ghost",
-                height=480,
-                width=640,
-            )
-            for frame in video:
-                writer.append_data(frame)
+        try:
+            with imageio.get_writer(video_path, fps=render_fps) as writer:
+                video = env.render(
+                    rollout,
+                    camera=f"{cfg.render_config.render_camera_name}-ghost",
+                    height=480,
+                    width=640,
+                )
+                for frame in video:
+                    writer.append_data(frame)
 
-        wandb.log(
-            {"videos/rollout": wandb.Video(video_path, format="mp4")},
-            commit=False,
-        )
+            wandb.log(
+                {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                commit=False,
+            )
+        except mujoco.FatalError as e:
+            logging.warning(f"Rendering video failed with mujoco error: {e}")
 
 
 def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):

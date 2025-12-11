@@ -24,8 +24,12 @@ env_config:
     energy_cost_weight: 0.00
     joint_reward_weight: 5.0
     endeff_reward_weight: 0.0
+    bodypos_reward_weight: 1.0
+    quat_reward_weight: 1.0
     joint_reward_exp_scale: 0.2
     endeff_reward_exp_scale: 0.0
+    bodypos_reward_exp_scale: 0.8
+    quat_reward_exp_scale: 0.8
     joint_penalty_threshold: 0.0   
     joint_penalty_weight: 0.0 
 
@@ -89,7 +93,11 @@ logging_config:
   rollout_metrics:
     - joint_reward
     - endeff_reward
+    - bodypos_reward
+    - quat_reward
     - joint_distance
+    - bodypos_distance
+    - quat_distance
     - ctrl_cost
     - ctrl_diff_cost
     - energy_cost

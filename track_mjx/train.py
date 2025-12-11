@@ -61,7 +61,7 @@ _REACHERS = {
 }
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="config", config_name="mouse-arm")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:

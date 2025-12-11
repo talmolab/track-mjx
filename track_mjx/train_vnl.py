@@ -164,6 +164,11 @@ def main(cfg: DictConfig):
             torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
             qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
         ),
+        prior_rollout_config=(
+            dict(cfg.prior_rollout_config)
+            if hasattr(cfg, "prior_rollout_config") and cfg.prior_rollout_config is not None
+            else None
+        ),
     )
 
     # Set the render env start frame to always be 0

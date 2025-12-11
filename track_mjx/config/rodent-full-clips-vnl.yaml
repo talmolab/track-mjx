@@ -86,6 +86,16 @@ render_config:
   render_fps: 50
   render_interval: 1
 
+# Prior rollout evaluation settings
+prior_rollout_config:
+  enabled: true  # Whether to run prior rollout evaluation
+  eval_interval: 1  # Run every N evals (1 = every eval)
+  num_rollouts: 4  # Number of rollouts to average over
+  max_steps: 200  # Maximum steps per rollout
+  fixed_logvar: -2.0  # Fixed log-variance for prior sampling
+  deterministic: true  # Whether to use deterministic policy
+  healthy_z_range: [0.0325, 0.5]  # Healthy torso height range for termination
+
 network_config:
   arch_name: intention
   encoder_layer_sizes: [512,256,256]

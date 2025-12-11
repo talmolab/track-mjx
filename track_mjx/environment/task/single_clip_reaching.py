@@ -165,6 +165,8 @@ class SingleClipReaching(PipelineEnv):
         metrics = {
             "joint_reward": zero,
             "endeff_reward": zero,
+            "bodypos_reward": zero,
+            "quat_reward": zero,
             "ctrl_cost": zero,
             "ctrl_diff_cost": zero,
             "energy_cost": zero,
@@ -172,6 +174,8 @@ class SingleClipReaching(PipelineEnv):
             "bad_pose": zero,
             "nan": zero,
             "joint_distance": zero,
+            "bodypos_distance": zero,
+            "quat_distance": zero,
         }
 
         return State(data, obs, reward, done, metrics, info)
@@ -201,10 +205,14 @@ class SingleClipReaching(PipelineEnv):
         (
             joint_reward,
             endeff_reward,
+            bodypos_reward,
+            quat_reward,
             ctrl_cost,
             ctrl_diff_cost,
             energy_cost,
             joint_distance,
+            bodypos_distance,
+            quat_distance,
             joint_penalty,
         ) = compute_reaching_rewards(
             data=data,
@@ -221,6 +229,8 @@ class SingleClipReaching(PipelineEnv):
         reward = (
             joint_reward
             + endeff_reward
+            + bodypos_reward
+            + quat_reward
             - ctrl_cost
             - ctrl_diff_cost
             - energy_cost
@@ -242,6 +252,8 @@ class SingleClipReaching(PipelineEnv):
         state.metrics.update(
             joint_reward=joint_reward,
             endeff_reward=endeff_reward,
+            bodypos_reward=bodypos_reward,
+            quat_reward=quat_reward,
             ctrl_cost=-ctrl_cost,
             ctrl_diff_cost=-ctrl_diff_cost,
             energy_cost=-energy_cost,
@@ -249,6 +261,8 @@ class SingleClipReaching(PipelineEnv):
             bad_pose=joint_penalty,  # Changed from bad_pose to joint_penalty
             nan=nan,
             joint_distance=joint_distance,
+            bodypos_distance=bodypos_distance,
+            quat_distance=quat_distance,
         )
 
         return state.replace(

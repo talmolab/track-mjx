@@ -235,7 +235,7 @@ def main(cfg: DictConfig):
             link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
             torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
             qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
-        ),
+        ) if cfg.env_config.use_domain_randomization else None,
         prior_rollout_config=(
             dict(cfg.prior_rollout_config)
             if hasattr(cfg, "prior_rollout_config") and cfg.prior_rollout_config is not None

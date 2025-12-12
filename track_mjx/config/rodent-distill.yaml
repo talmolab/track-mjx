@@ -70,6 +70,7 @@ env_config:
     nan_termination: {}
   
   # Domain randomization (optional for distillation)
+  use_domain_randomization: false
   domain_randomization:
     floor_friction: [0.4, 1.0]
     static_friction_scale: [0.9, 1.1]

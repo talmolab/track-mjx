@@ -28,8 +28,8 @@ env_config:
     quat_reward_weight: 1.0
     joint_reward_exp_scale: 0.2
     endeff_reward_exp_scale: 0.0
-    bodypos_reward_exp_scale: 0.8
-    quat_reward_exp_scale: 0.8
+    bodypos_reward_exp_scale: 10.0
+    quat_reward_exp_scale: 10.0
     joint_penalty_threshold: 0.0   
     joint_penalty_weight: 0.0 
 
@@ -61,12 +61,12 @@ train_setup:
   checkpoint_max_to_keep: 
 
   checkpoint_keep_period: 
-  eval_every: 5_000_000
+  eval_every: 100_000_000
   episode_length: 60
   reset_every: 50_000_000
   train_config:
-    num_envs: 4096
-    num_timesteps: 600_000_000
+    num_envs: 8192
+    num_timesteps: 1_000_000_000
     batch_size: 1024
     num_minibatches: 8
     num_updates_per_batch: 4
@@ -84,7 +84,7 @@ train_setup:
     deterministic_eval: True
 
 logging_config:
-  project_name: ctrl_cost_ctrl_diff_energy_cost_sweep_three
+  project_name: moving_shoulder_bodypos_quat
   group_name: 
   exp_name: reaching_task
   clip_id: -1
@@ -106,6 +106,8 @@ reacher_config:
   torque_actuators: False 
   rescale_factor: 1.0
   joint_names:
+    - sh_ty
+    - sh_tz
     - sh_elv
     - sh_rotation
     - sh_extension
@@ -113,6 +115,7 @@ reacher_config:
   body_names:
     - world
     - ground
+    - shoulder_base
     - clavicle
     - scapula
     - humerus

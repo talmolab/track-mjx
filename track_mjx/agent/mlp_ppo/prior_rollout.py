@@ -195,176 +195,176 @@ def check_termination(
     return jnp.logical_or(has_nan, z_out_of_range)
 
 
-def run_prior_rollout(
-    env,
-    policy_fn: Callable,
-    rng_key: jax.Array,
-    max_steps: int,
-    healthy_z_range: Tuple[float, float] = (0.0325, 0.5),
-) -> Tuple[int, jax.Array]:
-    """
-    Run a single rollout using only the prior network.
+# def run_prior_rollout(
+#     env,
+#     policy_fn: Callable,
+#     rng_key: jax.Array,
+#     max_steps: int,
+#     healthy_z_range: Tuple[float, float] = (0.0325, 0.5),
+# ) -> Tuple[int, jax.Array]:
+#     """
+#     Run a single rollout using only the prior network.
     
-    Args:
-        env: The environment (Imitation environment).
-        policy_fn: Prior-based policy function.
-        rng_key: Random key for the rollout.
-        max_steps: Maximum number of steps to run.
-        healthy_z_range: Tuple of (min_z, max_z) for healthy torso height.
+#     Args:
+#         env: The environment (Imitation environment).
+#         policy_fn: Prior-based policy function.
+#         rng_key: Random key for the rollout.
+#         max_steps: Maximum number of steps to run.
+#         healthy_z_range: Tuple of (min_z, max_z) for healthy torso height.
         
-    Returns:
-        Tuple of (num_steps_before_termination, terminated_flag).
-    """
-    key_reset, key_rollout = random.split(rng_key)
+#     Returns:
+#         Tuple of (num_steps_before_termination, terminated_flag).
+#     """
+#     key_reset, key_rollout = random.split(rng_key)
     
-    # Reset environment (will pick random clip and starting frame)
-    state = env.reset(key_reset)
+#     # Reset environment (will pick random clip and starting frame)
+#     state = env.reset(key_reset)
     
-    def step_fn(carry, _):
-        state, key, terminated, step_count = carry
-        key, key_action = random.split(key)
+#     def step_fn(carry, _):
+#         state, key, terminated, step_count = carry
+#         key, key_action = random.split(key)
         
-        # Get proprioceptive observations (exclude trajectory observations)
-        # The observation structure varies, so we use the flattened obs
-        # and assume proprioceptive obs is the last portion
-        if hasattr(state.obs, 'get') or isinstance(state.obs, dict):
-            # Dictionary observation
-            proprio = state.obs.get("proprioception", state.obs)
-            if isinstance(proprio, dict):
-                # Flatten proprioception dict
-                from jax import flatten_util
-                proprio, _ = flatten_util.ravel_pytree(proprio)
-        else:
-            # Flat observation - need to extract proprioceptive portion
-            proprio = state.obs
+#         # Get proprioceptive observations (exclude trajectory observations)
+#         # The observation structure varies, so we use the flattened obs
+#         # and assume proprioceptive obs is the last portion
+#         if hasattr(state.obs, 'get') or isinstance(state.obs, dict):
+#             # Dictionary observation
+#             proprio = state.obs.get("proprioception", state.obs)
+#             if isinstance(proprio, dict):
+#                 # Flatten proprioception dict
+#                 from jax import flatten_util
+#                 proprio, _ = flatten_util.ravel_pytree(proprio)
+#         else:
+#             # Flat observation - need to extract proprioceptive portion
+#             proprio = state.obs
         
-        # Get action from prior policy
-        action, _ = policy_fn(proprio, key_action)
+#         # Get action from prior policy
+#         action, _ = policy_fn(proprio, key_action)
         
-        # Step environment
-        next_state = env.step(state, action)
+#         # Step environment
+#         next_state = env.step(state, action)
         
-        # Check termination
-        step_terminated = check_termination(next_state.data, healthy_z_range)
-        new_terminated = jnp.logical_or(terminated, step_terminated)
+#         # Check termination
+#         step_terminated = check_termination(next_state.data, healthy_z_range)
+#         new_terminated = jnp.logical_or(terminated, step_terminated)
         
-        # Only increment step count if not already terminated
-        new_step_count = jnp.where(terminated, step_count, step_count + 1)
+#         # Only increment step count if not already terminated
+#         new_step_count = jnp.where(terminated, step_count, step_count + 1)
         
-        return (next_state, key, new_terminated, new_step_count), None
+#         return (next_state, key, new_terminated, new_step_count), None
     
-    initial_carry = (state, key_rollout, jnp.array(False), jnp.array(0))
-    (final_state, _, terminated, step_count), _ = jax.lax.scan(
-        step_fn, initial_carry, None, length=max_steps
-    )
+#     initial_carry = (state, key_rollout, jnp.array(False), jnp.array(0))
+#     (final_state, _, terminated, step_count), _ = jax.lax.scan(
+#         step_fn, initial_carry, None, length=max_steps
+#     )
     
-    return step_count, terminated
+#     return step_count, terminated
 
 
-def create_prior_rollout_evaluator(
-    env,
-    policy_params: Tuple,
-    intention_latent_size: int,
-    action_size: int,
-    proprioceptive_obs_size: int,
-    decoder_hidden_layer_sizes: Sequence[int],
-    prior_hidden_layer_sizes: Sequence[int],
-    preprocess_observations_fn: types.PreprocessObservationFn,
-    num_rollouts: int = 32,
-    max_steps: int = 200,
-    healthy_z_range: Tuple[float, float] = (0.0325, 0.5),
-    fixed_logvar: float = -2.0,
-    deterministic: bool = False,
-) -> Callable:
-    """
-    Create a jitted evaluator function for prior-only rollouts.
+# def create_prior_rollout_evaluator(
+#     env,
+#     policy_params: Tuple,
+#     intention_latent_size: int,
+#     action_size: int,
+#     proprioceptive_obs_size: int,
+#     decoder_hidden_layer_sizes: Sequence[int],
+#     prior_hidden_layer_sizes: Sequence[int],
+#     preprocess_observations_fn: types.PreprocessObservationFn,
+#     num_rollouts: int = 32,
+#     max_steps: int = 200,
+#     healthy_z_range: Tuple[float, float] = (0.0325, 0.5),
+#     fixed_logvar: float = -2.0,
+#     deterministic: bool = False,
+# ) -> Callable:
+#     """
+#     Create a jitted evaluator function for prior-only rollouts.
     
-    Args:
-        env: The environment.
-        policy_params: Full policy parameters tuple.
-        intention_latent_size: Size of intention latent space.
-        action_size: Size of action space.
-        proprioceptive_obs_size: Size of proprioceptive observations.
-        decoder_hidden_layer_sizes: Hidden layer sizes for decoder.
-        prior_hidden_layer_sizes: Hidden layer sizes for prior.
-        preprocess_observations_fn: Observation normalization function.
-        num_rollouts: Number of rollouts to average over.
-        max_steps: Maximum steps per rollout.
-        healthy_z_range: Healthy torso height range.
-        fixed_logvar: Fixed log-variance for prior sampling.
-        deterministic: Whether to use deterministic policy.
+#     Args:
+#         env: The environment.
+#         policy_params: Full policy parameters tuple.
+#         intention_latent_size: Size of intention latent space.
+#         action_size: Size of action space.
+#         proprioceptive_obs_size: Size of proprioceptive observations.
+#         decoder_hidden_layer_sizes: Hidden layer sizes for decoder.
+#         prior_hidden_layer_sizes: Hidden layer sizes for prior.
+#         preprocess_observations_fn: Observation normalization function.
+#         num_rollouts: Number of rollouts to average over.
+#         max_steps: Maximum steps per rollout.
+#         healthy_z_range: Healthy torso height range.
+#         fixed_logvar: Fixed log-variance for prior sampling.
+#         deterministic: Whether to use deterministic policy.
         
-    Returns:
-        A function that takes (policy_params, rng_key) and returns metrics dict.
-    """
+#     Returns:
+#         A function that takes (policy_params, rng_key) and returns metrics dict.
+#     """
     
-    def evaluate_fn(policy_params: Tuple, rng_key: jax.Array) -> Dict[str, jax.Array]:
-        """
-        Run multiple prior rollouts and compute metrics.
+#     def evaluate_fn(policy_params: Tuple, rng_key: jax.Array) -> Dict[str, jax.Array]:
+#         """
+#         Run multiple prior rollouts and compute metrics.
         
-        Args:
-            policy_params: Tuple of (normalizer_params, network_params).
-            rng_key: Random key for rollouts.
+#         Args:
+#             policy_params: Tuple of (normalizer_params, network_params).
+#             rng_key: Random key for rollouts.
             
-        Returns:
-            Dictionary with metrics:
-                - avg_steps: Average number of steps before termination.
-                - termination_rate: Fraction of rollouts that terminated early.
-        """
-        # Extract prior and decoder params
-        prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(policy_params)
+#         Returns:
+#             Dictionary with metrics:
+#                 - avg_steps: Average number of steps before termination.
+#                 - termination_rate: Fraction of rollouts that terminated early.
+#         """
+#         # Extract prior and decoder params
+#         prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(policy_params)
         
-        # Create proprioceptive-only normalizer params
-        proprio_normalizer_params = running_statistics.RunningStatisticsState(
-            count=normalizer_params.count,
-            mean=normalizer_params.mean[-proprioceptive_obs_size:],
-            summed_variance=normalizer_params.summed_variance[-proprioceptive_obs_size:],
-            std=normalizer_params.std[-proprioceptive_obs_size:],
-        )
+#         # Create proprioceptive-only normalizer params
+#         proprio_normalizer_params = running_statistics.RunningStatisticsState(
+#             count=normalizer_params.count,
+#             mean=normalizer_params.mean[-proprioceptive_obs_size:],
+#             summed_variance=normalizer_params.summed_variance[-proprioceptive_obs_size:],
+#             std=normalizer_params.std[-proprioceptive_obs_size:],
+#         )
         
-        # Create policy function
-        policy_fn = create_prior_policy(
-            prior_network_params=prior_params,
-            decoder_network_params=decoder_params,
-            normalizer_params=proprio_normalizer_params,
-            intention_latent_size=intention_latent_size,
-            action_size=action_size,
-            proprioceptive_obs_size=proprioceptive_obs_size,
-            decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
-            prior_hidden_layer_sizes=prior_hidden_layer_sizes,
-            preprocess_observations_fn=preprocess_observations_fn,
-            fixed_logvar=fixed_logvar,
-            deterministic=deterministic,
-        )
+#         # Create policy function
+#         policy_fn = create_prior_policy(
+#             prior_network_params=prior_params,
+#             decoder_network_params=decoder_params,
+#             normalizer_params=proprio_normalizer_params,
+#             intention_latent_size=intention_latent_size,
+#             action_size=action_size,
+#             proprioceptive_obs_size=proprioceptive_obs_size,
+#             decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+#             prior_hidden_layer_sizes=prior_hidden_layer_sizes,
+#             preprocess_observations_fn=preprocess_observations_fn,
+#             fixed_logvar=fixed_logvar,
+#             deterministic=deterministic,
+#         )
         
-        # Run multiple rollouts in parallel using vmap
-        rollout_keys = random.split(rng_key, num_rollouts)
+#         # Run multiple rollouts in parallel using vmap
+#         rollout_keys = random.split(rng_key, num_rollouts)
         
-        def single_rollout(key):
-            return run_prior_rollout(
-                env=env,
-                policy_fn=policy_fn,
-                rng_key=key,
-                max_steps=max_steps,
-                healthy_z_range=healthy_z_range,
-            )
+#         def single_rollout(key):
+#             return run_prior_rollout(
+#                 env=env,
+#                 policy_fn=policy_fn,
+#                 rng_key=key,
+#                 max_steps=max_steps,
+#                 healthy_z_range=healthy_z_range,
+#             )
         
-        step_counts, terminated_flags = jax.vmap(single_rollout)(rollout_keys)
+#         step_counts, terminated_flags = jax.vmap(single_rollout)(rollout_keys)
         
-        # Compute metrics
-        avg_steps = jnp.mean(step_counts)
-        termination_rate = jnp.mean(terminated_flags.astype(jnp.float32))
-        max_steps_reached = jnp.mean((step_counts >= max_steps).astype(jnp.float32))
+#         # Compute metrics
+#         avg_steps = jnp.mean(step_counts)
+#         termination_rate = jnp.mean(terminated_flags.astype(jnp.float32))
+#         max_steps_reached = jnp.mean((step_counts >= max_steps).astype(jnp.float32))
         
-        return {
-            "prior_rollout/avg_steps": avg_steps,
-            "prior_rollout/termination_rate": termination_rate,
-            "prior_rollout/max_steps_reached": max_steps_reached,
-            "prior_rollout/min_steps": jnp.min(step_counts),
-            "prior_rollout/max_steps": jnp.max(step_counts),
-        }
+#         return {
+#             "prior_rollout/avg_steps": avg_steps,
+#             "prior_rollout/termination_rate": termination_rate,
+#             "prior_rollout/max_steps_reached": max_steps_reached,
+#             "prior_rollout/min_steps": jnp.min(step_counts),
+#             "prior_rollout/max_steps": jnp.max(step_counts),
+#         }
     
-    return evaluate_fn
+#     return evaluate_fn
 
 
 class PriorRolloutEvaluator:
@@ -514,8 +514,8 @@ class PriorRolloutEvaluator:
                 "prior_rollout/avg_steps": avg_steps,
                 "prior_rollout/termination_rate": termination_rate,
                 "prior_rollout/max_steps_reached": max_steps_reached,
-                "prior_rollout/min_steps": jnp.min(step_counts).astype(jnp.float32),
-                "prior_rollout/max_steps_num": jnp.max(step_counts).astype(jnp.float32),
+                "prior_rollout/rollouts_min_steps": jnp.min(step_counts).astype(jnp.float32),
+                "prior_rollout/rollouts_max_steps": jnp.max(step_counts).astype(jnp.float32),
             }
         
         return evaluate_fn

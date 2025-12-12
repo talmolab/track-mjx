@@ -5,7 +5,7 @@ data_path: data/transform_snips.h5
 
 # Teacher model configuration
 teacher_config:
-  checkpoint_path: null  # Path to pretrained teacher checkpoint (REQUIRED)
+  checkpoint_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints/251210_204401_323736  # Path to pretrained teacher checkpoint (REQUIRED)
   checkpoint_step: null  # Optional: specific step to load (null = latest)
 
 # VNL Environment Configuration (same as training config)
@@ -111,12 +111,12 @@ distill_config:
   # Optional: schedule for loss weights
   use_schedule: true
   schedule_params:
-    kl_start_weight: 0.0
+    kl_start_weight: 1e-2
     kl_end_weight: 1e-3
-    kl_start_ramp: 0.0
-    kl_end_ramp: 0.25
-    ar_start_weight: 0.0
-    ar_end_weight: 1e-3
+    kl_start_ramp: 0.5
+    kl_end_ramp: 0.75
+    ar_start_weight: 0.005
+    ar_end_weight: 0.005
     ar_start_ramp: 0.0
     ar_end_ramp: 0.25
 
@@ -144,8 +144,8 @@ train_setup:
     deterministic_eval: true
 
 logging_config:
-  project_name: vnl_distill
-  group_name: null
+  project_name: vnl_debug
+  group_name: distillation
   exp_name: null
   clip_id: -1
   model_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints

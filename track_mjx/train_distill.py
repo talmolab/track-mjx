@@ -34,13 +34,9 @@ from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 from mujoco_playground import wrapper as playground_wrappers
 
-# Import mujoco for rendering
-try:
-    import mujoco
-    from track_mjx import rendering
-    HAS_RENDERING = True
-except ImportError:
-    HAS_RENDERING = False
+# Import mujoco and imageio for rendering
+import mujoco
+import imageio
 
 
 def distill_rollout_logging_fn(
@@ -96,14 +92,26 @@ def distill_rollout_logging_fn(
         state = jit_step(state, ctrl)
         rollout.append(state)
     
-    if render_video and HAS_RENDERING:
+    if render_video:
+        render_fps = cfg.render_config.render_fps
+        video_path = f"{model_path}/{current_step}.mp4"
         try:
-            render_fps = cfg.render_config.render_fps
-            video_path = f"{model_path}/{current_step}.mp4"
-            rendering.render_video(env, rollout, video_path, fps=render_fps)
-            wandb.log({"video": wandb.Video(video_path, fps=render_fps)}, commit=False)
-        except Exception as e:
-            logging.warning(f"Failed to render video: {e}")
+            with imageio.get_writer(video_path, fps=render_fps) as writer:
+                video = env.render(
+                    rollout,
+                    camera=f"{cfg.render_config.render_camera_name}-ghost",
+                    height=480,
+                    width=640,
+                )
+                for frame in video:
+                    writer.append_data(frame)
+
+            wandb.log(
+                {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                commit=False,
+            )
+        except mujoco.FatalError as e:
+            logging.warning(f"Video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
 
 
 @hydra.main(version_base=None, config_path="config", config_name="rodent-distill")

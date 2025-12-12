@@ -679,11 +679,21 @@ def train(
                     logging.info(f"Prior rollout metrics: {prior_metrics}")
 
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
-            policy_params_fn(
-                current_step=it,
-                params=policy_param,
-                policy_params_fn_key=policy_params_fn_key,
-            )
+            if it % config_dict["render_config"]["render_interval"] == 0:
+                # Render video every `render_interval` iterations.
+                policy_params_fn(
+                    current_step=it,
+                    params=policy_param,
+                    policy_params_fn_key=policy_params_fn_key,
+                    render_video=True,
+                )
+            else:
+                policy_params_fn(
+                    current_step=it,
+                    params=policy_param,
+                    policy_params_fn_key=policy_params_fn_key,
+                    render_video=False,
+                )
 
             logging.info(metrics)
             progress_fn(current_step, metrics)

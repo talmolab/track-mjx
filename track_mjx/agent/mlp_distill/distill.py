@@ -682,6 +682,8 @@ def train(
             if it % config_dict["render_config"]["render_interval"] == 0:
                 # Render video every `render_interval` iterations.
                 policy_params_fn(
+                    teacher_policy_fn=teacher_policy_fn,
+                    teacher_params=teacher_params,
                     current_step=it,
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
@@ -689,6 +691,8 @@ def train(
                 )
             else:
                 policy_params_fn(
+                    teacher_policy_fn=teacher_policy_fn,
+                    teacher_params=teacher_params,
                     current_step=it,
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,

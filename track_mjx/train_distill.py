@@ -45,32 +45,30 @@ def distill_rollout_logging_fn(
     jit_step,
     cfg: DictConfig,
     model_path: str,
+    teacher_policy_fn,
+    teacher_params,
     current_step: int,
     params,
     policy_params_fn_key,
     render_video: bool = True,
 ) -> None:
-    """Simple rollout logging for distillation training."""
+    """Rollout logging for distillation training - renders both student and teacher."""
     from jax import numpy as jp
-    
-    _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
-    state = jit_reset(reset_rng)
-    
-    rollout = [state]
+
     physics_step_per_control_step = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
     steps_per_frame = (1 / cfg.env_config.mocap_hz) / (
         cfg.env_config.sim_dt * physics_step_per_control_step
     )
     episode_length = int(cfg.env_config.clip_length * steps_per_frame)
-    
-    # Create inference function for logging
+
+    # Create student inference function
     normalize = lambda x, y: x
     if cfg.train_setup.train_config.normalize_observations:
         from brax.training.acme import running_statistics
         normalize = running_statistics.normalize
-    
+
     student_networks = distill_networks.make_student_networks(
-        observation_size=state.obs.shape[-1],
+        observation_size=env.observation_size,
         reference_obs_size=int(env.non_proprioceptive_obs_size),
         action_size=env.action_size,
         preprocess_observations_fn=normalize,
@@ -79,27 +77,50 @@ def distill_rollout_logging_fn(
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         prior_hidden_layer_sizes=tuple(cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)),
     )
-    
-    make_policy = distill_networks.make_student_inference_fn(student_networks)
-    policy = make_policy(params, deterministic=True)
-    jit_policy = jax.jit(policy)
-    
+
+    make_student_policy = distill_networks.make_student_inference_fn(student_networks)
+    student_policy = make_student_policy(params, deterministic=True)
+    jit_student_policy = jax.jit(student_policy)
+
+    # Teacher policy is already jitted and passed in
+    jit_teacher_policy = teacher_policy_fn
+
+    # Split keys for student and teacher rollouts
+    _, reset_rng_student, reset_rng_teacher, act_rng_student, act_rng_teacher = jax.random.split(policy_params_fn_key, 5)
+
+    # Run student rollout
+    state = jit_reset(reset_rng_student)
+    student_rollout = [state]
     for i in range(episode_length):
-        _, act_rng = jax.random.split(act_rng)
+        _, act_rng_student = jax.random.split(act_rng_student)
         obs = state.obs
-        ctrl, extras = jit_policy(obs, act_rng)
+        ctrl, extras = jit_student_policy(obs, act_rng_student)
         ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
         state = jit_step(state, ctrl)
-        rollout.append(state)
-    
+        student_rollout.append(state)
+
+    # Run teacher rollout (use same initial state for fair comparison)
+    state = jit_reset(reset_rng_student)  # Same reset key as student
+    teacher_rollout = [state]
+    for i in range(episode_length):
+        _, act_rng_teacher = jax.random.split(act_rng_teacher)
+        obs = state.obs
+        ctrl, extras = jit_teacher_policy(teacher_params, obs, act_rng_teacher)
+        ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
+        state = jit_step(state, ctrl)
+        teacher_rollout.append(state)
+
     if render_video:
         render_fps = cfg.render_config.render_fps
-        video_path = f"{model_path}/{current_step}.mp4"
+        camera_name = f"{cfg.render_config.render_camera_name}-ghost"
+
+        # Render student video
+        student_video_path = f"{model_path}/{current_step}_student.mp4"
         try:
-            with imageio.get_writer(video_path, fps=render_fps) as writer:
+            with imageio.get_writer(student_video_path, fps=render_fps) as writer:
                 video = env.render(
-                    rollout,
-                    camera=f"{cfg.render_config.render_camera_name}-ghost",
+                    student_rollout,
+                    camera=camera_name,
                     height=480,
                     width=640,
                 )
@@ -107,11 +128,31 @@ def distill_rollout_logging_fn(
                     writer.append_data(frame)
 
             wandb.log(
-                {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                {"videos/student_rollout": wandb.Video(student_video_path, format="mp4")},
                 commit=False,
             )
         except mujoco.FatalError as e:
-            logging.warning(f"Video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
+            logging.warning(f"Student video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
+
+        # Render teacher video
+        teacher_video_path = f"{model_path}/{current_step}_teacher.mp4"
+        try:
+            with imageio.get_writer(teacher_video_path, fps=render_fps) as writer:
+                video = env.render(
+                    teacher_rollout,
+                    camera=camera_name,
+                    height=480,
+                    width=640,
+                )
+                for frame in video:
+                    writer.append_data(frame)
+
+            wandb.log(
+                {"videos/teacher_rollout": wandb.Video(teacher_video_path, format="mp4")},
+                commit=False,
+            )
+        except mujoco.FatalError as e:
+            logging.warning(f"Teacher video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
 
 
 @hydra.main(version_base=None, config_path="config", config_name="rodent-distill")

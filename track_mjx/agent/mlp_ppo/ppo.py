@@ -36,6 +36,7 @@ from brax.training.types import Params
 from brax.training.types import PRNGKey
 from track_mjx.agent import network_masks
 from track_mjx.agent.mlp_ppo import losses, ppo_networks
+from track_mjx.agent.mlp_ppo import prior_rollout
 from track_mjx.agent import checkpointing
 from track_mjx.agent import gradients
 from track_mjx import utils
@@ -171,6 +172,7 @@ def train(
     checkpoint_callback: Optional[Callable[[int], None]] = None,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False),
+    prior_rollout_config: Optional[dict] = None,
 ):
     """PPO training.
 
@@ -677,6 +679,36 @@ def train(
             key=key_env_test_set,
         )
 
+    # Initialize prior rollout evaluator if configured
+    prior_rollout_evaluator = None
+    if prior_rollout_config is not None and prior_rollout_config.get("enabled", False):
+        logging.info("Initializing prior rollout evaluator")
+        # Get network config from config_dict
+        network_config = config_dict.get("network_config", {})
+        prior_layer_sizes = network_config.get(
+            "prior_layer_sizes",
+            network_config.get("encoder_layer_sizes", [1024, 1024])
+        )
+        decoder_layer_sizes = network_config.get("decoder_layer_sizes", [1024, 1024])
+        intention_size = network_config.get("intention_size", 60)
+        
+        prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluator(
+            env=environment,  # Use unwrapped environment for prior rollouts
+            intention_latent_size=intention_size,
+            action_size=env.action_size,
+            proprioceptive_obs_size=proprioceptive_obs_size,
+            decoder_hidden_layer_sizes=tuple(decoder_layer_sizes),
+            prior_hidden_layer_sizes=tuple(prior_layer_sizes),
+            preprocess_observations_fn=normalize,
+            num_rollouts=prior_rollout_config.get("num_rollouts", 32),
+            max_steps=prior_rollout_config.get("max_steps", 200),
+            healthy_z_range=tuple(prior_rollout_config.get("healthy_z_range", (0.0325, 0.5))),
+            fixed_logvar=prior_rollout_config.get("fixed_logvar", -2.0),
+            deterministic=prior_rollout_config.get("deterministic", False),
+            eval_interval=prior_rollout_config.get("eval_interval", 1),
+        )
+        logging.info(f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts")
+
     # Logic to restore iteration count from checkpoint
     start_it = 0
     if ckpt_mgr is not None:
@@ -694,6 +726,7 @@ def train(
         policy_param = _unpmap(
             (training_state.normalizer_params, training_state.params.policy)
         )
+
         metrics = evaluator.run_evaluation(
             policy_param,
             training_metrics={},
@@ -705,6 +738,16 @@ def train(
                 training_metrics=metrics,
                 data_split="test_set",
             )
+
+        # Run prior rollout evaluation during initial eval (after other evals so metrics isn't overwritten)
+        if prior_rollout_evaluator is not None:
+            prior_metrics = prior_rollout_evaluator.run_evaluation(
+                policy_params=policy_param,
+                eval_step=0,
+            )
+            if prior_metrics is not None:
+                metrics.update(prior_metrics)
+                logging.info(f"Initial prior rollout metrics: {prior_metrics}")
         logging.info(metrics)
         progress_fn(start_it, metrics)
         # Save checkpoints
@@ -770,6 +813,17 @@ def train(
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
+            
+            # Run prior rollout evaluation if configured
+            if prior_rollout_evaluator is not None:
+                prior_metrics = prior_rollout_evaluator.run_evaluation(
+                    policy_params=policy_param,
+                    eval_step=it,
+                )
+                if prior_metrics is not None:
+                    metrics.update(prior_metrics)
+                    logging.info(f"Prior rollout metrics: {prior_metrics}")
+            
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             if it % config_dict["render_config"]["render_interval"] == 0:

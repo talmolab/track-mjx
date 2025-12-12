@@ -242,7 +242,7 @@ def train(
     teacher_policy_fn, teacher_params, teacher_cfg = distill_networks.create_teacher_inference_fn(
         teacher_checkpoint_path, step=teacher_checkpoint_step
     )
-    teacher_policy_fn = jax.jit(teacher_policy_fn)
+    teacher_policy_fn = jax.jit(teacher_policy_fn, static_argnames=['deterministic'])
     logging.info("Teacher policy loaded successfully")
 
     def minibatch_step(

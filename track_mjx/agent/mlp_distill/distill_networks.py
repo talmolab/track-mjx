@@ -151,14 +151,14 @@ def create_teacher_inference_fn(
     step: int | None = None,
 ) -> Tuple[Callable, Any, Any]:
     """Create a jittable teacher inference function.
-    
+
     Args:
         teacher_checkpoint_path: Path to the teacher checkpoint directory.
         step: Optional step to load. If None, loads the latest checkpoint.
-        
+
     Returns:
-        Tuple of (teacher_policy_fn, teacher_params, teacher_cfg) where:
-        - teacher_policy_fn: A function that takes (params, observations, key) and returns actions
+        Tuple of (make_teacher_policy, teacher_params, teacher_cfg) where:
+        - make_teacher_policy: A factory function that takes (deterministic) and returns a policy function
         - teacher_params: The teacher's policy parameters
         - teacher_cfg: The teacher's configuration
     """
@@ -167,45 +167,54 @@ def create_teacher_inference_fn(
     )
     cfg = checkpoint_data["cfg"]
     policy_params = checkpoint_data["policy"]
-    
+
     # Create the ppo network from config
     ppo_network = checkpointing.make_ppo_network_from_cfg(cfg)
-    
-    def teacher_policy_fn(
-        params: types.PolicyParams,
-        observations: jnp.ndarray,
-        key: PRNGKey,
-        deterministic: bool = True,
-    ) -> Tuple[jnp.ndarray, dict]:
-        """Apply teacher network.
-        
+
+    def make_teacher_policy(deterministic: bool = True) -> Callable:
+        """Create a teacher policy function with deterministic behavior fixed.
+
         Args:
-            params: Tuple of (normalizer_params, policy_params)
-            observations: Input observations
-            key: Random key
-            deterministic: Whether to use deterministic policy
-            
+            deterministic: Whether to use deterministic policy (captured in closure)
+
         Returns:
-            Tuple of (actions, extras)
+            A policy function that takes (params, observations, key) and returns (actions, extras)
         """
-        normalizer_params, policy_network_params = params
-        
-        # Get policy outputs
-        policy_logits, latent_mean, latent_logvar, prior_mean, prior_logvar = ppo_network.policy_network.apply(
-            normalizer_params, policy_network_params, observations, key, deterministic=deterministic
-        )
-        
-        if deterministic:
-            action = ppo_network.parametric_action_distribution.mode(policy_logits)
-        else:
-            action = ppo_network.parametric_action_distribution.sample(policy_logits, key)
-        
-        return action, {
-            "policy_logits": policy_logits,
-            "latent_mean": latent_mean,
-            "latent_logvar": latent_logvar,
-            "prior_mean": prior_mean,
-            "prior_logvar": prior_logvar,
-        }
-    
-    return teacher_policy_fn, policy_params, cfg
+        def teacher_policy_fn(
+            params: types.PolicyParams,
+            observations: jnp.ndarray,
+            key: PRNGKey,
+        ) -> Tuple[jnp.ndarray, dict]:
+            """Apply teacher network.
+
+            Args:
+                params: Tuple of (normalizer_params, policy_params)
+                observations: Input observations
+                key: Random key
+
+            Returns:
+                Tuple of (actions, extras)
+            """
+            normalizer_params, policy_network_params = params
+
+            # Get policy outputs (deterministic captured from closure)
+            policy_logits, latent_mean, latent_logvar, prior_mean, prior_logvar = ppo_network.policy_network.apply(
+                normalizer_params, policy_network_params, observations, key, deterministic=deterministic
+            )
+
+            if deterministic:
+                action = ppo_network.parametric_action_distribution.mode(policy_logits)
+            else:
+                action = ppo_network.parametric_action_distribution.sample(policy_logits, key)
+
+            return action, {
+                "policy_logits": policy_logits,
+                "latent_mean": latent_mean,
+                "latent_logvar": latent_logvar,
+                "prior_mean": prior_mean,
+                "prior_logvar": prior_logvar,
+            }
+
+        return teacher_policy_fn
+
+    return make_teacher_policy, policy_params, cfg

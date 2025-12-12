@@ -166,8 +166,9 @@ def compute_distillation_loss(
     )
     
     # Get teacher actions (frozen - no gradients)
+    # Note: deterministic behavior is already captured in the teacher_policy_fn closure
     teacher_actions, teacher_extras = teacher_policy_fn(
-        teacher_params, data.observation, teacher_key, deterministic=True
+        teacher_params, data.observation, teacher_key
     )
     teacher_actions = jax.lax.stop_gradient(teacher_actions)
     

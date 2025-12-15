@@ -94,7 +94,6 @@ prior_rollout_config:
   max_steps: 200  # Maximum steps per rollout
   fixed_logvar: -2.0  # Fixed log-variance for prior sampling
   deterministic: true  # Whether to use deterministic policy
-  healthy_z_range: [0.0325, 0.5]  # Healthy torso height range for termination
 
 network_config:
   arch_name: intention

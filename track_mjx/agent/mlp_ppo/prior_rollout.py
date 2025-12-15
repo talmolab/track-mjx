@@ -159,40 +159,41 @@ def extract_prior_decoder_params(policy_params: Tuple) -> Tuple[Dict, Dict, runn
     return prior_params, decoder_params, normalizer_params
 
 
-def check_termination(
-    data: Any,
-    healthy_z_range: Tuple[float, float] = (0.0325, 0.5),
-) -> jax.Array:
+def check_termination_nan(data: Any) -> jax.Array:
     """
-    Check if a state should be terminated based on simple criteria.
-    
-    For prior-only rollouts, we use simpler termination criteria that don't
-    require reference trajectories:
-    1. NaN detection in the physics state
-    2. Torso height outside healthy range (rodent fell or jumped too high)
-    
+    Check for NaN values in physics state (cheap, run every step).
+
     Args:
         data: MJX Data object containing physics state.
-        healthy_z_range: Tuple of (min_z, max_z) for healthy torso height.
-        
+
     Returns:
-        Boolean array indicating whether the state is terminated.
+        Boolean array indicating whether NaN values were detected.
     """
     from jax import flatten_util
-    
-    # Check for NaN values
+
     flattened_vals, _ = flatten_util.ravel_pytree(data.qpos)
     flattened_qvel, _ = flatten_util.ravel_pytree(data.qvel)
     all_vals = jnp.concatenate([flattened_vals, flattened_qvel])
-    has_nan = jnp.any(jnp.isnan(all_vals))
-    
-    # Check torso height (assuming first body is torso/root)
-    # The root body z-position is typically at index 2 of qpos for free joints
-    torso_z = data.qpos[2]  # z-position of root
-    min_z, max_z = healthy_z_range
-    z_out_of_range = jnp.logical_or(torso_z < min_z, torso_z > max_z)
-    
-    return jnp.logical_or(has_nan, z_out_of_range)
+    return jnp.any(jnp.isnan(all_vals))
+
+
+def compute_world_zaxis_termination(env, datas: Any) -> jax.Array:
+    """
+    Batch compute world z-axis termination for all timesteps.
+
+    Terminates when the z-component of the world z-axis is negative (upside down).
+    This function is designed to be called AFTER the rollout completes for efficiency.
+
+    Args:
+        env: The environment (used to call _get_world_zaxis).
+        datas: Stacked MJX Data objects from all timesteps.
+
+    Returns:
+        Boolean array of shape (max_steps,) with True where z-component < 0.
+    """
+    # vmap _get_world_zaxis over all timesteps
+    world_zaxes = jax.vmap(env._get_world_zaxis)(datas)  # (max_steps, 3)
+    return world_zaxes[:, 2] < 0  # (max_steps,)
 
 
 def create_neutral_state(env, mjx_model) -> Any:
@@ -266,14 +267,13 @@ class PriorRolloutEvaluator:
         preprocess_observations_fn: types.PreprocessObservationFn,
         num_rollouts: int = 32,
         max_steps: int = 200,
-        healthy_z_range: Tuple[float, float] = (0.0325, 0.5),
         fixed_logvar: float = -2.0,
         deterministic: bool = False,
         eval_interval: int = 1,
     ):
         """
         Initialize the prior rollout evaluator.
-        
+
         Args:
             env: The environment to run rollouts in.
             intention_latent_size: Size of intention latent space.
@@ -284,7 +284,6 @@ class PriorRolloutEvaluator:
             preprocess_observations_fn: Observation normalization function.
             num_rollouts: Number of rollouts per evaluation.
             max_steps: Maximum steps per rollout.
-            healthy_z_range: Healthy torso height range for termination.
             fixed_logvar: Fixed log-variance for prior sampling.
             deterministic: Whether to use deterministic policy.
             eval_interval: Run evaluation every N evals (1 = every eval).
@@ -298,7 +297,6 @@ class PriorRolloutEvaluator:
         self.preprocess_observations_fn = preprocess_observations_fn
         self.num_rollouts = num_rollouts
         self.max_steps = max_steps
-        self.healthy_z_range = healthy_z_range
         self.fixed_logvar = fixed_logvar
         self.deterministic = deterministic
         self.eval_interval = eval_interval
@@ -333,19 +331,20 @@ class PriorRolloutEvaluator:
             deterministic=self.deterministic,
         )
         
+        jit_reset = jax.jit(self.env.reset)
         jit_step = jax.jit(self.env.step)
         
         def single_rollout_fn(rng_key: jax.Array) -> Tuple[jax.Array, jax.Array]:
             """Run a single prior rollout."""
             key_reset, key_rollout = random.split(rng_key)
-            
+
             # Reset environment
             state = jit_reset(key_reset)
-            
+
             def step_fn(carry, _):
-                state, key, terminated, step_count = carry
+                state, key, nan_terminated = carry
                 key, key_action = random.split(key)
-                
+
                 # Get proprioceptive observations
                 if hasattr(state.obs, 'get') or isinstance(state.obs, dict):
                     proprio = state.obs.get("proprioception", state.obs)
@@ -354,27 +353,39 @@ class PriorRolloutEvaluator:
                         proprio, _ = flatten_util.ravel_pytree(proprio)
                 else:
                     proprio = state.obs
-                
+
                 # Get action from prior policy
                 action, _ = policy_fn(proprio, key_action)
-                
+
                 # Step environment
                 next_state = jit_step(state, action)
-                
-                # Check termination
-                step_terminated = check_termination(next_state.data, self.healthy_z_range)
-                new_terminated = jnp.logical_or(terminated, step_terminated)
-                
-                # Only increment step count if not already terminated
-                new_step_count = jnp.where(terminated, step_count, step_count + 1)
-                
-                return (next_state, key, new_terminated, new_step_count), None
-            
-            initial_carry = (state, key_rollout, jnp.array(False), jnp.array(0))
-            (_, _, terminated, step_count), _ = jax.lax.scan(
+
+                # Only check NaN during rollout (cheap)
+                step_nan = check_termination_nan(next_state.data)
+                new_nan_terminated = jnp.logical_or(nan_terminated, step_nan)
+
+                return (next_state, key, new_nan_terminated), next_state.data
+
+            initial_carry = (state, key_rollout, jnp.array(False))
+            (_, _, nan_terminated), all_datas = jax.lax.scan(
                 step_fn, initial_carry, None, length=self.max_steps
             )
-            
+
+            # Batch compute world z-axis termination AFTER rollout
+            upside_down_flags = compute_world_zaxis_termination(self.env, all_datas)
+
+            # Find first termination step
+            any_upside_down = jnp.any(upside_down_flags)
+            first_upside_down_step = jnp.argmax(upside_down_flags)  # First True index
+
+            # Combine NaN termination with upside-down termination
+            terminated = jnp.logical_or(nan_terminated, any_upside_down)
+            step_count = jnp.where(
+                any_upside_down,
+                first_upside_down_step + 1,  # +1 because step 0 is after first action
+                self.max_steps
+            )
+
             return step_count, terminated
         
         # Vmap and jit the rollout function
@@ -453,14 +464,13 @@ class PriorRolloutEvaluatorNeutralState:
         preprocess_observations_fn: types.PreprocessObservationFn,
         num_rollouts: int = 32,
         max_steps: int = 200,
-        healthy_z_range: Tuple[float, float] = (0.0325, 0.5),
         fixed_logvar: float = -2.0,
         deterministic: bool = False,
         eval_interval: int = 1,
     ):
         """
         Initialize the prior rollout evaluator.
-        
+
         Args:
             env: The environment to run rollouts in.
             intention_latent_size: Size of intention latent space.
@@ -471,7 +481,6 @@ class PriorRolloutEvaluatorNeutralState:
             preprocess_observations_fn: Observation normalization function.
             num_rollouts: Number of rollouts per evaluation.
             max_steps: Maximum steps per rollout.
-            healthy_z_range: Healthy torso height range for termination.
             fixed_logvar: Fixed log-variance for prior sampling.
             deterministic: Whether to use deterministic policy.
             eval_interval: Run evaluation every N evals (1 = every eval).
@@ -486,11 +495,10 @@ class PriorRolloutEvaluatorNeutralState:
         self.preprocess_observations_fn = preprocess_observations_fn
         self.num_rollouts = num_rollouts
         self.max_steps = max_steps
-        self.healthy_z_range = healthy_z_range
         self.fixed_logvar = fixed_logvar
         self.deterministic = deterministic
         self.eval_interval = eval_interval
-        
+
         self._key = random.PRNGKey(0)
         self._jit_evaluate = None
     
@@ -534,11 +542,11 @@ class PriorRolloutEvaluatorNeutralState:
 
             # Initialize from neutral pose instead of random clip
             state = jit_create_neutral_state()
-            
+
             def step_fn(carry, _):
-                state, key, terminated, step_count = carry
+                state, key, nan_terminated = carry
                 key, key_action = random.split(key)
-                
+
                 # Get proprioceptive observations
                 if hasattr(state.obs, 'get') or isinstance(state.obs, dict):
                     proprio = state.obs.get("proprioception", state.obs)
@@ -547,27 +555,39 @@ class PriorRolloutEvaluatorNeutralState:
                         proprio, _ = flatten_util.ravel_pytree(proprio)
                 else:
                     proprio = state.obs
-                
+
                 # Get action from prior policy
                 action, _ = policy_fn(proprio, key_action)
-                
+
                 # Step environment
                 next_state = jit_step(state, action)
-                
-                # Check termination
-                step_terminated = check_termination(next_state.data, self.healthy_z_range)
-                new_terminated = jnp.logical_or(terminated, step_terminated)
-                
-                # Only increment step count if not already terminated
-                new_step_count = jnp.where(terminated, step_count, step_count + 1)
-                
-                return (next_state, key, new_terminated, new_step_count), None
-            
-            initial_carry = (state, key_rollout, jnp.array(False), jnp.array(0))
-            (_, _, terminated, step_count), _ = jax.lax.scan(
+
+                # Only check NaN during rollout (cheap)
+                step_nan = check_termination_nan(next_state.data)
+                new_nan_terminated = jnp.logical_or(nan_terminated, step_nan)
+
+                return (next_state, key, new_nan_terminated), next_state.data
+
+            initial_carry = (state, key_rollout, jnp.array(False))
+            (_, _, nan_terminated), all_datas = jax.lax.scan(
                 step_fn, initial_carry, None, length=self.max_steps
             )
-            
+
+            # Batch compute world z-axis termination AFTER rollout
+            upside_down_flags = compute_world_zaxis_termination(self.env, all_datas)
+
+            # Find first termination step
+            any_upside_down = jnp.any(upside_down_flags)
+            first_upside_down_step = jnp.argmax(upside_down_flags)  # First True index
+
+            # Combine NaN termination with upside-down termination
+            terminated = jnp.logical_or(nan_terminated, any_upside_down)
+            step_count = jnp.where(
+                any_upside_down,
+                first_upside_down_step + 1,  # +1 because step 0 is after first action
+                self.max_steps
+            )
+
             return step_count, terminated
         
         # Vmap and jit the rollout function

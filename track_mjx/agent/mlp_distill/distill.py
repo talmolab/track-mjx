@@ -579,7 +579,6 @@ def train(
             preprocess_observations_fn=normalize,
             num_rollouts=prior_rollout_config.get("num_rollouts", 32),
             max_steps=prior_rollout_config.get("max_steps", 200),
-            healthy_z_range=tuple(prior_rollout_config.get("healthy_z_range", (0.0325, 0.5))),
             fixed_logvar=prior_rollout_config.get("fixed_logvar", -2.0),
             deterministic=prior_rollout_config.get("deterministic", False),
             eval_interval=prior_rollout_config.get("eval_interval", 1),

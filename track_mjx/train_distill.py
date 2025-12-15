@@ -91,13 +91,55 @@ def distill_rollout_logging_fn(
     # Run student rollout
     state = jit_reset(reset_rng_student)
     student_rollout = [state]
+    encoder_latent_means = []
+    encoder_latent_logvars = []
+    prior_latent_means = []
+    prior_latent_logvars = []
     for i in range(episode_length):
         _, act_rng_student = jax.random.split(act_rng_student)
         obs = state.obs
         ctrl, extras = jit_student_policy(obs, act_rng_student)
         ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
+        # Collect latent statistics
+        encoder_latent_means.append(extras["latent_mean"])
+        encoder_latent_logvars.append(extras["latent_logvar"])
+        prior_latent_means.append(extras["prior_mean"])
+        prior_latent_logvars.append(extras["prior_logvar"])
         state = jit_step(state, ctrl)
         student_rollout.append(state)
+
+    # Log per-dimension latent statistics (encoder)
+    encoder_latent_means = jp.stack(encoder_latent_means)
+    encoder_latent_logvars = jp.stack(encoder_latent_logvars)
+    encoder_means_mean = jp.mean(encoder_latent_means, axis=0)
+    encoder_means_std = jp.std(encoder_latent_means, axis=0)
+    encoder_logvars_mean = jp.mean(encoder_latent_logvars, axis=0)
+    encoder_logvars_std = jp.std(encoder_latent_logvars, axis=0)
+
+    # Log per-dimension latent statistics (prior)
+    prior_latent_means = jp.stack(prior_latent_means)
+    prior_latent_logvars = jp.stack(prior_latent_logvars)
+    prior_means_mean = jp.mean(prior_latent_means, axis=0)
+    prior_means_std = jp.std(prior_latent_means, axis=0)
+    prior_logvars_mean = jp.mean(prior_latent_logvars, axis=0)
+    prior_logvars_std = jp.std(prior_latent_logvars, axis=0)
+
+    for i in range(encoder_means_mean.shape[0]):
+        wandb.log(
+            {
+                # Encoder latent statistics
+                f"latents/encoder_means_mean{i}": encoder_means_mean[i],
+                f"latents/encoder_means_std{i}": encoder_means_std[i],
+                f"latents/encoder_logvars_mean{i}": encoder_logvars_mean[i],
+                f"latents/encoder_logvars_std{i}": encoder_logvars_std[i],
+                # Prior latent statistics
+                f"latents/prior_means_mean{i}": prior_means_mean[i],
+                f"latents/prior_means_std{i}": prior_means_std[i],
+                f"latents/prior_logvars_mean{i}": prior_logvars_mean[i],
+                f"latents/prior_logvars_std{i}": prior_logvars_std[i],
+            },
+            commit=False,
+        )
 
     # Run teacher rollout (use same initial state for fair comparison)
     state = jit_reset(reset_rng_student)  # Same reset key as student

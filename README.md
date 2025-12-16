@@ -1,6 +1,6 @@
 # track-mjx
 
-This is a package for training control policies through motion imitation using deep reinforcement learning. Part of [MIMIC-MJX](https://mimic-mjx.talmolab.org/), along with [STAC-MJX](https://github.com/talmolab/stac-mjx), a tool for performing inverse kinematics on markerless motion tracking data.
+This is a package for training control policies through motion imitation using deep reinforcement learning. Part of [MIMIC-MJX](https://mimic-mjx.talmolab.org/), along with [STAC-MJX](https://github.com/talmolab/stac-mjx) (a tool for performing inverse kinematics on markerless motion tracking data).
 
 ## Installation
 
@@ -36,7 +36,7 @@ cd track-mjx
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
-3. Install the package with optional dependencies based on your hardware. CUDA 12, CUDA 13, and CPU-only configurations are supported:
+3. Install the package with optional dependencies based on your hardware. CUDA 12, CUDA 13, and CPU-only configurations are supported. This will take a few minutes:
 
 For CUDA 12.x:
 ```bash

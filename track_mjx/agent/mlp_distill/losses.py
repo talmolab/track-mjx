@@ -17,7 +17,7 @@ Loss functions for distillation training.
 
 The distillation loss consists of:
 1. MSE loss between student and teacher actions
-2. Autoregressive loss between consecutive latent means of the encoder
+2. AR(1) loss between consecutive latent means (z_t - φ*z_{t-1}), matching PULSE
 3. KL divergence loss between encoder and prior distributions
 """
 
@@ -57,27 +57,49 @@ def compute_mse_action_loss(
 
 def compute_autoregressive_loss(
     latent_means: jnp.ndarray,
+    discount: jnp.ndarray,
+    phi: float = 0.99,
 ) -> jnp.ndarray:
-    """Compute autoregressive loss between consecutive latent means.
-    
-    Encourages temporal smoothness in the latent space by minimizing
-    the MSE between consecutive latent representations.
-    
+    """Compute AR(1) autoregressive loss between consecutive latent means.
+
+    Encourages temporal smoothness in the latent space by modeling the latent
+    as an AR(1) process: z_t ≈ φ * z_{t-1}. Uses mean L2 norm like PULSE.
+
+    Episode boundaries are handled by masking out pairs where discount=0,
+    which indicates an episode ended at that timestep.
+
     Args:
         latent_means: Latent means from encoder [T, B, latent_dim]
-        
+        discount: Discount factor from environment [T, B], 0.0 at episode end
+        phi: AR(1) coefficient (default 0.99, same as PULSE)
+
     Returns:
-        Scalar autoregressive loss
+        Scalar AR(1) loss (mean L2 norm of prediction errors)
     """
     if latent_means.shape[0] <= 1:
         return jnp.array(0.0)
-    
+
     # Get consecutive latent means
-    z_prev = latent_means[:-1]  # z_0, ..., z_{T-2}
-    z_curr = latent_means[1:]   # z_1, ..., z_{T-1}
-    
-    # MSE between consecutive latent means
-    ar_loss = jnp.mean(jnp.square(z_curr - z_prev))
+    z_prev = latent_means[:-1]  # z_0, ..., z_{T-2}  [T-1, B, d]
+    z_curr = latent_means[1:]   # z_1, ..., z_{T-1}  [T-1, B, d]
+
+    # AR(1) prediction error: z_t - φ * z_{t-1}
+    error = z_curr - phi * z_prev  # [T-1, B, d]
+
+    # Mask for valid pairs: discount[t] > 0 means episode didn't end at t
+    # So (z_t, z_{t+1}) is a valid same-episode pair
+    valid_mask = discount[:-1] > 0  # [T-1, B]
+
+    # Compute L2 norm of error for each (t, batch) pair
+    l2_norms = jnp.linalg.norm(error, axis=-1)  # [T-1, B]
+
+    # Apply mask and compute mean only over valid pairs
+    masked_norms = l2_norms * valid_mask
+    num_valid = jnp.sum(valid_mask)
+
+    # Avoid division by zero
+    ar_loss = jnp.sum(masked_norms) / jnp.maximum(num_valid, 1.0)
+
     return ar_loss
 
 
@@ -128,13 +150,13 @@ def compute_distillation_loss(
     ar_schedule: Callable | None = None,
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Compute the combined distillation loss.
-    
+
     The total loss is:
     L = action_mse_weight * L_action + autoregressive_weight * L_ar + kl_weight * L_kl
-    
+
     Where:
     - L_action: MSE between student and teacher actions
-    - L_ar: Autoregressive loss between consecutive encoder latent means
+    - L_ar: AR(1) loss (mean L2 norm of z_t - φ*z_{t-1}), with episode boundary masking
     - L_kl: KL divergence between encoder and prior distributions
     
     Args:
@@ -181,7 +203,7 @@ def compute_distillation_loss(
     
     # Compute individual losses
     action_loss = compute_mse_action_loss(student_actions, teacher_actions)
-    ar_loss = compute_autoregressive_loss(encoder_mean)
+    ar_loss = compute_autoregressive_loss(encoder_mean, data.discount)
     kl_loss = compute_encoder_prior_kl_loss(
         encoder_mean, encoder_logvar, prior_mean, prior_logvar
     )

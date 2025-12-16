@@ -38,21 +38,29 @@ class DistillNetworkParams:
     policy: Params  # Student policy parameters (encoder, decoder, prior)
 
 
-def compute_mse_action_loss(
+def compute_action_loss(
     student_actions: jnp.ndarray,
     teacher_actions: jnp.ndarray,
+    use_l2_norm: bool = False,
 ) -> jnp.ndarray:
-    """Compute MSE loss between student and teacher actions.
-    
+    """Compute action reconstruction loss between student and teacher actions.
+
     Args:
         student_actions: Actions predicted by the student network [T, B, action_dim]
         teacher_actions: Actions from the teacher network [T, B, action_dim]
-        
+        use_l2_norm: If True, use mean L2 norm (like PULSE). If False, use MSE.
+
     Returns:
-        Scalar MSE loss
+        Scalar action loss
     """
-    mse = jnp.mean(jnp.square(student_actions - teacher_actions))
-    return mse
+    if use_l2_norm:
+        # Mean L2 norm (Euclidean distance) - same as PULSE
+        # Computes ||a - a_gt||_2 for each sample, then averages
+        l2_norms = jnp.linalg.norm(student_actions - teacher_actions, axis=-1)
+        return jnp.mean(l2_norms)
+    else:
+        # MSE loss - mean of squared errors across all dimensions
+        return jnp.mean(jnp.square(student_actions - teacher_actions))
 
 
 def compute_autoregressive_loss(
@@ -143,22 +151,23 @@ def compute_distillation_loss(
     student_network: Any,
     teacher_policy_fn: Callable,
     teacher_params: Any,
-    action_mse_weight: float = 1.0,
+    action_loss_weight: float = 1.0,
     autoregressive_weight: float = 1e-3,
     kl_weight: float = 1e-3,
     kl_schedule: Callable | None = None,
     ar_schedule: Callable | None = None,
+    use_l2_action_loss: bool = False,
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Compute the combined distillation loss.
 
     The total loss is:
-    L = action_mse_weight * L_action + autoregressive_weight * L_ar + kl_weight * L_kl
+    L = action_loss_weight * L_action + autoregressive_weight * L_ar + kl_weight * L_kl
 
     Where:
-    - L_action: MSE between student and teacher actions
+    - L_action: Action reconstruction loss (MSE or mean L2 norm)
     - L_ar: AR(1) loss (mean L2 norm of z_t - φ*z_{t-1}), with episode boundary masking
     - L_kl: KL divergence between encoder and prior distributions
-    
+
     Args:
         params: Student network parameters
         normalizer_params: Observation normalizer parameters
@@ -168,12 +177,13 @@ def compute_distillation_loss(
         student_network: Student policy network (FeedForwardNetwork)
         teacher_policy_fn: Teacher policy function
         teacher_params: Teacher policy parameters (frozen)
-        action_mse_weight: Weight for action MSE loss
+        action_loss_weight: Weight for action reconstruction loss
         autoregressive_weight: Weight for autoregressive loss
         kl_weight: Weight for KL divergence loss
         kl_schedule: Optional schedule function for KL weight
         ar_schedule: Optional schedule function for autoregressive weight
-        
+        use_l2_action_loss: If True, use mean L2 norm (like PULSE). If False, use MSE.
+
     Returns:
         Tuple of (total_loss, metrics_dict)
     """
@@ -202,12 +212,12 @@ def compute_distillation_loss(
     student_actions = jnp.tanh(student_action_mean)
     
     # Compute individual losses
-    action_loss = compute_mse_action_loss(student_actions, teacher_actions)
+    action_loss = compute_action_loss(student_actions, teacher_actions, use_l2_action_loss)
     ar_loss = compute_autoregressive_loss(encoder_mean, data.discount)
     kl_loss = compute_encoder_prior_kl_loss(
         encoder_mean, encoder_logvar, prior_mean, prior_logvar
     )
-    
+
     # Apply schedules if provided
     current_kl_weight = kl_weight
     current_ar_weight = autoregressive_weight
@@ -215,17 +225,17 @@ def compute_distillation_loss(
         current_kl_weight = kl_schedule(step)
     if ar_schedule is not None:
         current_ar_weight = ar_schedule(step)
-    
+
     # Compute weighted total loss
     total_loss = (
-        action_mse_weight * action_loss +
+        action_loss_weight * action_loss +
         current_ar_weight * ar_loss +
         current_kl_weight * kl_loss
     )
-    
+
     metrics = {
         "total_loss": total_loss,
-        "action_mse_loss": action_loss,
+        "action_loss": action_loss,
         "autoregressive_loss": ar_loss,
         "kl_loss": kl_loss,
         "kl_weight": current_kl_weight,

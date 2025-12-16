@@ -105,9 +105,10 @@ network_config:
 
 # Distillation-specific loss configuration
 distill_config:
-  action_mse_weight: 1.0           # Weight for MSE loss between student and teacher actions
-  autoregressive_weight: 1e-3      # Weight for temporal smoothness of latent means
+  action_loss_weight: 1.0          # Weight for action reconstruction loss
+  autoregressive_weight: 1e-3      # Weight for AR(1) temporal smoothness of latent means
   kl_weight: 1e-3                  # Weight for KL divergence between encoder and prior
+  use_l2_action_loss: false        # If true, use mean L2 norm (like PULSE). If false, use MSE.
   
   # Optional: schedule for loss weights
   use_schedule: true

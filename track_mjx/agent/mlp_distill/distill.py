@@ -135,9 +135,10 @@ def train(
     max_devices_per_host: Optional[int] = None,
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
-    action_mse_weight: float = 1.0,
+    action_loss_weight: float = 1.0,
     autoregressive_weight: float = 1e-3,
     kl_weight: float = 1e-3,
+    use_l2_action_loss: bool = False,
     seed: int = 0,
     unroll_length: int = 10,
     batch_size: int = 32,
@@ -178,9 +179,10 @@ def train(
         max_devices_per_host: Maximum devices per host
         num_eval_envs: Number of evaluation environments
         learning_rate: Learning rate for optimizer
-        action_mse_weight: Weight for action MSE loss
+        action_loss_weight: Weight for action reconstruction loss
         autoregressive_weight: Weight for autoregressive loss
         kl_weight: Weight for KL divergence loss
+        use_l2_action_loss: If True, use mean L2 norm (like PULSE). If False, use MSE.
         seed: Random seed
         unroll_length: Number of timesteps to unroll
         batch_size: Batch size for minibatch SGD
@@ -483,11 +485,12 @@ def train(
         student_network=student_networks.student_network,
         teacher_policy_fn=teacher_policy_fn,
         teacher_params=teacher_params,
-        action_mse_weight=action_mse_weight,
+        action_loss_weight=action_loss_weight,
         autoregressive_weight=autoregressive_weight,
         kl_weight=kl_weight,
         kl_schedule=kl_schedule_fn,
         ar_schedule=ar_schedule_fn,
+        use_l2_action_loss=use_l2_action_loss,
     )
 
     # Initialize student parameters

@@ -118,27 +118,37 @@ def compute_encoder_prior_kl_loss(
     prior_logvar: jnp.ndarray,
 ) -> jnp.ndarray:
     """Compute KL divergence between encoder and prior distributions.
-    
+
     KL(q(z|x) || p(z|x_proprio)) where:
     - q(z|x) is the encoder distribution (Gaussian with encoder_mean, encoder_logvar)
     - p(z|x_proprio) is the prior distribution (Gaussian with prior_mean, prior_logvar)
-    
+
+    Uses PULSE-style aggregation: sum over latent dimensions, then mean over samples.
+    This is the mathematically correct KL for multivariate Gaussians with diagonal covariance.
+
     Args:
         encoder_mean: Mean of encoder distribution [T, B, latent_dim]
         encoder_logvar: Log-variance of encoder distribution [T, B, latent_dim]
         prior_mean: Mean of prior distribution [T, B, latent_dim]
         prior_logvar: Log-variance of prior distribution [T, B, latent_dim]
-        
+
     Returns:
         Scalar KL divergence loss
     """
-    # KL divergence between two Gaussians:
-    # KL = 0.5 * (log(σ_p^2/σ_q^2) + (σ_q^2 + (μ_q - μ_p)^2) / σ_p^2 - 1)
+    # KL divergence between two Gaussians (element-wise per latent dimension):
+    # KL_j = 0.5 * (log(σ_p^2/σ_q^2) + σ_q^2/σ_p^2 + (μ_q - μ_p)^2/σ_p^2 - 1)
+    log_var_diff = prior_logvar - encoder_logvar  # log(σ_p^2) - log(σ_q^2)
     var_ratio = jnp.exp(encoder_logvar - prior_logvar)  # σ_q^2 / σ_p^2
     mean_diff_sq = jnp.square(encoder_mean - prior_mean) / jnp.exp(prior_logvar)  # (μ_q - μ_p)^2 / σ_p^2
-    log_var_diff = prior_logvar - encoder_logvar  # log(σ_p^2) - log(σ_q^2)
-    
-    kl_loss = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_diff)
+
+    # Element-wise KL for each latent dimension
+    element_wise_kl = 0.5 * (log_var_diff + var_ratio + mean_diff_sq - 1)  # [T, B, d]
+
+    # Sum over latent dimensions (correct KL for multivariate Gaussian)
+    # Then mean over samples (T × B) - matches PULSE aggregation
+    kl_per_sample = jnp.sum(element_wise_kl, axis=-1)  # [T, B]
+    kl_loss = jnp.mean(kl_per_sample)  # scalar
+
     return kl_loss
 
 

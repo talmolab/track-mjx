@@ -1,10 +1,10 @@
 # track-mjx
 
-This is a package for training control policies through motion imitation using deep reinforcement learning.
+This is a package for training control policies through motion imitation using deep reinforcement learning. Part of [MIMIC-MJX](https://mimic-mjx.talmolab.org/), along with [STAC-MJX](https://github.com/talmolab/stac-mjx), a tool for performing inverse kinematics on markerless motion tracking data.
 
 ## Installation
 
-### Option 1: `uv`
+### Option 1: `uv` (fastest)
 
 #### Prerequisites
 
@@ -12,7 +12,7 @@ This is a package for training control policies through motion imitation using d
 - [uv](https://docs.astral.sh/uv/) package manager (recommended) or pip
 - CUDA 12.x or 13.x (for GPU support, optional)
 
-#### Installing `uv`
+#### Installing `uv` 
 
 If you don't have uv installed:
 

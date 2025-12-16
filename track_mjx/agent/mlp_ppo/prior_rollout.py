@@ -310,7 +310,7 @@ class PriorRolloutEvaluator:
         self.eval_interval = eval_interval
         self.render_best_rollout = render_best_rollout
         self.render_fps = render_fps
-        self.render_camera_name = render_camera_name
+        self.render_camera_name = f"{render_camera_name}-ghost"
         self.model_path = model_path
 
         self._key = random.PRNGKey(0)
@@ -476,16 +476,16 @@ class PriorRolloutEvaluator:
         import wandb
         import imageio
 
-        # Render frames for each step up to step_count
-        frames = []
+        # Convert stacked states to list of individual State objects
+        states_list = []
         for i in range(step_count):
-            # Extract state at timestep i
-            state_i_data = jax.tree_util.tree_map(lambda x: x[i], states.data)
-            frame = self.env.render(state_i_data, camera=self.render_camera_name)
-            frames.append(frame)
+            state_i = jax.tree_util.tree_map(lambda x: x[i], states)
+            states_list.append(state_i)
+
+        # Render all frames at once (env.render returns list of np.ndarray frames)
+        frames = self.env.render(states_list, camera=self.render_camera_name)
 
         if len(frames) > 0:
-            # Write video to model_path (matching wandb_logging.py pattern)
             video_path = f"{self.model_path}/prior_rollout_{current_step}.mp4"
             with imageio.get_writer(video_path, fps=self.render_fps) as writer:
                 for frame in frames:
@@ -559,7 +559,7 @@ class PriorRolloutEvaluatorNeutralState:
         self.eval_interval = eval_interval
         self.render_best_rollout = render_best_rollout
         self.render_fps = render_fps
-        self.render_camera_name = render_camera_name
+        self.render_camera_name = f"{render_camera_name}-ghost"
         self.model_path = model_path
 
         self._key = random.PRNGKey(0)
@@ -729,16 +729,16 @@ class PriorRolloutEvaluatorNeutralState:
         import wandb
         import imageio
 
-        # Render frames for each step up to step_count
-        frames = []
+        # Convert stacked states to list of individual State objects
+        states_list = []
         for i in range(step_count):
-            # Extract state at timestep i
-            state_i_data = jax.tree_util.tree_map(lambda x: x[i], states.data)
-            frame = self.env.render(state_i_data, camera=self.render_camera_name)
-            frames.append(frame)
+            state_i = jax.tree_util.tree_map(lambda x: x[i], states)
+            states_list.append(state_i)
+
+        # Render all frames at once (env.render returns list of np.ndarray frames)
+        frames = self.env.render(states_list, camera=self.render_camera_name)
 
         if len(frames) > 0:
-            # Write video to model_path (matching wandb_logging.py pattern)
             video_path = f"{self.model_path}/prior_rollout_{current_step}.mp4"
             with imageio.get_writer(video_path, fps=self.render_fps) as writer:
                 for frame in frames:

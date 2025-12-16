@@ -692,6 +692,12 @@ def train(
         decoder_layer_sizes = network_config.get("decoder_layer_sizes", [1024, 1024])
         intention_size = network_config.get("intention_size", 60)
         
+        # Get render config for optional best rollout rendering
+        render_config = config_dict.get("render_config", {})
+
+        # Get model_path from logging config for video saving
+        logging_config = config_dict.get("logging_config", {})
+
         prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluator(
             env=environment,  # Use unwrapped environment for prior rollouts
             intention_latent_size=intention_size,
@@ -705,6 +711,10 @@ def train(
             fixed_logvar=prior_rollout_config.get("fixed_logvar", -2.0),
             deterministic=prior_rollout_config.get("deterministic", False),
             eval_interval=prior_rollout_config.get("eval_interval", 1),
+            render_best_rollout=prior_rollout_config.get("render_best_rollout", False),
+            render_fps=render_config.get("render_fps", 50),
+            render_camera_name=render_config.get("render_camera_name", "close_profile"),
+            model_path=logging_config.get("model_path", ""),
         )
         logging.info(f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts")
 

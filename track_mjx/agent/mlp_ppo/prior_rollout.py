@@ -251,11 +251,11 @@ def create_neutral_state(env, mjx_model) -> Any:
 class PriorRolloutEvaluator:
     """
     Evaluator class for running prior-only rollouts during training.
-    
+
     This class manages the evaluation of the prior network's ability to generate
     plausible actions by running rollouts using only the prior and decoder.
     """
-    
+
     def __init__(
         self,
         env,
@@ -270,6 +270,10 @@ class PriorRolloutEvaluator:
         fixed_logvar: float = -2.0,
         deterministic: bool = False,
         eval_interval: int = 1,
+        render_best_rollout: bool = False,
+        render_fps: int = 50,
+        render_camera_name: str = "close_profile",
+        model_path: str = "",
     ):
         """
         Initialize the prior rollout evaluator.
@@ -287,6 +291,10 @@ class PriorRolloutEvaluator:
             fixed_logvar: Fixed log-variance for prior sampling.
             deterministic: Whether to use deterministic policy.
             eval_interval: Run evaluation every N evals (1 = every eval).
+            render_best_rollout: Whether to render the best (longest) rollout.
+            render_fps: FPS for rendered video.
+            render_camera_name: Camera name for rendering.
+            model_path: Path to save rendered videos.
         """
         self.env = env
         self.intention_latent_size = intention_latent_size
@@ -300,7 +308,11 @@ class PriorRolloutEvaluator:
         self.fixed_logvar = fixed_logvar
         self.deterministic = deterministic
         self.eval_interval = eval_interval
-        
+        self.render_best_rollout = render_best_rollout
+        self.render_fps = render_fps
+        self.render_camera_name = render_camera_name
+        self.model_path = model_path
+
         self._key = random.PRNGKey(0)
         self._jit_evaluate = None
     
@@ -334,7 +346,7 @@ class PriorRolloutEvaluator:
         jit_reset = jax.jit(self.env.reset)
         jit_step = jax.jit(self.env.step)
         
-        def single_rollout_fn(rng_key: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        def single_rollout_fn(rng_key: jax.Array) -> Tuple[jax.Array, jax.Array, Any]:
             """Run a single prior rollout."""
             key_reset, key_rollout = random.split(rng_key)
 
@@ -364,15 +376,16 @@ class PriorRolloutEvaluator:
                 step_nan = check_termination_nan(next_state.data)
                 new_nan_terminated = jnp.logical_or(nan_terminated, step_nan)
 
-                return (next_state, key, new_nan_terminated), next_state.data
+                # Return full state for potential rendering
+                return (next_state, key, new_nan_terminated), next_state
 
             initial_carry = (state, key_rollout, jnp.array(False))
-            (_, _, nan_terminated), all_datas = jax.lax.scan(
+            (_, _, nan_terminated), all_states = jax.lax.scan(
                 step_fn, initial_carry, None, length=self.max_steps
             )
 
-            # Batch compute world z-axis termination AFTER rollout
-            upside_down_flags = compute_world_zaxis_termination(self.env, all_datas)
+            # Batch compute world z-axis termination AFTER rollout using data from states
+            upside_down_flags = compute_world_zaxis_termination(self.env, all_states.data)
 
             # Find first termination step
             any_upside_down = jnp.any(upside_down_flags)
@@ -386,30 +399,38 @@ class PriorRolloutEvaluator:
                 self.max_steps
             )
 
-            return step_count, terminated
-        
+            return step_count, terminated, all_states
+
         # Vmap and jit the rollout function
         vmapped_rollout = jax.vmap(single_rollout_fn)
-        
+
         @jax.jit
-        def evaluate_fn(rng_key: jax.Array) -> Dict[str, jax.Array]:
+        def evaluate_fn(rng_key: jax.Array) -> Tuple[Dict[str, jax.Array], Any, jax.Array]:
             rollout_keys = random.split(rng_key, self.num_rollouts)
-            step_counts, terminated_flags = vmapped_rollout(rollout_keys)
-            
+            step_counts, terminated_flags, all_rollout_states = vmapped_rollout(rollout_keys)
+
             avg_steps = jnp.mean(step_counts.astype(jnp.float32))
             termination_rate = jnp.mean(terminated_flags.astype(jnp.float32))
             max_steps_reached = jnp.mean((step_counts >= self.max_steps).astype(jnp.float32))
-            
-            return {
+
+            metrics = {
                 "prior_rollout/avg_steps": avg_steps,
                 "prior_rollout/termination_rate": termination_rate,
                 "prior_rollout/max_steps_reached": max_steps_reached,
                 "prior_rollout/rollouts_min_steps": jnp.min(step_counts).astype(jnp.float32),
                 "prior_rollout/rollouts_max_steps": jnp.max(step_counts).astype(jnp.float32),
             }
-        
+
+            # Find best rollout (longest before termination)
+            best_idx = jnp.argmax(step_counts)
+            best_step_count = step_counts[best_idx]
+            # Extract states for the best rollout
+            best_states = jax.tree_util.tree_map(lambda x: x[best_idx], all_rollout_states)
+
+            return metrics, best_states, best_step_count
+
         return evaluate_fn
-    
+
     def run_evaluation(
         self,
         policy_params: Tuple,
@@ -417,42 +438,72 @@ class PriorRolloutEvaluator:
     ) -> Optional[Dict[str, float]]:
         """
         Run prior rollout evaluation if it's time to do so.
-        
+
         Args:
             policy_params: Current policy parameters.
             eval_step: Current evaluation step number.
-            
+
         Returns:
             Dictionary of metrics if evaluation was run, None otherwise.
         """
         # Check if we should run evaluation this step
         if eval_step % self.eval_interval != 0:
             return None
-        
+
         # Build the evaluate function with current params
         evaluate_fn = self._build_evaluate_fn(policy_params)
-        
+
         # Get new random key
         self._key, eval_key = random.split(self._key)
-        
+
         # Run evaluation
         import time
         t_start = time.time()
-        metrics = evaluate_fn(eval_key)
+        metrics, best_states, best_step_count = evaluate_fn(eval_key)
         # Block until complete and convert to Python floats
         metrics = {k: float(v) for k, v in metrics.items()}
+        best_step_count = int(best_step_count)
         metrics["prior_rollout/eval_time"] = time.time() - t_start
-        
+
+        # Render best rollout if enabled
+        if self.render_best_rollout:
+            self._render_best_rollout(best_states, best_step_count, eval_step)
+
         return metrics
+
+    def _render_best_rollout(self, states: Any, step_count: int, current_step: int) -> None:
+        """Render the best prior rollout and log to wandb."""
+        import wandb
+        import imageio
+
+        # Render frames for each step up to step_count
+        frames = []
+        for i in range(step_count):
+            # Extract state at timestep i
+            state_i_data = jax.tree_util.tree_map(lambda x: x[i], states.data)
+            frame = self.env.render(state_i_data, camera=self.render_camera_name)
+            frames.append(frame)
+
+        if len(frames) > 0:
+            # Write video to model_path (matching wandb_logging.py pattern)
+            video_path = f"{self.model_path}/prior_rollout_{current_step}.mp4"
+            with imageio.get_writer(video_path, fps=self.render_fps) as writer:
+                for frame in frames:
+                    writer.append_data(frame)
+
+            wandb.log({
+                "videos/best_prior_rollout": wandb.Video(video_path, format="mp4")
+            }, commit=False)
+
 
 class PriorRolloutEvaluatorNeutralState:
     """
     Evaluator class for running prior-only rollouts during training.
-    
+
     This class manages the evaluation of the prior network's ability to generate
     plausible actions by running rollouts using only the prior and decoder.
     """
-    
+
     def __init__(
         self,
         env,
@@ -467,6 +518,10 @@ class PriorRolloutEvaluatorNeutralState:
         fixed_logvar: float = -2.0,
         deterministic: bool = False,
         eval_interval: int = 1,
+        render_best_rollout: bool = False,
+        render_fps: int = 50,
+        render_camera_name: str = "close_profile",
+        model_path: str = "",
     ):
         """
         Initialize the prior rollout evaluator.
@@ -484,6 +539,10 @@ class PriorRolloutEvaluatorNeutralState:
             fixed_logvar: Fixed log-variance for prior sampling.
             deterministic: Whether to use deterministic policy.
             eval_interval: Run evaluation every N evals (1 = every eval).
+            render_best_rollout: Whether to render the best (longest) rollout.
+            render_fps: FPS for rendered video.
+            render_camera_name: Camera name for rendering.
+            model_path: Path to save rendered videos.
         """
         self.env = env
         self.mjx_model = env.mjx_model  # Store MJX model for neutral pose initialization
@@ -498,6 +557,10 @@ class PriorRolloutEvaluatorNeutralState:
         self.fixed_logvar = fixed_logvar
         self.deterministic = deterministic
         self.eval_interval = eval_interval
+        self.render_best_rollout = render_best_rollout
+        self.render_fps = render_fps
+        self.render_camera_name = render_camera_name
+        self.model_path = model_path
 
         self._key = random.PRNGKey(0)
         self._jit_evaluate = None
@@ -536,7 +599,7 @@ class PriorRolloutEvaluatorNeutralState:
             functools.partial(create_neutral_state, self.env, self.mjx_model)
         )
 
-        def single_rollout_fn(rng_key: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        def single_rollout_fn(rng_key: jax.Array) -> Tuple[jax.Array, jax.Array, Any]:
             """Run a single prior rollout starting from neutral pose."""
             key_rollout = rng_key  # No longer need to split for reset
 
@@ -566,15 +629,16 @@ class PriorRolloutEvaluatorNeutralState:
                 step_nan = check_termination_nan(next_state.data)
                 new_nan_terminated = jnp.logical_or(nan_terminated, step_nan)
 
-                return (next_state, key, new_nan_terminated), next_state.data
+                # Return full state for potential rendering
+                return (next_state, key, new_nan_terminated), next_state
 
             initial_carry = (state, key_rollout, jnp.array(False))
-            (_, _, nan_terminated), all_datas = jax.lax.scan(
+            (_, _, nan_terminated), all_states = jax.lax.scan(
                 step_fn, initial_carry, None, length=self.max_steps
             )
 
-            # Batch compute world z-axis termination AFTER rollout
-            upside_down_flags = compute_world_zaxis_termination(self.env, all_datas)
+            # Batch compute world z-axis termination AFTER rollout using data from states
+            upside_down_flags = compute_world_zaxis_termination(self.env, all_states.data)
 
             # Find first termination step
             any_upside_down = jnp.any(upside_down_flags)
@@ -588,30 +652,38 @@ class PriorRolloutEvaluatorNeutralState:
                 self.max_steps
             )
 
-            return step_count, terminated
-        
+            return step_count, terminated, all_states
+
         # Vmap and jit the rollout function
         vmapped_rollout = jax.vmap(single_rollout_fn)
-        
+
         @jax.jit
-        def evaluate_fn(rng_key: jax.Array) -> Dict[str, jax.Array]:
+        def evaluate_fn(rng_key: jax.Array) -> Tuple[Dict[str, jax.Array], Any, jax.Array]:
             rollout_keys = random.split(rng_key, self.num_rollouts)
-            step_counts, terminated_flags = vmapped_rollout(rollout_keys)
-            
+            step_counts, terminated_flags, all_rollout_states = vmapped_rollout(rollout_keys)
+
             avg_steps = jnp.mean(step_counts.astype(jnp.float32))
             termination_rate = jnp.mean(terminated_flags.astype(jnp.float32))
             max_steps_reached = jnp.mean((step_counts >= self.max_steps).astype(jnp.float32))
-            
-            return {
+
+            metrics = {
                 "prior_rollout/avg_steps": avg_steps,
                 "prior_rollout/termination_rate": termination_rate,
                 "prior_rollout/max_steps_reached": max_steps_reached,
                 "prior_rollout/rollouts_min_steps": jnp.min(step_counts).astype(jnp.float32),
                 "prior_rollout/rollouts_max_steps": jnp.max(step_counts).astype(jnp.float32),
             }
-        
+
+            # Find best rollout (longest before termination)
+            best_idx = jnp.argmax(step_counts)
+            best_step_count = step_counts[best_idx]
+            # Extract states for the best rollout
+            best_states = jax.tree_util.tree_map(lambda x: x[best_idx], all_rollout_states)
+
+            return metrics, best_states, best_step_count
+
         return evaluate_fn
-    
+
     def run_evaluation(
         self,
         policy_params: Tuple,
@@ -619,30 +691,59 @@ class PriorRolloutEvaluatorNeutralState:
     ) -> Optional[Dict[str, float]]:
         """
         Run prior rollout evaluation if it's time to do so.
-        
+
         Args:
             policy_params: Current policy parameters.
             eval_step: Current evaluation step number.
-            
+
         Returns:
             Dictionary of metrics if evaluation was run, None otherwise.
         """
         # Check if we should run evaluation this step
         if eval_step % self.eval_interval != 0:
             return None
-        
+
         # Build the evaluate function with current params
         evaluate_fn = self._build_evaluate_fn(policy_params)
-        
+
         # Get new random key
         self._key, eval_key = random.split(self._key)
-        
+
         # Run evaluation
         import time
         t_start = time.time()
-        metrics = evaluate_fn(eval_key)
+        metrics, best_states, best_step_count = evaluate_fn(eval_key)
         # Block until complete and convert to Python floats
         metrics = {k: float(v) for k, v in metrics.items()}
+        best_step_count = int(best_step_count)
         metrics["prior_rollout/eval_time"] = time.time() - t_start
-        
+
+        # Render best rollout if enabled
+        if self.render_best_rollout:
+            self._render_best_rollout(best_states, best_step_count, eval_step)
+
         return metrics
+
+    def _render_best_rollout(self, states: Any, step_count: int, current_step: int) -> None:
+        """Render the best prior rollout and log to wandb."""
+        import wandb
+        import imageio
+
+        # Render frames for each step up to step_count
+        frames = []
+        for i in range(step_count):
+            # Extract state at timestep i
+            state_i_data = jax.tree_util.tree_map(lambda x: x[i], states.data)
+            frame = self.env.render(state_i_data, camera=self.render_camera_name)
+            frames.append(frame)
+
+        if len(frames) > 0:
+            # Write video to model_path (matching wandb_logging.py pattern)
+            video_path = f"{self.model_path}/prior_rollout_{current_step}.mp4"
+            with imageio.get_writer(video_path, fps=self.render_fps) as writer:
+                for frame in frames:
+                    writer.append_data(frame)
+
+            wandb.log({
+                "videos/best_prior_rollout": wandb.Video(video_path, format="mp4")
+            }, commit=False)

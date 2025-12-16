@@ -94,6 +94,7 @@ prior_rollout_config:
   max_steps: 200  # Maximum steps per rollout
   fixed_logvar: -2.0  # Fixed log-variance for prior sampling
   deterministic: true  # Whether to use deterministic policy
+  render_best_rollout: false  # Whether to render the best (longest) rollout to wandb
 
 network_config:
   arch_name: intention

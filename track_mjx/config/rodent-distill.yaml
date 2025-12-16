@@ -109,6 +109,13 @@ distill_config:
   autoregressive_weight: 1e-3      # Weight for AR(1) temporal smoothness of latent means
   kl_weight: 1e-3                  # Weight for KL divergence between encoder and prior
   use_l2_action_loss: false        # If true, use mean L2 norm (like PULSE). If false, use MSE.
+
+  # Log-variance clamping (PULSE uses min=-5, max=2 for both)
+  # Set to null to disable clamping
+  encoder_logvar_min: -5.0         # Min clamp for encoder log-variance
+  encoder_logvar_max: 2.0          # Max clamp for encoder log-variance
+  prior_logvar_min: -5.0           # Min clamp for prior log-variance
+  prior_logvar_max: 2.0            # Max clamp for prior log-variance
   
   # Optional: schedule for loss weights
   use_schedule: true

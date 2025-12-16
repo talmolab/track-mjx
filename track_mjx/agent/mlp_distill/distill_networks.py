@@ -92,15 +92,25 @@ def make_student_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     prior_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    encoder_logvar_min: float | None = None,
+    encoder_logvar_max: float | None = None,
+    prior_logvar_min: float | None = None,
+    prior_logvar_max: float | None = None,
 ) -> DistillNetworks:
     """Create student networks for distillation training.
-    
+
     Uses the same architecture as PPO intention networks.
+
+    Args:
+        encoder_logvar_min: Min clamp for encoder log-variance (PULSE uses -5).
+        encoder_logvar_max: Max clamp for encoder log-variance (PULSE uses 2).
+        prior_logvar_min: Min clamp for prior log-variance (PULSE uses -5).
+        prior_logvar_max: Max clamp for prior log-variance (PULSE uses 2).
     """
     parametric_action_distribution = distribution.NormalTanhDistribution(
         event_size=action_size
     )
-    
+
     student_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,
@@ -110,6 +120,10 @@ def make_student_networks(
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         prior_hidden_layer_sizes=prior_hidden_layer_sizes,
+        encoder_logvar_min=encoder_logvar_min,
+        encoder_logvar_max=encoder_logvar_max,
+        prior_logvar_min=prior_logvar_min,
+        prior_logvar_max=prior_logvar_max,
     )
     
     return DistillNetworks(

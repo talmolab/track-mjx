@@ -134,11 +134,28 @@ class IntentionNetwork(nn.Module):
     prior_layers: Sequence[int]
     reference_obs_size: int
     latents: int = 60
+    # Log-variance clamping (PULSE uses min=-5, max=2)
+    encoder_logvar_min: float | None = None
+    encoder_logvar_max: float | None = None
+    prior_logvar_min: float | None = None
+    prior_logvar_max: float | None = None
 
     def setup(self):
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
         self.prior = Prior(layer_sizes=self.prior_layers, latents=self.latents)
+
+    def _clamp_encoder_logvar(self, logvar: jnp.ndarray) -> jnp.ndarray:
+        """Apply clamping to encoder log-variance if bounds are set."""
+        if self.encoder_logvar_min is not None or self.encoder_logvar_max is not None:
+            return jnp.clip(logvar, a_min=self.encoder_logvar_min, a_max=self.encoder_logvar_max)
+        return logvar
+
+    def _clamp_prior_logvar(self, logvar: jnp.ndarray) -> jnp.ndarray:
+        """Apply clamping to prior log-variance if bounds are set."""
+        if self.prior_logvar_min is not None or self.prior_logvar_max is not None:
+            return jnp.clip(logvar, a_min=self.prior_logvar_min, a_max=self.prior_logvar_max)
+        return logvar
 
     def __call__(self, obs, key, deterministic: bool = False, get_activation: bool = False):
         _, encoder_rng = jax.random.split(key)
@@ -151,12 +168,16 @@ class IntentionNetwork(nn.Module):
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
                 encoder_input, get_activation=True
             )
-            
+            # Apply encoder logvar clamping (PULSE-style)
+            latent_logvar = self._clamp_encoder_logvar(latent_logvar)
+
             # Prior takes only proprioceptive observations
             (prior_mean, prior_logvar), prior_activations = self.prior(
                 egocentric_obs, get_activation=True
             )
-            
+            # Apply prior logvar clamping (PULSE-style)
+            prior_logvar = self._clamp_prior_logvar(prior_logvar)
+
             # Uses mean in the case of deterministic evaluation
             if deterministic:
                 z = latent_mean
@@ -188,10 +209,14 @@ class IntentionNetwork(nn.Module):
             # Concatenate proprioceptive observations with trajectory for encoder
             encoder_input = jnp.concatenate([traj, egocentric_obs], axis=-1)
             latent_mean, latent_logvar = self.encoder(encoder_input, get_activation=False)
-            
+            # Apply encoder logvar clamping (PULSE-style)
+            latent_logvar = self._clamp_encoder_logvar(latent_logvar)
+
             # Prior takes only proprioceptive observations
             prior_mean, prior_logvar = self.prior(egocentric_obs, get_activation=False)
-            
+            # Apply prior logvar clamping (PULSE-style)
+            prior_logvar = self._clamp_prior_logvar(prior_logvar)
+
             # Uses mean in the case of deterministic evaluation
             if deterministic:
                 z = latent_mean
@@ -213,6 +238,10 @@ def make_intention_policy(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     prior_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    encoder_logvar_min: float | None = None,
+    encoder_logvar_max: float | None = None,
+    prior_logvar_min: float | None = None,
+    prior_logvar_max: float | None = None,
 ) -> networks.FeedForwardNetwork:
     """
     Create a policy network with intention module including prior, encoder, and decoder.
@@ -226,6 +255,10 @@ def make_intention_policy(
         encoder_hidden_layer_sizes (Sequence[int], optional): sizes of encoder hidden layers. Defaults to (1024, 1024).
         decoder_hidden_layer_sizes (Sequence[int], optional): sizes of decoder hidden layers. Defaults to (1024, 1024).
         prior_hidden_layer_sizes (Sequence[int], optional): sizes of prior hidden layers. Defaults to (1024, 1024).
+        encoder_logvar_min (float | None, optional): min clamp for encoder log-variance. Defaults to None (no clamping).
+        encoder_logvar_max (float | None, optional): max clamp for encoder log-variance. Defaults to None (no clamping).
+        prior_logvar_min (float | None, optional): min clamp for prior log-variance. Defaults to None (no clamping).
+        prior_logvar_max (float | None, optional): max clamp for prior log-variance. Defaults to None (no clamping).
 
     Returns:
         networks.FeedForwardNetwork: the created policy network
@@ -238,6 +271,10 @@ def make_intention_policy(
         prior_layers=list(prior_hidden_layer_sizes),
         reference_obs_size=reference_obs_size,
         latents=latent_size,
+        encoder_logvar_min=encoder_logvar_min,
+        encoder_logvar_max=encoder_logvar_max,
+        prior_logvar_min=prior_logvar_min,
+        prior_logvar_max=prior_logvar_max,
     )
 
     def apply(processor_params, policy_params, obs, key, deterministic: bool = False, get_activation: bool = False):

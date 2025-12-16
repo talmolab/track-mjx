@@ -139,6 +139,10 @@ def train(
     autoregressive_weight: float = 1e-3,
     kl_weight: float = 1e-3,
     use_l2_action_loss: bool = False,
+    encoder_logvar_min: float | None = None,
+    encoder_logvar_max: float | None = None,
+    prior_logvar_min: float | None = None,
+    prior_logvar_max: float | None = None,
     seed: int = 0,
     unroll_length: int = 10,
     batch_size: int = 32,
@@ -183,6 +187,10 @@ def train(
         autoregressive_weight: Weight for autoregressive loss
         kl_weight: Weight for KL divergence loss
         use_l2_action_loss: If True, use mean L2 norm (like PULSE). If False, use MSE.
+        encoder_logvar_min: Optional min clamp for encoder log-variance (PULSE uses -5)
+        encoder_logvar_max: Optional max clamp for encoder log-variance (PULSE uses 2)
+        prior_logvar_min: Optional min clamp for prior log-variance (PULSE uses -5)
+        prior_logvar_max: Optional max clamp for prior log-variance (PULSE uses 2)
         seed: Random seed
         unroll_length: Number of timesteps to unroll
         batch_size: Batch size for minibatch SGD
@@ -447,6 +455,10 @@ def train(
         reference_obs_size,
         env.action_size,
         preprocess_observations_fn=normalize,
+        encoder_logvar_min=encoder_logvar_min,
+        encoder_logvar_max=encoder_logvar_max,
+        prior_logvar_min=prior_logvar_min,
+        prior_logvar_max=prior_logvar_max,
     )
     make_policy = distill_networks.make_student_inference_fn(student_networks)
 
@@ -480,6 +492,7 @@ def train(
             )
 
     # Create loss function
+    # Note: logvar clamping is now done in the network, not in the loss function
     loss_fn = functools.partial(
         losses.compute_distillation_loss,
         student_network=student_networks.student_network,

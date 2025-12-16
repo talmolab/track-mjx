@@ -168,6 +168,7 @@ def train(
     kl_ramp_up_frac: float = 0.25,
     freeze_decoder: bool = False,
     checkpoint_callback: Optional[Callable[[int], None]] = None,
+    use_pmap_on_reset: bool = True,
 ):
     """PPO training.
 
@@ -474,10 +475,25 @@ def train(
         # use_lstm=use_lstm,
     )
 
-    reset_fn = jax.jit(jax.vmap(env.reset))
+    def reset_fn_donated_env_state(env_state_donated, key_envs):
+        return env.reset(key_envs)
+
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
-    env_state = reset_fn(key_envs)
+    if local_devices_to_use > 1 or use_pmap_on_reset:
+        reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
+        env_state = reset_fn_(key_envs)
+        reset_fn = jax.pmap(
+            reset_fn_donated_env_state,
+            axis_name=_PMAP_AXIS_NAME,
+            donate_argnums=(0,),
+        )
+    else:
+        reset_fn_ = jax.jit(jax.vmap(env.reset))
+        env_state = reset_fn_(key_envs)
+        reset_fn = jax.jit(
+            reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
+        )
 
     reference_obs_size = int(_unpmap(env_state.info["reference_obs_size"])[0])
     # might be breaking change for old checkpoint
@@ -743,7 +759,8 @@ def train(
                 lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)
             )(key_envs, key_envs.shape[1])
             # TODO: move extra reset logic to the AutoResetWrapper.
-            env_state = reset_fn(key_envs) if num_resets_per_eval > 0 else env_state
+            if num_resets_per_eval > 0:
+                env_state = reset_fn(env_state, key_envs)
 
         if process_id == 0:
             # Run evaluation rollout, logging and checkpointing.
@@ -768,7 +785,11 @@ def train(
             )
             # Do policy evaluation and logging.
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
-            if it % config_dict["env_config"]["render_interval"] == 0:
+            try:
+                render_interval = config_dict["env_config"]["render_interval"]
+            except KeyError:
+                render_interval = 1
+            if it % render_interval == 0:
                 # Render video every `render_interval` iterations.
                 policy_params_fn(
                     current_step=it,

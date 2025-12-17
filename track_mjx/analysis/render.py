@@ -1,32 +1,31 @@
-# imports
-import os
+"""Rendering utilities for rollout visualization and analysis.
 
+This module provides functions for rendering MuJoCo rollouts with optional
+PCA progression overlays, and displaying videos in Jupyter notebooks.
+
+Note:
+    Sets MUJOCO_GL and PYOPENGL_PLATFORM environment variables to "egl"
+    for headless rendering if not already set.
+"""
+
+import functools
+import multiprocessing as mp
+import os
+from typing import Any
+
+# Configure OpenGL for headless rendering (must be before matplotlib import)
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
-from typing import List, Any, Dict
-import numpy as np
-
 import matplotlib
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-
-from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.animation as animation
-
-from sklearn.decomposition import PCA
-from PIL import Image
-from IPython.display import HTML
-
-# TODO: Add other walker consts
-from vnl_playground.tasks.rodent import consts as rodent_consts
-from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
-from vnl_playground.tasks.mouse import consts as mouse_consts
-
+import matplotlib.pyplot as plt
 import numpy as np
-
-import multiprocessing as mp
-import functools
+from IPython.display import HTML
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from PIL import Image
+from sklearn.decomposition import PCA
+from tqdm import tqdm
 
 
 def plot_pca_intention(
@@ -40,155 +39,197 @@ def plot_pca_intention(
     terminated: bool = False,
     window_size: int = 530,
 ) -> np.ndarray:
-    """Plot PCA intention progression of the episode.
+    """Generate a PCA progression plot as an image array.
+
+    Creates a line plot showing the trajectory of PCA components over time,
+    with the current timestep marked. Useful for visualizing latent intention
+    or control signal evolution during a rollout.
 
     Args:
-        idx (int): The current timestep.
-        episode_start (int): The start timestep of the episode.
-        pca (PCA): The PCA object fitted on the dataset.
-        pca_projections (np.ndarray): The PCA projection of the episode, shape (timestep, n_components).
-        clip_idx (int): The clip index.
-        feature_name (str): The feature name.
-        n_components (int, optional): The number of PCA components to plot. Defaults to 4.
-        terminated (bool, optional): Whether the episode is terminated. Defaults to False.
-        window_size (int, optional): The window size of the plot. Defaults to 530.
+        idx: Current timestep index (absolute, not relative to episode).
+        episode_start: Timestep where the current episode began.
+        pca: Fitted sklearn PCA object (used for variance ratios in legend).
+        pca_projections: PCA-transformed data, shape (num_timesteps, n_components).
+        clip_idx: Reference clip index (displayed in title).
+        feature_name: Name of the feature being visualized (e.g., "ctrl", "intention").
+        n_components: Number of principal components to plot. Defaults to 4.
+        terminated: If True, draws a vertical line marking episode termination.
+        window_size: Number of timesteps visible in the x-axis window. Defaults to 530.
 
     Returns:
-        np.ndarray: The image array of the plot.
+        RGB image array of the plot, shape (height, width, 3).
     """
-    max_y = np.max(list(pca_projections[:, :n_components]))
-    min_y = np.min(list(pca_projections[:, :n_components]))
+    max_y = np.max(pca_projections[:, :n_components])
+    min_y = np.min(pca_projections[:, :n_components])
     y_lim = (min_y - 0.2, max_y + 0.2)
-    idx_in_this_episode = idx - episode_start  # the current timestep in this episode
+    idx_in_episode = idx - episode_start
+
     plt.figure(figsize=(9.6, 4.8))
+
     for pc_ind in range(n_components):
-        # Plot the PCA projection of the episode
+        variance_pct = pca.explained_variance_ratio_[pc_ind] * 100
         plt.plot(
             pca_projections[episode_start:idx, pc_ind],
-            label=f"PC {pc_ind} ({pca.explained_variance_ratio_[pc_ind]*100:.1f}%)",
+            label=f"PC {pc_ind} ({variance_pct:.1f}%)",
         )
-        plt.scatter(idx - episode_start, pca_projections[idx - 1, pc_ind])
+        plt.scatter(idx_in_episode, pca_projections[idx - 1, pc_ind])
+
     if terminated:
-        # Mark the episode termination
-        plt.axvline(x=idx - episode_start, color="r", linestyle="-")
+        plt.axvline(x=idx_in_episode, color="r", linestyle="-")
         plt.text(
-            idx - episode_start - 8,  # Adjust the x-offset as needed
-            sum(y_lim) / 2,  # Adjust the y-position as needed
+            idx_in_episode - 8,
+            sum(y_lim) / 2,
             "Episode Terminated",
             color="r",
             rotation=90,
-        )  # Rotate the text vertically
-    if idx_in_this_episode <= window_size:
+        )
+
+    # Sliding window for x-axis
+    if idx_in_episode <= window_size:
         plt.xlim(0, window_size)
     else:
-        plt.xlim(
-            idx_in_this_episode - window_size, idx_in_this_episode
-        )  # dynamically move xlim as time progress
+        plt.xlim(idx_in_episode - window_size, idx_in_episode)
+
     plt.ylim(*y_lim)
     plt.legend(loc="upper right")
     plt.xlabel("Timestep")
-    plt.title(
-        f"PCA {feature_name} Progression for Clip {clip_idx}"
-    )  # TODO make it configurable
-    # Get the current figure
+    plt.title(f"PCA {feature_name} Progression for Clip {clip_idx}")
+
+    # Render figure to numpy array
     fig = plt.gcf()
-    # Create a canvas for rendering
     canvas = FigureCanvasAgg(fig)
-    # Render the canvas to a buffer
     canvas.draw()
-    s, (width, height) = canvas.print_to_buffer()
-    # Convert the buffer to a PIL Image
-    image = Image.frombytes("RGBA", (width, height), s)
+    buf, (width, height) = canvas.print_to_buffer()
+    image = Image.frombytes("RGBA", (width, height), buf)
     rgb_array = np.array(image.convert("RGB"))
+    plt.close(fig)
+
     return rgb_array
 
 
 def render_with_pca_progression(
-    rollout: Dict[str, Any],
+    rollout: dict[str, Any],
+    pca: PCA,
     pca_projections: np.ndarray,
+    render_fn: callable,
     n_components: int = 4,
     feature_name: str = "ctrl",
-) -> List[np.ndarray]:
-    """Render rollout frames concatenated with PCA progression plots.
+) -> list[np.ndarray]:
+    """Render rollout frames side-by-side with PCA progression plots.
+
+    Combines MuJoCo rendered frames with corresponding PCA trajectory plots,
+    creating a visualization that shows both the physical simulation and
+    the evolution of latent features over time.
 
     Args:
-        rollout (Dict[str, Any]): The rollout dictionary.
-        pca_projections (np.ndarray): The PCA projections of the rollout.
-        n_components (int, optional): The number of PCA components to plot. Defaults to 4.
-        feature_name (str, optional): The feature name. Defaults to "ctrl".
+        rollout: Rollout dictionary containing "info" and "qposes_rollout" keys.
+        pca: Fitted sklearn PCA object for variance ratio display.
+        pca_projections: PCA-transformed features, shape (num_timesteps, n_components).
+        render_fn: Function to render rollout states, returns list of frame arrays.
+        n_components: Number of PCA components to display. Defaults to 4.
+        feature_name: Label for the PCA plot title. Defaults to "ctrl".
 
     Returns:
-        List[np.ndarray]: List of frames of the rendering concatenated with PCA plots.
+        List of concatenated frames (MuJoCo frame | PCA plot), suitable for video.
+
+    Note:
+        Adds 50 frozen frames at the end showing the termination state.
     """
-    frames_mujoco = render_from_saved_rollout(rollout)[1:]
-    # skip the first frame, since we don't have intention for the first frame
+    # Skip first frame (no intention data available)
+    frames_mujoco = render_fn(rollout)[1:]
+
     orig_backend = matplotlib.get_backend()
-    matplotlib.use("Agg")  # Switch to headless 'Agg' to inhibit figure rendering.
+    matplotlib.use("Agg")
+
     clip_idx = int(rollout["info"][0]["clip_idx"])
+
+    # Parallel render PCA plots
     worker = functools.partial(
         plot_pca_intention,
         episode_start=0,
+        pca=pca,
+        pca_projections=pca_projections,
         clip_idx=clip_idx,
-        pca_projections=pca_embedded,
         n_components=n_components,
         feature_name=feature_name,
     )
-    print("Rendering with PCA progression...")
-    # Use multiprocessing to parallelize the rendering of the reward graph
+
+    print("Rendering PCA progression plots...")
     with mp.Pool(processes=mp.cpu_count()) as pool:
         frames_pca = pool.map(worker, range(len(rollout["qposes_rollout"])))
-    concat_frames = []
-    episode_start = 0
-    # implement reset logics of the reward graph too.
+
     print("Concatenating frames...")
+    concat_frames = []
     for idx, frame in tqdm(enumerate(frames_mujoco)):
         concat_frames.append(np.hstack([frame, frames_pca[idx]]))
-    reward_plot = plot_pca_intention(
-        len(frames_mujoco) - 1,
-        episode_start,
-        pca_projections,
-        clip_idx,
-        feature_name,
-        n_components,
+
+    # Final frame with termination marker
+    final_plot = plot_pca_intention(
+        idx=len(frames_mujoco) - 1,
+        episode_start=0,
+        pca=pca,
+        pca_projections=pca_projections,
+        clip_idx=clip_idx,
+        feature_name=feature_name,
+        n_components=n_components,
         terminated=True,
     )
-    plt.close("all")  # Figure auto-closing upon backend switching is deprecated.
+
+    plt.close("all")
     matplotlib.use(orig_backend)
+
+    # Add frozen end frames
     for _ in range(50):
-        concat_frames.append(
-            np.hstack([frames_mujoco[-1], reward_plot])
-        )  # create stoppage when episode terminates
+        concat_frames.append(np.hstack([frames_mujoco[-1], final_plot]))
+
     return concat_frames
 
 
-def display_video(frames: List[np.ndarray], framerate: int = 30) -> HTML:
-    """Display a video from a list of frames.
+def display_video(frames: list[np.ndarray], framerate: int = 30) -> HTML:
+    """Display a sequence of frames as an HTML5 video in Jupyter.
+
+    Creates a matplotlib animation from the frames and converts it to an
+    HTML5 video element for inline display in Jupyter notebooks.
 
     Args:
-        frames (List[np.ndarray]): List of frames with shape (height, width, 3).
-        framerate (int, optional): The framerate of the video. Defaults to 30.
+        frames: List of RGB image arrays, each with shape (height, width, 3).
+        framerate: Video playback speed in frames per second. Defaults to 30.
 
     Returns:
-        HTML: HTML video object for display in Jupyter notebooks.
+        IPython HTML object containing the embedded video.
+
+    Example:
+        >>> frames = [np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        ...           for _ in range(100)]
+        >>> display_video(frames, framerate=30)
     """
     height, width, _ = frames[0].shape
     dpi = 70
+
     orig_backend = matplotlib.get_backend()
-    matplotlib.use("Agg")  # Switch to headless 'Agg' to inhibit figure rendering.
+    matplotlib.use("Agg")
+
     fig, ax = plt.subplots(1, 1, figsize=(width / dpi, height / dpi), dpi=dpi)
-    plt.close("all")  # Figure auto-closing upon backend switching is deprecated.
-    matplotlib.use(orig_backend)  # Switch back to the original backend.
     ax.set_axis_off()
     ax.set_aspect("equal")
     ax.set_position([0, 0, 1, 1])
     im = ax.imshow(frames[0])
 
-    def update(frame: np.ndarray) -> List[Any]:
+    plt.close("all")
+    matplotlib.use(orig_backend)
+
+    def update(frame: np.ndarray) -> list[Any]:
         im.set_data(frame)
         return [im]
 
     interval = 1000 / framerate
     anim = animation.FuncAnimation(
-        fig=fig, func=update, frames=frames, interval=interval, blit=True, repeat=False
+        fig=fig,
+        func=update,
+        frames=frames,
+        interval=interval,
+        blit=True,
+        repeat=False,
     )
+
     return HTML(anim.to_html5_video())

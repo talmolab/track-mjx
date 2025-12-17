@@ -1,3 +1,4 @@
+from typing import Any
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import consts as rodent_consts
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
@@ -5,7 +6,7 @@ from vnl_playground.tasks.mouse import consts as mouse_consts
 from ml_collections import config_dict
 import logging
 
-def prepare_config(cfg: DictConfig) -> tuple[DictConfig, DictConfig, DictConfig, config_dict.ConfigDict, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig, DictConfig]:
+def prepare_config(cfg: DictConfig) -> tuple[DictConfig, Any, config_dict.ConfigDict]:
 
     # Determine walker
     walker_name = cfg.walker_config.walker_name

@@ -25,7 +25,7 @@ import jax
 
 
 def load_config_from_checkpoint(
-    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None
+    checkpoint_path: str, step_prefix: str = "Network", step: int | None = None
 ):
     """Load the config from a checkpoint."""
     mgr_options = ocp.CheckpointManagerOptions(create=False, step_prefix=step_prefix)
@@ -47,7 +47,7 @@ def load_config_from_checkpoint(
 def load_training_state(
     checkpoint_path: str,
     abstract_training_state,
-    step_prefix: str = "PPONetwork",
+    step_prefix: str = "Network",
     step: int | None = None,
 ):
     """Load the training state from checkpoint, given an arbitrary reference training state."""
@@ -70,7 +70,7 @@ def load_training_state(
 
 
 def load_policy(
-    checkpoint_path: str, cfg=None, ckpt_mgr=None, step_prefix="PPONetwork", step=None
+    checkpoint_path: str, cfg=None, ckpt_mgr=None, step_prefix="Network", step=None
 ):
     if cfg is None:
         cfg = load_config_from_checkpoint(checkpoint_path, step_prefix, step)
@@ -96,7 +96,7 @@ def load_policy(
 
 
 def load_checkpoint_for_eval(
-    checkpoint_path: str, step_prefix: str = "PPONetwork", step: int | None = None
+    checkpoint_path: str, step_prefix: str = "Network", step: int | None = None
 ):
     """Load a checkpoint's config and policy. Creates an abstract state to define structure.
 
@@ -364,7 +364,7 @@ def discover_existing_run_state(cfg: DictConfig) -> Optional[Dict[str, Any]]:
         ckpt_mgr = ocp.CheckpointManager(
             checkpoint_path,
             options=ocp.CheckpointManagerOptions(
-                create=False, step_prefix="PPONetwork"
+                create=False, step_prefix="Network"
             ),
         )
         latest_step = ckpt_mgr.latest_step()

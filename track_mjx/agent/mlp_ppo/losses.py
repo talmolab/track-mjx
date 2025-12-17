@@ -31,7 +31,6 @@ from typing import Any
 import flax
 import jax
 import jax.numpy as jnp
-import optax
 from brax.training import types
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.types import Params

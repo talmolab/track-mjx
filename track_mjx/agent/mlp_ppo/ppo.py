@@ -22,8 +22,6 @@ This module implements PPO training with support for:
 - KL divergence scheduling for VAE training stability
 
 Based on Brax's PPO implementation with modifications for VNL tracking tasks.
-
-Reference: https://arxiv.org/pdf/1707.06347.pdf
 """
 
 import functools

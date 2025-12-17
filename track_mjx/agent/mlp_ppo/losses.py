@@ -21,8 +21,6 @@ intention networks, including:
 - Value function loss
 - Entropy bonus
 - KL divergence loss for VAE latent space (with autoregressive prior)
-
-Reference: https://arxiv.org/pdf/1707.06347.pdf
 """
 
 from collections.abc import Callable

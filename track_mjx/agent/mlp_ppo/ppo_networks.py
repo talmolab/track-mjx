@@ -1,7 +1,7 @@
 """PPO network definitions for intention-based imitation learning.
 
 This module provides network architectures for PPO training with VAE-style
-intention encoding, based on the CoMic architecture (Hasenclever et al., 2020).
+intention encoding.
 
 The key components are:
 - PPOImitationNetworks: Container for policy, value, and action distribution

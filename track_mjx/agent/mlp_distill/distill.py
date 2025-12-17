@@ -143,6 +143,7 @@ def train(
     encoder_logvar_max: float | None = None,
     prior_logvar_min: float | None = None,
     prior_logvar_max: float | None = None,
+    grad_clip_norm: float = 0.5,
     seed: int = 0,
     unroll_length: int = 10,
     batch_size: int = 32,
@@ -464,7 +465,7 @@ def train(
 
     # Setup optimizer
     optimizer = optax.chain(
-        optax.clip_by_global_norm(0.5),
+        optax.clip_by_global_norm(grad_clip_norm),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 

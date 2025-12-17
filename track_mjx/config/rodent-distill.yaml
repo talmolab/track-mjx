@@ -110,6 +110,7 @@ distill_config:
   autoregressive_weight: 1e-3      # Weight for AR(1) temporal smoothness of latent means
   kl_weight: 1e-3                  # Weight for KL divergence between encoder and prior
   use_l2_action_loss: false        # If true, use mean L2 norm (like PULSE). If false, use MSE.
+  grad_clip_norm: 50.0             # Gradient clipping norm (PULSE uses 50.0, default was 0.5)
 
   # Log-variance clamping (PULSE uses min=-5, max=2 for both)
   # Set to null to disable clamping

@@ -314,6 +314,7 @@ def main(cfg: DictConfig):
         encoder_logvar_max=distill_cfg.get("encoder_logvar_max", None),
         prior_logvar_min=distill_cfg.get("prior_logvar_min", None),
         prior_logvar_max=distill_cfg.get("prior_logvar_max", None),
+        grad_clip_norm=distill_cfg.get("grad_clip_norm", 10.0),
         network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,

@@ -11,7 +11,7 @@ Note:
 import functools
 import multiprocessing as mp
 import os
-from typing import Any
+from typing import Any, Callable
 
 # Configure OpenGL for headless rendering (must be before matplotlib import)
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
@@ -111,7 +111,7 @@ def render_with_pca_progression(
     rollout: dict[str, Any],
     pca: PCA,
     pca_projections: np.ndarray,
-    render_fn: callable,
+    render_fn: Callable,
     n_components: int = 4,
     feature_name: str = "ctrl",
 ) -> list[np.ndarray]:

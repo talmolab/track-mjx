@@ -67,6 +67,7 @@ def distill_rollout_logging_fn(
         from brax.training.acme import running_statistics
         normalize = running_statistics.normalize
 
+    distill_cfg = cfg.distill_config
     student_networks = distill_networks.make_student_networks(
         observation_size=env.observation_size,
         reference_obs_size=int(env.non_proprioceptive_obs_size),
@@ -77,6 +78,10 @@ def distill_rollout_logging_fn(
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         prior_hidden_layer_sizes=tuple(cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)),
         encoder_expansion_factor=cfg.network_config.get("encoder_expansion_factor", 1),
+        encoder_logvar_min=distill_cfg.get("encoder_logvar_min", None),
+        encoder_logvar_max=distill_cfg.get("encoder_logvar_max", None),
+        prior_logvar_min=distill_cfg.get("prior_logvar_min", None),
+        prior_logvar_max=distill_cfg.get("prior_logvar_max", None),
     )
 
     make_student_policy = distill_networks.make_student_inference_fn(student_networks)

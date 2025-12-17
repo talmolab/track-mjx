@@ -14,7 +14,7 @@ from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
-from track_mjx import utils
+from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.mlp_ppo import ppo, ppo_networks
 

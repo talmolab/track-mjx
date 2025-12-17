@@ -19,6 +19,7 @@ class Encoder(nn.Module):
     activation: networks.ActivationFn = nn.silu
     kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform()
     bias: bool = True
+    expansion_factor: int = 1  # PULSE uses 5x expansion before mean/logvar heads
 
     @nn.compact
     def __call__(
@@ -39,6 +40,20 @@ class Encoder(nn.Module):
             x = nn.LayerNorm()(x)
             if get_activation:
                 activations[f"layer_{i}"] = x
+
+        # Expansion layer before mean/logvar heads (PULSE-style)
+        if self.expansion_factor > 1:
+            expansion_dim = self.latents * self.expansion_factor
+            x = nn.Dense(
+                expansion_dim,
+                name="expansion",
+                kernel_init=self.kernel_init,
+                use_bias=self.bias,
+            )(x)
+            x = self.activation(x)
+            x = nn.LayerNorm()(x)
+            if get_activation:
+                activations["expansion"] = x
 
         mean_x = nn.Dense(self.latents, name="fc2_mean")(x)
         logvar_x = nn.Dense(self.latents, name="fc2_logvar")(x)
@@ -139,9 +154,15 @@ class IntentionNetwork(nn.Module):
     encoder_logvar_max: float | None = None
     prior_logvar_min: float | None = None
     prior_logvar_max: float | None = None
+    # Encoder expansion factor (PULSE uses 5x expansion before mean/logvar heads)
+    encoder_expansion_factor: int = 1
 
     def setup(self):
-        self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
+        self.encoder = Encoder(
+            layer_sizes=self.encoder_layers,
+            latents=self.latents,
+            expansion_factor=self.encoder_expansion_factor,
+        )
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
         self.prior = Prior(layer_sizes=self.prior_layers, latents=self.latents)
 
@@ -242,6 +263,7 @@ def make_intention_policy(
     encoder_logvar_max: float | None = None,
     prior_logvar_min: float | None = None,
     prior_logvar_max: float | None = None,
+    encoder_expansion_factor: int = 1,
 ) -> networks.FeedForwardNetwork:
     """
     Create a policy network with intention module including prior, encoder, and decoder.
@@ -259,6 +281,7 @@ def make_intention_policy(
         encoder_logvar_max (float | None, optional): max clamp for encoder log-variance. Defaults to None (no clamping).
         prior_logvar_min (float | None, optional): min clamp for prior log-variance. Defaults to None (no clamping).
         prior_logvar_max (float | None, optional): max clamp for prior log-variance. Defaults to None (no clamping).
+        encoder_expansion_factor (int, optional): expansion factor for encoder before mean/logvar heads (PULSE uses 5). Defaults to 1 (no expansion).
 
     Returns:
         networks.FeedForwardNetwork: the created policy network
@@ -275,6 +298,7 @@ def make_intention_policy(
         encoder_logvar_max=encoder_logvar_max,
         prior_logvar_min=prior_logvar_min,
         prior_logvar_max=prior_logvar_max,
+        encoder_expansion_factor=encoder_expansion_factor,
     )
 
     def apply(processor_params, policy_params, obs, key, deterministic: bool = False, get_activation: bool = False):

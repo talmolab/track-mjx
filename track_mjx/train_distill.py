@@ -76,6 +76,7 @@ def distill_rollout_logging_fn(
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         prior_hidden_layer_sizes=tuple(cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)),
+        encoder_expansion_factor=cfg.network_config.get("encoder_expansion_factor", 1),
     )
 
     make_student_policy = distill_networks.make_student_inference_fn(student_networks)
@@ -263,6 +264,7 @@ def main(cfg: DictConfig):
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         prior_hidden_layer_sizes=tuple(cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)),
+        encoder_expansion_factor=cfg.network_config.get("encoder_expansion_factor", 1),
     )
 
     # Initialize wandb logging

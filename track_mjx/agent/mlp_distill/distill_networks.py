@@ -96,6 +96,7 @@ def make_student_networks(
     encoder_logvar_max: float | None = None,
     prior_logvar_min: float | None = None,
     prior_logvar_max: float | None = None,
+    encoder_expansion_factor: int = 1,
 ) -> DistillNetworks:
     """Create student networks for distillation training.
 
@@ -106,6 +107,7 @@ def make_student_networks(
         encoder_logvar_max: Max clamp for encoder log-variance (PULSE uses 2).
         prior_logvar_min: Min clamp for prior log-variance (PULSE uses -5).
         prior_logvar_max: Max clamp for prior log-variance (PULSE uses 2).
+        encoder_expansion_factor: Expansion factor for encoder before mean/logvar heads (PULSE uses 5).
     """
     parametric_action_distribution = distribution.NormalTanhDistribution(
         event_size=action_size
@@ -124,6 +126,7 @@ def make_student_networks(
         encoder_logvar_max=encoder_logvar_max,
         prior_logvar_min=prior_logvar_min,
         prior_logvar_max=prior_logvar_max,
+        encoder_expansion_factor=encoder_expansion_factor,
     )
     
     return DistillNetworks(

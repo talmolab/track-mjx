@@ -12,34 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Proximal policy optimization training.
+"""Proximal Policy Optimization (PPO) training for VNL imitation learning.
 
-See: https://arxiv.org/pdf/1707.06347.pdf
+This module implements PPO training with support for:
+- Intention-based policy networks (VAE-style latent encoding)
+- Observation normalization with optional frozen proprioceptive components
+- Checkpoint saving/restoration with preemption recovery
+- Train/test split evaluation
+- KL divergence scheduling for VAE training stability
+
+Based on Brax's PPO implementation with modifications for VNL tracking tasks.
+
+Reference: https://arxiv.org/pdf/1707.06347.pdf
 """
 
 import functools
 import time
-from typing import Callable, Optional, Tuple, Union
-
-from absl import logging
-from brax import base
-from brax import envs
-from brax.training import acting
-from brax.training import pmap
-from brax.training import types
-
-# from brax.training import gradients
-from track_mjx.agent import gradients
-from brax.training.acme import running_statistics
-from brax.training.acme import specs
-from brax.training.types import Params
-from brax.training.types import PRNGKey
-from track_mjx.agent import network_masks
-from track_mjx.agent.mlp_ppo import losses, ppo_networks
-from track_mjx.agent import checkpointing
-from track_mjx.agent import gradients
-
-from mujoco_playground import wrapper as mp_wrapper
+from typing import Any, Callable
 
 import flax
 import flax.struct
@@ -47,19 +36,37 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from optax.transforms import freeze
 import orbax.checkpoint as ocp
+from absl import logging
+from brax import base, envs
+from brax.training import acting, pmap, types
+from brax.training.acme import running_statistics, specs
+from brax.training.types import Params, PRNGKey
+from mujoco_playground import wrapper as mp_wrapper
+from optax.transforms import freeze
 
-InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
+from track_mjx.agent import checkpointing, gradients, network_masks
+from track_mjx.agent.mlp_ppo import losses, ppo_networks
+
+# Type aliases
+InferenceParams = tuple[running_statistics.NestedMeanStd, Params]
 Metrics = types.Metrics
-STEPS_IN_THOUSANDS = 1e3
 
+# Constants
+STEPS_IN_THOUSANDS = 1e3
 _PMAP_AXIS_NAME = "i"
 
 
 @flax.struct.dataclass
 class TrainingState:
-    """Contains training state for the learner."""
+    """Training state for PPO learner.
+
+    Attributes:
+        optimizer_state: Optax optimizer state.
+        params: PPO network parameters (policy and value).
+        normalizer_params: Running statistics for observation normalization.
+        env_steps: Total environment steps taken (in thousands).
+    """
 
     optimizer_state: optax.OptState
     params: losses.PPONetworkParams
@@ -67,13 +74,31 @@ class TrainingState:
     env_steps: jnp.ndarray
 
 
-def _unpmap(v):
+def _unpmap(v: Any) -> Any:
+    """Extract first device's values from a pmap'd pytree.
+
+    Args:
+        v: Pytree with leading device axis from pmap.
+
+    Returns:
+        Pytree with device axis removed (values from first device).
+    """
     return jax.tree_util.tree_map(lambda x: x[0], v)
 
 
-def _strip_weak_type(tree):
-    # brax user code is sometimes ambiguous about weak_type.  in order to
-    # avoid extra jit recompilations we strip all weak types from user input
+def _strip_weak_type(tree: Any) -> Any:
+    """Remove weak types from a pytree to prevent JIT recompilation.
+
+    Brax user code is sometimes ambiguous about weak_type, which can cause
+    unnecessary JIT recompilations.
+
+    Args:
+        tree: Input pytree potentially containing weak-typed arrays.
+
+    Returns:
+        Pytree with all arrays converted to their canonical dtype.
+    """
+
     def f(leaf):
         leaf = jnp.asarray(leaf)
         return leaf.astype(leaf.dtype)
@@ -83,12 +108,26 @@ def _strip_weak_type(tree):
 
 def run_evaluation(
     self,
-    policy_params,
+    policy_params: InferenceParams,
     training_metrics: Metrics,
     aggregate_episodes: bool = True,
     data_split: str = "",
 ) -> Metrics:
-    """Run one epoch of evaluation."""
+    """Run one epoch of evaluation.
+
+    Extended version of Brax's Evaluator.run_evaluation that supports
+    data_split prefixes for train/test set metrics separation.
+
+    Args:
+        self: Evaluator instance.
+        policy_params: Tuple of (normalizer_params, policy_params).
+        training_metrics: Training metrics to include in output.
+        aggregate_episodes: If True, compute mean/std across episodes.
+        data_split: Prefix for metric keys (e.g., "test_set").
+
+    Returns:
+        Dictionary of evaluation metrics merged with training_metrics.
+    """
     self._key, unroll_key = jax.random.split(self._key)
 
     t = time.time()
@@ -96,8 +135,10 @@ def run_evaluation(
     eval_metrics = eval_state.info["eval_metrics"]
     eval_metrics.active_episodes.block_until_ready()
     epoch_eval_time = time.time() - t
+
     metrics = {}
-    prefix = f"{data_split}/" if data_split != "" else ""
+    prefix = f"{data_split}/" if data_split else ""
+
     for fn in [np.mean, np.std]:
         suffix = "_std" if fn == np.std else ""
         metrics.update(
@@ -108,6 +149,7 @@ def run_evaluation(
                 for name, value in eval_metrics.episode_metrics.items()
             }
         )
+
     metrics[f"eval/{prefix}avg_episode_length"] = np.mean(eval_metrics.episode_steps)
     metrics[f"eval/{prefix}epoch_eval_time"] = epoch_eval_time
     metrics[f"eval/{prefix}sps"] = self._steps_per_unroll / epoch_eval_time
@@ -118,24 +160,23 @@ def run_evaluation(
         **metrics,
     }
 
-    return metrics  # pytype: disable=bad-return-type  # jax-ndarray
+    return metrics
 
 
-# Monkey patch the run_evaluation method to include data_split
+# Monkey-patch Evaluator to support data_split parameter for train/test metrics
 acting.Evaluator.run_evaluation = run_evaluation
 
 
-# TODO: Pass in a loss-specific config instead of throwing them all in individually.
 def train(
     environment: envs.Env,
     num_timesteps: int,
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
-    config_dict: dict,
+    config_dict: dict[str, Any],
     checkpoint_to_restore: str | None = None,
     action_repeat: int = 1,
     num_envs: int = 1,
-    max_devices_per_host: Optional[int] = None,
+    max_devices_per_host: int | None = None,
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,
@@ -156,21 +197,22 @@ def train(
     network_factory: Callable[..., ppo_networks.PPOImitationNetworks] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
-    eval_env: Optional[envs.Env] = None,
-    eval_env_test_set: Optional[envs.Env] = None,
+    eval_env: envs.Env | None = None,
+    eval_env_test_set: envs.Env | None = None,
     policy_params_fn: Callable[..., None] = lambda *args: None,
-    randomization_fn: Optional[
-        Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
-    ] = None,
+    randomization_fn: Callable[
+        [base.System, jnp.ndarray], tuple[base.System, base.System]
+    ] | None = None,
     get_activation: bool = True,
     use_kl_schedule: bool = True,
     kl_ramp_up_frac: float = 0.25,
     freeze_decoder: bool = False,
-    checkpoint_callback: Optional[Callable[[int], None]] = None,
+    checkpoint_callback: Callable[[int], None] | None = None,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
-        mp_wrapper.wrap_for_brax_training, full_reset=False),
-):
-    """PPO training.
+        mp_wrapper.wrap_for_brax_training, full_reset=False
+    ),
+) -> tuple[Callable, InferenceParams, Metrics]:
+    """Train a PPO agent on the given environment.
 
     Args:
       environment: the environment to train
@@ -226,13 +268,15 @@ def train(
       use_kl_schedule: whether to use a ramping schedule for the kl weight in the PPO loss
         (intention network variational layer)
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
-      checkpoint_callback: a callback function that is called after checkpointing to update
-        the json file which contains the run state for preemption handling
-      wrap_for_training: a function that wraps the environment for training
-
+      checkpoint_callback: Callback called after checkpointing to update
+        run state JSON for preemption recovery.
+      wrap_for_training: Function that wraps environment for training.
 
     Returns:
-      Tuple of (make_policy function, network params, metrics)
+        Tuple of:
+            - make_policy: Function to create inference policy from params.
+            - params: Trained (normalizer_params, policy_params) tuple.
+            - metrics: Final evaluation metrics dictionary.
     """
     assert batch_size * num_minibatches % num_envs == 0, (
         batch_size * num_minibatches % num_envs
@@ -502,15 +546,8 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    # optimizer = optax.chain(
-    #     optax.clip_by_global_norm(10.0),
-    #     optax.adam(learning_rate=learning_rate),
-    # )
-
-    # TEST SETUP
     optimizer = optax.chain(
         optax.clip_by_global_norm(0.5),
-        # optax.contrib.muon(learning_rate=learning_rate),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
@@ -539,10 +576,10 @@ def train(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
     )
-    training_state = TrainingState(  # pytype: disable=wrong-arg-types  # jax-ndarray
+    training_state = TrainingState(
         optimizer_state=optimizer.init(
             init_params
-        ),  # pytype: disable=wrong-arg-types  # numpy-scalars
+        ),
         params=init_params,
         normalizer_params=running_statistics.init_state(
             specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))

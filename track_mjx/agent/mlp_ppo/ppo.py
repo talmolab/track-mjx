@@ -714,7 +714,7 @@ def train(
             render_best_rollout=prior_rollout_config.get("render_best_rollout", False),
             render_fps=render_config.get("render_fps", 50),
             render_camera_name=render_config.get("render_camera_name", "close_profile"),
-            model_path=logging_config.get("model_path", ""),
+            model_path=str(ckpt_mgr.directory),
         )
         logging.info(f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts")
 

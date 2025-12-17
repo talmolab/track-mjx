@@ -26,7 +26,7 @@ Based on Brax's PPO implementation with modifications for VNL tracking tasks.
 
 import functools
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Tuple
 
 import flax
 import flax.struct

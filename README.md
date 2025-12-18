@@ -2,6 +2,12 @@
 
 This is a package for training control policies through motion imitation using deep reinforcement learning. Part of [MIMIC-MJX](https://mimic-mjx.talmolab.org/), along with [STAC-MJX](https://github.com/talmolab/stac-mjx) (a tool for performing inverse kinematics on markerless motion tracking data).
 
+## IMPORTANT (For reviewers and new users):
+**Please use the latest stable version of track-mjx (v0.0.1) for notebook demos and running rodent training example.**
+
+## Prerelease (track-mjx >= v1.0.0)
+**track-mjx v1 will soon include all body models, related notebooks and training logic. track-mjx v1 and on will rely on [vnl-playground](https://github.com/talmolab/vnl-playground) for the environment and task logic. vnl-playground will be installed during the following installation steps along with other needed libraries. For more information regarding the environment and task logic, please visit [vnl-playground](https://github.com/talmolab/vnl-playground).**
+
 ## Installation
 
 ### Option 1: `uv` (fastest)

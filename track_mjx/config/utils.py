@@ -5,6 +5,7 @@ configurations, including walker-specific path resolution and config merging.
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from ml_collections import config_dict
@@ -12,6 +13,21 @@ from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
+
+# Project root directory (track-mjx/)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+
+def _resolve_data_path(relative_path: str) -> str:
+    """Resolve a relative data path to an absolute path from the project root.
+
+    Args:
+        relative_path: Path relative to the project root (e.g., "data/rodent/file.h5").
+
+    Returns:
+        Absolute path as a string.
+    """
+    return str(_PROJECT_ROOT / relative_path)
 
 
 def prepare_config(
@@ -42,7 +58,7 @@ def prepare_config(
         logging.info("Using rodent walker")
         walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
         arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
-        reference_data_path = "data/rodent/rodent_reference_clips.h5"
+        reference_data_path = _resolve_data_path("data/rodent/rodent_reference_clips.h5")
     elif walker_name == "fruitfly":
         logging.info("Using fruitfly walker")
         walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)

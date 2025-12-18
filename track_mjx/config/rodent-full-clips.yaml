@@ -5,9 +5,6 @@
 # agent using PPO. This config trains on the full set of motion capture clips.
 # =============================================================================
 
-# Path to preprocessed motion capture reference data (HDF5 format)
-data_path: data/transform_snips.h5
-
 # =============================================================================
 # VNL Environment Configuration
 # =============================================================================

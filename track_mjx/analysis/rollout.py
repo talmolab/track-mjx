@@ -34,7 +34,7 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
         >>> env = create_environment(cfg)
         >>> state = env.reset(jax.random.PRNGKey(0))
     """
-    if "data_path" in cfg_dict:
+    if "walker_config" in cfg_dict:
         env_cfg = cfg_dict["env_config"]
         env_cfg_ml = config_dict.ConfigDict(
             OmegaConf.to_container(env_cfg, resolve=True)

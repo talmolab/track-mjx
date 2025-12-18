@@ -149,13 +149,13 @@ python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id=
 
 **Using uv:**
 ```bash
-uv run python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
+uv run python -m track_mjx.train --config-name rodent-full-clips.yaml
 ```
 
 **Using conda:**
 ```bash
 conda activate track_mjx
-python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
+python -m track_mjx.train --config-name rodent-full-clips.yaml
 ```
 
 

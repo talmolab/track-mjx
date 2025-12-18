@@ -536,8 +536,9 @@ def train(
     # )
 
     # TEST SETUP
+    grad_clip_threshold = 0.5  # Gradient clipping threshold (tracked in metrics)
     optimizer = optax.chain(
-        optax.clip_by_global_norm(0.5),
+        optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
@@ -641,7 +642,8 @@ def train(
 
     # gradient update function with the new optimizer and loss function
     gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
+        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True,
+        clip_threshold=grad_clip_threshold,
     )
 
     training_state = jax.device_put_replicated(

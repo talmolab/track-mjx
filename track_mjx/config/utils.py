@@ -58,7 +58,7 @@ def prepare_config(
         logging.info("Using rodent walker")
         walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
         arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path("data/rodent/rodent_reference_clips.h5")
+        reference_data_path = _resolve_data_path("data/rodent/data.h5")
     elif walker_name == "fruitfly":
         logging.info("Using fruitfly walker")
         walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)

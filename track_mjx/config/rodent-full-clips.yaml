@@ -56,6 +56,7 @@ network_config:
   intention_size: 60
   kl_schedule: True
   kl_weight: 1e-1
+  kl_prior_type: "ar1"  # "standard" for N(0,I) or "ar1" for autoregressive
 
 train_setup:
   agent_name: rodent

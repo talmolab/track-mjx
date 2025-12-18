@@ -100,6 +100,84 @@ def compute_gae(
     return jax.lax.stop_gradient(vs), jax.lax.stop_gradient(advantages)
 
 
+def compute_kl_loss(
+    latent_mean: jnp.ndarray,
+    latent_logvar: jnp.ndarray,
+    kl_prior_type: str,
+    alpha: float = 0.95,
+) -> jnp.ndarray:
+    """Compute KL divergence loss with proper dimension handling.
+
+    Args:
+        latent_mean: Encoder mean, shape [T, B, latent_dim]
+        latent_logvar: Encoder log-variance, shape [T, B, latent_dim]
+        kl_prior_type: "standard" for N(0,I) or "ar1" for autoregressive
+        alpha: AR(1) coefficient (only used if kl_prior_type="ar1")
+
+    Returns:
+        Scalar KL loss (before multiplying by kl_weight)
+
+    Note on dimension handling:
+        - Sum over latent dimensions (KL is sum of per-dimension KLs)
+        - Mean over batch dimension (standard practice)
+        - Mean over time dimension (uniform treatment of timesteps)
+    """
+    if kl_prior_type == "standard":
+        # KL(q(z)||N(0,I)) for all timesteps independently
+        # KL = 0.5 * sum_d(var_d + mean_d^2 - 1 - log(var_d))
+        kl_per_sample = 0.5 * jnp.sum(
+            jnp.exp(latent_logvar) + jnp.square(latent_mean) - 1 - latent_logvar,
+            axis=-1,  # Sum over latent dimensions -> [T, B]
+        )
+        kl_loss = jnp.mean(kl_per_sample)  # Mean over T and B
+
+    elif kl_prior_type == "ar1":
+        prior_variance = 1 - alpha**2  # = 0.0975 for alpha=0.95
+
+        # First timestep: KL(q(z_0)||N(0,I))
+        kl_0_per_sample = 0.5 * jnp.sum(
+            jnp.exp(latent_logvar[0])
+            + jnp.square(latent_mean[0])
+            - 1
+            - latent_logvar[0],
+            axis=-1,  # Sum over latent dims -> [B]
+        )
+        kl_0 = jnp.mean(kl_0_per_sample)  # Mean over batch -> scalar
+
+        if latent_mean.shape[0] > 1:
+            # Subsequent timesteps: KL(q(z_t)||N(alpha*z_{t-1}, prior_var*I))
+            z_prev = latent_mean[:-1]  # [T-1, B, latent_dim]
+            mu_curr = latent_mean[1:]  # [T-1, B, latent_dim]
+            logvar_curr = latent_logvar[1:]  # [T-1, B, latent_dim]
+
+            prior_mean = alpha * z_prev
+            var_curr = jnp.exp(logvar_curr)
+
+            # KL(N(mu, var) || N(prior_mean, prior_var))
+            # = 0.5 * sum_d(var/prior_var + (mu - prior_mean)^2/prior_var - 1 + log(prior_var/var))
+            kl_t_elements = 0.5 * (
+                var_curr / prior_variance
+                + jnp.square(mu_curr - prior_mean) / prior_variance
+                - 1
+                + jnp.log(prior_variance)
+                - logvar_curr
+            )
+            kl_t_per_sample = jnp.sum(kl_t_elements, axis=-1)  # [T-1, B]
+            kl_t = jnp.mean(kl_t_per_sample)  # Mean over T-1 and B -> scalar
+
+            # Weighted average: 1 timestep of kl_0, T-1 timesteps of kl_t
+            T = latent_mean.shape[0]
+            kl_loss = (kl_0 + kl_t * (T - 1)) / T
+        else:
+            kl_loss = kl_0
+    else:
+        raise ValueError(
+            f"Unknown kl_prior_type: {kl_prior_type}. Use 'standard' or 'ar1'."
+        )
+
+    return kl_loss
+
+
 def compute_ppo_loss(
     params: PPONetworkParams,
     normalizer_params: Any,
@@ -109,6 +187,7 @@ def compute_ppo_loss(
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
     kl_weight: float = 1e-3,
+    kl_prior_type: str = "ar1",
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
@@ -197,42 +276,9 @@ def compute_ppo_loss(
     if kl_schedule is not None:
         kl_weight = kl_schedule(step)
 
-    # Use autoregressive Gaussian prior: p(z_t | z_t-1) = N(0.95 * z_t-1, (1-0.95^2) * I)
-    alpha = 0.95
-    prior_variance = 1 - alpha**2  # = 0.0975
-
-    # For the first timestep, use standard Gaussian prior
-    # KL(q(z_0)||N(0,I))
-    kl_0 = -0.5 * jnp.mean(
-        1 + latent_logvar[0] - jnp.square(latent_mean[0]) - jnp.exp(latent_logvar[0])
+    kl_latent_loss = kl_weight * compute_kl_loss(
+        latent_mean, latent_logvar, kl_prior_type
     )
-
-    # For subsequent timesteps, use autoregressive prior
-    # KL(q(z_t)||N(alpha * z_{t-1}, prior_variance * I))
-    if latent_mean.shape[0] > 1:  # If we have more than one timestep
-        # Get z_{t-1} and z_t
-        z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
-        mu_curr = latent_mean[1:]  # mu_1, ..., mu_{T-1}
-        logvar_curr = latent_logvar[1:]  # logvar_1, ..., logvar_{T-1}
-
-        # Prior mean: alpha * z_{t-1}
-        prior_mean = alpha * z_prev
-
-        # KL divergence components
-        var_ratio = jnp.exp(logvar_curr) / prior_variance
-        mean_diff_sq = jnp.square(prior_mean - mu_curr) / prior_variance
-        log_var_ratio = jnp.log(prior_variance) - logvar_curr
-
-        kl_t = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_ratio)
-
-        # Combine KL losses (weighted by sequence length)
-        total_timesteps = latent_mean.shape[0]
-        kl_latent_loss = kl_weight * (
-            (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
-        )
-    else:
-        # Only one timestep, use standard Gaussian prior
-        kl_latent_loss = kl_weight * kl_0
 
     total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss
     return total_loss, {

@@ -138,6 +138,7 @@ def train(
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,
     kl_weight: float = 1e-3,
+    kl_prior_type: str = "ar1",
     discounting: float = 0.9,
     seed: int = 0,
     unroll_length: int = 10,
@@ -536,7 +537,7 @@ def train(
     # )
 
     # TEST SETUP
-    grad_clip_threshold = 0.5  # Gradient clipping threshold (tracked in metrics)
+    grad_clip_threshold = 10  # Gradient clipping threshold (tracked in metrics)
     optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
@@ -555,6 +556,7 @@ def train(
         ppo_network=ppo_network,
         entropy_cost=entropy_cost,
         kl_weight=kl_weight,
+        kl_prior_type=kl_prior_type,
         discounting=discounting,
         reward_scaling=reward_scaling,
         gae_lambda=gae_lambda,
@@ -642,7 +644,10 @@ def train(
 
     # gradient update function with the new optimizer and loss function
     gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True,
+        loss_fn,
+        optimizer,
+        pmap_axis_name=_PMAP_AXIS_NAME,
+        has_aux=True,
         clip_threshold=grad_clip_threshold,
     )
 

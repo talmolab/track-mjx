@@ -16,14 +16,15 @@ import flax
 import jax
 from jax import numpy as jnp
 
-from track_mjx.agent.mlp_ppo import intention_network
+# from track_mjx.agent.mlp_ppo import intention_network
+from track_mjx.agent.mlp_distill import student_network
 from track_mjx.agent import checkpointing
 
 
 @flax.struct.dataclass
 class DistillNetworks:
     """Networks used for distillation training."""
-    student_network: intention_network.IntentionNetwork
+    student: student_network.StudentNetwork
     parametric_action_distribution: distribution.ParametricDistribution
 
 
@@ -37,7 +38,7 @@ def make_student_inference_fn(distill_networks: DistillNetworks):
         params: types.PolicyParams,
         deterministic: bool = False,
     ) -> types.Policy:
-        student_network = distill_networks.student_network
+        student_network = distill_networks.student
         parametric_action_distribution = distill_networks.parametric_action_distribution
         
         def policy(
@@ -99,7 +100,7 @@ def make_student_networks(
         event_size=action_size
     )
 
-    student_network = intention_network.make_intention_policy(
+    student = student_network.make_student_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,
         total_obs_size=observation_size,
@@ -116,7 +117,7 @@ def make_student_networks(
     )
     
     return DistillNetworks(
-        student_network=student_network,
+        student=student,
         parametric_action_distribution=parametric_action_distribution,
     )
 

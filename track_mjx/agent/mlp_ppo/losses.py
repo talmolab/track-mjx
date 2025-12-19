@@ -105,9 +105,7 @@ def compute_gae(
     # Add V(x_s) to get v_s
     vs = jnp.add(vs_minus_v_xs, values)
 
-    vs_t_plus_1 = jnp.concatenate(
-        [vs[1:], jnp.expand_dims(bootstrap_value, 0)], axis=0
-    )
+    vs_t_plus_1 = jnp.concatenate([vs[1:], jnp.expand_dims(bootstrap_value, 0)], axis=0)
     advantages = (
         rewards + discount * (1 - termination) * vs_t_plus_1 - values
     ) * truncation_mask
@@ -226,49 +224,33 @@ def compute_ppo_loss(
     if kl_schedule is not None:
         kl_weight = kl_schedule(step)
 
-    # Use autoregressive Gaussian prior: p(z_t | z_t-1) = N(0.95 * z_t-1, (1-0.95^2) * I)
-    alpha = 0.95
-    prior_variance = 1 - alpha**2  # = 0.0975
-
-    # For the first timestep, use standard Gaussian prior
-    # KL(q(z_0)||N(0,I))
-    kl_0 = -0.5 * jnp.mean(
-        1 + latent_logvar[0] - jnp.square(latent_mean[0]) - jnp.exp(latent_logvar[0])
+    # KL divergence to standard Gaussian prior N(0, I)
+    kl_gaussian = -0.5 * jnp.mean(
+        1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar)
     )
 
-    # For subsequent timesteps, use autoregressive prior
-    # KL(q(z_t)||N(alpha * z_{t-1}, prior_variance * I))
-    if latent_mean.shape[0] > 1:  # If we have more than one timestep
-        # Get z_{t-1} and z_t
-        z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
-        mu_curr = latent_mean[1:]  # mu_1, ..., mu_{T-1}
-        logvar_curr = latent_logvar[1:]  # logvar_1, ..., logvar_{T-1}
+    # L2 loss to previous latent mean (AR(1) temporal smoothness)
+    # Mask out pairs that cross episode boundaries (done OR truncation)
+    z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
+    z_curr = latent_mean[1:]  # z_1, ..., z_{T-1}
+    # Valid if episode continues: not done (discount=1) AND not truncated (truncation=0)
+    valid_mask = data.discount[:-1] * (1 - truncation[:-1])
+    l2_diff = jnp.mean(jnp.square(z_curr - z_prev), axis=-1)  # [T-1, B]
+    masked_l2 = l2_diff * valid_mask
+    ar1_loss = jnp.sum(masked_l2) / jnp.maximum(jnp.sum(valid_mask), 1.0)
 
-        # Prior mean: alpha * z_{t-1}
-        prior_mean = alpha * z_prev
+    # Split kl_weight equally between KL and AR(1) terms
+    latent_loss = 0.5 * kl_weight * kl_gaussian + 0.5 * kl_weight * ar1_loss
 
-        # KL divergence components
-        var_ratio = jnp.exp(logvar_curr) / prior_variance
-        mean_diff_sq = jnp.square(prior_mean - mu_curr) / prior_variance
-        log_var_ratio = jnp.log(prior_variance) - logvar_curr
+    total_loss = policy_loss + v_loss + entropy_loss + latent_loss
 
-        kl_t = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_ratio)
-
-        # Combine KL losses (weighted by sequence length)
-        total_timesteps = latent_mean.shape[0]
-        kl_latent_loss = kl_weight * (
-            (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
-        )
-    else:
-        # Only one timestep, use standard Gaussian prior
-        kl_latent_loss = kl_weight * kl_0
-
-    total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss
     return total_loss, {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
-        "kl_latent_loss": kl_latent_loss,
+        "latent_loss": latent_loss,
+        "latent_ar1_loss": ar1_loss,
+        "latent_kl_loss": kl_gaussian,
         "entropy_loss": entropy_loss,
         "kl_weight": kl_weight,
     }
@@ -310,7 +292,9 @@ def create_ramp_schedule(
         if schedule == "linear":
             progress = jnp.clip((step - warmup_steps) / ramp_steps, 0.0, 1.0)
             is_warmup = step < warmup_steps
-            return jnp.where(is_warmup, min_value, min_value + progress * (max_value - min_value))
+            return jnp.where(
+                is_warmup, min_value, min_value + progress * (max_value - min_value)
+            )
         elif schedule == "cosine":
             angle = (2 * jnp.pi * step) / period
             amplitude = (max_value - min_value) / 2

@@ -18,6 +18,7 @@ from typing import Callable, Optional
 
 import jax
 import optax
+import jax.numpy as jnp
 
 
 def loss_and_pgrad(
@@ -39,6 +40,7 @@ def gradient_update_fn(
     optimizer: optax.GradientTransformation,
     pmap_axis_name: Optional[str],
     has_aux: bool = False,
+    clip_threshold: Optional[float] = None,
 ):
     """Wrapper of the loss function that apply gradient updates.
 
@@ -48,6 +50,8 @@ def gradient_update_fn(
       pmap_axis_name: If relevant, the name of the pmap axis to synchronize
         gradients.
       has_aux: Whether the loss_fn has auxiliary data.
+      clip_threshold: The gradient clipping threshold used in the optimizer.
+        If provided, tracks gradient norm and clipping frequency in metrics.
 
     Returns:
       A function that takes the same argument as the loss function plus the
@@ -60,6 +64,18 @@ def gradient_update_fn(
 
     def f(*args, optimizer_state, params):
         value, grads = loss_and_pgrad_fn(*args)
+        # Track gradient norm before clipping (if threshold provided)
+        if clip_threshold is not None and has_aux:
+            grad_norm = optax.global_norm(grads)
+            is_clipped = (grad_norm > clip_threshold).astype(jnp.float32)
+            # value is (loss, metrics_dict) when has_aux=True
+            loss, metrics = value
+            metrics = {
+                **metrics,
+                "grad_norm": grad_norm,
+                "grad_clipped": is_clipped,
+            }
+            value = (loss, metrics)
         params_update, optimizer_state = optimizer.update(
             grads, optimizer_state, params
         )

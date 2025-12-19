@@ -192,15 +192,17 @@ def train(
     clipping_epsilon: float = 0.3,
     gae_lambda: float = 0.95,
     deterministic_eval: bool = False,
-    network_factory: Callable[..., ppo_networks.PPOImitationNetworks] = ppo_networks.make_intention_ppo_networks,
+    network_factory: Callable[
+        ..., ppo_networks.PPOImitationNetworks
+    ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
     eval_env: envs.Env | None = None,
     eval_env_test_set: envs.Env | None = None,
     policy_params_fn: Callable[..., None] = lambda *args: None,
-    randomization_fn: Callable[
-        [base.System, jnp.ndarray], tuple[base.System, base.System]
-    ] | None = None,
+    randomization_fn: (
+        Callable[[base.System, jnp.ndarray], tuple[base.System, base.System]] | None
+    ) = None,
     get_activation: bool = True,
     use_kl_schedule: bool = True,
     kl_ramp_up_frac: float = 0.25,
@@ -544,8 +546,9 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
+    grad_clip_threshold = 20.0
     optimizer = optax.chain(
-        optax.clip_by_global_norm(0.5),
+        optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
@@ -575,9 +578,7 @@ def train(
         value=ppo_network.value_network.init(key_value),
     )
     training_state = TrainingState(
-        optimizer_state=optimizer.init(
-            init_params
-        ),
+        optimizer_state=optimizer.init(init_params),
         params=init_params,
         normalizer_params=running_statistics.init_state(
             specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
@@ -649,7 +650,11 @@ def train(
 
     # gradient update function with the new optimizer and loss function
     gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
+        loss_fn,
+        optimizer,
+        pmap_axis_name=_PMAP_AXIS_NAME,
+        has_aux=True,
+        clip_threshold=grad_clip_threshold,
     )
 
     training_state = jax.device_put_replicated(
@@ -704,7 +709,9 @@ def train(
             start_it = ckpt_mgr.latest_step()
             pass
 
-    logging.info(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
+    logging.info(
+        f"Starting at iteration: {start_it} with {num_evals_after_init} evals left"
+    )
 
     # Run initial eval
     metrics = {}

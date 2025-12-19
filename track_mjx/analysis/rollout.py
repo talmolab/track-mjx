@@ -10,17 +10,10 @@ from typing import Any, Callable
 import jax
 from brax.envs.base import Env
 from jax import numpy as jnp
-
-from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
-from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
-from track_mjx.environment import wrappers
-from track_mjx.io import load
-
-from omegaconf import DictConfig
-
-envs.register_environment("rodent_single_clip", SingleClipTracking)
-envs.register_environment("rodent_multi_clip", MultiClipTracking)
-envs.register_environment("fly_multi_clip", MultiClipTracking)
+from ml_collections import config_dict
+from omegaconf import DictConfig, OmegaConf
+from vnl_playground.tasks.rodent import imitation
+from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 
 
 def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
@@ -117,13 +110,19 @@ def create_rollout_generator(
 
         state = jit_reset(reset_rng, clip_idx=clip_idx, start_frame=0)
 
-        num_steps = (
-            int(ref_traj_config.clip_length * environment._steps_for_cur_frame) - 1
-        )
+        # Calculate total steps: (clip_length * mocap_frames_per_ctrl_step) - 1
+        mocap_dt = 1.0 / cfg.env_config.mocap_hz
+        steps_per_frame = int(mocap_dt / cfg.env_config.ctrl_dt)
+        num_steps = cfg.env_config.clip_length * steps_per_frame - 1
 
-        def _step_fn_mlp(carry, _):
-            state, act_rng = carry
-            act_rng, new_rng = jax.random.split(act_rng)
+        rollout_states = [state]
+        ctrls = []
+        activations = []
+        joint_forces = []
+        sensor_readings = []
+
+        for _ in range(num_steps):
+            _, act_rng = jax.random.split(act_rng)
             ctrl, extras = jit_inference_fn(state.obs, act_rng)
             ctrls.append(ctrl)
 

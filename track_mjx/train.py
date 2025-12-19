@@ -94,6 +94,8 @@ def main(cfg: DictConfig) -> None:
     ) * steps_per_frame
     logging.info(f"episode_length {episode_length}")
 
+    logging.info("Using PPO Pipeline")
+
     network_factory = functools.partial(
         ppo_networks.make_intention_ppo_networks,
         intention_latent_size=cfg.network_config.intention_size,

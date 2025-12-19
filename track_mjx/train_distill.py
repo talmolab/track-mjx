@@ -25,7 +25,9 @@ from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
 from track_mjx.config import utils
 from track_mjx.agent.domain_randomization import domain_randomization_maker
+from track_mjx.agent.mlp_distill.rollout_distill import distill_rollout_logging_fn
 from track_mjx.agent.mlp_distill import distill, distill_networks
+
 
 
 def _setup_environment() -> None:
@@ -73,21 +75,19 @@ def main(cfg: DictConfig):
         n_frames_per_clip=cfg.env_config.clip_length,
         keep_clips_idx=cfg.env_config.keep_clips_idx,
     )
-    
     # Create train/test split
-    key_split, key = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
+    key_split, _ = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
-    
     # Create environments
     env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
     test_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=test_clips))
 
     logging.info(f"Environment config: {cfg.env_config}")
 
-    # Episode length calculation
+    # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     steps_per_frame = (1 / cfg.env_config.mocap_hz) / cfg.env_config.ctrl_dt
     episode_length = (
         cfg.env_config.clip_length
@@ -191,7 +191,6 @@ def main(cfg: DictConfig):
     # Define the jit reset/step functions for logging
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
-    
     policy_params_fn = functools.partial(
         distill_rollout_logging_fn,
         rollout_env,

@@ -39,8 +39,8 @@ from brax.training.types import PRNGKey
 from track_mjx.agent import gradients
 from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_distill import losses, distill_networks
-from track_mjx.agent.mlp_ppo import prior_rollout
-from track_mjx import utils
+from track_mjx.agent.mlp_distill import prior_rollout
+from track_mjx.config import utils
 
 from mujoco_playground import wrapper as mp_wrapper
 
@@ -496,7 +496,7 @@ def train(
     # Note: logvar clamping is now done in the network, not in the loss function
     loss_fn = functools.partial(
         losses.compute_distillation_loss,
-        student_network=student_networks.student_network,
+        student_network=student_networks.student,
         teacher_policy_fn=teacher_policy_fn,
         teacher_params=teacher_params,
         action_loss_weight=action_loss_weight,
@@ -509,7 +509,7 @@ def train(
 
     # Initialize student parameters
     init_params = losses.DistillNetworkParams(
-        policy=student_networks.student_network.init(key_policy),
+        policy=student_networks.student.init(key_policy),
     )
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),

@@ -20,7 +20,7 @@ from jax import random
 from brax.training import distribution, types
 from brax.training.acme import running_statistics
 
-from track_mjx.agent.mlp_ppo import intention_network
+from track_mjx.agent.mlp_distill import student_network
 
 
 def reparameterize(rng: jax.Array, mean: jax.Array, logvar: jax.Array) -> jax.Array:
@@ -73,12 +73,12 @@ def create_prior_policy(
     )
     
     # Create the prior and decoder modules
-    prior_module = intention_network.Prior(
+    prior_module = student_network.Prior(
         layer_sizes=list(prior_hidden_layer_sizes),
         latents=intention_latent_size,
     )
-    
-    decoder_module = intention_network.Decoder(
+
+    decoder_module = student_network.Decoder(
         layer_sizes=list(decoder_hidden_layer_sizes) + [parametric_action_distribution.param_size],
     )
     

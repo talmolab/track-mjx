@@ -14,7 +14,7 @@ data_path: data/transform_snips.h5
 # Settings for the pretrained teacher model to distill from
 teacher_config:
   # Path to pretrained teacher checkpoint (REQUIRED)
-  checkpoint_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints/251210_204401_323736
+  checkpoint_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints/251207_182944_367370
   checkpoint_step: null             # Specific step to load (null = latest)
 
 # =============================================================================

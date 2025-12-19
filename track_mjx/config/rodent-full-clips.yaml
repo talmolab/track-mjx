@@ -43,6 +43,19 @@ env_config:
   keep_clips_idx: null            # Specific clip indices to use (null = all)
 
   # -----------------------------------------------------------------------------
+  # Domain Randomization Settings
+  # -----------------------------------------------------------------------------
+  domain_randomization:
+    use_domain_randomization: true      # Enable/disable domain randomization
+    floor_friction: [0.4, 1.0]          # Uniform range for floor friction
+    static_friction_scale: [0.9, 1.1]   # Scale for static friction coeffs
+    armature_scale: [1.0, 1.05]         # Scale for joint armature values
+    com_jitter: [-0.05, 0.05]           # Center of mass position jitter (m)
+    link_mass_scale: [0.9, 1.1]         # Scale for link masses
+    torso_mass_jitter: [-0.02, 0.02]    # Jitter for torso mass
+    qpos0_jitter: [-0.05, 0.05]         # Jitter for initial joint positions
+
+  # -----------------------------------------------------------------------------
   # Reward Terms
   # -----------------------------------------------------------------------------
   # Imitation rewards computed as: weight * exp(-exp_scale * error)

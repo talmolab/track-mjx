@@ -666,7 +666,7 @@ def train(
         eval_env,
         episode_length=episode_length,
         action_repeat=action_repeat,
-        randomization_fn=v_randomization_fn,
+        randomization_fn=None,
     )
 
     evaluator = acting.Evaluator(
@@ -685,7 +685,7 @@ def train(
             eval_env_test_set,
             episode_length=episode_length,
             action_repeat=action_repeat,
-            randomization_fn=v_randomization_fn,
+            randomization_fn=None,
         )
         evaluator_test_set = acting.Evaluator(
             eval_env_test_set,

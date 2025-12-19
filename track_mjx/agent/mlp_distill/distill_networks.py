@@ -201,7 +201,7 @@ def create_teacher_inference_fn(
             normalizer_params, policy_network_params = params
 
             # Get policy outputs (deterministic captured from closure)
-            policy_logits, latent_mean, latent_logvar, prior_mean, prior_logvar = ppo_network.policy_network.apply(
+            policy_logits, latent_mean, latent_logvar = ppo_network.policy_network.apply(
                 normalizer_params, policy_network_params, observations, key, deterministic=deterministic
             )
 
@@ -214,8 +214,6 @@ def create_teacher_inference_fn(
                 "policy_logits": policy_logits,
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
-                "prior_mean": prior_mean,
-                "prior_logvar": prior_logvar,
             }
 
         return teacher_policy_fn

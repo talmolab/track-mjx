@@ -46,6 +46,7 @@ env_config:
   # Domain Randomization Settings
   # -----------------------------------------------------------------------------
   domain_randomization:
+    use_domain_randomization: true      # Enable/disable domain randomization
     floor_friction: [0.4, 1.0]          # Uniform range for floor friction
     static_friction_scale: [0.9, 1.1]   # Scale for static friction coeffs
     armature_scale: [1.0, 1.05]         # Scale for joint armature values

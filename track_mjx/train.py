@@ -155,7 +155,7 @@ def main(cfg: DictConfig) -> None:
             link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
             torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
             qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
-        ),
+        ) if cfg.env_config.domain_randomization.use_domain_randomization else None,
     )
 
     # Set the render env start frame to always be 0

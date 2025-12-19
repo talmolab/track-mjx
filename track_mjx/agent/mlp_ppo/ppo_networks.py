@@ -1,87 +1,108 @@
-"""
-Custom network definitions.
-This is needed because we need to route the observations
-to proper places in the network in the case of the VAE (CoMic, Hasenclever 2020)
+"""PPO network definitions for intention-based imitation learning.
+
+This module provides network architectures for PPO training with VAE-style
+intention encoding.
+
+The key components are:
+- PPOImitationNetworks: Container for policy, value, and action distribution
+- Inference functions that route observations through encoder/decoder
+- Factory functions for creating intention-based PPO networks
 """
 
-import dataclasses
-from typing import Any, Callable, Sequence, Tuple
+from collections.abc import Callable, Sequence
 from pathlib import Path
-import warnings
 
-from brax.training import networks
-from brax.training import types
-from brax.training import distribution
-from brax.training.types import PRNGKey
-
-import jax
-from jax import numpy as jnp
 import flax
+import jax
+from brax.training import distribution, networks, types
+from brax.training.types import PRNGKey
+from jax import numpy as jnp
 
+from track_mjx.agent import checkpointing, masked_running_statistics
 from track_mjx.agent.mlp_ppo import intention_network
-from track_mjx.agent import masked_running_statistics, checkpointing
-
-from omegaconf import DictConfig, OmegaConf
 
 
 @flax.struct.dataclass
 class PPOImitationNetworks:
+    """Container for PPO imitation learning network components.
+
+    Attributes:
+        policy_network: Intention-based encoder-decoder policy network.
+        value_network: Feedforward value function network.
+        parametric_action_distribution: Action distribution (NormalTanh).
+    """
+
     policy_network: intention_network.IntentionNetwork
     value_network: networks.FeedForwardNetwork
     parametric_action_distribution: distribution.ParametricDistribution
 
 
-def make_inference_fn(ppo_networks: PPOImitationNetworks):
-    """Creates params and inference function for the PPO agent."""
+def make_inference_fn(
+    ppo_networks: PPOImitationNetworks,
+) -> Callable[..., types.Policy]:
+    """Create a policy factory function for inference.
+
+    Returns a function that creates policy functions with fixed parameters.
+    The policy function maps observations to actions with optional extras.
+
+    Args:
+        ppo_networks: PPO network components.
+
+    Returns:
+        A make_policy function with signature:
+            make_policy(params, deterministic, get_activation) -> policy_fn
+    """
 
     def make_policy(
         params: types.PolicyParams,
         deterministic: bool = False,
         get_activation: bool = False,
     ) -> types.Policy:
+        """Create a policy function with fixed parameters.
+
+        Args:
+            params: Tuple of (normalizer_params, policy_params).
+            deterministic: If True, return mode of action distribution.
+            get_activation: If True, include network activations in extras.
+
+        Returns:
+            Policy function: (obs, key) -> (action, extras_dict).
+        """
         policy_network = ppo_networks.policy_network
-        # can modify this to provide stochastic action + noise
         parametric_action_distribution = ppo_networks.parametric_action_distribution
 
         def policy(
             observations: types.Observation,
             key_sample: PRNGKey,
-        ) -> Tuple[types.Action, types.Extra]:
+        ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
+
             if get_activation:
                 logits, latent_mean, latent_logvar, activations = policy_network.apply(
-                    *params, observations, key_network, deterministic=deterministic, get_activation=True
+                    *params,
+                    observations,
+                    key_network,
+                    deterministic=deterministic,
+                    get_activation=True,
                 )
-                # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
                 logits, latent_mean, latent_logvar = policy_network.apply(
                     *params, observations, key_network, deterministic=deterministic
                 )
-            if deterministic:
-                if get_activation:
-                    return jnp.array(
-                        ppo_networks.parametric_action_distribution.mode(logits)
-                    ), {
-                        "activations": activations,
-                        "latent_mean": latent_mean,
-                        "latent_logvar": latent_logvar,
-                    }
-                return jnp.array(
-                    ppo_networks.parametric_action_distribution.mode(logits)
-                ), {
-                    "latent_mean": latent_mean,
-                    "latent_logvar": latent_logvar,
-                }
 
-            # action sampling is happening here, according to distribution parameter logits
+            if deterministic:
+                action = jnp.array(parametric_action_distribution.mode(logits))
+                extras = {"latent_mean": latent_mean, "latent_logvar": latent_logvar}
+                if get_activation:
+                    extras["activations"] = activations
+                return action, extras
+
+            # Sample action from distribution
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
                 logits, key_sample
             )
-
-            # probability of selection specific action, actions with higher reward should have higher probability
             log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
-
             postprocessed_actions = parametric_action_distribution.postprocess(
                 raw_actions
             )
@@ -100,46 +121,61 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
     return make_policy
 
 
-def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
-    """Creates params and inference function for the PPO agent.
-    The policy takes the params as an input, so different sets of params can be used.
+def make_logging_inference_fn(
+    ppo_networks: PPOImitationNetworks,
+) -> Callable[[bool], Callable]:
+    """Create a policy factory for logging/evaluation with explicit params.
+
+    Unlike make_inference_fn, the returned policy takes params as an argument,
+    allowing evaluation with different parameter sets without recreating the policy.
+
+    Args:
+        ppo_networks: PPO network components.
+
+    Returns:
+        A make_logging_policy function with signature:
+            make_logging_policy(deterministic) -> logging_policy_fn
+
+        Where logging_policy_fn has signature:
+            (params, obs, key) -> (action, extras)
     """
 
-    def make_logging_policy(deterministic: bool = False) -> types.Policy:
+    def make_logging_policy(deterministic: bool = False) -> Callable:
+        """Create a logging policy that takes params as input.
+
+        Args:
+            deterministic: If True, return mode of action distribution.
+
+        Returns:
+            Policy function: (params, obs, key) -> (action, extras_dict).
+        """
         policy_network = ppo_networks.policy_network
-        # can modify this to provide stochastic action + noise
         parametric_action_distribution = ppo_networks.parametric_action_distribution
 
         def logging_policy(
             params: types.PolicyParams,
             observations: types.Observation,
             key_sample: PRNGKey,
-        ) -> Tuple[types.Action, types.Extra]:
+        ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
             logits, latent_mean, latent_logvar = policy_network.apply(
                 *params, observations, key_network
             )
-            # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
 
             if deterministic:
-                return jnp.array(
-                    ppo_networks.parametric_action_distribution.mode(logits)
-                ), {
+                return jnp.array(parametric_action_distribution.mode(logits)), {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
 
-            # action sampling is happening here, according to distribution parameter logits
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
                 logits, key_sample
             )
-
-            # probability of selection specific action, actions with higher reward should have higher probability
             log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
-
             postprocessed_actions = parametric_action_distribution.postprocess(
                 raw_actions
             )
+
             return jnp.array(postprocessed_actions), {
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
@@ -153,7 +189,6 @@ def make_logging_inference_fn(ppo_networks: PPOImitationNetworks):
     return make_logging_policy
 
 
-# intention policy
 def make_intention_ppo_networks(
     observation_size: int,
     reference_obs_size: int,
@@ -164,10 +199,30 @@ def make_intention_ppo_networks(
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
 ) -> PPOImitationNetworks:
-    """Make Imitation PPO networks with preprocessor."""
+    """Create intention-based PPO networks for imitation learning.
+
+    Creates an encoder-decoder policy network where the encoder processes
+    reference trajectory observations and the decoder generates actions
+    conditioned on proprioceptive state and latent intention.
+
+    Args:
+        observation_size: Total observation dimension.
+        reference_obs_size: Dimension of reference trajectory observations
+            (processed by encoder).
+        action_size: Action dimension.
+        preprocess_observations_fn: Observation preprocessing (e.g., normalize).
+        intention_latent_size: Dimension of VAE latent space.
+        encoder_hidden_layer_sizes: MLP layer sizes for encoder.
+        decoder_hidden_layer_sizes: MLP layer sizes for decoder.
+        value_hidden_layer_sizes: MLP layer sizes for value network.
+
+    Returns:
+        PPOImitationNetworks containing policy, value, and action distribution.
+    """
     parametric_action_distribution = distribution.NormalTanhDistribution(
         event_size=action_size
     )
+
     policy_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,
@@ -177,6 +232,7 @@ def make_intention_ppo_networks(
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
     )
+
     value_network = networks.make_value_network(
         observation_size,
         preprocess_observations_fn=preprocess_observations_fn,
@@ -190,19 +246,39 @@ def make_intention_ppo_networks(
     )
 
 
-def make_decoder_policy_fn(ckpt_path: str | Path, step: int = None):
+def make_decoder_policy_fn(
+    ckpt_path: str | Path,
+    step: int | None = None,
+) -> types.Policy:
+    """Load a decoder-only policy from a trained intention network checkpoint.
+
+    Extracts the decoder portion of a trained intention network for use as
+    a standalone policy. Useful for downstream tasks that provide their own
+    latent intentions.
+
+    Args:
+        ckpt_path: Path to checkpoint directory.
+        step: Checkpoint step to load. If None, loads latest.
+
+    Returns:
+        Policy function: (obs) -> (action, extras).
+        Note: This policy is deterministic (returns mode of action distribution).
+    """
 
     def make_decoder_policy(
-        params, policy_network, parametric_action_distribution
+        params: tuple,
+        policy_network: networks.FeedForwardNetwork,
+        parametric_action_distribution: distribution.ParametricDistribution,
     ) -> types.Policy:
         def policy(
             observations: types.Observation,
-        ) -> Tuple[types.Action, types.Extra]:
+        ) -> tuple[types.Action, types.Extra]:
             logits, extras = policy_network.apply(*params, observations)
             return parametric_action_distribution.mode(logits), extras
 
         return policy
 
+    # Load config and policy from checkpoint
     cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step=step)
     observation_size = cfg["network_config"]["observation_size"]
     reference_obs_size = cfg["network_config"]["reference_obs_size"]
@@ -212,27 +288,30 @@ def make_decoder_policy_fn(ckpt_path: str | Path, step: int = None):
 
     intention_policy_params = checkpointing.load_policy(ckpt_path, cfg, step=step)
 
+    # Create decoder-only network
     parametric_action_distribution = distribution.NormalTanhDistribution(
         event_size=action_size
     )
     policy_network = intention_network.make_decoder_policy(
         parametric_action_distribution.param_size,
-        decoder_obs_size=(observation_size - reference_obs_size)
-        + intention_latent_size,
+        decoder_obs_size=(observation_size - reference_obs_size) + intention_latent_size,
         preprocess_observations_fn=masked_running_statistics.normalize,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
     )
+
+    # Extract decoder normalizer params (proprioceptive portion only)
     decoder_normalizer_params = masked_running_statistics.RunningStatisticsState(
         count=jnp.zeros(()),
         mean=intention_policy_params[0].mean[reference_obs_size:],
         summed_variance=intention_policy_params[0].summed_variance[reference_obs_size:],
         std=intention_policy_params[0].std[reference_obs_size:],
     )
+
     decoder_params = (
         decoder_normalizer_params,
         {"params": intention_policy_params[1]["params"]["decoder"]},
     )
-    decoder_policy = make_decoder_policy(
+
+    return make_decoder_policy(
         decoder_params, policy_network, parametric_action_distribution
     )
-    return decoder_policy

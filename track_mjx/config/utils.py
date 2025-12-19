@@ -1,0 +1,119 @@
+"""Configuration utilities for track-mjx training pipelines.
+
+This module provides helper functions for preparing and updating OmegaConf
+configurations, including walker-specific path resolution and config merging.
+"""
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from ml_collections import config_dict
+from omegaconf import DictConfig, OmegaConf
+from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
+from vnl_playground.tasks.mouse import consts as mouse_consts
+from vnl_playground.tasks.rodent import consts as rodent_consts
+
+# Project root directory (track-mjx/)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+
+def _resolve_data_path(relative_path: str) -> str:
+    """Resolve a relative data path to an absolute path from the project root.
+
+    Args:
+        relative_path: Path relative to the project root (e.g., "data/rodent/file.h5").
+
+    Returns:
+        Absolute path as a string.
+    """
+    return str(_PROJECT_ROOT / relative_path)
+
+
+def prepare_config(
+    cfg: DictConfig,
+) -> tuple[DictConfig, dict[str, Any], config_dict.ConfigDict]:
+    """Prepare configuration by resolving walker-specific paths and creating config variants.
+
+    Takes a Hydra/OmegaConf configuration and resolves walker-specific XML and
+    reference data paths based on the walker_name. Updates the env_config section
+    with these paths and walker settings, then returns multiple config formats.
+
+    Args:
+        cfg: The root OmegaConf configuration containing walker_config and env_config.
+
+    Returns:
+        A tuple containing:
+            - cfg: The updated OmegaConf DictConfig with resolved paths.
+            - cfg_dict: The full config as a plain Python dictionary.
+            - env_cfg_ml: The env_config as an ml_collections ConfigDict.
+
+    Raises:
+        ValueError: If walker_name is not recognized.
+        NotImplementedError: If the specified walker is not yet fully implemented.
+    """
+    walker_name = cfg.walker_config.walker_name
+
+    if walker_name == "rodent":
+        logging.info("Using rodent walker")
+        walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
+        arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
+        reference_data_path = _resolve_data_path("data/rodent/rodent_reference_clips.h5")
+    elif walker_name == "fruitfly":
+        logging.info("Using fruitfly walker")
+        walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
+        arena_xml_path = str(fruitfly_consts.ARENA_XML_PATH)
+        raise NotImplementedError("Fruitfly reference data path not implemented yet.")
+    elif walker_name == "celegans":
+        logging.info("Using celegans walker")
+        raise NotImplementedError("Celegans walker not implemented yet.")
+    elif walker_name == "mouse":
+        logging.info("Using mouse walker")
+        walker_xml_path = str(mouse_consts.MOUSE_XML_PATH)
+        raise NotImplementedError("Mouse arena and reference data paths not implemented yet.")
+    elif walker_name == "stickbug":
+        logging.info("Using stickbug walker")
+        raise NotImplementedError("Stickbug walker not implemented yet.")
+    else:
+        raise ValueError(f"Unknown walker name: {walker_name}")
+
+    # Update env_config with resolved paths and walker settings
+    OmegaConf.set_struct(cfg.env_config, False)
+    OmegaConf.update(cfg.env_config, "walker_xml_path", walker_xml_path, merge=False)
+    OmegaConf.update(cfg.env_config, "arena_xml_path", arena_xml_path, merge=False)
+    OmegaConf.update(cfg.env_config, "reference_data_path", reference_data_path, merge=False)
+    OmegaConf.update(cfg.env_config, "walker_name", cfg.walker_config.walker_name, merge=False)
+    OmegaConf.update(cfg.env_config, "torque_actuators", cfg.walker_config.torque_actuators, merge=False)
+    OmegaConf.update(cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False)
+    OmegaConf.set_struct(cfg.env_config, True)
+
+    # Create ml_collections ConfigDict for env_config
+    env_cfg_dict = OmegaConf.to_container(cfg.env_config, resolve=True)
+    env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
+
+    # Convert full config to dict and log
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    logging.info(f"Configs: {cfg_dict}")
+
+    return cfg, cfg_dict, env_cfg_ml
+
+
+def update_config(cfg: DictConfig, overrides: dict[str, Any]) -> DictConfig:
+    """Update an OmegaConf configuration with override values.
+
+    Temporarily disables struct mode to allow adding/modifying keys,
+    applies all overrides, then re-enables struct mode.
+
+    Args:
+        cfg: The OmegaConf DictConfig to update.
+        overrides: Dictionary of key-value pairs to apply. Keys can use
+            dot notation for nested updates (e.g., "env_config.num_envs").
+
+    Returns:
+        The updated DictConfig (modified in-place).
+    """
+    OmegaConf.set_struct(cfg, False)
+    for key, value in overrides.items():
+        OmegaConf.update(cfg, key, value, merge=False)
+    OmegaConf.set_struct(cfg, True)
+    return cfg

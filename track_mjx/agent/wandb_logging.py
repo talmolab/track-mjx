@@ -1,192 +1,179 @@
-import os
-from pathlib import Path
-from absl import flags
-import hydra
-from omegaconf import DictConfig, OmegaConf
-import uuid
-from typing import Callable, Any
-from types import ModuleType
+"""Weights & Biases logging utilities for PPO training.
 
-import functools
-import jax
-import wandb
+This module provides functions for logging training metrics, rollout videos,
+and latent space statistics to Weights & Biases during reinforcement learning
+training runs.
+"""
+
+import logging
+from typing import Any, Callable
+
 import imageio
-import mediapy as media
+import jax
 import mujoco
+import wandb
+from jax import numpy as jnp
+from omegaconf import DictConfig, OmegaConf
 
 from track_mjx.agent.mlp_ppo import losses
 
-from brax.io import model
-from brax.envs.base import Env
-import numpy as np
-from jax import numpy as jp
-
 
 def rollout_logging_fn(
-    env,
-    jit_reset,
-    jit_step,
+    env: Any,
+    jit_reset: Callable,
+    jit_step: Callable,
     cfg: DictConfig,
     model_path: str,
-    renderer,
-    mj_model,
-    mj_data,
-    scene_option,
-    current_step: int,  # all args above this one are passed in by functools.partial
-    jit_logging_inference_fn,
+    current_step: int,
+    jit_logging_inference_fn: Callable,
     params: losses.PPONetworkParams,
-    policy_params_fn_key: jax.random.PRNGKey,
+    policy_params_fn_key: jax.Array,
     render_video: bool = True,
 ) -> None:
-    """Logs metrics and videos for a reinforcement learning training rollout.
+    """Log evaluation rollout metrics and video to Weights & Biases.
+
+    Runs a full episode using the current policy, logging latent space statistics
+    (mean/std of VAE latents), per-step reward breakdowns, and optionally a
+    rendered video of the rollout.
 
     Args:
-        env: An instance of the base PipelineEnv envrionment. # supporting mujoco playground envs
-        jit_reset: Jitted env reset function.
-        jit_step: Jitted env step function.
-        cfg: Configuration dictionary for the environment and agent.
-        model_path: The path to save the model parameters and videos.
-        renderer: A mujoco.Renderer object.
-        mj_model: A mujoco.Model object for rendering.
-        mj_data: A mujoco.Data object for rendering.
-        scene_option: A mujoco.MjvOption object for rendering.
-        current_step: The number of training steps completed.
-        jit_logging_inference_fn: Jitted policy inference function.
-        params: Parameters for the policy model.
-        policy_params_fn_key: PRNG key.
-        render_video: Whether to render the video of the rollout, defaults to True.
+        env: VNL environment instance with render() and _config attributes.
+        jit_reset: JIT-compiled environment reset function.
+        jit_step: JIT-compiled environment step function.
+        cfg: Full configuration containing env_config and render_config.
+        model_path: Directory path for saving video files.
+        current_step: Current training step (used for video filename).
+        jit_logging_inference_fn: JIT-compiled inference function with signature
+            (params, obs, rng) -> (action, extras). Extras must contain
+            "latent_mean" and "latent_logvar" keys.
+        params: PPO network parameters for the policy.
+        policy_params_fn_key: JAX PRNG key for stochastic operations.
+        render_video: If True, render and log a video of the rollout.
+
+    Note:
+        All metrics are logged with commit=False to batch with other logs.
+        The caller should call wandb.log() with commit=True afterward.
     """
-    train_config = cfg["train_setup"]["train_config"]
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
-
     state = jit_reset(reset_rng)
-
-    if train_config.get("use_lstm", None):
-        hidden_state = state.info["hidden_state"]
 
     rollout = [state]
     latent_means = []
     latent_logvars = []
-    if "reference_config" in cfg:
-        episode_length = int(
-            cfg["reference_config"].clip_length * env._steps_for_cur_frame
-        )
-    else:
-        episode_length = int(cfg["train_setup"]["train_config"]["episode_length"])
-    for i in range(episode_length):
+
+    # Calculate episode length from config
+    physics_steps_per_ctrl = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
+    steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
+        cfg.env_config.sim_dt * physics_steps_per_ctrl
+    )
+    episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
+
+    for _ in range(episode_length):
         _, act_rng = jax.random.split(act_rng)
-        obs = state.obs
-        if train_config.get("use_lstm", None):
-            ctrl, extras, hidden_state = jit_logging_inference_fn(
-                params, obs, act_rng, hidden_state
-            )
-        else:
-            (
-                ctrl,
-                extras,
-            ) = jit_logging_inference_fn(params, obs, act_rng)
-        ctrl = jp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
+        ctrl, extras = jit_logging_inference_fn(params, state.obs, act_rng)
+        ctrl = jnp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
+
         latent_means.append(extras["latent_mean"])
         latent_logvars.append(extras["latent_logvar"])
+
         state = jit_step(state, ctrl)
         rollout.append(state)
 
-    # plot the statistics of each latent dim (representing means and logvars sampled)
-    latent_logvars = jp.stack(latent_logvars)
-    latent_means = jp.stack(latent_means)
-    latent_means_means = jp.mean(latent_means, axis=0)
-    latent_logvars_means = jp.mean(latent_logvars, axis=0)
-    latent_means_stds = jp.std(latent_means, axis=0)
-    latent_logvars_stds = jp.std(latent_logvars, axis=0)
-    for i in range(latent_means_means.shape[0]):
+    # Log latent space statistics per dimension
+    latent_means = jnp.stack(latent_means)
+    latent_logvars = jnp.stack(latent_logvars)
+
+    means_mean = jnp.mean(latent_means, axis=0)
+    means_std = jnp.std(latent_means, axis=0)
+    logvars_mean = jnp.mean(latent_logvars, axis=0)
+    logvars_std = jnp.std(latent_logvars, axis=0)
+
+    for i in range(means_mean.shape[0]):
         wandb.log(
             {
-                f"latents/latent_means_mean{i}": latent_means_means[i],
-                f"latents/latent_means_std{i}": latent_means_stds[i],
-                f"latents/latent_logvars_mean{i}": latent_logvars_means[i],
-                f"latents/latent_logvars_std{i}": latent_logvars_stds[i],
+                f"latents/latent_means_mean{i}": means_mean[i],
+                f"latents/latent_means_std{i}": means_std[i],
+                f"latents/latent_logvars_mean{i}": logvars_mean[i],
+                f"latents/latent_logvars_std{i}": logvars_std[i],
             },
             commit=False,
         )
 
     if render_video:
-        if cfg["env_config"].get("render_fps") is not None:
-            render_fps = cfg["env_config"].get("render_fps")
-        else:
-            render_fps = int(1.0 / env.dt)
-        video_path = f"{model_path}/{current_step}.mp4"
-        if cfg["env_config"]["task_name"] == "imitation":
-            # track-mjx envs
-            for rollout_metric in cfg.logging_config.rollout_metrics:
-                log_lineplot_to_wandb(
-                    f"eval/rollout_{rollout_metric}",
-                    rollout_metric,
-                    list(
-                        enumerate([state.metrics[rollout_metric] for state in rollout])
-                    ),
-                    title=f"{rollout_metric} for each rollout frame",
-                )
+        _log_rollout_video(env, cfg, model_path, current_step, rollout)
 
-            # Render the walker with the reference expert demonstration trajectory
-            qposes_rollout = np.array([state.pipeline_state.qpos for state in rollout])
-            ref_traj = env._get_reference_clip(rollout[0].info)
 
-            # Handle both ReferenceClip (tracking) and ReferenceClipReach (reaching)
-            if hasattr(cfg.env_config, "walker_name"):
-                ref_qpos = np.hstack(
-                    [ref_traj.position, ref_traj.quaternion, ref_traj.joints]
-                )
-            elif hasattr(cfg.env_config, "reacher_name"):
-                # Reacher reference has only joints
-                ref_qpos = ref_traj.joints
+def _log_rollout_video(
+    env: Any,
+    cfg: DictConfig,
+    model_path: str,
+    current_step: int,
+    rollout: list[Any],
+) -> None:
+    """Render rollout video and log reward metrics to wandb.
 
-            qposes_ref = np.repeat(ref_qpos, env._steps_for_cur_frame, axis=0)
+    Args:
+        env: Environment with render() method and _config attribute.
+        cfg: Configuration with render_config section.
+        model_path: Directory to save video file.
+        current_step: Training step for filename.
+        rollout: List of environment states from the episode.
+    """
+    render_fps = cfg.render_config.render_fps
+    video_path = f"{model_path}/{current_step}.mp4"
 
-            with imageio.get_writer(video_path, fps=render_fps) as video:
-                for qpos1, qpos2 in zip(qposes_rollout, qposes_ref):
-                    mj_data.qpos = np.append(qpos1, qpos2)
-                    mujoco.mj_forward(mj_model, mj_data)
-                    renderer.update_scene(
-                        mj_data,
-                        camera=cfg["env_config"].render_camera_name,
-                        scene_option=scene_option,
-                    )
-                    pixels = renderer.render()
-                    video.append_data(pixels)
-        else:
-            # mujoco playground envs
-            render_every = 2
-            fps = render_fps / render_every
-            traj = rollout[::render_every]
-            # TODO: make the camera configurable via yaml config
-            frames = env.render(
-                traj,
-                camera="close_profile-rodent",
-                scene_option=scene_option,
+    # Log per-step reward breakdowns
+    metric_names = [f"rewards/{k}" for k in env._config.reward_terms.keys()]
+    for metric in metric_names:
+        log_lineplot_to_wandb(
+            name=f"eval/rollout_{metric}",
+            metric_name=metric,
+            data=list(enumerate([s.metrics[metric] for s in rollout])),
+            title=f"{metric} per rollout frame",
+        )
+
+    try:
+        with imageio.get_writer(video_path, fps=render_fps) as writer:
+            video = env.render(
+                rollout,
+                camera=f"{cfg.render_config.render_camera_name}-ghost",
                 height=480,
                 width=640,
             )
-            media.write_video(video_path, frames, fps=fps, qp=18)
+            for frame in video:
+                writer.append_data(frame)
+
         wandb.log(
             {"videos/rollout": wandb.Video(video_path, format="mp4")},
             commit=False,
         )
+    except mujoco.FatalError as e:
+        logging.warning(f"Rendering video failed with MuJoCo error: {e}")
 
 
-def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: str):
-    """Logs a table of values and its line plot to wandb.
+def log_lineplot_to_wandb(
+    name: str,
+    metric_name: str,
+    data: list[tuple[int, float]] | tuple[list[int], list[float]],
+    title: str,
+) -> None:
+    """Log a line plot to Weights & Biases.
+
+    Creates a wandb Table and plots it as a line chart. Useful for visualizing
+    metrics over time (e.g., reward per timestep during a rollout).
 
     Args:
-        name: The name of the lineplot in wandb (i.e. eval/reward_over_rollout).
-        metric_name: The key under which to log the metric.
-        data: List of (x, y) tuples or two lists (frames, rewards).
-        title: Title for the wandb plot.
+        name: Wandb log key (e.g., "eval/reward_over_rollout").
+        metric_name: Column name for the y-axis values.
+        data: Either a list of (x, y) tuples, or a tuple of (x_list, y_list).
+        title: Title displayed on the wandb plot.
+
+    Note:
+        Logged with commit=False; caller should batch with other logs.
     """
     if isinstance(data[0], tuple):
-        # If data is a list of (x, y) tuples, separate it into frames and values
         frames, values = zip(*data)
     else:
-        # If data is two lists, use them directly
         frames, values = data
 
     table = wandb.Table(
@@ -195,13 +182,68 @@ def log_lineplot_to_wandb(name: str, metric_name: str, data: jp.ndarray, title: 
     )
 
     wandb.log(
-        {
-            name: wandb.plot.line(
-                table,
-                "frame",
-                metric_name,
-                title=title,
-            )
-        },
+        {name: wandb.plot.line(table, "frame", metric_name, title=title)},
         commit=False,
     )
+
+
+def initialize_wandb_logging(
+    logging_cfg: DictConfig,
+    cfg: DictConfig,
+    run_id: str,
+    existing_run_state: DictConfig | None,
+) -> str:
+    """Initialize a Weights & Biases run, with optional resume support.
+
+    Creates a new wandb run or resumes an existing one if restoring from a
+    checkpoint. The full config is logged to wandb for experiment tracking.
+
+    Args:
+        logging_cfg: Logging config with project_name, exp_name, group_name.
+        cfg: Full experiment configuration to log to wandb.
+        run_id: Unique identifier for this run (used in wandb run ID).
+        existing_run_state: If resuming, dict with "wandb_run_id" key.
+            If None, starts a new run.
+
+    Returns:
+        The wandb run ID (for saving in checkpoints to enable future resume).
+    """
+    wandb_run_id = f"{logging_cfg.exp_name}_{run_id}"
+
+    if existing_run_state:
+        wandb_run_id = existing_run_state["wandb_run_id"]
+        wandb_resume = "must"
+        logging.info(f"Resuming wandb run: {wandb_run_id}")
+    else:
+        wandb_resume = "allow"
+        logging.info(f"Starting new wandb run: {wandb_run_id}")
+
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True)
+
+    wandb.init(
+        project=logging_cfg.project_name,
+        config=cfg_dict,
+        notes="",
+        id=wandb_run_id,
+        resume=wandb_resume,
+        group=logging_cfg.group_name,
+    )
+
+    return wandb_run_id
+
+
+def wandb_progress(num_steps: int, metrics: dict[str, Any]) -> None:
+    """Log training progress metrics to Weights & Biases.
+
+    Adds the step count to metrics and commits the log entry.
+
+    Args:
+        num_steps: Current training step count (logged as num_steps_thousands).
+        metrics: Dictionary of metric names to values to log.
+
+    Note:
+        This function commits the log (unlike other logging functions in this
+        module), so it should be called last in a logging batch.
+    """
+    metrics["num_steps_thousands"] = num_steps
+    wandb.log(metrics)

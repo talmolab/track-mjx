@@ -1,287 +1,31 @@
-# imports
-import os
+"""Rendering utilities for rollout visualization and analysis.
 
+This module provides functions for rendering MuJoCo rollouts with optional
+PCA progression overlays, and displaying videos in Jupyter notebooks.
+
+Note:
+    Sets MUJOCO_GL and PYOPENGL_PLATFORM environment variables to "egl"
+    for headless rendering if not already set.
+"""
+
+import functools
+import multiprocessing as mp
+import os
+from typing import Any, Callable
+
+# Configure OpenGL for headless rendering (must be before matplotlib import)
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
 os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
-from typing import List, Tuple, Callable, Any, Dict
-import numpy as np
 import matplotlib
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-
-from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.animation as animation
-
-from sklearn.decomposition import PCA
-from PIL import Image
+import matplotlib.pyplot as plt
+import numpy as np
 from IPython.display import HTML
-
-from track_mjx.environment.walker.spec_utils import _scale_body_tree, _recolour_tree
-
-import mujoco
-from pathlib import Path
-
-import multiprocessing as mp
-import functools
-
-# TODO: should this be part of config?
-_BASE_XML_PATHS = {
-    "rodent": str(
-        Path(__file__).parent.parent / "environment/walker/assets/rodent/rodent.xml"
-    ),
-    "fly": str(
-        Path(__file__).parent.parent
-        / "environment/walker/assets/fruitfly/fruitfly_force_fast.xml"
-    ),
-    "stick": str(
-        Path(__file__).parent.parent
-        / "environment/walker/assets/stick/sungaya_inexpectata_box.xml"
-    ),
-    "mouse_arm": str(
-        Path(__file__).parent.parent
-        / "environment/reacher/assets/mouse_arm/mouse_arm.xml"
-    ),
-}
-
-_ROOT_BODY_NAMES = {
-    "rodent": "walker",
-    "fly": "thorax",
-    "stick": "reference_base",
-}
-
-
-def agg_backend_context(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorator to switch to a headless backend during function execution.
-
-    Args:
-        func (Callable[..., Any]): The function to decorate.
-
-    Returns:
-        Callable[..., Any]: The wrapped function using headless backend.
-    """
-
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        orig_backend = matplotlib.get_backend()
-        matplotlib.use("Agg")  # Switch to headless 'Agg' to inhibit figure rendering.
-        # Code to execute BEFORE the original function
-        result = func(*args, **kwargs)
-        # Code to execute AFTER the original function
-        plt.close("all")  # Figure auto-closing upon backend switching is deprecated.
-        matplotlib.use(orig_backend)
-        return result
-
-    return wrapper
-
-
-def make_ghost_pair(
-    xml_path: str,
-    *,
-    scale: float = 1.0,
-    root_body_name="root",
-) -> Tuple[mujoco.MjSpec, mujoco.MjModel, str]:
-    """Build output XML containing the original model plus a ghost copy.
-
-    Args:
-        input_xml_str (str): The XML string of the original model.
-        scale (float, optional): Scale factor for the ghost model. Defaults to 1.0.
-        rgba (Tuple[float, float, float, float], optional): Color and transparency for ghost model. Defaults to (0.8, 0.8, 0.8, 0.2).
-
-    Returns:
-        Tuple[mujoco.MjSpec, mujoco.MjModel, str]: The modified MjSpec, compiled MjModel, and XML string.
-    """
-    # Load the original as a spec
-    base = mujoco.MjSpec.from_file(xml_path)
-    for top in base.worldbody.bodies:
-        _scale_body_tree(top, scale)
-
-    # Deep‑copy the spec to obtain the second (ghost) body
-    ghost = base.copy()
-
-    model_path = Path(xml_path).as_posix().lower()
-
-    # recolour the ghost body
-    for top in ghost.worldbody.bodies:
-        _recolour_tree(top, rgba=[0.8, 0.8, 0.8, 0.2])
-
-    if "reacher" in model_path:
-        # Reacher: rotate slightly for visibility
-        frame = base.worldbody.add_frame(pos=[0.0, 0.0, 0.0], euler=[0, -15, 0])
-        ghost_body = ghost.worldbody.bodies[0]
-        frame.attach_body(ghost_body, prefix="ghost_")  ### try this!
-    elif "walker" in model_path:
-        # Walker: shift to the left to compare side-by-side
-        frame = base.worldbody.add_frame(pos=[-0.2, 0, 0.0], quat=[0, 0, 0, 0])
-        frame.attach_body(ghost.body(root_body_name), "", "ghost")
-    else:
-        raise ValueError(f"Unrecognized model type in path: {xml_path}")
-
-    # Compile & write out
-    model = base.compile()
-    xml = base.to_xml()
-    return base, model, xml
-
-
-def make_rollout_renderer(
-    cfg: Any, render_ghost: bool = True
-) -> Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]:
-    """Build a renderer for rollout visualization.
-
-    Args:
-        cfg (Any): Configuration object with environment settings.
-        render_ghost (bool, optional): Whether to render the ghost model. Defaults to True.
-
-    Returns:
-        Tuple[mujoco.Renderer, mujoco.MjModel, mujoco.MjData, mujoco.MjvOption]: Renderer, model, data, and scene options.
-    """
-
-    # Check for walker_name or reacher_name
-    if (
-        hasattr(cfg.env_config, "walker_name")
-        and cfg.env_config.walker_name in _BASE_XML_PATHS.keys()
-    ):
-        xml_path = _BASE_XML_PATHS[cfg.env_config.walker_name]
-        if render_ghost:
-            _, mj_model, _ = make_ghost_pair(
-                xml_path,
-                scale=cfg.walker_config.rescale_factor,
-                root_body_name=_ROOT_BODY_NAMES[cfg.env_config.walker_name],
-            )
-        else:
-            base = mujoco.MjSpec.from_file(xml_path)
-            for top in base.worldbody.bodies:
-                _scale_body_tree(top, cfg.walker_config.rescale_factor)
-            mj_model = base.compile()
-    elif (
-        hasattr(cfg.env_config, "reacher_name")
-        and cfg.env_config.reacher_name in _BASE_XML_PATHS.keys()
-    ):
-        xml_path = _BASE_XML_PATHS[cfg.env_config.reacher_name]
-        if render_ghost:
-            _, mj_model, _ = make_ghost_pair(
-                xml_path, scale=cfg.reacher_config.rescale_factor
-            )
-        else:
-            base = mujoco.MjSpec.from_file(xml_path)
-            for top in base.worldbody.bodies:
-                _scale_body_tree(top, cfg.reacher_config.rescale_factor)
-            mj_model = base.compile()
-    else:
-        # Try to determine which name is available
-        if hasattr(cfg.env_config, "walker_name"):
-            raise ValueError(f"Unknown walker_name: {cfg.env_config.walker_name}")
-        elif hasattr(cfg.env_config, "reacher_name"):
-            raise ValueError(f"Unknown reacher_name: {cfg.env_config.reacher_name}")
-        else:
-            raise ValueError("Neither walker_name nor reacher_name found in config")
-
-    mj_model.opt.solver = {
-        "cg": mujoco.mjtSolver.mjSOL_CG,
-        "newton": mujoco.mjtSolver.mjSOL_NEWTON,
-    }["cg"]
-
-    mj_model.opt.iterations = 6
-    mj_model.opt.ls_iterations = 6
-    mj_data = mujoco.MjData(mj_model)
-
-    site_id = [
-        mj_model.site(i).id
-        for i in range(mj_model.nsite)
-        if "-0" in mj_model.site(i).name
-    ]
-    for id in site_id:
-        mj_model.site(id).rgba = [1, 0, 0, 1]
-
-    # visual mujoco rendering
-    # TODO: Add more rendering options
-    scene_option = mujoco.MjvOption()
-    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
-    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = True
-    # scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = True
-
-    # save rendering and log to wandb
-    mujoco.mj_kinematics(mj_model, mj_data)
-    renderer = mujoco.Renderer(mj_model, height=512, width=512)
-
-    return renderer, mj_model, mj_data, scene_option
-
-
-def render_rollout(
-    cfg: Any,
-    rollout: Dict[str, Any],
-    height: int = None,
-    width: int = None,
-    render_ghost: bool = True,
-    render_only_realtime: bool = False,
-) -> Tuple[List[np.ndarray], float]:
-    """Render a rollout from saved qposes.
-
-    Args:
-        cfg (Any): Configuration object with environment settings.
-        rollout (Dict[str, Any]): A dictionary containing the qposes of the reference and rollout trajectories.
-        height (int, optional): Height of the rendered frames. If None, uses default based on agent type.
-        width (int, optional): Width of the rendered frames. If None, uses default based on agent type.
-        render_ghost (bool, optional): Whether to render the ghost model. Defaults to True.
-
-    Returns:
-        Tuple[List[np.ndarray], float]: List of frames of the rendering and the rendering FPS.
-    """
-    # Prepare a unified list of qpos arrays to render
-    qroll = rollout["qposes_rollout"]
-    if not render_ghost:
-        qpos_list = qroll
-        render_msg = "MuJoCo Rendering..."
-    else:
-        qref = rollout["qposes_ref"]
-        # rollout qpos comes first, then reference qpos
-        qpos_list = [np.concatenate((qp, qr)) for qp, qr in zip(qroll, qref)]
-        render_msg = "MuJoCo Rendering with Ghost Model..."
-
-    # Build renderer and MuJoCo data
-    renderer, mj_model, mj_data, scene_option = make_rollout_renderer(
-        cfg, render_ghost=render_ghost
-    )
-
-    # Warm up kinematics and reset renderer with custom dimensions if provided
-    mujoco.mj_kinematics(mj_model, mj_data)
-
-    if height is not None and width is not None:
-        renderer = mujoco.Renderer(mj_model, height=height, width=width)
-    # Otherwise use the default dimensions set by make_rollout_renderer
-
-    frames = []
-    print(render_msg)
-
-    if render_only_realtime:
-        n = int(
-            1.0
-            / (
-                mj_model.opt.timestep
-                * cfg.env_config.env_args.mocap_hz
-                * cfg.env_config.env_args.physics_steps_per_control_step
-            )
-        )
-        realtime_fps = cfg.env_config.env_args.mocap_hz
-    else:
-        n = 1
-        realtime_fps = int(
-            1.0
-            / (
-                mj_model.opt.timestep
-                * cfg.env_config.env_args.physics_steps_per_control_step
-            )
-        )
-
-    print(f"Rendering every {n} steps; realtime fps: {realtime_fps}")
-    for qpos in tqdm(qpos_list[::n]):
-        mj_data.qpos = qpos
-        mujoco.mj_forward(mj_model, mj_data)
-        renderer.update_scene(
-            mj_data, camera=cfg.env_config.render_camera_name, scene_option=scene_option
-        )
-        frames.append(renderer.render())
-
-    return frames, realtime_fps
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from PIL import Image
+from sklearn.decomposition import PCA
+from tqdm import tqdm
 
 
 def plot_pca_intention(
@@ -295,155 +39,197 @@ def plot_pca_intention(
     terminated: bool = False,
     window_size: int = 530,
 ) -> np.ndarray:
-    """Plot PCA intention progression of the episode.
+    """Generate a PCA progression plot as an image array.
+
+    Creates a line plot showing the trajectory of PCA components over time,
+    with the current timestep marked. Useful for visualizing latent intention
+    or control signal evolution during a rollout.
 
     Args:
-        idx (int): The current timestep.
-        episode_start (int): The start timestep of the episode.
-        pca (PCA): The PCA object fitted on the dataset.
-        pca_projections (np.ndarray): The PCA projection of the episode, shape (timestep, n_components).
-        clip_idx (int): The clip index.
-        feature_name (str): The feature name.
-        n_components (int, optional): The number of PCA components to plot. Defaults to 4.
-        terminated (bool, optional): Whether the episode is terminated. Defaults to False.
-        window_size (int, optional): The window size of the plot. Defaults to 530.
+        idx: Current timestep index (absolute, not relative to episode).
+        episode_start: Timestep where the current episode began.
+        pca: Fitted sklearn PCA object (used for variance ratios in legend).
+        pca_projections: PCA-transformed data, shape (num_timesteps, n_components).
+        clip_idx: Reference clip index (displayed in title).
+        feature_name: Name of the feature being visualized (e.g., "ctrl", "intention").
+        n_components: Number of principal components to plot. Defaults to 4.
+        terminated: If True, draws a vertical line marking episode termination.
+        window_size: Number of timesteps visible in the x-axis window. Defaults to 530.
 
     Returns:
-        np.ndarray: The image array of the plot.
+        RGB image array of the plot, shape (height, width, 3).
     """
-    max_y = np.max(list(pca_projections[:, :n_components]))
-    min_y = np.min(list(pca_projections[:, :n_components]))
+    max_y = np.max(pca_projections[:, :n_components])
+    min_y = np.min(pca_projections[:, :n_components])
     y_lim = (min_y - 0.2, max_y + 0.2)
-    idx_in_this_episode = idx - episode_start  # the current timestep in this episode
+    idx_in_episode = idx - episode_start
+
     plt.figure(figsize=(9.6, 4.8))
+
     for pc_ind in range(n_components):
-        # Plot the PCA projection of the episode
+        variance_pct = pca.explained_variance_ratio_[pc_ind] * 100
         plt.plot(
             pca_projections[episode_start:idx, pc_ind],
-            label=f"PC {pc_ind} ({pca.explained_variance_ratio_[pc_ind]*100:.1f}%)",
+            label=f"PC {pc_ind} ({variance_pct:.1f}%)",
         )
-        plt.scatter(idx - episode_start, pca_projections[idx - 1, pc_ind])
+        plt.scatter(idx_in_episode, pca_projections[idx - 1, pc_ind])
+
     if terminated:
-        # Mark the episode termination
-        plt.axvline(x=idx - episode_start, color="r", linestyle="-")
+        plt.axvline(x=idx_in_episode, color="r", linestyle="-")
         plt.text(
-            idx - episode_start - 8,  # Adjust the x-offset as needed
-            sum(y_lim) / 2,  # Adjust the y-position as needed
+            idx_in_episode - 8,
+            sum(y_lim) / 2,
             "Episode Terminated",
             color="r",
             rotation=90,
-        )  # Rotate the text vertically
-    if idx_in_this_episode <= window_size:
+        )
+
+    # Sliding window for x-axis
+    if idx_in_episode <= window_size:
         plt.xlim(0, window_size)
     else:
-        plt.xlim(
-            idx_in_this_episode - window_size, idx_in_this_episode
-        )  # dynamically move xlim as time progress
+        plt.xlim(idx_in_episode - window_size, idx_in_episode)
+
     plt.ylim(*y_lim)
     plt.legend(loc="upper right")
     plt.xlabel("Timestep")
-    plt.title(
-        f"PCA {feature_name} Progression for Clip {clip_idx}"
-    )  # TODO make it configurable
-    # Get the current figure
+    plt.title(f"PCA {feature_name} Progression for Clip {clip_idx}")
+
+    # Render figure to numpy array
     fig = plt.gcf()
-    # Create a canvas for rendering
     canvas = FigureCanvasAgg(fig)
-    # Render the canvas to a buffer
     canvas.draw()
-    s, (width, height) = canvas.print_to_buffer()
-    # Convert the buffer to a PIL Image
-    image = Image.frombytes("RGBA", (width, height), s)
+    buf, (width, height) = canvas.print_to_buffer()
+    image = Image.frombytes("RGBA", (width, height), buf)
     rgb_array = np.array(image.convert("RGB"))
+    plt.close(fig)
+
     return rgb_array
 
 
 def render_with_pca_progression(
-    rollout: Dict[str, Any],
+    rollout: dict[str, Any],
+    pca: PCA,
     pca_projections: np.ndarray,
+    render_fn: Callable,
     n_components: int = 4,
     feature_name: str = "ctrl",
-) -> List[np.ndarray]:
-    """Render rollout frames concatenated with PCA progression plots.
+) -> list[np.ndarray]:
+    """Render rollout frames side-by-side with PCA progression plots.
+
+    Combines MuJoCo rendered frames with corresponding PCA trajectory plots,
+    creating a visualization that shows both the physical simulation and
+    the evolution of latent features over time.
 
     Args:
-        rollout (Dict[str, Any]): The rollout dictionary.
-        pca_projections (np.ndarray): The PCA projections of the rollout.
-        n_components (int, optional): The number of PCA components to plot. Defaults to 4.
-        feature_name (str, optional): The feature name. Defaults to "ctrl".
+        rollout: Rollout dictionary containing "info" and "qposes_rollout" keys.
+        pca: Fitted sklearn PCA object for variance ratio display.
+        pca_projections: PCA-transformed features, shape (num_timesteps, n_components).
+        render_fn: Function to render rollout states, returns list of frame arrays.
+        n_components: Number of PCA components to display. Defaults to 4.
+        feature_name: Label for the PCA plot title. Defaults to "ctrl".
 
     Returns:
-        List[np.ndarray]: List of frames of the rendering concatenated with PCA plots.
+        List of concatenated frames (MuJoCo frame | PCA plot), suitable for video.
+
+    Note:
+        Adds 50 frozen frames at the end showing the termination state.
     """
-    frames_mujoco = render_from_saved_rollout(rollout)[1:]
-    # skip the first frame, since we don't have intention for the first frame
+    # Skip first frame (no intention data available)
+    frames_mujoco = render_fn(rollout)[1:]
+
     orig_backend = matplotlib.get_backend()
-    matplotlib.use("Agg")  # Switch to headless 'Agg' to inhibit figure rendering.
+    matplotlib.use("Agg")
+
     clip_idx = int(rollout["info"][0]["clip_idx"])
+
+    # Parallel render PCA plots
     worker = functools.partial(
         plot_pca_intention,
         episode_start=0,
+        pca=pca,
+        pca_projections=pca_projections,
         clip_idx=clip_idx,
-        pca_projections=pca_embedded,
         n_components=n_components,
         feature_name=feature_name,
     )
-    print("Rendering with PCA progression...")
-    # Use multiprocessing to parallelize the rendering of the reward graph
+
+    print("Rendering PCA progression plots...")
     with mp.Pool(processes=mp.cpu_count()) as pool:
         frames_pca = pool.map(worker, range(len(rollout["qposes_rollout"])))
-    concat_frames = []
-    episode_start = 0
-    # implement reset logics of the reward graph too.
+
     print("Concatenating frames...")
+    concat_frames = []
     for idx, frame in tqdm(enumerate(frames_mujoco)):
         concat_frames.append(np.hstack([frame, frames_pca[idx]]))
-    reward_plot = plot_pca_intention(
-        len(frames_mujoco) - 1,
-        episode_start,
-        pca_projections,
-        clip_idx,
-        feature_name,
-        n_components,
+
+    # Final frame with termination marker
+    final_plot = plot_pca_intention(
+        idx=len(frames_mujoco) - 1,
+        episode_start=0,
+        pca=pca,
+        pca_projections=pca_projections,
+        clip_idx=clip_idx,
+        feature_name=feature_name,
+        n_components=n_components,
         terminated=True,
     )
-    plt.close("all")  # Figure auto-closing upon backend switching is deprecated.
+
+    plt.close("all")
     matplotlib.use(orig_backend)
+
+    # Add frozen end frames
     for _ in range(50):
-        concat_frames.append(
-            np.hstack([frames_mujoco[-1], reward_plot])
-        )  # create stoppage when episode terminates
+        concat_frames.append(np.hstack([frames_mujoco[-1], final_plot]))
+
     return concat_frames
 
 
-def display_video(frames: List[np.ndarray], framerate: int = 30) -> HTML:
-    """Display a video from a list of frames.
+def display_video(frames: list[np.ndarray], framerate: int = 30) -> HTML:
+    """Display a sequence of frames as an HTML5 video in Jupyter.
+
+    Creates a matplotlib animation from the frames and converts it to an
+    HTML5 video element for inline display in Jupyter notebooks.
 
     Args:
-        frames (List[np.ndarray]): List of frames with shape (height, width, 3).
-        framerate (int, optional): The framerate of the video. Defaults to 30.
+        frames: List of RGB image arrays, each with shape (height, width, 3).
+        framerate: Video playback speed in frames per second. Defaults to 30.
 
     Returns:
-        HTML: HTML video object for display in Jupyter notebooks.
+        IPython HTML object containing the embedded video.
+
+    Example:
+        >>> frames = [np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        ...           for _ in range(100)]
+        >>> display_video(frames, framerate=30)
     """
     height, width, _ = frames[0].shape
     dpi = 70
+
     orig_backend = matplotlib.get_backend()
-    matplotlib.use("Agg")  # Switch to headless 'Agg' to inhibit figure rendering.
+    matplotlib.use("Agg")
+
     fig, ax = plt.subplots(1, 1, figsize=(width / dpi, height / dpi), dpi=dpi)
-    plt.close("all")  # Figure auto-closing upon backend switching is deprecated.
-    matplotlib.use(orig_backend)  # Switch back to the original backend.
     ax.set_axis_off()
     ax.set_aspect("equal")
     ax.set_position([0, 0, 1, 1])
     im = ax.imshow(frames[0])
 
-    def update(frame: np.ndarray) -> List[Any]:
+    plt.close("all")
+    matplotlib.use(orig_backend)
+
+    def update(frame: np.ndarray) -> list[Any]:
         im.set_data(frame)
         return [im]
 
     interval = 1000 / framerate
     anim = animation.FuncAnimation(
-        fig=fig, func=update, frames=frames, interval=interval, blit=True, repeat=False
+        fig=fig,
+        func=update,
+        frames=frames,
+        interval=interval,
+        blit=True,
+        repeat=False,
     )
+
     return HTML(anim.to_html5_video())

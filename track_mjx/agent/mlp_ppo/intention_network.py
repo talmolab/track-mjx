@@ -1,21 +1,40 @@
-from typing import Sequence, Tuple, Union
+"""Intention network architectures for VAE-style imitation learning.
 
-from brax.training import networks
-from brax.training import types
-from brax.training.types import PRNGKey
+This module provides encoder-decoder neural network architectures.
+The key components are:
+
+- Encoder: Maps reference trajectory observations to a latent intention space
+- Decoder: Maps latent intentions + proprioceptive state to action parameters
+- IntentionNetwork: Full VAE combining encoder and decoder with reparameterization
+
+The architecture enables learning from motion capture data by encoding trajectory
+information into a compact latent space that conditions the policy.
+"""
+
+from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
-from jax import random
-
+from brax.training import networks, types
 from flax import linen as nn
 
 
 class Encoder(nn.Module):
-    """outputs in the form of distributions in latent space"""
+    """VAE encoder that maps observations to latent distribution parameters.
+
+    Processes reference trajectory observations through an MLP with LayerNorm
+    to produce mean and log-variance of the latent intention distribution.
+
+    Attributes:
+        layer_sizes: Hidden layer dimensions for the MLP.
+        latents: Dimension of the latent intention space.
+        activation: Activation function (default: SiLU).
+        kernel_init: Weight initializer (default: LeCun uniform).
+        bias: Whether to use bias terms in Dense layers.
+    """
 
     layer_sizes: Sequence[int]
-    latents: int  # intention size
+    latents: int
     activation: networks.ActivationFn = nn.silu
     kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform()
     bias: bool = True
@@ -23,9 +42,7 @@ class Encoder(nn.Module):
     @nn.compact
     def __call__(
         self, x: jnp.ndarray, get_activation: bool = False
-    ) -> Union[
-        Tuple[jnp.ndarray, jnp.ndarray], Tuple[Tuple[jnp.ndarray, jnp.ndarray], dict]
-    ]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray] | tuple[tuple[jnp.ndarray, jnp.ndarray], dict]:
         activations = {}
         # For each layer in the sequence
         for i, hidden_size in enumerate(self.layer_sizes):
@@ -51,7 +68,18 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    """decode with action output"""
+    """VAE decoder that maps latent intentions to action distribution parameters.
+
+    Processes concatenated latent intention and proprioceptive observations
+    through an MLP to produce action distribution parameters.
+
+    Attributes:
+        layer_sizes: Layer dimensions including final output size.
+        activation: Activation function (default: SiLU).
+        kernel_init: Weight initializer (default: LeCun uniform).
+        activate_final: Whether to apply activation after final layer.
+        bias: Whether to use bias terms in Dense layers.
+    """
 
     layer_sizes: Sequence[int]
     activation: networks.ActivationFn = nn.silu
@@ -62,7 +90,7 @@ class Decoder(nn.Module):
     @nn.compact
     def __call__(
         self, x: jnp.ndarray, get_activation: bool = False
-    ) -> Union[jnp.ndarray, Tuple[jnp.ndarray, dict]]:
+    ) -> tuple[jnp.ndarray, dict]:
         activations = {}
         for i, hidden_size in enumerate(self.layer_sizes):
             x = nn.Dense(
@@ -81,14 +109,41 @@ class Decoder(nn.Module):
         return x, {}
 
 
-def reparameterize(rng, mean, logvar):
+def reparameterize(
+    rng: jax.Array, mean: jnp.ndarray, logvar: jnp.ndarray
+) -> jnp.ndarray:
+    """Sample from Gaussian using reparameterization trick.
+
+    Enables backpropagation through stochastic sampling by expressing the
+    sample as a deterministic function of the parameters plus noise.
+
+    Args:
+        rng: JAX random key for sampling.
+        mean: Mean of the Gaussian distribution.
+        logvar: Log-variance of the Gaussian distribution.
+
+    Returns:
+        Sampled latent vector: mean + std * epsilon, where epsilon ~ N(0, I).
+    """
     std = jnp.exp(0.5 * logvar)
-    eps = random.normal(rng, logvar.shape)
+    eps = jax.random.normal(rng, logvar.shape)
     return mean + eps * std
 
 
 class IntentionNetwork(nn.Module):
-    """Full VAE model, encode -> decode with sampled actions"""
+    """Full VAE model combining encoder and decoder for intention-based policy.
+
+    The network splits observations into reference trajectory and proprioceptive
+    components. The encoder processes trajectory observations to produce latent
+    intentions, which are then concatenated with proprioceptive state and decoded
+    into action distribution parameters.
+
+    Attributes:
+        encoder_layers: Hidden layer sizes for the encoder MLP.
+        decoder_layers: Layer sizes for decoder (excluding action output).
+        reference_obs_size: Dimension of reference trajectory observations.
+        latents: Dimension of the latent intention space.
+    """
 
     encoder_layers: Sequence[int]
     decoder_layers: Sequence[int]
@@ -96,10 +151,17 @@ class IntentionNetwork(nn.Module):
     latents: int = 60
 
     def setup(self):
+        """Initialize encoder and decoder submodules."""
         self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
 
-    def __call__(self, obs, key, deterministic: bool = False, get_activation: bool = False):
+    def __call__(
+        self,
+        obs: jnp.ndarray,
+        key: jax.Array,
+        deterministic: bool = False,
+        get_activation: bool = False,
+    ):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
 
@@ -151,20 +213,25 @@ def make_intention_policy(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
 ) -> networks.FeedForwardNetwork:
-    """
-    Create a policy network with intention module.
+    """Create an intention-based policy network.
+
+    Constructs an encoder-decoder VAE policy where the encoder processes
+    reference trajectory observations and the decoder generates action
+    parameters conditioned on latent intentions and proprioceptive state.
 
     Args:
-        action_param_size (int): the parameter size of the action space, usually double of the action size to model both the mean and variance of the action distribution
-        latent_size (int): the size of the latent space
-        total_obs_size (int): the total size of observations
-        reference_obs_size (int): the size of reference observations
-        preprocess_observations_fn (types.PreprocessObservationFn, optional): function to preprocess observations. Defaults to types.identity_observation_preprocessor.
-        encoder_hidden_layer_sizes (Sequence[int], optional): sizes of encoder hidden layers. Defaults to (1024, 1024).
-        decoder_hidden_layer_sizes (Sequence[int], optional): sizes of decoder hidden layers. Defaults to (1024, 1024).
+        action_param_size: Output dimension (typically 2x action_size for
+            Gaussian mean and variance).
+        latent_size: Dimension of the latent intention space.
+        total_obs_size: Total observation dimension.
+        reference_obs_size: Dimension of reference trajectory portion of obs.
+        preprocess_observations_fn: Observation normalization function.
+        encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
+        decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
 
     Returns:
-        networks.FeedForwardNetwork: the created policy network
+        FeedForwardNetwork with init and apply methods. The apply function
+        returns (action_params, latent_mean, latent_logvar).
     """
 
     policy_module = IntentionNetwork(
@@ -175,11 +242,22 @@ def make_intention_policy(
         latents=latent_size,
     )
 
-    def apply(processor_params, policy_params, obs, key, deterministic: bool = False, get_activation: bool = False):
-        """Applies the policy network with observation normalizer, the output is the action distribution parameters."""
+    def apply(
+        processor_params,
+        policy_params,
+        obs,
+        key,
+        deterministic: bool = False,
+        get_activation: bool = False,
+    ):
+        """Apply policy with observation normalization."""
         obs = preprocess_observations_fn(obs, processor_params)
         return policy_module.apply(
-            policy_params, obs=obs, key=key, deterministic=deterministic, get_activation=get_activation
+            policy_params,
+            obs=obs,
+            key=key,
+            deterministic=deterministic,
+            get_activation=get_activation,
         )
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))
@@ -196,27 +274,42 @@ def make_decoder_policy(
     decoder_obs_size: int,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
-) -> Decoder:
-    """Creates an encoder policy network."""
+) -> networks.FeedForwardNetwork:
+    """Create a decoder-only policy network for downstream tasks.
 
+    Creates a standalone decoder policy that can be used with externally
+    provided latent intentions. Useful for transfer learning or hierarchical
+    control where intentions come from a separate module.
+
+    The normalizer params only apply to the proprioceptive portion of the
+    observation (latent intentions are not normalized).
+
+    Args:
+        param_size: Output dimension for action distribution parameters.
+        decoder_obs_size: Input dimension (latent_size + proprioceptive_size).
+        preprocess_observations_fn: Normalization function for proprioceptive obs.
+        decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
+
+    Returns:
+        FeedForwardNetwork with init and apply methods.
+    """
     policy_module = Decoder(
         layer_sizes=list(decoder_hidden_layer_sizes) + [param_size],
     )
 
     def apply(processor_params, policy_params, obs):
-        temp_obs = obs
-        obs = preprocess_observations_fn(
+        """Apply decoder with selective normalization of proprioceptive obs."""
+        # Split obs into latent (unnormalized) and proprioceptive (normalized)
+        latent_obs = obs[..., : -processor_params.mean.shape[-1]]
+        proprio_obs = preprocess_observations_fn(
             obs[..., -processor_params.mean.shape[-1] :], processor_params
         )
-        obs = jnp.concatenate(
-            [temp_obs[..., : -processor_params.mean.shape[-1]], obs], axis=-1
-        )
+        obs = jnp.concatenate([latent_obs, proprio_obs], axis=-1)
         return policy_module.apply(policy_params, x=obs)
 
-    dummy_total_obs = jnp.zeros((1, decoder_obs_size))
-    dummy_key = jax.random.PRNGKey(0)
+    dummy_obs = jnp.zeros((1, decoder_obs_size))
 
     return networks.FeedForwardNetwork(
-        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
+        init=lambda key: policy_module.init(key, dummy_obs),
         apply=apply,
     )

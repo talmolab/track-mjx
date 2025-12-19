@@ -2,6 +2,12 @@
 
 This is a package for training control policies through motion imitation using deep reinforcement learning. Part of [MIMIC-MJX](https://mimic-mjx.talmolab.org/), along with [STAC-MJX](https://github.com/talmolab/stac-mjx) (a tool for performing inverse kinematics on markerless motion tracking data).
 
+## IMPORTANT (For reviewers and new users):
+**Please use the latest stable version of track-mjx (v0.0.1) for notebook demos and running rodent training example.**
+
+## Prerelease (track-mjx >= v1.0.0)
+**track-mjx v1 will soon include all body models, related notebooks and training logic. track-mjx v1 and on will rely on [vnl-playground](https://github.com/talmolab/vnl-playground) for the environment and task logic. vnl-playground will be installed during the following installation steps along with other needed libraries. For more information regarding the environment and task logic, please visit [vnl-playground](https://github.com/talmolab/vnl-playground).**
+
 ## Installation
 
 ### Option 1: `uv` (fastest)
@@ -149,13 +155,13 @@ python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id=
 
 **Using uv:**
 ```bash
-uv run python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
+uv run python -m track_mjx.train --config-name rodent-full-clips.yaml
 ```
 
 **Using conda:**
 ```bash
 conda activate track_mjx
-python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --config-name rodent-full-clips.yaml
+python -m track_mjx.train --config-name rodent-full-clips.yaml
 ```
 
 
@@ -164,12 +170,14 @@ python -m track_mjx.train data_path="data/rodent/rodent_reference_clips.h5" --co
 If you use track-mjx in your research, please cite our paper:
 
 ```bibtex
-@article{mimicmjx2024,
-  title={MIMIC-MJX: Neuromechanical Emulation of Animal Behavior},
-  author={Zhang, Charles Y. and Yang, Yuanjia and Sirbu, Aidan and Abe, Elliott T. T. and Warnberg, Emil and Leonardis, Eric J. and Aldarondo, Diego E. and Lee, Adam and Prasad, Aaditya and Foat, Jason and Bian, Kaiwen and Park, Joshua and Bhatt, Rusham and Saunders, Hutton and Nagamori, Akira and Thanawalla, Ayesha R. and Huang, Kee Wui and Plum, Fabian and Beck, Hendrik and Flavell, Steven W. and Labonte, David and Richards, Blake A. and Brunton, Bingni W. and Azim, Eiman and Ölveczky, Bence P. and Pereira, Talmo D.},
-  journal={Journal Name},
-  year={2025},
-  note={Preprint}
+@misc{zhang2025mimicmjxneuromechanicalemulationanimal,
+      title={MIMIC-MJX: Neuromechanical Emulation of Animal Behavior}, 
+      author={Charles Y. Zhang and Yuanjia Yang and Aidan Sirbu and Elliott T. T. Abe and Emil Wärnberg and Eric J. Leonardis and Diego E. Aldarondo and Adam Lee and Aaditya Prasad and Jason Foat and Kaiwen Bian and Joshua Park and Rusham Bhatt and Hutton Saunders and Akira Nagamori and Ayesha R. Thanawalla and Kee Wui Huang and Fabian Plum and Hendrik K. Beck and Steven W. Flavell and David Labonte and Blake A. Richards and Bingni W. Brunton and Eiman Azim and Bence P. Ölveczky and Talmo D. Pereira},
+      year={2025},
+      eprint={2511.20532},
+      archivePrefix={arXiv},
+      primaryClass={q-bio.NC},
+      url={https://arxiv.org/abs/2511.20532}, 
 }
 ```
 

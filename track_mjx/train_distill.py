@@ -64,7 +64,7 @@ def main(cfg: DictConfig):
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
         create=True,
-        step_prefix="Network",
+        step_prefix="DistillNetwork",
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 

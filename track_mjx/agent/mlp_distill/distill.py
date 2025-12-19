@@ -523,7 +523,7 @@ def train(
     # Optionally restore from checkpoint
     if checkpoint_to_restore is not None:
         training_state = checkpointing.load_training_state(
-            checkpoint_to_restore, training_state
+            checkpoint_to_restore, training_state, step_prefix="DistillNetwork"
         )
         logging.info(f"Restored checkpoint from {checkpoint_to_restore}")
 

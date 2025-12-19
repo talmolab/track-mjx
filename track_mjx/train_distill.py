@@ -69,7 +69,7 @@ def main(cfg: DictConfig):
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
     # Create the reference clips
-    logging.info(f"Loading data: {cfg.data_path}")
+    logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
     reference_clips = ReferenceClips(
         data_path=cfg.env_config.reference_data_path,
         n_frames_per_clip=cfg.env_config.clip_length,

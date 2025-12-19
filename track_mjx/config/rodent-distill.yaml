@@ -252,7 +252,7 @@ train_setup:
 # Weights & Biases logging settings
 logging_config:
   project_name: vnl_debug
-  group_name: distillation
+  group_name: null
   exp_name: null
   clip_id: -1                       # Clip ID for single-clip runs (-1 = all)
   model_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints

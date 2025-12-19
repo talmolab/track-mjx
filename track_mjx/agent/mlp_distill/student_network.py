@@ -315,34 +315,3 @@ def make_student_policy(
         init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
         apply=apply,
     )
-
-
-def make_decoder_policy(
-    param_size: int,
-    decoder_obs_size: int,
-    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
-    decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
-) -> Decoder:
-    """Creates an encoder policy network."""
-
-    policy_module = Decoder(
-        layer_sizes=list(decoder_hidden_layer_sizes) + [param_size],
-    )
-
-    def apply(processor_params, policy_params, obs):
-        temp_obs = obs
-        obs = preprocess_observations_fn(
-            obs[..., -processor_params.mean.shape[-1] :], processor_params
-        )
-        obs = jnp.concatenate(
-            [temp_obs[..., : -processor_params.mean.shape[-1]], obs], axis=-1
-        )
-        return policy_module.apply(policy_params, x=obs)
-
-    dummy_total_obs = jnp.zeros((1, decoder_obs_size))
-    dummy_key = jax.random.PRNGKey(0)
-
-    return networks.FeedForwardNetwork(
-        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
-        apply=apply,
-    )

@@ -16,7 +16,6 @@ import flax
 import jax
 from jax import numpy as jnp
 
-# from track_mjx.agent.mlp_ppo import intention_network
 from track_mjx.agent.mlp_distill import student_network
 from track_mjx.agent import checkpointing
 

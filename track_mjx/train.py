@@ -1,52 +1,55 @@
-"""
-Entry point for track-mjx. Load the config file, create environments, initialize network, and start training.
-"""
+"""Entry point for track-mjx training."""
 
 import os
-import sys
 
-# Limit to a particular GPU
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# Must set rendering backend before importing MuJoCo
+os.environ["MUJOCO_GL"] = "egl"
+os.environ["PYOPENGL_PLATFORM"] = "egl"
 
-# Either preallocate memory for JAX or disable it
-# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
-#     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9"
-# )
-xla_flags = os.environ.get("XLA_FLAGS", "")
-xla_flags += " --xla_gpu_triton_gemm_any=True"
-os.environ["XLA_FLAGS"] = xla_flags
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-
-os.environ["MUJOCO_GL"] = "osmesa"
-os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-
-import jax
-import hydra
-from omegaconf import DictConfig
 import functools
-import wandb
-import orbax.checkpoint as ocp
-from track_mjx.agent.mlp_ppo import ppo as mlp_ppo, ppo_networks as mlp_ppo_networks
 import logging
 
-from track_mjx.agent import checkpointing
-from track_mjx.agent import wandb_logging
-from track_mjx import utils
-from track_mjx.agent.domain_randomization import domain_randomization_maker
-
+import hydra
+import jax
+import orbax.checkpoint as ocp
+import wandb
+from mujoco_playground import wrapper as playground_wrappers
+from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
-from vnl_playground.tasks.rodent import consts as rodent_consts
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
-from mujoco_playground import wrapper as playground_wrappers
+
+from track_mjx.config import utils
+from track_mjx.agent import checkpointing, wandb_logging
+from track_mjx.agent.mlp_ppo import ppo, ppo_networks
+from track_mjx.agent.domain_randomization import domain_randomization_maker
+
+
+def _setup_environment() -> None:
+    """Configure environment variables for JAX."""
+    xla_flags = os.environ.get("XLA_FLAGS", "")
+    xla_flags += " --xla_gpu_triton_gemm_any=True"
+    os.environ["XLA_FLAGS"] = xla_flags
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 
 @hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
-def main(cfg: DictConfig):
-    """Main function using Hydra configs"""
+def main(cfg: DictConfig) -> None:
+    """Main training entry point using Hydra configs.
+
+    Initializes JAX devices, loads reference clips, creates train/test
+    environments, and runs PPO training with wandb logging.
+
+    Args:
+        cfg: Hydra configuration containing env_config, network_config,
+            train_setup, and logging_config.
+    """
+    _setup_environment()
+
     try:
         n_devices = jax.device_count(backend="gpu")
         logging.info(f"Using {n_devices} GPUs")
-    except:
+    except RuntimeError:
         n_devices = 1
         logging.info("Not using GPUs")
 
@@ -54,7 +57,7 @@ def main(cfg: DictConfig):
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
 
     # Prepare config
-    (cfg,cfg_dict,env_cfg_ml) = utils.prepare_config(cfg)
+    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
@@ -64,14 +67,14 @@ def main(cfg: DictConfig):
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
     # Create the reference clips
-    logging.info(f"Loading data: {cfg.data_path}")
+    logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
     reference_clips = ReferenceClips(
         data_path=cfg.env_config.reference_data_path,
         n_frames_per_clip=cfg.env_config.clip_length,
         keep_clips_idx=cfg.env_config.keep_clips_idx,
     )
     # Create train/test split
-    key_split, key = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
+    key_split, _ = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
@@ -83,7 +86,6 @@ def main(cfg: DictConfig):
     logging.info(f"Environment config: {cfg.env_config}")
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
-    # env_args = cfg.env_config.env_args
     steps_per_frame = (1 / cfg.env_config.mocap_hz) / (cfg.env_config.ctrl_dt)
     episode_length = (
         cfg.env_config.clip_length
@@ -92,9 +94,6 @@ def main(cfg: DictConfig):
     ) * steps_per_frame
     logging.info(f"episode_length {episode_length}")
 
-    logging.info("Using MLP Pipeline Now")
-    ppo = mlp_ppo
-    ppo_networks = mlp_ppo_networks
     network_factory = functools.partial(
         ppo_networks.make_intention_ppo_networks,
         intention_latent_size=cfg.network_config.intention_size,
@@ -143,13 +142,9 @@ def main(cfg: DictConfig):
         config_dict=cfg_dict,
         use_kl_schedule=cfg.network_config.kl_schedule,
         eval_env_test_set=test_env,
-        freeze_decoder=(
-            False
-            if "freeze_decoder" not in cfg.train_setup
-            else cfg.train_setup.freeze_decoder
-        ),
+        freeze_decoder=cfg.train_setup.get("freeze_decoder", False),
         checkpoint_callback=checkpoint_callback,
-        wrap_for_training=functools.partial(  # Testing full reset instead of setting to initial state
+        wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
         randomization_fn=domain_randomization_maker(
@@ -183,7 +178,7 @@ def main(cfg: DictConfig):
     make_inference_fn, params, _ = train_fn(
         environment=env,
         progress_fn=wandb_logging.wandb_progress,
-        policy_params_fn=policy_params_fn,  # fill in the rest in training
+        policy_params_fn=policy_params_fn,
     )
 
     # Clean up run state after successful completion

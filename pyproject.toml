@@ -26,7 +26,7 @@ dependencies = [
     "optax==0.2.6",
     "orbax-checkpoint",
     # MuJoCo
-    "mujoco-mjx==3.3.8",
+    "mujoco-mjx[warp]>=3.3.5",
     # Rendering (EGL/osmesa support)
     "PyOpenGL==3.1.9",
     # Data & ML utilities
@@ -88,7 +88,7 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 line-length = 88
 
 [tool.uv.sources]
-vnl-playground = { path = "/home/mila/a/aidan.sirbu/vnl-playground", editable = true }
+vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.4" }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground" }
 
 [pydocstyle]

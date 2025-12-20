@@ -201,6 +201,7 @@ def train(
     ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
+    vf_loss_coefficient: float = 0.5,
     eval_env: envs.Env | None = None,
     eval_env_test_set: envs.Env | None = None,
     policy_params_fn: Callable[..., None] = lambda *args: None,
@@ -262,6 +263,7 @@ def train(
         functions
       progress_fn: a user-defined callback function for reporting/plotting metrics
       normalize_advantage: whether to normalize advantage estimate
+      vf_loss_coefficient: Coefficient for value function loss.
       eval_env: an optional environment for eval only, defaults to `environment`
       policy_params_fn: a user-defined callback function that can be used for
         saving policy checkpoints
@@ -596,6 +598,7 @@ def train(
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
+        vf_coefficient=vf_loss_coefficient,
         kl_schedule=kl_schedule,
     )
 

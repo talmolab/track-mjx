@@ -188,6 +188,7 @@ train_setup:
     discounting: 0.95                 # Discount factor (gamma)
     action_repeat: 1                  # Actions repeated per step
     entropy_cost: 1e-2                # Entropy bonus coefficient
+    vf_loss_coefficient: 0.5          # Value function loss coefficient
     reward_scaling: 1                 # Reward multiplier
     normalize_observations: true      # Running mean/std normalization
     unroll_length: 20                 # Rollout length before update

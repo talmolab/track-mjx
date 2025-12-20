@@ -127,6 +127,7 @@ def compute_ppo_loss(
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
+    vf_coefficient: float = 0.5,
     kl_schedule: Callable[[int], float] | None = None,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss with VAE KL divergence for intention networks.
@@ -156,6 +157,7 @@ def compute_ppo_loss(
         gae_lambda: GAE lambda parameter.
         clipping_epsilon: PPO clipping range for policy ratio.
         normalize_advantage: Whether to normalize advantages to zero mean/unit std.
+        vf_coefficient: Coefficient for value function loss
         kl_schedule: Optional schedule function(step) -> kl_weight.
 
     Returns:
@@ -212,7 +214,7 @@ def compute_ppo_loss(
 
     # Value function loss
     v_error = vs - baseline
-    v_loss = jnp.mean(v_error * v_error) * 0.5 * 0.5
+    v_loss = jnp.mean(v_error * v_error) * 0.5 * vf_coefficient
 
     # Entropy reward
     entropy = jnp.mean(

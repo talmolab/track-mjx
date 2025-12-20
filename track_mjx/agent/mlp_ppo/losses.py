@@ -242,7 +242,9 @@ def compute_ppo_loss(
     ar1_loss = jnp.sum(masked_l2) / jnp.maximum(jnp.sum(valid_mask), 1.0)
 
     # Split kl_weight equally between KL and AR(1) terms
-    latent_loss = 0.5 * kl_weight * kl_gaussian + 0.5 * kl_weight * ar1_loss
+    kl_gaussian = 0.3 * kl_weight * kl_gaussian
+    ar1_loss = 0.7 * kl_weight * ar1_loss
+    latent_loss = kl_gaussian + ar1_loss
 
     total_loss = policy_loss + v_loss + entropy_loss + latent_loss
 
@@ -250,7 +252,7 @@ def compute_ppo_loss(
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
-        "latent_loss": latent_loss,
+        "total_latent_loss": latent_loss,
         "latent_ar1_loss": ar1_loss,
         "latent_kl_loss": kl_gaussian,
         "entropy_loss": entropy_loss,

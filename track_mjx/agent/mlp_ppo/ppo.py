@@ -129,7 +129,10 @@ def run_evaluation(
     self._key, unroll_key = jax.random.split(self._key)
 
     t = time.time()
-    eval_state = self._generate_eval_unroll(policy_params, unroll_key)
+    eval_state = self._generate_eval_unroll(
+        self._eval_state_to_donate, policy_params, unroll_key
+    )
+    self._eval_state_to_donate = eval_state
     eval_metrics = eval_state.info["eval_metrics"]
     eval_metrics.active_episodes.block_until_ready()
     epoch_eval_time = time.time() - t
@@ -181,6 +184,7 @@ def train(
     kl_weight: float = 1e-3,
     discounting: float = 0.9,
     seed: int = 0,
+    use_pmap_on_reset: bool = True,
     unroll_length: int = 10,
     batch_size: int = 32,
     num_minibatches: int = 16,
@@ -271,7 +275,7 @@ def train(
       checkpoint_callback: Callback called after checkpointing to update
         run state JSON for preemption recovery.
       wrap_for_training: Function that wraps environment for training.
-
+      use_pmap_on_reset: whether to use pmap instead of vmap for env.reset across devices.
     Returns:
         Tuple of:
             - make_policy: Function to create inference policy from params.
@@ -451,7 +455,14 @@ def train(
         loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
-    training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)
+    training_epoch = jax.pmap(
+        training_epoch,
+        axis_name=_PMAP_AXIS_NAME,
+        donate_argnums=(
+            0,
+            1,
+        ),
+    )
 
     # Note that this is NOT a pure jittable method.
     def training_epoch_with_timing(
@@ -516,10 +527,25 @@ def train(
         randomization_fn=v_randomization_fn,
     )
 
-    reset_fn = jax.jit(jax.vmap(env.reset))
+    def reset_fn_donated_env_state(env_state_donated, key_envs):
+        return env.reset(key_envs)
+
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
-    env_state = reset_fn(key_envs)
+    if local_devices_to_use > 1 or use_pmap_on_reset:
+        reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
+        env_state = reset_fn_(key_envs)
+        reset_fn = jax.pmap(
+            reset_fn_donated_env_state,
+            axis_name=_PMAP_AXIS_NAME,
+            donate_argnums=(0,),
+        )
+    else:
+        reset_fn_ = jax.jit(jax.vmap(env.reset))
+        env_state = reset_fn_(key_envs)
+        reset_fn = jax.jit(
+            reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
+        )(key_envs)
 
     # TODO: reference_obs_size should be optional (network factory-dependent)
     config_dict["network_config"].update(
@@ -773,7 +799,8 @@ def train(
                 lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)
             )(key_envs, key_envs.shape[1])
             # TODO: move extra reset logic to the AutoResetWrapper.
-            env_state = reset_fn(key_envs) if num_resets_per_eval > 0 else env_state
+            if num_resets_per_eval > 0:
+                env_state = reset_fn((training_state, env_state), key_envs)
 
         if process_id == 0:
             # Run evaluation rollout, logging and checkpointing.

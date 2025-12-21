@@ -56,6 +56,11 @@ logging_config:
   algo_name: ppo
   exp_name: V1
   rollout_metrics:
+
+render_config:
+  render_camera_name: close_profile   # Camera view for rendering
+  render_fps: 50                      # Output video framerate
+  render_interval: 1                  # Render every N eval episodes
   
 walker_config:
   torque_actuators: True

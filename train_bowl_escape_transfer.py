@@ -174,22 +174,13 @@ def main(bowl_cfg: DictConfig):
     # # define the jit reset/step functions
     jit_reset = jax.jit(evaluator_env.reset)
     jit_step = jax.jit(evaluator_env.step)
-    mj_model = evaluator_env.mj_model
-    mj_data = mujoco.MjData(mj_model)
-    scene_option = mujoco.MjvOption()
-    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
-    renderer = mujoco.Renderer(mj_model, height=512, width=512)
     policy_params_fn = functools.partial(
         wandb_logging.rollout_logging_fn,
-        evaluator_env,
-        jit_reset,
-        jit_step,
-        loaded_cfg,
-        checkpoint_path,
-        renderer,
-        mj_model,
-        mj_data,
-        scene_option,
+        env=evaluator_env,
+        jit_reset=jit_reset,
+        jit_step=jit_step,
+        cfg=loaded_cfg,
+        model_path=checkpoint_path,
     )
 
     make_inference_fn, params, _ = train_fn(

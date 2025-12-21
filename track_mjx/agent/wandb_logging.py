@@ -66,6 +66,7 @@ def rollout_logging_fn(
     steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
         cfg.env_config.sim_dt * physics_steps_per_ctrl
     )
+
     episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
 
     for _ in range(episode_length):

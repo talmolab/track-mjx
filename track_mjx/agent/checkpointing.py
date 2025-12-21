@@ -55,7 +55,7 @@ def load_config_from_checkpoint(
             args=ocp.args.Composite(config=ocp.args.JsonRestore()),
         )["config"]
 
-        return cfg
+        return OmegaConf.create(cfg)
 
 
 def load_training_state(
@@ -121,7 +121,9 @@ def load_policy(
     abstract_policy = make_abstract_policy(cfg)
 
     if ckpt_mgr is None:
-        mgr_options = ocp.CheckpointManagerOptions(create=False, step_prefix=step_prefix)
+        mgr_options = ocp.CheckpointManagerOptions(
+            create=False, step_prefix=step_prefix
+        )
         ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
     if step is None:
@@ -253,7 +255,9 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
     else:
-        raise ValueError(f"Unknown network architecture: {cfg.network_config.arch_name}")
+        raise ValueError(
+            f"Unknown network architecture: {cfg.network_config.arch_name}"
+        )
 
 
 def save(
@@ -291,6 +295,7 @@ def save(
             checkpoint_callback(step)
         except Exception as e:
             logging.warning(f"Checkpoint callback failed: {e}")
+
 
 def _hash_config(cfg: DictConfig) -> str:
     """Create a short hash of the config for consistency checking.
@@ -447,7 +452,9 @@ def discover_existing_run_state(cfg: DictConfig) -> dict[str, Any] | None:
     try:
         ckpt_mgr = ocp.CheckpointManager(
             checkpoint_path,
-            options=ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork"),
+            options=ocp.CheckpointManagerOptions(
+                create=False, step_prefix="PPONetwork"
+            ),
         )
         latest_step = ckpt_mgr.latest_step()
         if latest_step is None:

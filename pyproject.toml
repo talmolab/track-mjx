@@ -21,7 +21,7 @@ dependencies = [
     "jax==0.7.2",
     "jaxlib==0.7.2",
     # Core ML dependencies
-    "brax==0.13.0",
+    "brax==0.14.0",
     "flax==0.10.2",
     "optax==0.2.6",
     "orbax-checkpoint",
@@ -88,7 +88,7 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 line-length = 88
 
 [tool.uv.sources]
-vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.4" }
+vnl-playground = { path = "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/vnl-playground", editable = true }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground" }
 
 [pydocstyle]

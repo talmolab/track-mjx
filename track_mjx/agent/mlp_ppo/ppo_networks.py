@@ -19,7 +19,7 @@ from brax.training.acme import running_statistics
 from brax.training.types import PRNGKey
 from jax import numpy as jnp
 
-from track_mjx.agent import checkpointing, masked_running_statistics
+from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_ppo import intention_network
 
 

@@ -93,8 +93,6 @@ class Decoder(nn.Module):
     ) -> tuple[jnp.ndarray, dict]:
         if get_activation:
             activations = {}
-            activations["decoder_x"] = x
-
         for i, hidden_size in enumerate(self.layer_sizes):
             x = nn.Dense(
                 hidden_size,

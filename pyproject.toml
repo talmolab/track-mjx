@@ -21,7 +21,7 @@ dependencies = [
     "jax==0.7.2",
     "jaxlib==0.7.2",
     # Core ML dependencies
-    "brax==0.13.0",
+    "brax==0.14.0",
     "flax==0.10.2",
     "optax==0.2.6",
     "orbax-checkpoint",

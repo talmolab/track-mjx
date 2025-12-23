@@ -90,23 +90,34 @@ def run_evaluation(
     self._key, unroll_key = jax.random.split(self._key)
 
     t = time.time()
-    eval_state = self._generate_eval_unroll(policy_params, unroll_key)
+    # Updated to match new brax API: pass eval_state_to_donate as first argument
+    eval_state = self._generate_eval_unroll(
+        self._eval_state_to_donate, policy_params, unroll_key
+    )
+    self._eval_state_to_donate = eval_state
+
     eval_metrics = eval_state.info["eval_metrics"]
     eval_metrics.active_episodes.block_until_ready()
     epoch_eval_time = time.time() - t
+    episode_lengths = np.maximum(eval_metrics.episode_steps, 1.0).astype(float)
+
     metrics = {}
     prefix = f"{data_split}/" if data_split != "" else ""
     for fn in [np.mean, np.std]:
         suffix = "_std" if fn == np.std else ""
-        metrics.update(
-            {
-                f"eval/{prefix}episode_{name}{suffix}": (
-                    fn(value) if aggregate_episodes else value
-                )
-                for name, value in eval_metrics.episode_metrics.items()
-            }
-        )
+        for name, value in eval_metrics.episode_metrics.items():
+            # Handle per_step metrics normalization like the new brax version
+            to_normalize = name.endswith("per_step")
+            if aggregate_episodes:
+                if to_normalize:
+                    metrics[f"eval/{prefix}episode_{name}{suffix}"] = fn(value / episode_lengths)
+                else:
+                    metrics[f"eval/{prefix}episode_{name}{suffix}"] = fn(value)
+            else:
+                metrics[f"eval/{prefix}episode_{name}{suffix}"] = value
+
     metrics[f"eval/{prefix}avg_episode_length"] = np.mean(eval_metrics.episode_steps)
+    metrics[f"eval/{prefix}std_episode_length"] = np.std(eval_metrics.episode_steps)
     metrics[f"eval/{prefix}epoch_eval_time"] = epoch_eval_time
     metrics[f"eval/{prefix}sps"] = self._steps_per_unroll / epoch_eval_time
     self._eval_walltime = self._eval_walltime + epoch_eval_time

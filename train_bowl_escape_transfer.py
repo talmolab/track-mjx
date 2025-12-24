@@ -72,7 +72,7 @@ def main(bowl_cfg: DictConfig):
     # TODO: We set the restored config's checkpoint_to_restore to itself
     # Because that restored config is used from now on. This is a hack.
     checkpoint_to_restore = hydra.utils.to_absolute_path(
-        "./model_checkpoints/251219_184309_960093"
+        "./model_checkpoints/251223_232558_038379"
     )
     # Load the checkpoint's config and update the run_id and checkpoint path
     loaded_cfg = OmegaConf.create(
@@ -93,7 +93,7 @@ def main(bowl_cfg: DictConfig):
     ppo_params = {
         "episode_length": 2000,
         "num_envs": 4096,
-        "num_timesteps": 1_000_000_000,
+        "num_timesteps": 500_000_000,
         "batch_size": 1024,
         "num_minibatches": 16,
         "num_updates_per_batch": 4,
@@ -127,8 +127,8 @@ def main(bowl_cfg: DictConfig):
     train_fn = functools.partial(
         ppo.train,
         **ppo_params,
-        num_evals=int(ppo_params["num_timesteps"] / 15_000_000),
-        num_resets_per_eval=15_000_000 // 50_000_000,
+        num_evals=int(ppo_params["num_timesteps"] / 5_000_000),
+        num_resets_per_eval=1,
         latent_kl_weight=0,
         latent_ar1_weight=0,
         network_factory=functools.partial(
@@ -144,6 +144,8 @@ def main(bowl_cfg: DictConfig):
             ),
             intention_latent_size=loaded_cfg.network_config.intention_size,
         ),
+        latent_kl_weight=bowl_cfg.network_config.latent_kl_weight,
+        latent_ar1_weight=bowl_cfg.network_config.latent_ar1_weight,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=checkpoint_to_restore,
         freeze_decoder=True,
@@ -152,7 +154,7 @@ def main(bowl_cfg: DictConfig):
         ),  # finalize config here
         use_kl_schedule=False,
         wrap_for_training=functools.partial(
-            wrapper.wrap_for_brax_training, full_reset=True
+            wrapper.wrap_for_brax_training, full_reset=False
         ),
     )
 

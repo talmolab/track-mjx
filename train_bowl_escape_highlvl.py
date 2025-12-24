@@ -45,7 +45,7 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = bowl_escape.default_config()
 print(f"env_cfg:\n{env_cfg}")
-mimic_run_id = "251222_135817_628743"
+mimic_run_id = "251223_232558_038379"
 mimic_checkpoint_path = hydra.utils.to_absolute_path(
     f"./model_checkpoints/{mimic_run_id}"
 )

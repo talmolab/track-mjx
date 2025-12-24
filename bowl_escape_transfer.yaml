@@ -20,13 +20,13 @@ network_config:
   critic_layer_sizes: [512, 512, 512, 256, 256]
   intention_size: 16 # recover from the checkpoint
   kl_schedule: False # Whether to use a ramping KL schedule
-  latent_kl_weight: 0 # Weight for KL divergence to standard Gaussian prior
-  latent_ar1_weight: 0 # Weight for AR(1) temporal smoothness loss
+  latent_kl_weight: 1e-4 # Weight for KL divergence to standard Gaussian prior
+  latent_ar1_weight: 1e-4 # Weight for AR(1) temporal smoothness loss
 
 train_setup:
   agent_name: rodent
   run_name: bowl_escape
-  checkpoint_to_restore: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/model_checkpoints/251219_184309_960093
+  checkpoint_to_restore: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/model_checkpoints/251222_135817_628743
   freeze_decoder: True
   checkpoint_max_to_keep:
   checkpoint_keep_period:

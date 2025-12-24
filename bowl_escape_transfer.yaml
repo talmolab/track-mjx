@@ -50,7 +50,7 @@ train_setup:
     seed: 0
 
 logging_config:
-  project_name: vnl_playground
+  project_name: vnl-playground
   group_name: V1
   model_path: model_checkpoints
   notes: "V1"

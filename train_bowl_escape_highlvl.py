@@ -44,9 +44,10 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = bowl_escape.default_config()
-
+print(f"env_cfg:\n{env_cfg}")
+mimic_run_id = "251222_135817_628743"
 mimic_checkpoint_path = hydra.utils.to_absolute_path(
-    "./model_checkpoints/251222_135817_628743"
+    f"./model_checkpoints/{mimic_run_id}"
 )
 mimic_cfg = OmegaConf.create(
     checkpointing.load_config_from_checkpoint(mimic_checkpoint_path)
@@ -55,16 +56,16 @@ decoder_policy_fn = track_networks.make_decoder_policy_fn(mimic_checkpoint_path)
 
 
 ppo_params = config_dict.create(
-    num_timesteps=int(1e9),  # 1 billion
+    num_timesteps=int(3e8),  # 300 million
     reward_scaling=1.0,
     episode_length=1500,
     normalize_observations=True,
     action_repeat=1,
     unroll_length=20,
-    num_minibatches=8,
-    num_updates_per_batch=2,
-    discounting=0.9,
-    learning_rate=1e-3,
+    num_minibatches=16,
+    num_updates_per_batch=4,
+    discounting=0.99,
+    learning_rate=1e-4,
     entropy_cost=1e-2,
     num_envs=4096,
     batch_size=1024,
@@ -73,50 +74,39 @@ ppo_params = config_dict.create(
         policy_hidden_layer_sizes=(1024, 512, 256),
         value_hidden_layer_sizes=(1024, 512, 256),
     ),
-    eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
+    eval_every=5_000_000,  # num_evals = num_timesteps // eval_every
 )
+print(f"ppo_params:\n{ppo_params}")
 
 env_name = "bowl_escape"
-
-from pprint import pprint
-
-pprint(f"ppo_params: {ppo_params}")
-
-
-SUFFIX = None
-FINETUNE_PATH = None
 
 # Generate unique experiment name.
 now = datetime.now()
 timestamp = now.strftime("%Y%m%d-%H%M%S")
 exp_name = f"{env_name}-{timestamp}"
-if SUFFIX is not None:
-    exp_name += f"-{SUFFIX}"
+
 print(f"Experiment name: {exp_name}")
 
-ckpt_path = epath.Path("checkpoints").resolve() / exp_name
+ckpt_path = epath.Path("highlvl_checkpoints").resolve() / exp_name
 ckpt_path.mkdir(parents=True, exist_ok=True)
-print(f"{ckpt_path}")
+print(f"Checkpoint path: {ckpt_path}")
 
 with open(ckpt_path / "config.json", "w") as fp:
     json.dump(env_cfg.to_dict(), fp, indent=4, default=lambda o: str(o))
 
 
-wandb.init(project="vnl-playground", config=env_cfg, id=f"bowl_escape-{exp_name}")
-wandb.config.update(
-    {
-        "env_name": env_name,
-    }
+wandb.init(
+    project="vnl-playground",
+    config=env_cfg,
+    id=f"bowl_escape-{exp_name}",
+    notes=f"mimic run: {mimic_run_id}",
 )
 
 
 def wandb_progress(num_steps, metrics):
-    pprint(f"Step {num_steps}")
-    pprint(metrics)
+    print(f"Step {num_steps}")
+    print(f"Metrics: {metrics}")
     wandb.log(metrics)
-
-
-progress_fn = wandb_progress
 
 
 training_params = dict(ppo_params)
@@ -138,7 +128,7 @@ train_fn = functools.partial(
     num_evals=int(ppo_params.num_timesteps / ppo_params.eval_every),
     network_factory=network_factory,
     restore_checkpoint_path=None,
-    progress_fn=progress_fn,
+    progress_fn=wandb_progress,
     wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training),
 )
 

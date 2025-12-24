@@ -115,6 +115,7 @@ def main(bowl_cfg: DictConfig):
         "bowl_amplitude": -20,
         "target_speed": 2,
         "iterations": 10,
+        "ctrl_dt": loaded_cfg.env_config.ctrl_dt,
     }
 
     env = rodent_wrappers.FlattenObsWrapper(

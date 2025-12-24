@@ -52,6 +52,7 @@ mimic_checkpoint_path = hydra.utils.to_absolute_path(
 mimic_cfg = OmegaConf.create(
     checkpointing.load_config_from_checkpoint(mimic_checkpoint_path)
 )
+env_cfg.ctrl_dt = mimic_cfg.env_config.ctrl_dt
 decoder_policy_fn = track_networks.make_decoder_policy_fn(mimic_checkpoint_path)
 
 

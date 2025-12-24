@@ -18,9 +18,10 @@ network_config:
   encoder_layer_sizes: [512, 512, 256, 256]
   decoder_layer_sizes: [1024, 1024, 512]  # loaded from checkpoint
   critic_layer_sizes: [512, 512, 512, 256, 256]
-  intention_size: 16 # recover from the checkpoint 
+  intention_size: 16 # recover from the checkpoint
   kl_schedule: False # Whether to use a ramping KL schedule
-  kl_weight: 0 # The maximum weight if schedule is True
+  latent_kl_weight: 0 # Weight for KL divergence to standard Gaussian prior
+  latent_ar1_weight: 0 # Weight for AR(1) temporal smoothness loss
 
 train_setup:
   agent_name: rodent

@@ -181,7 +181,8 @@ def train(
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,
-    kl_weight: float = 1e-3,
+    latent_kl_weight: float = 1e-3,
+    latent_ar1_weight: float = 1e-3,
     discounting: float = 0.9,
     seed: int = 0,
     use_pmap_on_reset: bool = True,
@@ -580,10 +581,16 @@ def train(
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
-    kl_schedule = None
+    latent_kl_schedule = None
+    latent_ar1_schedule = None
     if use_kl_schedule:
-        kl_schedule = losses.create_ramp_schedule(
-            max_value=kl_weight,
+        latent_kl_schedule = losses.create_ramp_schedule(
+            max_value=latent_kl_weight,
+            ramp_steps=int(num_evals * kl_ramp_up_frac),
+            schedule="linear",
+        )
+        latent_ar1_schedule = losses.create_ramp_schedule(
+            max_value=latent_ar1_weight,
             ramp_steps=int(num_evals * kl_ramp_up_frac),
             schedule="linear",
         )
@@ -592,14 +599,16 @@ def train(
         losses.compute_ppo_loss,
         ppo_network=ppo_network,
         entropy_cost=entropy_cost,
-        kl_weight=kl_weight,
+        latent_kl_weight=latent_kl_weight,
+        latent_ar1_weight=latent_ar1_weight,
         discounting=discounting,
         reward_scaling=reward_scaling,
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
         vf_coefficient=vf_loss_coefficient,
-        kl_schedule=kl_schedule,
+        latent_kl_schedule=latent_kl_schedule,
+        latent_ar1_schedule=latent_ar1_schedule,
     )
 
     init_params = losses.PPONetworkParams(

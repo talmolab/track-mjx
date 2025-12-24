@@ -121,14 +121,16 @@ def compute_ppo_loss(
     step: int,
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
-    kl_weight: float = 1e-3,
+    latent_kl_weight: float = 1e-3,
+    latent_ar1_weight: float = 1e-3,
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
     vf_coefficient: float = 0.5,
-    kl_schedule: Callable[[int], float] | None = None,
+    latent_kl_schedule: Callable[[int], float] | None = None,
+    latent_ar1_schedule: Callable[[int], float] | None = None,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss with VAE KL divergence for intention networks.
 
@@ -151,14 +153,16 @@ def compute_ppo_loss(
         step: Current training step (for KL schedule).
         ppo_network: PPO network container with policy, value, and distribution.
         entropy_cost: Entropy bonus coefficient (higher = more exploration).
-        kl_weight: Base KL divergence weight (may be overridden by schedule).
+        latent_kl_weight: Weight for KL divergence to standard Gaussian prior.
+        latent_ar1_weight: Weight for AR(1) temporal smoothness loss.
         discounting: Discount factor (gamma) for GAE.
         reward_scaling: Multiplier applied to rewards.
         gae_lambda: GAE lambda parameter.
         clipping_epsilon: PPO clipping range for policy ratio.
         normalize_advantage: Whether to normalize advantages to zero mean/unit std.
         vf_coefficient: Coefficient for value function loss
-        kl_schedule: Optional schedule function(step) -> kl_weight.
+        latent_kl_schedule: Optional schedule function(step) -> latent_kl_weight.
+        latent_ar1_schedule: Optional schedule function(step) -> latent_ar1_weight.
 
     Returns:
         Tuple of:
@@ -223,8 +227,12 @@ def compute_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL Divergence for latent layer
-    if kl_schedule is not None:
-        kl_weight = kl_schedule(step)
+    current_kl_weight = latent_kl_weight
+    current_ar1_weight = latent_ar1_weight
+    if latent_kl_schedule is not None:
+        current_kl_weight = latent_kl_schedule(step)
+    if latent_ar1_schedule is not None:
+        current_ar1_weight = latent_ar1_schedule(step)
 
     # KL divergence to standard Gaussian prior N(0, I)
     kl_gaussian = -0.5 * jnp.mean(
@@ -241,10 +249,10 @@ def compute_ppo_loss(
     masked_l2 = l2_diff * valid_mask
     ar1_loss = jnp.sum(masked_l2) / jnp.maximum(jnp.sum(valid_mask), 1.0)
 
-    # Split kl_weight equally between KL and AR(1) terms
-    kl_gaussian = 0.3 * kl_weight * kl_gaussian
-    ar1_loss = 0.7 * kl_weight * ar1_loss
-    latent_loss = kl_gaussian + ar1_loss
+    # Apply weights to each loss term
+    kl_gaussian_weighted = current_kl_weight * kl_gaussian
+    ar1_loss_weighted = current_ar1_weight * ar1_loss
+    latent_loss = kl_gaussian_weighted + ar1_loss_weighted
 
     total_loss = policy_loss + v_loss + entropy_loss + latent_loss
 
@@ -253,10 +261,11 @@ def compute_ppo_loss(
         "policy_loss": policy_loss,
         "v_loss": v_loss,
         "total_latent_loss": latent_loss,
-        "latent_ar1_loss": ar1_loss,
-        "latent_kl_loss": kl_gaussian,
+        "latent_ar1_loss": ar1_loss_weighted,
+        "latent_kl_loss": kl_gaussian_weighted,
         "entropy_loss": entropy_loss,
-        "kl_weight": kl_weight,
+        "latent_kl_weight": current_kl_weight,
+        "latent_ar1_weight": current_ar1_weight,
     }
 
 

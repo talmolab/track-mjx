@@ -152,7 +152,8 @@ network_config:
   critic_layer_sizes: [512, 512, 256, 256]   # Value function
   intention_size: 60                   # Latent intention vector dimension
   kl_schedule: true                    # Anneal KL divergence weight over training
-  kl_weight: 1e-3                      # Initial KL divergence weight
+  latent_kl_weight: 3e-4               # Weight for KL divergence to standard Gaussian prior
+  latent_ar1_weight: 7e-4              # Weight for AR(1) temporal smoothness loss
 
 # =============================================================================
 # Training Setup

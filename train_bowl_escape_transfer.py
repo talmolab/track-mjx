@@ -129,7 +129,8 @@ def main(bowl_cfg: DictConfig):
         **ppo_params,
         num_evals=int(ppo_params["num_timesteps"] / 15_000_000),
         num_resets_per_eval=15_000_000 // 50_000_000,
-        kl_weight=0,
+        latent_kl_weight=0,
+        latent_ar1_weight=0,
         network_factory=functools.partial(
             ppo_networks.make_intention_ppo_networks,
             encoder_hidden_layer_sizes=tuple(

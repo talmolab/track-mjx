@@ -69,8 +69,6 @@ def main(bowl_cfg: DictConfig):
     checkpoint_path = hydra.utils.to_absolute_path(f"./model_checkpoints/{run_id}")
 
     # Load the checkpoint's config
-    # TODO: We set the restored config's checkpoint_to_restore to itself
-    # Because that restored config is used from now on. This is a hack.
     checkpoint_to_restore = hydra.utils.to_absolute_path(
         "./model_checkpoints/251223_232558_038379"
     )
@@ -108,21 +106,12 @@ def main(bowl_cfg: DictConfig):
         "seed": 0,
     }
 
-    env_config = {
-        "torque_actuators": True,
-        "rescale_factor": 0.9,
-        "bowl_vsize": 0.6,
-        "bowl_amplitude": -20,
-        "target_speed": 2,
-        "iterations": 10,
-        "ctrl_dt": loaded_cfg.env_config.ctrl_dt,
-    }
+    env_config = bowl_escape.default_config()
+    env_config.ctrl_dt = loaded_cfg.env_config.ctrl_dt
 
-    env = rodent_wrappers.FlattenObsWrapper(
-        bowl_escape.BowlEscape(config_overrides=env_config)
-    )
+    env = rodent_wrappers.FlattenObsWrapper(bowl_escape.BowlEscape(config=env_config))
     evaluator_env = rodent_wrappers.FlattenObsWrapper(
-        bowl_escape.BowlEscape(config_overrides=env_config)
+        bowl_escape.BowlEscape(config=env_config)
     )
 
     train_fn = functools.partial(
@@ -171,7 +160,7 @@ def main(bowl_cfg: DictConfig):
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
-        wandb.log(metrics, commit=False)
+        wandb.log(metrics)
 
     # # define the jit reset/step functions
     jit_reset = jax.jit(evaluator_env.reset)

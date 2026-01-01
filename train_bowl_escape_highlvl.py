@@ -44,16 +44,19 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = bowl_escape.default_config()
-print(f"env_cfg:\n{env_cfg}")
-mimic_run_id = "251223_232558_038379"
+mimic_run_id = "251224_200417_996678"
 mimic_checkpoint_path = hydra.utils.to_absolute_path(
     f"./model_checkpoints/{mimic_run_id}"
 )
 mimic_cfg = OmegaConf.create(
     checkpointing.load_config_from_checkpoint(mimic_checkpoint_path)
 )
+
 env_cfg.ctrl_dt = mimic_cfg.env_config.ctrl_dt
+env_cfg.target_speed = 1.0
+
 decoder_policy_fn = track_networks.make_decoder_policy_fn(mimic_checkpoint_path)
+print(f"env_cfg:\n{env_cfg}")
 
 
 ppo_params = config_dict.create(

@@ -88,7 +88,10 @@ def run_evaluation(
     self._key, unroll_key = jax.random.split(self._key)
 
     t = time.time()
-    eval_state = self._generate_eval_unroll(policy_params, unroll_key)
+    eval_state = self._generate_eval_unroll(
+        self._eval_state_to_donate, policy_params, unroll_key
+    )
+    self._eval_state_to_donate = eval_state
     eval_metrics = eval_state.info["eval_metrics"]
     eval_metrics.active_episodes.block_until_ready()
     epoch_eval_time = time.time() - t
@@ -145,6 +148,7 @@ def train(
     prior_logvar_max: float | None = None,
     grad_clip_norm: float = 0.5,
     seed: int = 0,
+    use_pmap_on_reset: bool = True,
     unroll_length: int = 10,
     batch_size: int = 32,
     num_minibatches: int = 16,
@@ -193,6 +197,7 @@ def train(
         prior_logvar_min: Optional min clamp for prior log-variance (PULSE uses -5)
         prior_logvar_max: Optional max clamp for prior log-variance (PULSE uses 2)
         seed: Random seed
+        use_pmap_on_reset: Whether to pmap instead of vmap the env reset function
         unroll_length: Number of timesteps to unroll
         batch_size: Batch size for minibatch SGD
         num_minibatches: Number of minibatches
@@ -372,7 +377,14 @@ def train(
         loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
-    training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)
+    training_epoch = jax.pmap(
+        training_epoch, 
+        axis_name=_PMAP_AXIS_NAME,
+        donate_argnums=(
+            0,
+            1,
+        ),
+    )
 
     def training_epoch_with_timing(
         training_state: TrainingState, env_state: envs.State, key: PRNGKey, it: int
@@ -430,10 +442,26 @@ def train(
         randomization_fn=v_randomization_fn,
     )
 
-    reset_fn = jax.jit(jax.vmap(env.reset))
+    def reset_fn_donated_env_state(env_state_donated, key_envs):
+        return env.reset(key_envs)
+
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
-    env_state = reset_fn(key_envs)
+    
+    if local_devices_to_use > 1 or use_pmap_on_reset:
+        reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
+        env_state = reset_fn_(key_envs)
+        reset_fn = jax.pmap(
+            reset_fn_donated_env_state,
+            axis_name=_PMAP_AXIS_NAME,
+            donate_argnums=(0,),
+        )
+    else:
+        reset_fn_ = jax.jit(jax.vmap(env.reset))
+        env_state = reset_fn_(key_envs)
+        reset_fn = jax.jit(
+            reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
+        )(key_envs)
 
     # Update config with network info
     config_dict["network_config"].update(
@@ -681,7 +709,8 @@ def train(
             key_envs = jax.vmap(
                 lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)
             )(key_envs, key_envs.shape[1])
-            env_state = reset_fn(key_envs) if num_resets_per_eval > 0 else env_state
+            if num_resets_per_eval > 0:
+                env_state = reset_fn((training_state, env_state), key_envs)
 
         if process_id == 0:
             policy_param = _unpmap(

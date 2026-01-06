@@ -51,7 +51,11 @@ def make_inference_fn(ppo_networks: PPOImitationNetworks):
             activations = None
             if get_activation:
                 logits, latent_mean, latent_logvar, activations = policy_network.apply(
-                    *params, observations, key_network, deterministic=deterministic, get_activation=True
+                    *params,
+                    observations,
+                    key_network,
+                    deterministic=deterministic,
+                    get_activation=True,
                 )
                 # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             else:
@@ -159,15 +163,34 @@ def make_intention_ppo_networks(
     reference_obs_size: int,
     action_size: int,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    action_distribution: distribution.ParametricDistribution = distribution.NormalTanhDistribution,
     intention_latent_size: int = 60,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
 ) -> PPOImitationNetworks:
-    """Make Imitation PPO networks with preprocessor."""
-    parametric_action_distribution = distribution.NormalTanhDistribution(
-        event_size=action_size
-    )
+    """Create intention-based PPO networks for imitation learning.
+
+    Creates an encoder-decoder policy network where the encoder processes
+    reference trajectory observations and the decoder generates actions
+    conditioned on proprioceptive state and latent intention.
+
+    Args:
+        observation_size: Total observation dimension.
+        reference_obs_size: Dimension of reference trajectory observations
+            (processed by encoder).
+        action_size: Action dimension.
+        preprocess_observations_fn: Observation preprocessing (e.g., normalize).
+        intention_latent_size: Dimension of VAE latent space.
+        encoder_hidden_layer_sizes: MLP layer sizes for encoder.
+        decoder_hidden_layer_sizes: MLP layer sizes for decoder.
+        value_hidden_layer_sizes: MLP layer sizes for value network.
+
+    Returns:
+        PPOImitationNetworks containing policy, value, and action distribution.
+    """
+    parametric_action_distribution = action_distribution(event_size=action_size)
+
     policy_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,
@@ -191,7 +214,6 @@ def make_intention_ppo_networks(
 
 
 def make_decoder_policy_fn(ckpt_path: str | Path, step: int = None):
-
     def make_decoder_policy(
         params, policy_network, parametric_action_distribution
     ) -> types.Policy:

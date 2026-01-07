@@ -22,7 +22,7 @@ jobs:
 
       - name: Install linting tools
         run: |
-          pip install black
+          pip install "black[jupyter]"
 
       - name: Run Black
         run: |

@@ -82,6 +82,11 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
+
+    # Compute naconmax for warp backend (naconmax = nconmax * num_envs)
+    if hasattr(env_cfg_ml, "nconmax"):
+        env_cfg_ml.naconmax = env_cfg_ml.nconmax * cfg.train_setup.train_config.num_envs
+
     # Create environments
     env = vnl_wrappers.FlattenObsWrapper(
         imitation.Imitation(config=env_cfg_ml, clips=train_clips)

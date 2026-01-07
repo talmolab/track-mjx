@@ -45,13 +45,13 @@ def create_prior_policy(
 ) -> Callable:
     """
     Create a policy function that uses only the prior and decoder networks.
-    
+
     This extracts the prior and decoder from trained intention network parameters
     and creates a policy that:
     1. Passes proprioceptive observations through the prior to get latent distribution
     2. Samples from the latent distribution (using fixed logvar for stability)
     3. Decodes the latent + proprioceptive obs to produce actions
-    
+
     Args:
         prior_network_params: Parameters for the prior network.
         decoder_network_params: Parameters for the decoder network.
@@ -64,14 +64,14 @@ def create_prior_policy(
         preprocess_observations_fn: Function to normalize observations.
         fixed_logvar: Fixed log-variance to use for latent sampling.
         deterministic: If True, use mean of prior distribution instead of sampling.
-        
+
     Returns:
         A policy function that takes (proprioceptive_obs, rng_key) and returns actions.
     """
     parametric_action_distribution = distribution.NormalTanhDistribution(
         event_size=action_size
     )
-    
+
     # Create the prior and decoder modules
     prior_module = student_network.Prior(
         layer_sizes=list(prior_hidden_layer_sizes),
@@ -79,77 +79,84 @@ def create_prior_policy(
     )
 
     decoder_module = student_network.Decoder(
-        layer_sizes=list(decoder_hidden_layer_sizes) + [parametric_action_distribution.param_size],
+        layer_sizes=list(decoder_hidden_layer_sizes)
+        + [parametric_action_distribution.param_size],
     )
-    
+
     def policy_fn(
         obs: jax.Array,
         rng_key: jax.Array,
     ) -> Tuple[jax.Array, Dict[str, Any]]:
         """
         Generate actions from proprioceptive observations using prior + decoder.
-        
+
         Args:
             proprioceptive_obs: Proprioceptive observations [..., proprioceptive_obs_size].
             rng_key: Random key for sampling.
-            
+
         Returns:
             Tuple of (actions, extras_dict).
         """
         key_prior, key_sample, key_action = random.split(rng_key, 3)
-        
+
         # Get proprioceptive observations
         proprioceptive_obs = obs[..., -proprioceptive_obs_size:]
 
         # Normalize observations
-        normalized_obs = preprocess_observations_fn(proprioceptive_obs, normalizer_params)
-        
+        normalized_obs = preprocess_observations_fn(
+            proprioceptive_obs, normalizer_params
+        )
+
         # Get prior distribution
         prior_mean, prior_logvar = prior_module.apply(
             {"params": prior_network_params}, normalized_obs
         )
-        
+
         # Use fixed logvar for more stable sampling
         fixed_logvar_array = jnp.full_like(prior_mean, fixed_logvar)
-        
+
         # Sample from prior
         if deterministic:
             z = prior_mean
         else:
             z = reparameterize(key_sample, prior_mean, fixed_logvar_array)
-        
+
         # Decode to action distribution parameters
         decoder_input = jnp.concatenate([z, normalized_obs], axis=-1)
         logits, _ = decoder_module.apply(
             {"params": decoder_network_params}, decoder_input
         )
-        
+
         # Sample action from distribution
         if deterministic:
             action = parametric_action_distribution.mode(logits)
         else:
-            raw_action = parametric_action_distribution.sample_no_postprocessing(logits, key_action)
+            raw_action = parametric_action_distribution.sample_no_postprocessing(
+                logits, key_action
+            )
             action = parametric_action_distribution.postprocess(raw_action)
-        
+
         extras = {
             "prior_mean": prior_mean,
             "prior_logvar": prior_logvar,
             "intention": z,
             "logits": logits,
         }
-        
+
         return action, extras
-    
+
     return policy_fn
 
 
-def extract_prior_decoder_params(policy_params: Tuple) -> Tuple[Dict, Dict, running_statistics.RunningStatisticsState]:
+def extract_prior_decoder_params(
+    policy_params: Tuple,
+) -> Tuple[Dict, Dict, running_statistics.RunningStatisticsState]:
     """
     Extract prior and decoder parameters from full intention network policy params.
-    
+
     Args:
         policy_params: Tuple of (normalizer_params, network_params).
-        
+
     Returns:
         Tuple of (prior_params, decoder_params, normalizer_params).
     """
@@ -247,7 +254,6 @@ def create_neutral_state(env, mjx_model) -> Any:
     return mjx_env.State(data, obs, reward, done, metrics, info)
 
 
-
 class PriorRolloutEvaluator:
     """
     Evaluator class for running prior-only rollouts during training.
@@ -315,19 +321,23 @@ class PriorRolloutEvaluator:
 
         self._key = random.PRNGKey(0)
         self._jit_evaluate = None
-    
+
     def _build_evaluate_fn(self, policy_params: Tuple):
         """Build the jitted evaluation function."""
-        prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(policy_params)
-        
+        prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(
+            policy_params
+        )
+
         # Create proprioceptive-only normalizer params
         proprio_normalizer_params = running_statistics.RunningStatisticsState(
             count=normalizer_params.count,
-            mean=normalizer_params.mean[-self.proprioceptive_obs_size:],
-            summed_variance=normalizer_params.summed_variance[-self.proprioceptive_obs_size:],
-            std=normalizer_params.std[-self.proprioceptive_obs_size:],
+            mean=normalizer_params.mean[-self.proprioceptive_obs_size :],
+            summed_variance=normalizer_params.summed_variance[
+                -self.proprioceptive_obs_size :
+            ],
+            std=normalizer_params.std[-self.proprioceptive_obs_size :],
         )
-        
+
         # Create policy function
         policy_fn = create_prior_policy(
             prior_network_params=prior_params,
@@ -342,10 +352,10 @@ class PriorRolloutEvaluator:
             fixed_logvar=self.fixed_logvar,
             deterministic=self.deterministic,
         )
-        
+
         jit_reset = jax.jit(self.env.reset)
         jit_step = jax.jit(self.env.step)
-        
+
         def single_rollout_fn(rng_key: jax.Array) -> Tuple[jax.Array, jax.Array, Any]:
             """Run a single prior rollout."""
             key_reset, key_rollout = random.split(rng_key)
@@ -358,10 +368,11 @@ class PriorRolloutEvaluator:
                 key, key_action = random.split(key)
 
                 # Get proprioceptive observations
-                if hasattr(state.obs, 'get') or isinstance(state.obs, dict):
+                if hasattr(state.obs, "get") or isinstance(state.obs, dict):
                     proprio = state.obs.get("proprioception", state.obs)
                     if isinstance(proprio, dict):
                         from jax import flatten_util
+
                         proprio, _ = flatten_util.ravel_pytree(proprio)
                 else:
                     proprio = state.obs
@@ -385,7 +396,9 @@ class PriorRolloutEvaluator:
             )
 
             # Batch compute world z-axis termination AFTER rollout using data from states
-            upside_down_flags = compute_world_zaxis_termination(self.env, all_states.data)
+            upside_down_flags = compute_world_zaxis_termination(
+                self.env, all_states.data
+            )
 
             # Find first termination step
             any_upside_down = jnp.any(upside_down_flags)
@@ -396,7 +409,7 @@ class PriorRolloutEvaluator:
             step_count = jnp.where(
                 any_upside_down,
                 first_upside_down_step + 1,  # +1 because step 0 is after first action
-                self.max_steps
+                self.max_steps,
             )
 
             return step_count, terminated, all_states
@@ -405,27 +418,39 @@ class PriorRolloutEvaluator:
         vmapped_rollout = jax.vmap(single_rollout_fn)
 
         @jax.jit
-        def evaluate_fn(rng_key: jax.Array) -> Tuple[Dict[str, jax.Array], Any, jax.Array]:
+        def evaluate_fn(
+            rng_key: jax.Array,
+        ) -> Tuple[Dict[str, jax.Array], Any, jax.Array]:
             rollout_keys = random.split(rng_key, self.num_rollouts)
-            step_counts, terminated_flags, all_rollout_states = vmapped_rollout(rollout_keys)
+            step_counts, terminated_flags, all_rollout_states = vmapped_rollout(
+                rollout_keys
+            )
 
             avg_steps = jnp.mean(step_counts.astype(jnp.float32))
             termination_rate = jnp.mean(terminated_flags.astype(jnp.float32))
-            max_steps_reached = jnp.mean((step_counts >= self.max_steps).astype(jnp.float32))
+            max_steps_reached = jnp.mean(
+                (step_counts >= self.max_steps).astype(jnp.float32)
+            )
 
             metrics = {
                 "prior_rollout/avg_steps": avg_steps,
                 "prior_rollout/termination_rate": termination_rate,
                 "prior_rollout/max_steps_reached": max_steps_reached,
-                "prior_rollout/rollouts_min_steps": jnp.min(step_counts).astype(jnp.float32),
-                "prior_rollout/rollouts_max_steps": jnp.max(step_counts).astype(jnp.float32),
+                "prior_rollout/rollouts_min_steps": jnp.min(step_counts).astype(
+                    jnp.float32
+                ),
+                "prior_rollout/rollouts_max_steps": jnp.max(step_counts).astype(
+                    jnp.float32
+                ),
             }
 
             # Find best rollout (longest before termination)
             best_idx = jnp.argmax(step_counts)
             best_step_count = step_counts[best_idx]
             # Extract states for the best rollout
-            best_states = jax.tree_util.tree_map(lambda x: x[best_idx], all_rollout_states)
+            best_states = jax.tree_util.tree_map(
+                lambda x: x[best_idx], all_rollout_states
+            )
 
             return metrics, best_states, best_step_count
 
@@ -458,6 +483,7 @@ class PriorRolloutEvaluator:
 
         # Run evaluation
         import time
+
         t_start = time.time()
         metrics, best_states, best_step_count = evaluate_fn(eval_key)
         # Block until complete and convert to Python floats
@@ -471,7 +497,9 @@ class PriorRolloutEvaluator:
 
         return metrics
 
-    def _render_best_rollout(self, states: Any, step_count: int, current_step: int) -> None:
+    def _render_best_rollout(
+        self, states: Any, step_count: int, current_step: int
+    ) -> None:
         """Render the best prior rollout and log to wandb."""
         import wandb
         import imageio
@@ -491,9 +519,10 @@ class PriorRolloutEvaluator:
                 for frame in frames:
                     writer.append_data(frame)
 
-            wandb.log({
-                "videos/best_prior_rollout": wandb.Video(video_path, format="mp4")
-            }, commit=False)
+            wandb.log(
+                {"videos/best_prior_rollout": wandb.Video(video_path, format="mp4")},
+                commit=False,
+            )
 
 
 class PriorRolloutEvaluatorNeutralState:
@@ -545,7 +574,9 @@ class PriorRolloutEvaluatorNeutralState:
             model_path: Path to save rendered videos.
         """
         self.env = env
-        self.mjx_model = env.mjx_model  # Store MJX model for neutral pose initialization
+        self.mjx_model = (
+            env.mjx_model
+        )  # Store MJX model for neutral pose initialization
         self.intention_latent_size = intention_latent_size
         self.action_size = action_size
         self.proprioceptive_obs_size = proprioceptive_obs_size
@@ -564,19 +595,23 @@ class PriorRolloutEvaluatorNeutralState:
 
         self._key = random.PRNGKey(0)
         self._jit_evaluate = None
-    
+
     def _build_evaluate_fn(self, policy_params: Tuple):
         """Build the jitted evaluation function."""
-        prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(policy_params)
-        
+        prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(
+            policy_params
+        )
+
         # Create proprioceptive-only normalizer params
         proprio_normalizer_params = running_statistics.RunningStatisticsState(
             count=normalizer_params.count,
-            mean=normalizer_params.mean[-self.proprioceptive_obs_size:],
-            summed_variance=normalizer_params.summed_variance[-self.proprioceptive_obs_size:],
-            std=normalizer_params.std[-self.proprioceptive_obs_size:],
+            mean=normalizer_params.mean[-self.proprioceptive_obs_size :],
+            summed_variance=normalizer_params.summed_variance[
+                -self.proprioceptive_obs_size :
+            ],
+            std=normalizer_params.std[-self.proprioceptive_obs_size :],
         )
-        
+
         # Create policy function
         policy_fn = create_prior_policy(
             prior_network_params=prior_params,
@@ -591,7 +626,7 @@ class PriorRolloutEvaluatorNeutralState:
             fixed_logvar=self.fixed_logvar,
             deterministic=self.deterministic,
         )
-        
+
         jit_step = jax.jit(self.env.step)
 
         # Create jitted function for neutral state initialization
@@ -611,10 +646,11 @@ class PriorRolloutEvaluatorNeutralState:
                 key, key_action = random.split(key)
 
                 # Get proprioceptive observations
-                if hasattr(state.obs, 'get') or isinstance(state.obs, dict):
+                if hasattr(state.obs, "get") or isinstance(state.obs, dict):
                     proprio = state.obs.get("proprioception", state.obs)
                     if isinstance(proprio, dict):
                         from jax import flatten_util
+
                         proprio, _ = flatten_util.ravel_pytree(proprio)
                 else:
                     proprio = state.obs
@@ -638,7 +674,9 @@ class PriorRolloutEvaluatorNeutralState:
             )
 
             # Batch compute world z-axis termination AFTER rollout using data from states
-            upside_down_flags = compute_world_zaxis_termination(self.env, all_states.data)
+            upside_down_flags = compute_world_zaxis_termination(
+                self.env, all_states.data
+            )
 
             # Find first termination step
             any_upside_down = jnp.any(upside_down_flags)
@@ -649,7 +687,7 @@ class PriorRolloutEvaluatorNeutralState:
             step_count = jnp.where(
                 any_upside_down,
                 first_upside_down_step + 1,  # +1 because step 0 is after first action
-                self.max_steps
+                self.max_steps,
             )
 
             return step_count, terminated, all_states
@@ -658,27 +696,39 @@ class PriorRolloutEvaluatorNeutralState:
         vmapped_rollout = jax.vmap(single_rollout_fn)
 
         @jax.jit
-        def evaluate_fn(rng_key: jax.Array) -> Tuple[Dict[str, jax.Array], Any, jax.Array]:
+        def evaluate_fn(
+            rng_key: jax.Array,
+        ) -> Tuple[Dict[str, jax.Array], Any, jax.Array]:
             rollout_keys = random.split(rng_key, self.num_rollouts)
-            step_counts, terminated_flags, all_rollout_states = vmapped_rollout(rollout_keys)
+            step_counts, terminated_flags, all_rollout_states = vmapped_rollout(
+                rollout_keys
+            )
 
             avg_steps = jnp.mean(step_counts.astype(jnp.float32))
             termination_rate = jnp.mean(terminated_flags.astype(jnp.float32))
-            max_steps_reached = jnp.mean((step_counts >= self.max_steps).astype(jnp.float32))
+            max_steps_reached = jnp.mean(
+                (step_counts >= self.max_steps).astype(jnp.float32)
+            )
 
             metrics = {
                 "prior_rollout/avg_steps": avg_steps,
                 "prior_rollout/termination_rate": termination_rate,
                 "prior_rollout/max_steps_reached": max_steps_reached,
-                "prior_rollout/rollouts_min_steps": jnp.min(step_counts).astype(jnp.float32),
-                "prior_rollout/rollouts_max_steps": jnp.max(step_counts).astype(jnp.float32),
+                "prior_rollout/rollouts_min_steps": jnp.min(step_counts).astype(
+                    jnp.float32
+                ),
+                "prior_rollout/rollouts_max_steps": jnp.max(step_counts).astype(
+                    jnp.float32
+                ),
             }
 
             # Find best rollout (longest before termination)
             best_idx = jnp.argmax(step_counts)
             best_step_count = step_counts[best_idx]
             # Extract states for the best rollout
-            best_states = jax.tree_util.tree_map(lambda x: x[best_idx], all_rollout_states)
+            best_states = jax.tree_util.tree_map(
+                lambda x: x[best_idx], all_rollout_states
+            )
 
             return metrics, best_states, best_step_count
 
@@ -711,6 +761,7 @@ class PriorRolloutEvaluatorNeutralState:
 
         # Run evaluation
         import time
+
         t_start = time.time()
         metrics, best_states, best_step_count = evaluate_fn(eval_key)
         # Block until complete and convert to Python floats
@@ -724,7 +775,9 @@ class PriorRolloutEvaluatorNeutralState:
 
         return metrics
 
-    def _render_best_rollout(self, states: Any, step_count: int, current_step: int) -> None:
+    def _render_best_rollout(
+        self, states: Any, step_count: int, current_step: int
+    ) -> None:
         """Render the best prior rollout and log to wandb."""
         import wandb
         import imageio
@@ -744,6 +797,7 @@ class PriorRolloutEvaluatorNeutralState:
                 for frame in frames:
                     writer.append_data(frame)
 
-            wandb.log({
-                "videos/best_prior_rollout": wandb.Video(video_path, format="mp4")
-            }, commit=False)
+            wandb.log(
+                {"videos/best_prior_rollout": wandb.Video(video_path, format="mp4")},
+                commit=False,
+            )

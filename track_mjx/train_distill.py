@@ -1,5 +1,5 @@
 """
-Entry point for distillation training. 
+Entry point for distillation training.
 Load the config file, create environments, load teacher model, and start distillation training.
 """
 
@@ -29,7 +29,6 @@ from track_mjx.agent.mlp_distill.rollout_distill import distill_rollout_logging_
 from track_mjx.agent.mlp_distill import distill, distill_networks
 
 
-
 def _setup_environment() -> None:
     """Configure environment variables for JAX."""
     xla_flags = os.environ.get("XLA_FLAGS", "")
@@ -41,9 +40,9 @@ def _setup_environment() -> None:
 @hydra.main(version_base=None, config_path="config", config_name="rodent-distill")
 def main(cfg: DictConfig):
     """Main function for distillation training using Hydra configs"""
-    
+
     _setup_environment()
-    
+
     try:
         n_devices = jax.device_count(backend="gpu")
         logging.info(f"Using {n_devices} GPUs")
@@ -53,7 +52,9 @@ def main(cfg: DictConfig):
 
     # Validate teacher config
     if cfg.teacher_config.checkpoint_path is None:
-        raise ValueError("teacher_config.checkpoint_path must be specified for distillation training")
+        raise ValueError(
+            "teacher_config.checkpoint_path must be specified for distillation training"
+        )
 
     # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
@@ -76,14 +77,20 @@ def main(cfg: DictConfig):
         keep_clips_idx=cfg.env_config.keep_clips_idx,
     )
     # Create train/test split
-    key_split, _ = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
+    key_split, _ = jax.random.split(
+        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
+    )
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
     # Create environments
-    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
-    test_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=test_clips))
+    env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg_ml, clips=train_clips)
+    )
+    test_env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg_ml, clips=test_clips)
+    )
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -104,7 +111,11 @@ def main(cfg: DictConfig):
         intention_latent_size=cfg.network_config.intention_size,
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-        prior_hidden_layer_sizes=tuple(cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)),
+        prior_hidden_layer_sizes=tuple(
+            cfg.network_config.get(
+                "prior_layer_sizes", cfg.network_config.encoder_layer_sizes
+            )
+        ),
         encoder_expansion_factor=cfg.network_config.get("encoder_expansion_factor", 1),
     )
 
@@ -161,24 +172,31 @@ def main(cfg: DictConfig):
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
         use_schedule=distill_cfg.use_schedule,
-        schedule_params=dict(distill_cfg.schedule_params) if distill_cfg.use_schedule else None,
+        schedule_params=(
+            dict(distill_cfg.schedule_params) if distill_cfg.use_schedule else None
+        ),
         eval_env_test_set=test_env,
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
-        randomization_fn=domain_randomization_maker(
-            floor_friction=cfg.env_config.domain_randomization.floor_friction,
-            static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
-            armature_scale=cfg.env_config.domain_randomization.armature_scale,
-            com_jitter=cfg.env_config.domain_randomization.com_jitter,
-            link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
-            torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
-            qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
-        ) if cfg.env_config.domain_randomization.use_domain_randomization else None,
+        randomization_fn=(
+            domain_randomization_maker(
+                floor_friction=cfg.env_config.domain_randomization.floor_friction,
+                static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
+                armature_scale=cfg.env_config.domain_randomization.armature_scale,
+                com_jitter=cfg.env_config.domain_randomization.com_jitter,
+                link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
+                torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
+                qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
+            )
+            if cfg.env_config.domain_randomization.use_domain_randomization
+            else None
+        ),
         prior_rollout_config=(
             dict(cfg.prior_rollout_config)
-            if hasattr(cfg, "prior_rollout_config") and cfg.prior_rollout_config is not None
+            if hasattr(cfg, "prior_rollout_config")
+            and cfg.prior_rollout_config is not None
             else None
         ),
     )
@@ -186,7 +204,9 @@ def main(cfg: DictConfig):
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=rollout_cfg))
+    rollout_env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=rollout_cfg)
+    )
 
     # Define the jit reset/step functions for logging
     jit_reset = jax.jit(rollout_env.reset)
@@ -210,7 +230,9 @@ def main(cfg: DictConfig):
     # Clean up run state after successful completion
     try:
         checkpointing.cleanup_run_state(cfg)
-        logging.info("Distillation training completed successfully, cleaned up run state")
+        logging.info(
+            "Distillation training completed successfully, cleaned up run state"
+        )
     except Exception as e:
         logging.warning(f"Failed to cleanup run state: {e}")
 

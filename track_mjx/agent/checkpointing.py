@@ -282,7 +282,8 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             # Legacy flat format - convert to obs_sizes dict
             obs_sizes = {
                 "imitation_target": network_config.reference_obs_size,
-                "proprioception": network_config.observation_size - network_config.reference_obs_size,
+                "proprioception": network_config.observation_size
+                - network_config.reference_obs_size,
             }
 
         return mlp_ppo_networks.make_intention_ppo_networks(

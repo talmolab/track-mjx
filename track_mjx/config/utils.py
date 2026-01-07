@@ -58,7 +58,9 @@ def prepare_config(
         logging.info("Using rodent walker")
         walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
         arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path("data/rodent/rodent_reference_clips.h5")
+        reference_data_path = _resolve_data_path(
+            "data/rodent/rodent_reference_clips.h5"
+        )
     elif walker_name == "fruitfly":
         logging.info("Using fruitfly walker")
         walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
@@ -70,7 +72,9 @@ def prepare_config(
     elif walker_name == "mouse":
         logging.info("Using mouse walker")
         walker_xml_path = str(mouse_consts.MOUSE_XML_PATH)
-        raise NotImplementedError("Mouse arena and reference data paths not implemented yet.")
+        raise NotImplementedError(
+            "Mouse arena and reference data paths not implemented yet."
+        )
     elif walker_name == "stickbug":
         logging.info("Using stickbug walker")
         raise NotImplementedError("Stickbug walker not implemented yet.")
@@ -81,10 +85,21 @@ def prepare_config(
     OmegaConf.set_struct(cfg.env_config, False)
     OmegaConf.update(cfg.env_config, "walker_xml_path", walker_xml_path, merge=False)
     OmegaConf.update(cfg.env_config, "arena_xml_path", arena_xml_path, merge=False)
-    OmegaConf.update(cfg.env_config, "reference_data_path", reference_data_path, merge=False)
-    OmegaConf.update(cfg.env_config, "walker_name", cfg.walker_config.walker_name, merge=False)
-    OmegaConf.update(cfg.env_config, "torque_actuators", cfg.walker_config.torque_actuators, merge=False)
-    OmegaConf.update(cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False)
+    OmegaConf.update(
+        cfg.env_config, "reference_data_path", reference_data_path, merge=False
+    )
+    OmegaConf.update(
+        cfg.env_config, "walker_name", cfg.walker_config.walker_name, merge=False
+    )
+    OmegaConf.update(
+        cfg.env_config,
+        "torque_actuators",
+        cfg.walker_config.torque_actuators,
+        merge=False,
+    )
+    OmegaConf.update(
+        cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False
+    )
     OmegaConf.set_struct(cfg.env_config, True)
 
     # Create ml_collections ConfigDict for env_config

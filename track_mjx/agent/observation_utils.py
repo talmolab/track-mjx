@@ -200,9 +200,7 @@ def concat_flat_dict_obs(obs: Mapping[str, jnp.ndarray]) -> jnp.ndarray:
     Returns:
         Single flat array with all observations concatenated.
     """
-    return jnp.concatenate(
-        [obs["imitation_target"], obs["proprioception"]], axis=-1
-    )
+    return jnp.concatenate([obs["imitation_target"], obs["proprioception"]], axis=-1)
 
 
 def get_obs_sizes(obs: Mapping[str, Any]) -> dict[str, int]:

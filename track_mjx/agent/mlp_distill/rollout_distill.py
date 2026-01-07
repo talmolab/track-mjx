@@ -35,6 +35,7 @@ def distill_rollout_logging_fn(
     normalize = lambda x, y: x
     if cfg.train_setup.train_config.normalize_observations:
         from brax.training.acme import running_statistics
+
         normalize = running_statistics.normalize
 
     distill_cfg = cfg.distill_config
@@ -46,7 +47,11 @@ def distill_rollout_logging_fn(
         intention_latent_size=cfg.network_config.intention_size,
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-        prior_hidden_layer_sizes=tuple(cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)),
+        prior_hidden_layer_sizes=tuple(
+            cfg.network_config.get(
+                "prior_layer_sizes", cfg.network_config.encoder_layer_sizes
+            )
+        ),
         encoder_expansion_factor=cfg.network_config.get("encoder_expansion_factor", 1),
         encoder_logvar_min=distill_cfg.get("encoder_logvar_min", None),
         encoder_logvar_max=distill_cfg.get("encoder_logvar_max", None),
@@ -62,7 +67,9 @@ def distill_rollout_logging_fn(
     jit_teacher_policy = teacher_policy_fn
 
     # Split keys for student and teacher rollouts
-    _, reset_rng_student, reset_rng_teacher, act_rng_student, act_rng_teacher = jax.random.split(policy_params_fn_key, 5)
+    _, reset_rng_student, reset_rng_teacher, act_rng_student, act_rng_teacher = (
+        jax.random.split(policy_params_fn_key, 5)
+    )
 
     # Run student rollout
     state = jit_reset(reset_rng_student)
@@ -146,11 +153,17 @@ def distill_rollout_logging_fn(
                     writer.append_data(frame)
 
             wandb.log(
-                {"videos/student_rollout": wandb.Video(student_video_path, format="mp4")},
+                {
+                    "videos/student_rollout": wandb.Video(
+                        student_video_path, format="mp4"
+                    )
+                },
                 commit=False,
             )
         except mujoco.FatalError as e:
-            logging.warning(f"Student video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
+            logging.warning(
+                f"Student video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration."
+            )
 
         # Render teacher video
         teacher_video_path = f"{model_path}/{current_step}_teacher.mp4"
@@ -166,8 +179,14 @@ def distill_rollout_logging_fn(
                     writer.append_data(frame)
 
             wandb.log(
-                {"videos/teacher_rollout": wandb.Video(teacher_video_path, format="mp4")},
+                {
+                    "videos/teacher_rollout": wandb.Video(
+                        teacher_video_path, format="mp4"
+                    )
+                },
                 commit=False,
             )
         except mujoco.FatalError as e:
-            logging.warning(f"Teacher video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
+            logging.warning(
+                f"Teacher video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration."
+            )

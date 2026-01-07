@@ -23,7 +23,10 @@ import jax.numpy as jnp
 from brax.training import networks, types
 from flax import linen as nn
 
-from track_mjx.agent.observation_utils import DictRunningStatisticsState, normalize_dict_obs
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    normalize_dict_obs,
+)
 
 
 class Encoder(nn.Module):
@@ -209,9 +212,7 @@ class IntentionNetwork(nn.Module):
                 z = latent_mean
             else:
                 z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            action, _ = self.decoder(
-                jnp.concatenate([z, egocentric_obs], axis=-1)
-            )
+            action, _ = self.decoder(jnp.concatenate([z, egocentric_obs], axis=-1))
             return action, latent_mean, latent_logvar
 
 

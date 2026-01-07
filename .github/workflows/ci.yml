@@ -26,4 +26,4 @@ jobs:
 
       - name: Run Black
         run: |
-          black --check track_mjx/
+          black --check track_mjx/ notebooks/

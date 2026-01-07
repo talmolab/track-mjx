@@ -27,7 +27,10 @@ from omegaconf import DictConfig, OmegaConf
 
 from track_mjx.agent.mlp_ppo import losses as mlp_losses
 from track_mjx.agent.mlp_ppo import ppo_networks as mlp_ppo_networks
-from track_mjx.agent.observation_utils import init_dict_normalizer
+from track_mjx.agent.observation_utils import (
+    convert_flat_to_dict_normalizer,
+    init_dict_normalizer,
+)
 
 
 def load_config_from_checkpoint(
@@ -234,6 +237,23 @@ def load_inference_fn(
     """
     ppo_network = make_ppo_network_from_cfg(cfg)
     make_policy = mlp_ppo_networks.make_inference_fn(ppo_network)
+
+    # Convert legacy flat normalizer to dict normalizer if needed
+    normalizer_state, network_params = policy_params
+    network_config = cfg.network_config
+
+    # Check if this is a legacy flat normalizer by looking at config format
+    is_legacy = not (
+        hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
+    )
+
+    if is_legacy:
+        # Convert flat normalizer to dict normalizer
+        reference_obs_size = network_config.reference_obs_size
+        normalizer_state = convert_flat_to_dict_normalizer(
+            normalizer_state, reference_obs_size
+        )
+        policy_params = (normalizer_state, network_params)
 
     return make_policy(
         policy_params, deterministic=deterministic, get_activation=get_activation

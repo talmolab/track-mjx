@@ -412,12 +412,16 @@ def train(
         )
         assert data.discount.shape[1:] == (unroll_length,)
 
-        # Update normalization params and normalize observations.
-        normalizer_params = update_dict_normalizer(
-            training_state.normalizer_params,
-            data.observation,
-            pmap_axis_name=_PMAP_AXIS_NAME,
-        )
+        # Update normalization params (only if normalization is enabled).
+        # When disabled, normalizer stays at identity (mean=0, std=1).
+        if normalize_observations:
+            normalizer_params = update_dict_normalizer(
+                training_state.normalizer_params,
+                data.observation,
+                pmap_axis_name=_PMAP_AXIS_NAME,
+            )
+        else:
+            normalizer_params = training_state.normalizer_params
 
         # If decoder is frozen, preserve the proprioceptive normalizer params
         if frozen_proprioceptive_normalizer_params is not None:

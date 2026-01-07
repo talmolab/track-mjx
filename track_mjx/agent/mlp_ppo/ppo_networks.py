@@ -27,7 +27,7 @@ from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_ppo import intention_network
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
-    flatten_dict_obs,
+    concat_flat_dict_obs,
     normalize_dict_obs,
 )
 
@@ -232,7 +232,7 @@ def make_dict_value_network(
         """Apply value network with dict observation normalization."""
         # Normalize each component and flatten
         normalized_obs = normalize_dict_obs(obs, processor_params)
-        flat_obs = flatten_dict_obs(normalized_obs)
+        flat_obs = concat_flat_dict_obs(normalized_obs)
         return base_value_network.apply((), value_params, flat_obs)
 
     return networks.FeedForwardNetwork(

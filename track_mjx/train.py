@@ -52,11 +52,12 @@ def main(cfg: DictConfig) -> None:
         n_devices = 1
         logging.info("Not using GPUs")
 
+    # Prepare config BEFORE load_from_run_state so the config hash is consistent
+    # between discovery and saving (prepare_config modifies cfg by adding paths)
+    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
+
     # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
-
-    # Prepare config
-    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
@@ -173,13 +174,7 @@ def main(cfg: DictConfig) -> None:
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)
-    jit_step = jax.jit(rollout_env.step)
     policy_params_fn = functools.partial(
-        wandb_logging.rollout_logging_fn,
-        rollout_env,
-        jit_reset,
-        jit_step,
-        cfg,
         checkpoint_path,
     )
 

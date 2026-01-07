@@ -224,7 +224,7 @@ def create_neutral_state(env, mjx_model) -> Any:
     # Get neutral qpos from model
     neutral_qpos = jnp.array(env.mj_model.qpos0)
     # Adjust z-position to be within healthy range (neutral has z=0, but healthy range starts at 0.0325)
-    neutral_qpos = neutral_qpos.at[2].set(0.1)
+    neutral_qpos = neutral_qpos.at[2].set(0)
 
     # Create MJX data with neutral pose
     data = mjx.make_data(mjx_model)
@@ -316,7 +316,7 @@ class PriorRolloutEvaluator:
         self.eval_interval = eval_interval
         self.render_best_rollout = render_best_rollout
         self.render_fps = render_fps
-        self.render_camera_name = f"{render_camera_name}-ghost"
+        self.render_camera_name = f"{render_camera_name}-rodent"
         self.model_path = model_path
 
         self._key = random.PRNGKey(0)

@@ -627,7 +627,8 @@ def train(
         # Get model_path from logging config for video saving
         logging_config = config_dict.get("logging_config", {})
 
-        prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluator(
+        # Common evaluator arguments
+        evaluator_kwargs = dict(
             env=environment,  # Use unwrapped environment for prior rollouts
             intention_latent_size=intention_size,
             action_size=env.action_size,
@@ -645,9 +646,27 @@ def train(
             render_camera_name=render_config.get("render_camera_name", "close_profile"),
             model_path=str(ckpt_mgr.directory),
         )
-        logging.info(
-            f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts"
-        )
+
+        # Select evaluator based on start_mode config
+        start_mode = prior_rollout_config.get("start_mode", "random_clip")
+        if start_mode == "neutral":
+            prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluatorNeutralState(
+                **evaluator_kwargs
+            )
+            logging.info(
+                f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts (neutral start)"
+            )
+        elif start_mode == "random_clip":
+            prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluator(
+                **evaluator_kwargs
+            )
+            logging.info(
+                f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts (random clip start)"
+            )
+        else:
+            raise ValueError(
+                f"Unknown prior_rollout start_mode: {start_mode}. Use 'neutral' or 'random_clip'."
+            )
 
     # Get starting iteration from checkpoint
     start_it = 0

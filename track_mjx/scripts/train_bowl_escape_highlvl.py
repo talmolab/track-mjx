@@ -102,7 +102,7 @@ with open(ckpt_path / "config.json", "w") as fp:
 wandb.init(
     project="vnl-playground",
     config=env_cfg,
-    id=f"bowl_escape-{exp_name}",
+    id=f"highlvl-{exp_name}",
     notes=f"mimic run: {mimic_run_id}",
 )
 

@@ -155,6 +155,16 @@ def rollout_logging_fn(
                     video.append_data(pixels)
         else:
             # mujoco playground envs
+            # Log rollout metrics for mujoco playground envs
+            for rollout_metric in cfg.logging_config.rollout_metrics:
+                log_lineplot_to_wandb(
+                    f"eval/rollout_{rollout_metric}",
+                    rollout_metric,
+                    list(
+                        enumerate([state.metrics[rollout_metric] for state in rollout])
+                    ),
+                    title=f"{rollout_metric} for each rollout frame",
+                )
             render_every = 2
             fps = render_fps / render_every
             traj = rollout[::render_every]

@@ -156,7 +156,8 @@ def compute_prior_training_loss(
     encoder_logvar = jax.lax.stop_gradient(encoder_logvar)
 
     # Get prior outputs (trainable)
-    prior_mean, prior_logvar = prior_apply_fn(prior_params, proprio_obs)
+    # prior_params is a PriorTrainingParams dataclass, extract the actual params
+    prior_mean, prior_logvar = prior_apply_fn(prior_params.prior, proprio_obs)
 
     # Compute KL loss
     kl_loss = compute_encoder_prior_kl_loss(

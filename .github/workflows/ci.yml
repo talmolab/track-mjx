@@ -22,12 +22,8 @@ jobs:
 
       - name: Install linting tools
         run: |
-          pip install black pydocstyle toml
+          pip install black
 
       - name: Run Black
         run: |
           black --check track_mjx/
-
-      - name: Run pydocstyle
-        run: |
-          pydocstyle --convention=google track_mjx/

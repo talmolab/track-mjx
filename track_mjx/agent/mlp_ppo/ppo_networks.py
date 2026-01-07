@@ -294,7 +294,8 @@ def make_decoder_policy_fn(
     )
     policy_network = intention_network.make_decoder_policy(
         parametric_action_distribution.param_size,
-        decoder_obs_size=(observation_size - reference_obs_size) + intention_latent_size,
+        decoder_obs_size=(observation_size - reference_obs_size)
+        + intention_latent_size,
         preprocess_observations_fn=masked_running_statistics.normalize,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
     )

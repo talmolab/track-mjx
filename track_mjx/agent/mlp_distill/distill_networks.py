@@ -23,49 +23,59 @@ from track_mjx.agent import checkpointing
 @flax.struct.dataclass
 class DistillNetworks:
     """Networks used for distillation training."""
+
     student: student_network.StudentNetwork
     parametric_action_distribution: distribution.ParametricDistribution
 
 
 def make_student_inference_fn(distill_networks: DistillNetworks):
     """Creates inference function for the student network.
-    
+
     Returns a function that takes (normalizer_params, policy_params) and returns
     a policy function that can be used for inference.
     """
+
     def make_policy(
         params: types.PolicyParams,
         deterministic: bool = False,
     ) -> types.Policy:
         student_network = distill_networks.student
         parametric_action_distribution = distill_networks.parametric_action_distribution
-        
+
         def policy(
             observations: types.Observation,
             key_sample: PRNGKey,
         ) -> Tuple[types.Action, types.Extra]:
             normalizer_params, policy_params = params
             key_sample, key_network = jax.random.split(key_sample)
-            
+
             # Get student outputs
-            policy_logits, latent_mean, latent_logvar, prior_mean, prior_logvar = student_network.apply(
-                normalizer_params, policy_params, observations, key_network, deterministic=deterministic
+            policy_logits, latent_mean, latent_logvar, prior_mean, prior_logvar = (
+                student_network.apply(
+                    normalizer_params,
+                    policy_params,
+                    observations,
+                    key_network,
+                    deterministic=deterministic,
+                )
             )
-            
+
             if deterministic:
                 action = parametric_action_distribution.mode(policy_logits)
             else:
-                action = parametric_action_distribution.sample(policy_logits, key_sample)
-            
+                action = parametric_action_distribution.sample(
+                    policy_logits, key_sample
+                )
+
             return action, {
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
                 "prior_mean": prior_mean,
                 "prior_logvar": prior_logvar,
             }
-        
+
         return policy
-    
+
     return make_policy
 
 
@@ -114,7 +124,7 @@ def make_student_networks(
         prior_logvar_max=prior_logvar_max,
         encoder_expansion_factor=encoder_expansion_factor,
     )
-    
+
     return DistillNetworks(
         student=student,
         parametric_action_distribution=parametric_action_distribution,
@@ -126,11 +136,11 @@ def load_teacher_policy(
     step: int | None = None,
 ) -> Tuple[Callable, Any]:
     """Load a pretrained teacher policy from checkpoint.
-    
+
     Args:
         teacher_checkpoint_path: Path to the teacher checkpoint directory.
         step: Optional step to load. If None, loads the latest checkpoint.
-        
+
     Returns:
         Tuple of (inference_fn, policy_params) where inference_fn is a callable
         that takes (observations, key) and returns (actions, extras).
@@ -140,12 +150,12 @@ def load_teacher_policy(
     )
     cfg = checkpoint_data["cfg"]
     policy_params = checkpoint_data["policy"]
-    
+
     # Create inference function
     inference_fn = checkpointing.load_inference_fn(
         cfg, policy_params, deterministic=True, get_activation=False
     )
-    
+
     return inference_fn, policy_params
 
 
@@ -183,6 +193,7 @@ def create_teacher_inference_fn(
         Returns:
             A policy function that takes (params, observations, key) and returns (actions, extras)
         """
+
         def teacher_policy_fn(
             params: types.PolicyParams,
             observations: jnp.ndarray,
@@ -201,14 +212,22 @@ def create_teacher_inference_fn(
             normalizer_params, policy_network_params = params
 
             # Get policy outputs (deterministic captured from closure)
-            policy_logits, latent_mean, latent_logvar = ppo_network.policy_network.apply(
-                normalizer_params, policy_network_params, observations, key, deterministic=deterministic
+            policy_logits, latent_mean, latent_logvar = (
+                ppo_network.policy_network.apply(
+                    normalizer_params,
+                    policy_network_params,
+                    observations,
+                    key,
+                    deterministic=deterministic,
+                )
             )
 
             if deterministic:
                 action = ppo_network.parametric_action_distribution.mode(policy_logits)
             else:
-                action = ppo_network.parametric_action_distribution.sample(policy_logits, key)
+                action = ppo_network.parametric_action_distribution.sample(
+                    policy_logits, key
+                )
 
             return action, {
                 "policy_logits": policy_logits,

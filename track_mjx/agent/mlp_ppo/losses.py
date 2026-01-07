@@ -105,9 +105,7 @@ def compute_gae(
     # Add V(x_s) to get v_s
     vs = jnp.add(vs_minus_v_xs, values)
 
-    vs_t_plus_1 = jnp.concatenate(
-        [vs[1:], jnp.expand_dims(bootstrap_value, 0)], axis=0
-    )
+    vs_t_plus_1 = jnp.concatenate([vs[1:], jnp.expand_dims(bootstrap_value, 0)], axis=0)
     advantages = (
         rewards + discount * (1 - termination) * vs_t_plus_1 - values
     ) * truncation_mask
@@ -310,7 +308,9 @@ def create_ramp_schedule(
         if schedule == "linear":
             progress = jnp.clip((step - warmup_steps) / ramp_steps, 0.0, 1.0)
             is_warmup = step < warmup_steps
-            return jnp.where(is_warmup, min_value, min_value + progress * (max_value - min_value))
+            return jnp.where(
+                is_warmup, min_value, min_value + progress * (max_value - min_value)
+            )
         elif schedule == "cosine":
             angle = (2 * jnp.pi * step) / period
             amplitude = (max_value - min_value) / 2

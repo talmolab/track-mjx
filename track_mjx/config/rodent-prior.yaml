@@ -12,7 +12,7 @@
 # Path to the pretrained mlp_ppo checkpoint with encoder and decoder
 teacher_config:
   # Path to pretrained mlp_ppo checkpoint (REQUIRED)
-  checkpoint_path: null               # MUST be set before training
+  checkpoint_path: "/home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints/charlesrodent"
   checkpoint_step: null               # Specific step to load (null = latest)
 
 # =============================================================================
@@ -127,8 +127,8 @@ render_config:
 prior_rollout_config:
   enabled: true                       # Whether to run prior rollout evaluation
   eval_interval: 1                    # Run every N evals (1 = every eval)
-  num_rollouts: 32                    # Number of rollouts per mode
-  max_steps: 200                      # Maximum steps per rollout
+  num_rollouts: 4                     # Number of rollouts per mode
+  max_steps: 400                      # Maximum steps per rollout
 
 # =============================================================================
 # Network Architecture
@@ -137,7 +137,7 @@ prior_rollout_config:
 network_config:
   arch_name: prior
   # Prior network architecture (newly trained)
-  prior_layer_sizes: [1024, 1024]
+  prior_layer_sizes: [1536,1024,512]
   # Encoder/decoder sizes and intention_size are loaded from mlp_ppo checkpoint
 
 # =============================================================================
@@ -151,7 +151,7 @@ prior_config:
   # ---------------------------------------------------------------------------
   # KL Loss Weight Schedule
   # ---------------------------------------------------------------------------
-  use_kl_schedule: true
+  use_kl_schedule: false
   kl_schedule_params:
     kl_start_weight: 1e-5             # Starting KL weight
     kl_end_weight: 1e-3               # Final KL weight
@@ -183,7 +183,7 @@ train_setup:
   # ---------------------------------------------------------------------------
   train_config:
     num_envs: 4096
-    num_timesteps: 500_000_000        # Less than distillation (prior only)
+    num_timesteps: 2_000_000_000        # Less than distillation (prior only)
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
@@ -198,8 +198,8 @@ train_setup:
 # Logging Configuration
 # =============================================================================
 logging_config:
-  project_name: vnl_prior_training
-  group_name: null
+  project_name: vnl_debug
+  group_name: prior_frozen_encoder_decoder
   exp_name: null
   clip_id: -1
   model_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints

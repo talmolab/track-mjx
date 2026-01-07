@@ -75,14 +75,20 @@ def main(cfg: DictConfig) -> None:
         keep_clips_idx=cfg.env_config.keep_clips_idx,
     )
     # Create train/test split
-    key_split, _ = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
+    key_split, _ = jax.random.split(
+        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
+    )
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
     # Create environments
-    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
-    test_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=test_clips))
+    env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg_ml, clips=train_clips)
+    )
+    test_env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg_ml, clips=test_clips)
+    )
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -150,21 +156,27 @@ def main(cfg: DictConfig) -> None:
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
-        randomization_fn=domain_randomization_maker(
-            floor_friction=cfg.env_config.domain_randomization.floor_friction,
-            static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
-            armature_scale=cfg.env_config.domain_randomization.armature_scale,
-            com_jitter=cfg.env_config.domain_randomization.com_jitter,
-            link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
-            torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
-            qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
-        ) if cfg.env_config.domain_randomization.use_domain_randomization else None,
+        randomization_fn=(
+            domain_randomization_maker(
+                floor_friction=cfg.env_config.domain_randomization.floor_friction,
+                static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
+                armature_scale=cfg.env_config.domain_randomization.armature_scale,
+                com_jitter=cfg.env_config.domain_randomization.com_jitter,
+                link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
+                torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
+                qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
+            )
+            if cfg.env_config.domain_randomization.use_domain_randomization
+            else None
+        ),
     )
 
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=rollout_cfg))
+    rollout_env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=rollout_cfg)
+    )
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

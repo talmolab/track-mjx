@@ -7,9 +7,13 @@ The key components are:
 - PPOImitationNetworks: Container for policy, value, and action distribution
 - Inference functions that route observations through encoder/decoder
 - Factory functions for creating intention-based PPO networks
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import flax
@@ -21,6 +25,11 @@ from jax import numpy as jnp
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_ppo import intention_network
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    flatten_dict_obs,
+    normalize_dict_obs,
+)
 
 
 @flax.struct.dataclass
@@ -190,11 +199,51 @@ def make_logging_inference_fn(
     return make_logging_policy
 
 
+def make_dict_value_network(
+    obs_sizes: Mapping[str, int],
+    hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+) -> networks.FeedForwardNetwork:
+    """Create a value network that accepts dictionary observations.
+
+    The value network flattens the dict observation internally and normalizes
+    each component before concatenating.
+
+    Args:
+        obs_sizes: Dict mapping observation keys to their sizes.
+        hidden_layer_sizes: MLP layer sizes for value network.
+
+    Returns:
+        FeedForwardNetwork that accepts dict observations.
+    """
+    total_obs_size = sum(obs_sizes.values())
+
+    # Create underlying value network with flat observations
+    base_value_network = networks.make_value_network(
+        total_obs_size,
+        preprocess_observations_fn=types.identity_observation_preprocessor,
+        hidden_layer_sizes=hidden_layer_sizes,
+    )
+
+    def apply(
+        processor_params: DictRunningStatisticsState,
+        value_params,
+        obs: Mapping[str, jnp.ndarray],
+    ):
+        """Apply value network with dict observation normalization."""
+        # Normalize each component and flatten
+        normalized_obs = normalize_dict_obs(obs, processor_params)
+        flat_obs = flatten_dict_obs(normalized_obs)
+        return base_value_network.apply((), value_params, flat_obs)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: base_value_network.init(key),
+        apply=apply,
+    )
+
+
 def make_intention_ppo_networks(
-    observation_size: int,
-    reference_obs_size: int,
+    obs_sizes: Mapping[str, int],
     action_size: int,
-    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     intention_latent_size: int = 60,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
@@ -207,11 +256,9 @@ def make_intention_ppo_networks(
     conditioned on proprioceptive state and latent intention.
 
     Args:
-        observation_size: Total observation dimension.
-        reference_obs_size: Dimension of reference trajectory observations
-            (processed by encoder).
+        obs_sizes: Dict mapping observation keys to their sizes, e.g.
+            {"imitation_target": 3716, "proprioception": 226}.
         action_size: Action dimension.
-        preprocess_observations_fn: Observation preprocessing (e.g., normalize).
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
@@ -227,16 +274,13 @@ def make_intention_ppo_networks(
     policy_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,
-        total_obs_size=observation_size,
-        reference_obs_size=reference_obs_size,
-        preprocess_observations_fn=preprocess_observations_fn,
+        obs_sizes=obs_sizes,
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
     )
 
-    value_network = networks.make_value_network(
-        observation_size,
-        preprocess_observations_fn=preprocess_observations_fn,
+    value_network = make_dict_value_network(
+        obs_sizes=obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
     )
 

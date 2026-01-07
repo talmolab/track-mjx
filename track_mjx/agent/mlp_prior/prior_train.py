@@ -201,6 +201,8 @@ def train(
     decoder_hidden_layer_sizes = tuple(teacher_cfg["network_config"]["decoder_layer_sizes"])
     reference_obs_size = teacher_cfg["network_config"]["reference_obs_size"]
     action_size = teacher_cfg["network_config"]["action_size"]
+    teacher_observation_size = teacher_cfg["network_config"]["observation_size"]
+    teacher_proprioceptive_obs_size = teacher_observation_size - reference_obs_size
 
     # Initialize keys
     key = jax.random.PRNGKey(seed)
@@ -219,9 +221,17 @@ def train(
         randomization_rng = jax.random.split(key_env, randomization_batch_size)
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
-    proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
+    env_proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
     logging.info(f"Reference observation size: {reference_obs_size}")
-    logging.info(f"Proprioceptive observation size: {proprioceptive_obs_size}")
+    logging.info(f"Environment proprioceptive observation size: {env_proprioceptive_obs_size}")
+    logging.info(f"Teacher proprioceptive observation size: {teacher_proprioceptive_obs_size}")
+    if env_proprioceptive_obs_size != teacher_proprioceptive_obs_size:
+        logging.warning(
+            f"Environment proprioceptive_obs_size ({env_proprioceptive_obs_size}) "
+            f"differs from teacher ({teacher_proprioceptive_obs_size}). "
+            f"Using teacher value for decoder compatibility."
+        )
+    proprioceptive_obs_size = teacher_proprioceptive_obs_size
 
     env = wrap_for_training(
         environment,

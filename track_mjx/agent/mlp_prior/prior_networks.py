@@ -70,6 +70,48 @@ class Prior(nn.Module):
         return mean_x, logvar_x
 
 
+class Decoder(nn.Module):
+    """Decode latent + proprioceptive observations to action distribution parameters.
+
+    Takes concatenated [latent, proprioceptive_obs] as input and outputs action
+    distribution parameters.
+
+    Attributes:
+        layer_sizes: Hidden layer dimensions for the MLP.
+        activation: Activation function (default: SiLU).
+        kernel_init: Weight initializer (default: LeCun uniform).
+        activate_final: Whether to apply activation to final layer.
+        bias: Whether to use bias terms in Dense layers.
+    """
+
+    layer_sizes: Sequence[int]
+    activation: networks.ActivationFn = nn.silu
+    kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform()
+    activate_final: bool = False
+    bias: bool = True
+
+    @nn.compact
+    def __call__(
+        self, x: jnp.ndarray, get_activation: bool = False
+    ) -> Tuple[jnp.ndarray, dict]:
+        activations = {}
+        for i, hidden_size in enumerate(self.layer_sizes):
+            x = nn.Dense(
+                hidden_size,
+                name=f"hidden_{i}",
+                kernel_init=self.kernel_init,
+                use_bias=self.bias,
+            )(x)
+            if i != len(self.layer_sizes) - 1 or self.activate_final:
+                x = self.activation(x)
+                x = nn.LayerNorm()(x)
+                if get_activation:
+                    activations[f"layer_{i}"] = x
+        if get_activation:
+            return x, activations
+        return x, {}
+
+
 def load_frozen_encoder_decoder(
     checkpoint_path: str,
     step: int | None = None,

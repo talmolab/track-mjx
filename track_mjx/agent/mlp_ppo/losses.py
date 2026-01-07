@@ -183,9 +183,9 @@ def compute_ppo_loss(
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 
-    bootstrap_value = value_apply(
-        normalizer_params, params.value, data.next_observation[-1]
-    )
+    # Get the last timestep from dict observation (tree_map handles dict structure)
+    last_next_obs = jax.tree_util.tree_map(lambda x: x[-1], data.next_observation)
+    bootstrap_value = value_apply(normalizer_params, params.value, last_next_obs)
 
     rewards = data.reward * reward_scaling
     truncation = data.extras["state_extras"]["truncation"]

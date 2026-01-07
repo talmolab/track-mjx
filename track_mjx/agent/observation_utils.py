@@ -19,34 +19,70 @@ from jax import flatten_util
 
 
 def _flatten_nested_obs(nested: Any) -> jnp.ndarray:
-    """Flatten a potentially nested observation to a 1D array.
+    """Flatten a potentially nested observation, preserving batch dimensions.
 
-    Handles both flat arrays and nested dicts/pytrees by using JAX's
-    flatten_util.ravel_pytree for deterministic flattening.
+    Handles both flat arrays and nested dicts/pytrees. Preserves the first
+    dimension (batch) and flattens all trailing dimensions.
 
     Args:
         nested: Either a flat array or a nested dict of arrays.
+            - 1D array (obs_size,): returned as-is (unbatched)
+            - 2D array (batch, obs_size): returned as-is (already flat)
+            - 3D+ array (batch, d1, d2, ...): flattened to (batch, d1*d2*...)
+            - Nested dict: leaves are concatenated along last axis
 
     Returns:
-        Flattened 1D array.
+        Flattened array with shape (obs_size,) or (batch, obs_size).
     """
-    if isinstance(nested, jnp.ndarray) and nested.ndim == 1:
-        return nested
-    flat, _ = flatten_util.ravel_pytree(nested)
-    return flat
+    if isinstance(nested, jnp.ndarray):
+        if nested.ndim <= 2:
+            # 1D (unbatched) or 2D (batched, already flat) - return as-is
+            return nested
+        else:
+            # 3D+ array: preserve batch dim (first), flatten the rest
+            # (batch, d1, d2, ...) -> (batch, d1*d2*...)
+            return nested.reshape(nested.shape[0], -1)
+
+    # For nested dicts/pytrees, flatten the observation structure
+    leaves = jax.tree_util.tree_leaves(nested)
+    if not leaves:
+        return jnp.array([])
+
+    # Find batch dims: leading dimensions that are identical across all leaves
+    # E.g., (1,64,5,3) and (1,64,18,5,3) share prefix (1,64)
+    ref = min(leaves, key=lambda x: x.ndim)
+    n_batch = 0
+    for i in range(ref.ndim - 1):
+        if len({leaf.shape[i] for leaf in leaves}) == 1:
+            n_batch += 1
+        else:
+            break
+
+    if n_batch == 0:
+        # Unbatched: flatten everything to 1D
+        flat, _ = flatten_util.ravel_pytree(nested)
+        return flat
+
+    # Batched: reshape each leaf to (*batch_shape, -1) and concatenate
+    batch_shape = ref.shape[:n_batch]
+    return jnp.concatenate([leaf.reshape(*batch_shape, -1) for leaf in leaves], axis=-1)
 
 
 def flatten_obs_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
-    """Flatten each top-level key in an observation dict to a 1D array.
+    """Flatten each top-level key in an observation dict, preserving batch dim.
 
     Converts nested observation structures (e.g., from vnl_playground)
     to flat arrays at each key, suitable for normalization and network input.
+    Preserves the batch dimension if present.
 
     Args:
         obs: Observation dict where values may be nested dicts or flat arrays.
+            Can be unbatched (each value is 1D) or batched (each value has
+            leading batch dimension).
 
     Returns:
-        Dict with the same keys but flat 1D array values.
+        Dict with the same keys but flattened array values. Shape is
+        (obs_size,) for unbatched input or (batch_size, obs_size) for batched.
     """
     return {
         "imitation_target": _flatten_nested_obs(obs["imitation_target"]),

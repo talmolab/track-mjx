@@ -618,6 +618,15 @@ def train(
                 metrics.update(prior_metrics)
                 logging.info(f"Initial prior rollout metrics: {prior_metrics}")
 
+        # Render initial video to wandb
+        _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
+        policy_params_fn(
+            current_step=0,
+            params=policy_param,
+            policy_params_fn_key=policy_params_fn_key,
+            render_video=True,
+        )
+
         logging.info(metrics)
         progress_fn(start_it, metrics)
 

@@ -162,6 +162,7 @@ prior_rollout_config:
   fixed_logvar: -2.0                # Fixed log-variance for prior sampling
   deterministic: true               # Whether to use deterministic policy
   render_best_rollout: true         # Whether to render the best rollout to wandb
+  start_mode: random_clip           # Starting pose: "neutral" or "random_clip"
 
 # =============================================================================
 # Network Architecture

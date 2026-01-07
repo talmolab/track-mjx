@@ -81,9 +81,7 @@ def create_rollout_generator(
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
 
-    def generate_rollout(
-        clip_idx: int | None = None, seed: int = 42
-    ) -> dict[str, Any]:
+    def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.
 
         Runs the policy in the environment for the full clip length, collecting

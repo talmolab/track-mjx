@@ -17,7 +17,7 @@ Distillation training for imitation learning.
 
 Trains a student network to mimic a pretrained teacher network using:
 1. MSE loss between student and teacher actions
-2. Autoregressive loss between consecutive encoder latent means  
+2. Autoregressive loss between consecutive encoder latent means
 3. KL divergence loss between encoder and prior distributions
 """
 
@@ -61,6 +61,7 @@ _PMAP_AXIS_NAME = "i"
 @flax.struct.dataclass
 class TrainingState:
     """Contains training state for the learner."""
+
     optimizer_state: optax.OptState
     params: losses.DistillNetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
@@ -75,7 +76,9 @@ def _strip_weak_type(tree):
     def f(leaf):
         leaf = jnp.asarray(leaf)
         return leaf.astype(leaf.dtype)
+
     return jax.tree_util.tree_map(f, tree)
+
 
 def run_evaluation(
     self,
@@ -157,7 +160,9 @@ def train(
     num_resets_per_eval: int = 0,
     normalize_observations: bool = False,
     deterministic_eval: bool = False,
-    network_factory: Callable[..., distill_networks.DistillNetworks] = distill_networks.make_student_networks,
+    network_factory: Callable[
+        ..., distill_networks.DistillNetworks
+    ] = distill_networks.make_student_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     eval_env: Optional[envs.Env] = None,
     eval_env_test_set: Optional[envs.Env] = None,
@@ -169,7 +174,8 @@ def train(
     schedule_params: Optional[dict] = None,
     checkpoint_callback: Optional[Callable[[int], None]] = None,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
-        mp_wrapper.wrap_for_brax_training, full_reset=False),
+        mp_wrapper.wrap_for_brax_training, full_reset=False
+    ),
     prior_rollout_config: Optional[dict] = None,
 ):
     """Distillation training.
@@ -255,8 +261,10 @@ def train(
 
     # Load teacher policy
     logging.info(f"Loading teacher from: {teacher_checkpoint_path}")
-    make_teacher_policy, teacher_params, teacher_cfg = distill_networks.create_teacher_inference_fn(
-        teacher_checkpoint_path, step=teacher_checkpoint_step
+    make_teacher_policy, teacher_params, teacher_cfg = (
+        distill_networks.create_teacher_inference_fn(
+            teacher_checkpoint_path, step=teacher_checkpoint_step
+        )
     )
     # Create teacher policy with deterministic=True captured in closure, then jit
     teacher_policy_fn = jax.jit(make_teacher_policy(deterministic=True))
@@ -333,7 +341,7 @@ def train(
             (),
             length=batch_size * num_minibatches // num_envs,
         )
-        
+
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(
             lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
@@ -378,7 +386,7 @@ def train(
         return training_state, state, loss_metrics
 
     training_epoch = jax.pmap(
-        training_epoch, 
+        training_epoch,
         axis_name=_PMAP_AXIS_NAME,
         donate_argnums=(
             0,
@@ -447,7 +455,7 @@ def train(
 
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
-    
+
     if local_devices_to_use > 1 or use_pmap_on_reset:
         reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
         env_state = reset_fn_(key_envs)
@@ -608,12 +616,11 @@ def train(
         # Get network config from config_dict
         network_config = config_dict.get("network_config", {})
         prior_layer_sizes = network_config.get(
-            "prior_layer_sizes",
-            network_config.get("encoder_layer_sizes", [1024, 1024])
+            "prior_layer_sizes", network_config.get("encoder_layer_sizes", [1024, 1024])
         )
         decoder_layer_sizes = network_config.get("decoder_layer_sizes", [1024, 1024])
         intention_size = network_config.get("intention_size", 60)
-        
+
         # Get render config for optional best rollout rendering
         render_config = config_dict.get("render_config", {})
 
@@ -638,7 +645,9 @@ def train(
             render_camera_name=render_config.get("render_camera_name", "close_profile"),
             model_path=str(ckpt_mgr.directory),
         )
-        logging.info(f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts")
+        logging.info(
+            f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts"
+        )
 
     # Get starting iteration from checkpoint
     start_it = 0
@@ -646,7 +655,9 @@ def train(
         num_evals_after_init -= ckpt_mgr.latest_step()
         start_it = ckpt_mgr.latest_step()
 
-    logging.info(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
+    logging.info(
+        f"Starting at iteration: {start_it} with {num_evals_after_init} evals left"
+    )
 
     # Run initial eval
     metrics = {}
@@ -674,7 +685,7 @@ def train(
 
         logging.info(metrics)
         progress_fn(start_it, metrics)
-        
+
         if ckpt_mgr is not None:
             ckpt_mgr.save(
                 step=0,
@@ -694,10 +705,10 @@ def train(
     training_walltime = 0
     start_it += 1
     current_step = 0
-    
+
     for it in range(start_it, num_evals_after_init + start_it):
         logging.info("starting iteration %s %s", it, time.time() - xt)
-        
+
         for _ in range(max(num_resets_per_eval, 1)):
             epoch_key, local_key = jax.random.split(local_key)
             epoch_keys = jax.random.split(epoch_key, local_devices_to_use)
@@ -716,7 +727,7 @@ def train(
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
-            
+
             metrics = evaluator.run_evaluation(policy_param, training_metrics)
             if evaluator_test_set is not None:
                 metrics = evaluator_test_set.run_evaluation(
@@ -756,7 +767,7 @@ def train(
 
             logging.info(metrics)
             progress_fn(current_step, metrics)
-            
+
             if ckpt_mgr is not None:
                 checkpointing.save(
                     ckpt_mgr,

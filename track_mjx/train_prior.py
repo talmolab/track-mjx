@@ -17,7 +17,7 @@ import jax
 import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
@@ -28,6 +28,7 @@ from track_mjx.config import utils
 from track_mjx.agent.domain_randomization import domain_randomization_maker
 from track_mjx.agent.mlp_prior.rollout_logging import prior_training_rollout_logging_fn
 from track_mjx.agent.mlp_prior import prior_train
+from track_mjx.agent.mlp_prior import prior_networks
 
 
 def _setup_environment() -> None:
@@ -200,6 +201,22 @@ def main(cfg: DictConfig):
 
     # Get prior config
     prior_cfg = cfg.prior_config
+
+    # Load teacher config to get encoder/decoder network sizes
+    _, _, _, teacher_cfg = prior_networks.load_frozen_encoder_decoder(
+        cfg.teacher_config.checkpoint_path, step=cfg.teacher_config.checkpoint_step
+    )
+    # Update cfg.network_config with values from teacher (needed for rollout logging)
+    teacher_net_cfg = teacher_cfg["network_config"]
+    OmegaConf.set_struct(cfg.network_config, False)
+    OmegaConf.update(cfg.network_config, "intention_size", teacher_net_cfg["intention_size"], merge=False)
+    OmegaConf.update(cfg.network_config, "encoder_layer_sizes", teacher_net_cfg["encoder_layer_sizes"], merge=False)
+    OmegaConf.update(cfg.network_config, "decoder_layer_sizes", teacher_net_cfg["decoder_layer_sizes"], merge=False)
+    OmegaConf.update(cfg.network_config, "reference_obs_size", teacher_net_cfg["reference_obs_size"], merge=False)
+    OmegaConf.update(cfg.network_config, "proprioceptive_obs_size",
+                     teacher_net_cfg["observation_size"] - teacher_net_cfg["reference_obs_size"], merge=False)
+    OmegaConf.update(cfg.network_config, "action_size", teacher_net_cfg["action_size"], merge=False)
+    OmegaConf.set_struct(cfg.network_config, True)
 
     # Setup training function
     train_fn = functools.partial(

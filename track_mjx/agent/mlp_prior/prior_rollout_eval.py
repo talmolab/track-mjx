@@ -90,7 +90,7 @@ def create_prior_policy(
         Returns:
             Tuple of (actions, extras_dict).
         """
-        key_prior, key_sample, key_action = random.split(rng_key, 3)
+        _, key_sample = random.split(rng_key)
 
         # Get proprioceptive observations (last part of obs)
         proprioceptive_obs = obs[..., -proprioceptive_obs_size:]
@@ -118,12 +118,8 @@ def create_prior_policy(
             {"params": decoder_network_params}, decoder_input
         )
 
-        # Sample action from distribution
-        if deterministic:
-            action = parametric_action_distribution.mode(logits)
-        else:
-            raw_action = parametric_action_distribution.sample_no_postprocessing(logits, key_action)
-            action = parametric_action_distribution.postprocess(raw_action)
+        # Always use mode of action distribution for deterministic actions
+        action = parametric_action_distribution.mode(logits)
 
         extras = {
             "prior_mean": prior_mean,

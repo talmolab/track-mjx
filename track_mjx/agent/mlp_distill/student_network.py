@@ -169,16 +169,22 @@ class StudentNetwork(nn.Module):
     def _clamp_encoder_logvar(self, logvar: jnp.ndarray) -> jnp.ndarray:
         """Apply clamping to encoder log-variance if bounds are set."""
         if self.encoder_logvar_min is not None or self.encoder_logvar_max is not None:
-            return jnp.clip(logvar, a_min=self.encoder_logvar_min, a_max=self.encoder_logvar_max)
+            return jnp.clip(
+                logvar, a_min=self.encoder_logvar_min, a_max=self.encoder_logvar_max
+            )
         return logvar
 
     def _clamp_prior_logvar(self, logvar: jnp.ndarray) -> jnp.ndarray:
         """Apply clamping to prior log-variance if bounds are set."""
         if self.prior_logvar_min is not None or self.prior_logvar_max is not None:
-            return jnp.clip(logvar, a_min=self.prior_logvar_min, a_max=self.prior_logvar_max)
+            return jnp.clip(
+                logvar, a_min=self.prior_logvar_min, a_max=self.prior_logvar_max
+            )
         return logvar
 
-    def __call__(self, obs, key, deterministic: bool = False, get_activation: bool = False):
+    def __call__(
+        self, obs, key, deterministic: bool = False, get_activation: bool = False
+    ):
         _, encoder_rng = jax.random.split(key)
         traj = obs[..., : self.reference_obs_size]
         egocentric_obs = obs[..., self.reference_obs_size :]
@@ -204,7 +210,7 @@ class StudentNetwork(nn.Module):
                 z = latent_mean
             else:
                 z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            
+
             concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
             action, decoder_activations = self.decoder(
                 concatenated, get_activation=True
@@ -229,7 +235,9 @@ class StudentNetwork(nn.Module):
         else:
             # Concatenate proprioceptive observations with trajectory for encoder
             encoder_input = jnp.concatenate([traj, egocentric_obs], axis=-1)
-            latent_mean, latent_logvar = self.encoder(encoder_input, get_activation=False)
+            latent_mean, latent_logvar = self.encoder(
+                encoder_input, get_activation=False
+            )
             # Apply encoder logvar clamping (PULSE-style)
             latent_logvar = self._clamp_encoder_logvar(latent_logvar)
 
@@ -243,10 +251,8 @@ class StudentNetwork(nn.Module):
                 z = latent_mean
             else:
                 z = reparameterize(encoder_rng, latent_mean, latent_logvar)
-            
-            action, _ = self.decoder(
-                jnp.concatenate([z, egocentric_obs], axis=-1)
-            )
+
+            action, _ = self.decoder(jnp.concatenate([z, egocentric_obs], axis=-1))
             return action, latent_mean, latent_logvar, prior_mean, prior_logvar
 
 
@@ -301,11 +307,22 @@ def make_student_policy(
         encoder_expansion_factor=encoder_expansion_factor,
     )
 
-    def apply(processor_params, policy_params, obs, key, deterministic: bool = False, get_activation: bool = False):
+    def apply(
+        processor_params,
+        policy_params,
+        obs,
+        key,
+        deterministic: bool = False,
+        get_activation: bool = False,
+    ):
         """Applies the policy network with observation normalizer, the output is the action distribution parameters."""
         obs = preprocess_observations_fn(obs, processor_params)
         return policy_module.apply(
-            policy_params, obs=obs, key=key, deterministic=deterministic, get_activation=get_activation
+            policy_params,
+            obs=obs,
+            key=key,
+            deterministic=deterministic,
+            get_activation=get_activation,
         )
 
     dummy_total_obs = jnp.zeros((1, total_obs_size))

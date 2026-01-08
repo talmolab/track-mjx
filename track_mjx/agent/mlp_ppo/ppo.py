@@ -577,7 +577,6 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    grad_clip_threshold = 20.0
     optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),

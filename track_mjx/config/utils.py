@@ -4,12 +4,53 @@ This module provides helper functions for preparing and updating OmegaConf
 configurations, including walker-specific path resolution and config merging.
 """
 
+import json
 import logging
+import subprocess
+from importlib.metadata import distribution
 from pathlib import Path
 from typing import Any
 
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
+
+
+def _get_package_commit(package_name: str) -> str:
+    """Get the git commit hash for an installed package.
+
+    Works for both editable installs (file://) and VCS installs (git+https://).
+
+    Args:
+        package_name: Name of the installed package.
+
+    Returns:
+        Git commit hash, or "unknown" if not available.
+    """
+    try:
+        dist = distribution(package_name)
+        direct_url = json.loads(dist.read_text("direct_url.json"))
+        url = direct_url.get("url", "")
+
+        # Editable install: file:// URL pointing to local repo
+        if url.startswith("file://"):
+            path = url[7:]
+            result = subprocess.run(
+                ["git", "-C", path, "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+
+        # VCS install: git+https:// with vcs_info
+        if "vcs_info" in direct_url:
+            return direct_url["vcs_info"].get("commit_id", "unknown")
+
+    except Exception:
+        pass
+    return "unknown"
+
+
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
@@ -99,6 +140,12 @@ def prepare_config(
     )
     OmegaConf.update(
         cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False
+    )
+    OmegaConf.update(
+        cfg.env_config,
+        "vnl_playground_commit",
+        _get_package_commit("vnl-playground"),
+        merge=False,
     )
     OmegaConf.set_struct(cfg.env_config, True)
 

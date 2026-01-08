@@ -91,7 +91,8 @@ class Decoder(nn.Module):
     def __call__(
         self, x: jnp.ndarray, get_activation: bool = False
     ) -> tuple[jnp.ndarray, dict]:
-        activations = {}
+        if get_activation:
+            activations = {}
         for i, hidden_size in enumerate(self.layer_sizes):
             x = nn.Dense(
                 hidden_size,
@@ -305,7 +306,7 @@ def make_decoder_policy(
             obs[..., -processor_params.mean.shape[-1] :], processor_params
         )
         obs = jnp.concatenate([latent_obs, proprio_obs], axis=-1)
-        return policy_module.apply(policy_params, x=obs)
+        return policy_module.apply(policy_params, x=obs, get_activation=False)
 
     dummy_obs = jnp.zeros((1, decoder_obs_size))
 

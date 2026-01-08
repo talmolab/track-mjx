@@ -47,6 +47,58 @@ class PPONetworkParams:
     value: Params
 
 
+def compute_kl_to_gaussian_prior(
+    latent_mean: jnp.ndarray,
+    latent_logvar: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute KL divergence from latent distribution to standard Gaussian prior.
+
+    Computes KL(q(z|x) || p(z)) where q(z|x) = N(latent_mean, exp(latent_logvar))
+    and p(z) = N(0, I). This encourages the latent space to be regularized
+    towards a standard Gaussian.
+
+    Args:
+        latent_mean: Mean of the latent distribution, shape [T, B, D].
+        latent_logvar: Log variance of the latent distribution, shape [T, B, D].
+
+    Returns:
+        Scalar KL divergence loss (mean over all dimensions and batch).
+    """
+    return -0.5 * jnp.mean(
+        1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar)
+    )
+
+
+def compute_ar1_temporal_loss(
+    latent_mean: jnp.ndarray,
+    discount: jnp.ndarray,
+    truncation: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute AR(1) temporal smoothness loss for latent intentions.
+
+    Encourages temporal consistency in the latent space by penalizing
+    large changes between consecutive timesteps. Pairs that cross episode
+    boundaries (done or truncated) are masked out.
+
+    Args:
+        latent_mean: Mean of the latent distribution, shape [T, B, D].
+        discount: Discount signal from transitions, shape [T, B].
+            0 indicates episode end.
+        truncation: Truncation signal, shape [T, B].
+            1 indicates episode was truncated (not terminated).
+
+    Returns:
+        Scalar L2 loss between consecutive latent means (masked and normalized).
+    """
+    z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
+    z_curr = latent_mean[1:]  # z_1, ..., z_{T-1}
+    # Valid if episode continues: not done (discount=1) AND not truncated (truncation=0)
+    valid_mask = discount[:-1] * (1 - truncation[:-1])
+    l2_diff = jnp.mean(jnp.square(z_curr - z_prev), axis=-1)  # [T-1, B]
+    masked_l2 = l2_diff * valid_mask
+    return jnp.sum(masked_l2) / jnp.maximum(jnp.sum(valid_mask), 1.0)
+
+
 def compute_gae(
     truncation: jnp.ndarray,
     termination: jnp.ndarray,
@@ -121,13 +173,16 @@ def compute_ppo_loss(
     step: int,
     ppo_network: ppo_networks.PPONetworks,
     entropy_cost: float = 1e-4,
-    kl_weight: float = 1e-3,
+    latent_kl_weight: float = 1e-3,
+    latent_ar1_weight: float = 1e-3,
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
-    kl_schedule: Callable[[int], float] | None = None,
+    vf_coefficient: float = 0.5,
+    latent_kl_schedule: Callable[[int], float] | None = None,
+    latent_ar1_schedule: Callable[[int], float] | None = None,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss with VAE KL divergence for intention networks.
 
@@ -150,13 +205,16 @@ def compute_ppo_loss(
         step: Current training step (for KL schedule).
         ppo_network: PPO network container with policy, value, and distribution.
         entropy_cost: Entropy bonus coefficient (higher = more exploration).
-        kl_weight: Base KL divergence weight (may be overridden by schedule).
+        latent_kl_weight: Weight for KL divergence to standard Gaussian prior.
+        latent_ar1_weight: Weight for AR(1) temporal smoothness loss.
         discounting: Discount factor (gamma) for GAE.
         reward_scaling: Multiplier applied to rewards.
         gae_lambda: GAE lambda parameter.
         clipping_epsilon: PPO clipping range for policy ratio.
         normalize_advantage: Whether to normalize advantages to zero mean/unit std.
-        kl_schedule: Optional schedule function(step) -> kl_weight.
+        vf_coefficient: Coefficient for value function loss
+        latent_kl_schedule: Optional schedule function(step) -> latent_kl_weight.
+        latent_ar1_schedule: Optional schedule function(step) -> latent_ar1_weight.
 
     Returns:
         Tuple of:
@@ -212,7 +270,7 @@ def compute_ppo_loss(
 
     # Value function loss
     v_error = vs - baseline
-    v_loss = jnp.mean(v_error * v_error) * 0.5 * 0.5
+    v_loss = jnp.mean(v_error * v_error) * 0.5 * vf_coefficient
 
     # Entropy reward
     entropy = jnp.mean(
@@ -221,54 +279,36 @@ def compute_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL Divergence for latent layer
-    if kl_schedule is not None:
-        kl_weight = kl_schedule(step)
+    current_kl_weight = latent_kl_weight
+    current_ar1_weight = latent_ar1_weight
+    if latent_kl_schedule is not None:
+        current_kl_weight = latent_kl_schedule(step)
+    if latent_ar1_schedule is not None:
+        current_ar1_weight = latent_ar1_schedule(step)
 
-    # Use autoregressive Gaussian prior: p(z_t | z_t-1) = N(0.95 * z_t-1, (1-0.95^2) * I)
-    alpha = 0.95
-    prior_variance = 1 - alpha**2  # = 0.0975
+    # KL divergence to standard Gaussian prior N(0, I)
+    kl_gaussian = compute_kl_to_gaussian_prior(latent_mean, latent_logvar)
 
-    # For the first timestep, use standard Gaussian prior
-    # KL(q(z_0)||N(0,I))
-    kl_0 = -0.5 * jnp.mean(
-        1 + latent_logvar[0] - jnp.square(latent_mean[0]) - jnp.exp(latent_logvar[0])
-    )
+    # L2 loss to previous latent mean (AR(1) temporal smoothness)
+    ar1_loss = compute_ar1_temporal_loss(latent_mean, data.discount, truncation)
 
-    # For subsequent timesteps, use autoregressive prior
-    # KL(q(z_t)||N(alpha * z_{t-1}, prior_variance * I))
-    if latent_mean.shape[0] > 1:  # If we have more than one timestep
-        # Get z_{t-1} and z_t
-        z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
-        mu_curr = latent_mean[1:]  # mu_1, ..., mu_{T-1}
-        logvar_curr = latent_logvar[1:]  # logvar_1, ..., logvar_{T-1}
+    # Apply weights to each loss term
+    kl_gaussian_weighted = current_kl_weight * kl_gaussian
+    ar1_loss_weighted = current_ar1_weight * ar1_loss
+    latent_loss = kl_gaussian_weighted + ar1_loss_weighted
 
-        # Prior mean: alpha * z_{t-1}
-        prior_mean = alpha * z_prev
+    total_loss = policy_loss + v_loss + entropy_loss + latent_loss
 
-        # KL divergence components
-        var_ratio = jnp.exp(logvar_curr) / prior_variance
-        mean_diff_sq = jnp.square(prior_mean - mu_curr) / prior_variance
-        log_var_ratio = jnp.log(prior_variance) - logvar_curr
-
-        kl_t = 0.5 * jnp.mean(var_ratio + mean_diff_sq - 1 + log_var_ratio)
-
-        # Combine KL losses (weighted by sequence length)
-        total_timesteps = latent_mean.shape[0]
-        kl_latent_loss = kl_weight * (
-            (kl_0 + kl_t * (total_timesteps - 1)) / total_timesteps
-        )
-    else:
-        # Only one timestep, use standard Gaussian prior
-        kl_latent_loss = kl_weight * kl_0
-
-    total_loss = policy_loss + v_loss + entropy_loss + kl_latent_loss
     return total_loss, {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
-        "kl_latent_loss": kl_latent_loss,
+        "total_latent_loss": latent_loss,
+        "latent_ar1_loss": ar1_loss_weighted,
+        "latent_kl_loss": kl_gaussian_weighted,
         "entropy_loss": entropy_loss,
-        "kl_weight": kl_weight,
+        "latent_kl_weight": current_kl_weight,
+        "latent_ar1_weight": current_ar1_weight,
     }
 
 

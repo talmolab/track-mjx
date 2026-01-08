@@ -367,7 +367,6 @@ class MultiModePriorRolloutEvaluator:
         jit_reset = jax.jit(self.env.reset)
         initial_state = jit_reset(reset_key)
 
-        all_metrics = {}
         self._key, rollout_key = random.split(self._key)
 
         for mode in self.evaluation_modes:
@@ -380,24 +379,8 @@ class MultiModePriorRolloutEvaluator:
             rollout_key, mode_key = random.split(rollout_key)
 
             # Run single rollout from shared initial state
-            t_start = time.time()
-            step_count, terminated, states = single_rollout_fn(initial_state, mode_key)
-            # Block until complete and convert to Python types
+            step_count, _, states = single_rollout_fn(initial_state, mode_key)
             step_count = int(step_count)
-            terminated = bool(terminated)
-            eval_time = time.time() - t_start
-
-            # Compute metrics for single rollout
-            metrics = {
-                "steps": float(step_count),
-                "terminated": float(terminated),
-                "max_steps_reached": float(step_count >= self.max_steps),
-            }
-
-            # Add metrics with mode prefix
-            for k, v in metrics.items():
-                all_metrics[f"prior_rollout/{mode_name}/{k}"] = v
-            all_metrics[f"prior_rollout/{mode_name}/eval_time"] = eval_time
 
             # Render the rollout for this mode
             try:
@@ -406,4 +389,4 @@ class MultiModePriorRolloutEvaluator:
                 import logging
                 logging.warning(f"Failed to render {mode_name} rollout: {e}")
 
-        return all_metrics
+        return {}

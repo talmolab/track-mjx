@@ -167,19 +167,6 @@ def prior_training_rollout_logging_fn(
         )
         kl_per_timestep.append(float(kl))
 
-    # Log aggregate statistics
-    wandb.log(
-        {
-            "rollout/kl_mean": float(jnp.mean(jnp.array(kl_per_timestep))),
-            "rollout/kl_std": float(jnp.std(jnp.array(kl_per_timestep))),
-            "rollout/kl_max": float(jnp.max(jnp.array(kl_per_timestep))),
-            "rollout/encoder_mean_norm": float(jnp.mean(jnp.linalg.norm(encoder_means, axis=-1))),
-            "rollout/prior_mean_norm": float(jnp.mean(jnp.linalg.norm(prior_means, axis=-1))),
-            "rollout/mean_diff_norm": float(jnp.mean(jnp.linalg.norm(encoder_means - prior_means, axis=-1))),
-        },
-        commit=False,
-    )
-
     # Log per-dimension latent statistics
     for i in range(encoder_means_mean.shape[-1]):
         wandb.log(

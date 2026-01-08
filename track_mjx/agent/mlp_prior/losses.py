@@ -172,22 +172,9 @@ def compute_prior_training_loss(
     # Total loss
     total_loss = current_kl_weight * kl_loss
 
-    # Compute latent statistics for logging
     metrics = {
-        "total_loss": total_loss,
         "kl_loss": kl_loss,
         "kl_weight": current_kl_weight,
-        # Encoder statistics
-        "encoder_mean_mean": jnp.mean(encoder_mean),
-        "encoder_mean_std": jnp.std(encoder_mean),
-        "encoder_logvar_mean": jnp.mean(encoder_logvar),
-        "encoder_logvar_std": jnp.std(encoder_logvar),
-        # Prior statistics
-        "prior_mean_mean": jnp.mean(prior_mean),
-        "prior_mean_std": jnp.std(prior_mean),
-        "prior_logvar_mean": jnp.mean(prior_logvar),
-        "prior_logvar_std": jnp.std(prior_logvar),
-        # Difference statistics
         "mean_diff_l2": jnp.mean(jnp.linalg.norm(encoder_mean - prior_mean, axis=-1)),
         "logvar_diff_l2": jnp.mean(jnp.linalg.norm(encoder_logvar - prior_logvar, axis=-1)),
     }

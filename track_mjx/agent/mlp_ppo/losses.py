@@ -47,6 +47,58 @@ class PPONetworkParams:
     value: Params
 
 
+def compute_kl_to_gaussian_prior(
+    latent_mean: jnp.ndarray,
+    latent_logvar: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute KL divergence from latent distribution to standard Gaussian prior.
+
+    Computes KL(q(z|x) || p(z)) where q(z|x) = N(latent_mean, exp(latent_logvar))
+    and p(z) = N(0, I). This encourages the latent space to be regularized
+    towards a standard Gaussian.
+
+    Args:
+        latent_mean: Mean of the latent distribution, shape [T, B, D].
+        latent_logvar: Log variance of the latent distribution, shape [T, B, D].
+
+    Returns:
+        Scalar KL divergence loss (mean over all dimensions and batch).
+    """
+    return -0.5 * jnp.mean(
+        1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar)
+    )
+
+
+def compute_ar1_temporal_loss(
+    latent_mean: jnp.ndarray,
+    discount: jnp.ndarray,
+    truncation: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute AR(1) temporal smoothness loss for latent intentions.
+
+    Encourages temporal consistency in the latent space by penalizing
+    large changes between consecutive timesteps. Pairs that cross episode
+    boundaries (done or truncated) are masked out.
+
+    Args:
+        latent_mean: Mean of the latent distribution, shape [T, B, D].
+        discount: Discount signal from transitions, shape [T, B].
+            0 indicates episode end.
+        truncation: Truncation signal, shape [T, B].
+            1 indicates episode was truncated (not terminated).
+
+    Returns:
+        Scalar L2 loss between consecutive latent means (masked and normalized).
+    """
+    z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
+    z_curr = latent_mean[1:]  # z_1, ..., z_{T-1}
+    # Valid if episode continues: not done (discount=1) AND not truncated (truncation=0)
+    valid_mask = discount[:-1] * (1 - truncation[:-1])
+    l2_diff = jnp.mean(jnp.square(z_curr - z_prev), axis=-1)  # [T-1, B]
+    masked_l2 = l2_diff * valid_mask
+    return jnp.sum(masked_l2) / jnp.maximum(jnp.sum(valid_mask), 1.0)
+
+
 def compute_gae(
     truncation: jnp.ndarray,
     termination: jnp.ndarray,
@@ -235,19 +287,10 @@ def compute_ppo_loss(
         current_ar1_weight = latent_ar1_schedule(step)
 
     # KL divergence to standard Gaussian prior N(0, I)
-    kl_gaussian = -0.5 * jnp.mean(
-        1 + latent_logvar - jnp.square(latent_mean) - jnp.exp(latent_logvar)
-    )
+    kl_gaussian = compute_kl_to_gaussian_prior(latent_mean, latent_logvar)
 
     # L2 loss to previous latent mean (AR(1) temporal smoothness)
-    # Mask out pairs that cross episode boundaries (done OR truncation)
-    z_prev = latent_mean[:-1]  # z_0, ..., z_{T-2}
-    z_curr = latent_mean[1:]  # z_1, ..., z_{T-1}
-    # Valid if episode continues: not done (discount=1) AND not truncated (truncation=0)
-    valid_mask = data.discount[:-1] * (1 - truncation[:-1])
-    l2_diff = jnp.mean(jnp.square(z_curr - z_prev), axis=-1)  # [T-1, B]
-    masked_l2 = l2_diff * valid_mask
-    ar1_loss = jnp.sum(masked_l2) / jnp.maximum(jnp.sum(valid_mask), 1.0)
+    ar1_loss = compute_ar1_temporal_loss(latent_mean, data.discount, truncation)
 
     # Apply weights to each loss term
     kl_gaussian_weighted = current_kl_weight * kl_gaussian

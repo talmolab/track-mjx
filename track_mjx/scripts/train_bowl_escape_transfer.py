@@ -70,7 +70,7 @@ def main(bowl_cfg: DictConfig):
 
     # Load the checkpoint's config
     checkpoint_to_restore = hydra.utils.to_absolute_path(
-        "./model_checkpoints/251223_232558_038379"
+        "./model_checkpoints/YYMMDD_HHMMSS_XXXXXX"  # Replace with your checkpoint
     )
     # Load the checkpoint's config and update the run_id and checkpoint path
     loaded_cfg = OmegaConf.create(

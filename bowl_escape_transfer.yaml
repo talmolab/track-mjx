@@ -26,7 +26,7 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: bowl_escape
-  checkpoint_to_restore: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/model_checkpoints/251222_135817_628743
+  checkpoint_to_restore: model_checkpoints/YYMMDD_HHMMSS_XXXXXX  # Replace with your checkpoint
   freeze_decoder: True
   checkpoint_max_to_keep:
   checkpoint_keep_period:

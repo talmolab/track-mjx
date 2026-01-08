@@ -45,16 +45,18 @@ _PMAP_AXIS_NAME = "i"
 @flax.struct.dataclass
 class PriorTrainingParams:
     """Contains trainable parameters for prior training."""
+
     prior: types.Params  # Only prior parameters are trainable
 
 
 @flax.struct.dataclass
 class TrainingState:
     """Contains training state for the prior learner."""
+
     optimizer_state: optax.OptState
-    params: PriorTrainingParams           # Only prior params (trainable)
-    frozen_encoder_params: Dict           # Frozen - not in optimizer
-    frozen_decoder_params: Dict           # Frozen - not in optimizer
+    params: PriorTrainingParams  # Only prior params (trainable)
+    frozen_encoder_params: Dict  # Frozen - not in optimizer
+    frozen_decoder_params: Dict  # Frozen - not in optimizer
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
 
@@ -67,6 +69,7 @@ def _strip_weak_type(tree):
     def f(leaf):
         leaf = jnp.asarray(leaf)
         return leaf.astype(leaf.dtype)
+
     return jax.tree_util.tree_map(f, tree)
 
 
@@ -108,7 +111,8 @@ def train(
     kl_schedule_params: Optional[dict] = None,
     checkpoint_callback: Optional[Callable[[int], None]] = None,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
-        mp_wrapper.wrap_for_brax_training, full_reset=False),
+        mp_wrapper.wrap_for_brax_training, full_reset=False
+    ),
     prior_rollout_config: Optional[dict] = None,
 ):
     """Prior network training.
@@ -189,16 +193,21 @@ def train(
 
     # Load frozen encoder and decoder from mlp_ppo checkpoint
     logging.info(f"Loading encoder/decoder from: {mlp_ppo_checkpoint_path}")
-    encoder_params, decoder_params, teacher_normalizer_params, teacher_cfg = \
+    encoder_params, decoder_params, teacher_normalizer_params, teacher_cfg = (
         prior_networks.load_frozen_encoder_decoder(
             mlp_ppo_checkpoint_path, step=mlp_ppo_checkpoint_step
         )
+    )
     logging.info("Encoder and decoder loaded successfully")
 
     # Extract network config from teacher
     latent_size = teacher_cfg["network_config"]["intention_size"]
-    encoder_hidden_layer_sizes = tuple(teacher_cfg["network_config"]["encoder_layer_sizes"])
-    decoder_hidden_layer_sizes = tuple(teacher_cfg["network_config"]["decoder_layer_sizes"])
+    encoder_hidden_layer_sizes = tuple(
+        teacher_cfg["network_config"]["encoder_layer_sizes"]
+    )
+    decoder_hidden_layer_sizes = tuple(
+        teacher_cfg["network_config"]["decoder_layer_sizes"]
+    )
     reference_obs_size = teacher_cfg["network_config"]["reference_obs_size"]
     action_size = teacher_cfg["network_config"]["action_size"]
     teacher_observation_size = teacher_cfg["network_config"]["observation_size"]
@@ -223,8 +232,12 @@ def train(
 
     env_proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
     logging.info(f"Reference observation size: {reference_obs_size}")
-    logging.info(f"Environment proprioceptive observation size: {env_proprioceptive_obs_size}")
-    logging.info(f"Teacher proprioceptive observation size: {teacher_proprioceptive_obs_size}")
+    logging.info(
+        f"Environment proprioceptive observation size: {env_proprioceptive_obs_size}"
+    )
+    logging.info(
+        f"Teacher proprioceptive observation size: {teacher_proprioceptive_obs_size}"
+    )
     if env_proprioceptive_obs_size != teacher_proprioceptive_obs_size:
         logging.warning(
             f"Environment proprioceptive_obs_size ({env_proprioceptive_obs_size}) "
@@ -496,7 +509,10 @@ def train(
     training_epoch = jax.pmap(
         training_epoch,
         axis_name=_PMAP_AXIS_NAME,
-        donate_argnums=(0, 1,),
+        donate_argnums=(
+            0,
+            1,
+        ),
     )
 
     training_walltime = 0
@@ -599,7 +615,9 @@ def train(
         num_evals_after_init -= ckpt_mgr.latest_step()
         start_it = ckpt_mgr.latest_step()
 
-    logging.info(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
+    logging.info(
+        f"Starting at iteration: {start_it} with {num_evals_after_init} evals left"
+    )
 
     # Run initial eval
     metrics = {}

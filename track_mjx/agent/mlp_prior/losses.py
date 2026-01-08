@@ -43,7 +43,9 @@ def compute_encoder_prior_kl_loss(
     # KL_j = 0.5 * (log(σ_p^2/σ_q^2) + σ_q^2/σ_p^2 + (μ_q - μ_p)^2/σ_p^2 - 1)
     log_var_diff = prior_logvar - encoder_logvar  # log(σ_p^2) - log(σ_q^2)
     var_ratio = jnp.exp(encoder_logvar - prior_logvar)  # σ_q^2 / σ_p^2
-    mean_diff_sq = jnp.square(encoder_mean - prior_mean) / jnp.exp(prior_logvar)  # (μ_q - μ_p)^2 / σ_p^2
+    mean_diff_sq = jnp.square(encoder_mean - prior_mean) / jnp.exp(
+        prior_logvar
+    )  # (μ_q - μ_p)^2 / σ_p^2
 
     # Element-wise KL for each latent dimension
     element_wise_kl = 0.5 * (log_var_diff + var_ratio + mean_diff_sq - 1)  # [T, B, d]
@@ -95,7 +97,9 @@ def create_ramp_schedule(
             effective_step = jnp.maximum(step - delay_steps, 0.0)
             is_delayed = step < delay_steps
             progress = jnp.clip(effective_step / ramp_steps, 0.0, 1.0)
-            cosine_value = start_value + 0.5 * (end_value - start_value) * (1 - jnp.cos(jnp.pi * progress))
+            cosine_value = start_value + 0.5 * (end_value - start_value) * (
+                1 - jnp.cos(jnp.pi * progress)
+            )
             return jnp.where(is_delayed, start_value, cosine_value)
         else:
             raise ValueError(f"schedule must be 'linear' or 'cosine', not {schedule}")
@@ -176,7 +180,9 @@ def compute_prior_training_loss(
         "kl_loss": kl_loss,
         "kl_weight": current_kl_weight,
         "mean_diff_l2": jnp.mean(jnp.linalg.norm(encoder_mean - prior_mean, axis=-1)),
-        "logvar_diff_l2": jnp.mean(jnp.linalg.norm(encoder_logvar - prior_logvar, axis=-1)),
+        "logvar_diff_l2": jnp.mean(
+            jnp.linalg.norm(encoder_logvar - prior_logvar, axis=-1)
+        ),
     }
 
     return total_loss, metrics

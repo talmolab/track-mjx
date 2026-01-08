@@ -176,7 +176,12 @@ def load_frozen_encoder_decoder(
     encoder_params = network_params["params"]["encoder"]
     decoder_params = network_params["params"]["decoder"]
 
-    return encoder_params, decoder_params, normalizer_params, OmegaConf.to_container(cfg)
+    return (
+        encoder_params,
+        decoder_params,
+        normalizer_params,
+        OmegaConf.to_container(cfg),
+    )
 
 
 def make_prior_networks(
@@ -229,7 +234,9 @@ def make_encoder_apply_fn(
         latents=latent_size,
     )
 
-    def apply_fn(params: Dict, obs: jnp.ndarray, key: jax.Array) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def apply_fn(
+        params: Dict, obs: jnp.ndarray, key: jax.Array
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Apply encoder to trajectory observations.
 
         Args:
@@ -285,7 +292,8 @@ def make_encoder_decoder_inference_fn(
     )
 
     decoder_module = intention_network.Decoder(
-        layer_sizes=list(decoder_hidden_layer_sizes) + [parametric_action_distribution.param_size],
+        layer_sizes=list(decoder_hidden_layer_sizes)
+        + [parametric_action_distribution.param_size],
     )
 
     def policy_fn(obs: jnp.ndarray, key: jax.Array) -> Tuple[jnp.ndarray, Dict]:
@@ -316,7 +324,9 @@ def make_encoder_decoder_inference_fn(
         if deterministic:
             z = latent_mean
         else:
-            z = intention_network.reparameterize(key_encoder, latent_mean, latent_logvar)
+            z = intention_network.reparameterize(
+                key_encoder, latent_mean, latent_logvar
+            )
 
         # Decode to action
         decoder_input = jnp.concatenate([z, proprio_obs], axis=-1)
@@ -326,7 +336,9 @@ def make_encoder_decoder_inference_fn(
         if deterministic:
             action = parametric_action_distribution.mode(logits)
         else:
-            raw_action = parametric_action_distribution.sample_no_postprocessing(logits, key_action)
+            raw_action = parametric_action_distribution.sample_no_postprocessing(
+                logits, key_action
+            )
             action = parametric_action_distribution.postprocess(raw_action)
 
         extras = {

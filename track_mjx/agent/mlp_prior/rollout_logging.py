@@ -61,7 +61,9 @@ def prior_training_rollout_logging_fn(
     latent_size = cfg.network_config.intention_size
     encoder_hidden_layer_sizes = tuple(cfg.network_config.encoder_layer_sizes)
     decoder_hidden_layer_sizes = tuple(cfg.network_config.decoder_layer_sizes)
-    prior_hidden_layer_sizes = tuple(cfg.network_config.get("prior_layer_sizes", [1024, 1024]))
+    prior_hidden_layer_sizes = tuple(
+        cfg.network_config.get("prior_layer_sizes", [1024, 1024])
+    )
     reference_obs_size = cfg.network_config.reference_obs_size
     proprioceptive_obs_size = cfg.network_config.proprioceptive_obs_size
     action_size = cfg.network_config.action_size
@@ -100,6 +102,7 @@ def prior_training_rollout_logging_fn(
     )
 
     from track_mjx.agent.mlp_prior.prior_networks import Prior
+
     prior_module = Prior(
         layer_sizes=list(prior_hidden_layer_sizes),
         latents=latent_size,
@@ -132,7 +135,9 @@ def prior_training_rollout_logging_fn(
         # Normalize observations
         normalized_obs = running_statistics.normalize(obs, normalizer_params)
         proprio_obs = normalized_obs[..., reference_obs_size:]
-        prior_mean, prior_logvar = prior_module.apply({"params": prior_params}, proprio_obs)
+        prior_mean, prior_logvar = prior_module.apply(
+            {"params": prior_params}, proprio_obs
+        )
         prior_means.append(prior_mean)
         prior_logvars.append(prior_logvar)
 
@@ -160,10 +165,10 @@ def prior_training_rollout_logging_fn(
     kl_per_timestep = []
     for t in range(len(encoder_means)):
         kl = losses.compute_encoder_prior_kl_loss(
-            encoder_means[t:t+1],
-            encoder_logvars[t:t+1],
-            prior_means[t:t+1],
-            prior_logvars[t:t+1],
+            encoder_means[t : t + 1],
+            encoder_logvars[t : t + 1],
+            prior_means[t : t + 1],
+            prior_logvars[t : t + 1],
         )
         kl_per_timestep.append(float(kl))
 
@@ -203,8 +208,14 @@ def prior_training_rollout_logging_fn(
                     writer.append_data(frame)
 
             wandb.log(
-                {"videos/encoder_decoder_rollout": wandb.Video(video_path, format="mp4")},
+                {
+                    "videos/encoder_decoder_rollout": wandb.Video(
+                        video_path, format="mp4"
+                    )
+                },
                 commit=False,
             )
         except mujoco.FatalError as e:
-            logging.warning(f"Video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
+            logging.warning(
+                f"Video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration."
+            )

@@ -64,6 +64,7 @@ def _load_from_run_state_prior(cfg: DictConfig) -> tuple:
     elif cfg.train_setup.restore_from_run_state:
         import fcntl
         import json
+
         base_path = Path(cfg.logging_config.model_path).resolve()
         full_path = base_path / cfg.train_setup.restore_from_run_state
 
@@ -86,6 +87,7 @@ def _load_from_run_state_prior(cfg: DictConfig) -> tuple:
     # If restoring from checkpoint, load the config
     if cfg.train_setup.checkpoint_to_restore is not None:
         from omegaconf import OmegaConf
+
         checkpoint_to_restore = cfg.train_setup.checkpoint_to_restore
         submitted_timesteps = cfg.train_setup.train_config.num_timesteps
 
@@ -129,7 +131,9 @@ def main(cfg: DictConfig):
 
     # Validate teacher config
     if cfg.teacher_config.checkpoint_path is None:
-        raise ValueError("teacher_config.checkpoint_path must be specified for prior training")
+        raise ValueError(
+            "teacher_config.checkpoint_path must be specified for prior training"
+        )
 
     # Prepare config BEFORE load_from_run_state so the config hash is consistent
     (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
@@ -152,14 +156,20 @@ def main(cfg: DictConfig):
         keep_clips_idx=cfg.env_config.keep_clips_idx,
     )
     # Create train/test split
-    key_split, _ = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
+    key_split, _ = jax.random.split(
+        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
+    )
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
     # Create environments
-    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
-    test_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=test_clips))
+    env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg_ml, clips=train_clips)
+    )
+    test_env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg_ml, clips=test_clips)
+    )
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -209,13 +219,39 @@ def main(cfg: DictConfig):
     # Update cfg.network_config with values from teacher (needed for rollout logging)
     teacher_net_cfg = teacher_cfg["network_config"]
     OmegaConf.set_struct(cfg.network_config, False)
-    OmegaConf.update(cfg.network_config, "intention_size", teacher_net_cfg["intention_size"], merge=False)
-    OmegaConf.update(cfg.network_config, "encoder_layer_sizes", teacher_net_cfg["encoder_layer_sizes"], merge=False)
-    OmegaConf.update(cfg.network_config, "decoder_layer_sizes", teacher_net_cfg["decoder_layer_sizes"], merge=False)
-    OmegaConf.update(cfg.network_config, "reference_obs_size", teacher_net_cfg["reference_obs_size"], merge=False)
-    OmegaConf.update(cfg.network_config, "proprioceptive_obs_size",
-                     teacher_net_cfg["observation_size"] - teacher_net_cfg["reference_obs_size"], merge=False)
-    OmegaConf.update(cfg.network_config, "action_size", teacher_net_cfg["action_size"], merge=False)
+    OmegaConf.update(
+        cfg.network_config,
+        "intention_size",
+        teacher_net_cfg["intention_size"],
+        merge=False,
+    )
+    OmegaConf.update(
+        cfg.network_config,
+        "encoder_layer_sizes",
+        teacher_net_cfg["encoder_layer_sizes"],
+        merge=False,
+    )
+    OmegaConf.update(
+        cfg.network_config,
+        "decoder_layer_sizes",
+        teacher_net_cfg["decoder_layer_sizes"],
+        merge=False,
+    )
+    OmegaConf.update(
+        cfg.network_config,
+        "reference_obs_size",
+        teacher_net_cfg["reference_obs_size"],
+        merge=False,
+    )
+    OmegaConf.update(
+        cfg.network_config,
+        "proprioceptive_obs_size",
+        teacher_net_cfg["observation_size"] - teacher_net_cfg["reference_obs_size"],
+        merge=False,
+    )
+    OmegaConf.update(
+        cfg.network_config, "action_size", teacher_net_cfg["action_size"], merge=False
+    )
     OmegaConf.set_struct(cfg.network_config, True)
 
     # Setup training function
@@ -231,7 +267,11 @@ def main(cfg: DictConfig):
         mlp_ppo_checkpoint_step=cfg.teacher_config.checkpoint_step,
         kl_weight=prior_cfg.kl_weight,
         use_kl_schedule=prior_cfg.get("use_kl_schedule", True),
-        kl_schedule_params=dict(prior_cfg.kl_schedule_params) if prior_cfg.get("use_kl_schedule", True) else None,
+        kl_schedule_params=(
+            dict(prior_cfg.kl_schedule_params)
+            if prior_cfg.get("use_kl_schedule", True)
+            else None
+        ),
         grad_clip_norm=prior_cfg.get("grad_clip_norm", 10.0),
         prior_hidden_layer_sizes=tuple(cfg.network_config.prior_layer_sizes),
         ckpt_mgr=ckpt_mgr,
@@ -242,18 +282,23 @@ def main(cfg: DictConfig):
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
-        randomization_fn=domain_randomization_maker(
-            floor_friction=cfg.env_config.domain_randomization.floor_friction,
-            static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
-            armature_scale=cfg.env_config.domain_randomization.armature_scale,
-            com_jitter=cfg.env_config.domain_randomization.com_jitter,
-            link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
-            torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
-            qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
-        ) if cfg.env_config.domain_randomization.use_domain_randomization else None,
+        randomization_fn=(
+            domain_randomization_maker(
+                floor_friction=cfg.env_config.domain_randomization.floor_friction,
+                static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
+                armature_scale=cfg.env_config.domain_randomization.armature_scale,
+                com_jitter=cfg.env_config.domain_randomization.com_jitter,
+                link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
+                torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
+                qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
+            )
+            if cfg.env_config.domain_randomization.use_domain_randomization
+            else None
+        ),
         prior_rollout_config=(
             dict(cfg.prior_rollout_config)
-            if hasattr(cfg, "prior_rollout_config") and cfg.prior_rollout_config is not None
+            if hasattr(cfg, "prior_rollout_config")
+            and cfg.prior_rollout_config is not None
             else None
         ),
     )
@@ -262,7 +307,9 @@ def main(cfg: DictConfig):
     # Use train_clips to ensure same clips as prior rollout evaluator
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=rollout_cfg, clips=train_clips))
+    rollout_env = vnl_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=rollout_cfg, clips=train_clips)
+    )
 
     # Define the jit reset/step functions for logging
     jit_reset = jax.jit(rollout_env.reset)

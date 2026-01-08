@@ -73,7 +73,8 @@ def create_prior_policy(
     )
 
     decoder_module = prior_networks.Decoder(
-        layer_sizes=list(decoder_hidden_layer_sizes) + [parametric_action_distribution.param_size],
+        layer_sizes=list(decoder_hidden_layer_sizes)
+        + [parametric_action_distribution.param_size],
     )
 
     def policy_fn(
@@ -96,7 +97,9 @@ def create_prior_policy(
         proprioceptive_obs = obs[..., -proprioceptive_obs_size:]
 
         # Normalize observations
-        normalized_obs = preprocess_observations_fn(proprioceptive_obs, normalizer_params)
+        normalized_obs = preprocess_observations_fn(
+            proprioceptive_obs, normalizer_params
+        )
 
         # Get prior distribution
         prior_mean, prior_logvar = prior_module.apply(
@@ -133,7 +136,9 @@ def create_prior_policy(
     return policy_fn
 
 
-def extract_prior_decoder_params(policy_params: Tuple) -> Tuple[Dict, Dict, running_statistics.RunningStatisticsState]:
+def extract_prior_decoder_params(
+    policy_params: Tuple,
+) -> Tuple[Dict, Dict, running_statistics.RunningStatisticsState]:
     """
     Extract prior and decoder parameters from full policy params.
 
@@ -237,14 +242,18 @@ class MultiModePriorRolloutEvaluator:
 
     def _build_single_rollout_fn(self, policy_params: Tuple, mode: Dict):
         """Build the jitted single rollout function for a specific mode."""
-        prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(policy_params)
+        prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(
+            policy_params
+        )
 
         # Create proprioceptive-only normalizer params
         proprio_normalizer_params = running_statistics.RunningStatisticsState(
             count=normalizer_params.count,
-            mean=normalizer_params.mean[-self.proprioceptive_obs_size:],
-            summed_variance=normalizer_params.summed_variance[-self.proprioceptive_obs_size:],
-            std=normalizer_params.std[-self.proprioceptive_obs_size:],
+            mean=normalizer_params.mean[-self.proprioceptive_obs_size :],
+            summed_variance=normalizer_params.summed_variance[
+                -self.proprioceptive_obs_size :
+            ],
+            std=normalizer_params.std[-self.proprioceptive_obs_size :],
         )
 
         # Create policy function for this mode
@@ -265,7 +274,9 @@ class MultiModePriorRolloutEvaluator:
         jit_step = jax.jit(self.env.step)
 
         @jax.jit
-        def single_rollout_fn(initial_state: Any, rng_key: jax.Array) -> Tuple[jax.Array, jax.Array, Any]:
+        def single_rollout_fn(
+            initial_state: Any, rng_key: jax.Array
+        ) -> Tuple[jax.Array, jax.Array, Any]:
             """Run a single prior rollout from given initial state."""
             state = initial_state
 
@@ -274,10 +285,11 @@ class MultiModePriorRolloutEvaluator:
                 key, key_action = random.split(key)
 
                 # Get proprioceptive observations
-                if hasattr(state.obs, 'get') or isinstance(state.obs, dict):
+                if hasattr(state.obs, "get") or isinstance(state.obs, dict):
                     proprio = state.obs.get("proprioception", state.obs)
                     if isinstance(proprio, dict):
                         from jax import flatten_util
+
                         proprio, _ = flatten_util.ravel_pytree(proprio)
                 else:
                     proprio = state.obs
@@ -300,7 +312,9 @@ class MultiModePriorRolloutEvaluator:
             )
 
             # Batch compute world z-axis termination AFTER rollout
-            upside_down_flags = compute_world_zaxis_termination(self.env, all_states.data)
+            upside_down_flags = compute_world_zaxis_termination(
+                self.env, all_states.data
+            )
 
             # Find first termination step
             any_upside_down = jnp.any(upside_down_flags)
@@ -309,16 +323,16 @@ class MultiModePriorRolloutEvaluator:
             # Combine NaN termination with upside-down termination
             terminated = jnp.logical_or(nan_terminated, any_upside_down)
             step_count = jnp.where(
-                any_upside_down,
-                first_upside_down_step + 1,
-                self.max_steps
+                any_upside_down, first_upside_down_step + 1, self.max_steps
             )
 
             return step_count, terminated, all_states
 
         return single_rollout_fn
 
-    def _render_rollout(self, states: Any, step_count: int, current_step: int, mode_name: str) -> None:
+    def _render_rollout(
+        self, states: Any, step_count: int, current_step: int, mode_name: str
+    ) -> None:
         """Render a rollout and log to wandb."""
         import wandb
         import imageio
@@ -333,14 +347,21 @@ class MultiModePriorRolloutEvaluator:
         frames = self.env.render(states_list, camera=self.render_camera_name)
 
         if len(frames) > 0:
-            video_path = f"{self.model_path}/prior_rollout_{mode_name}_{current_step}.mp4"
+            video_path = (
+                f"{self.model_path}/prior_rollout_{mode_name}_{current_step}.mp4"
+            )
             with imageio.get_writer(video_path, fps=self.render_fps) as writer:
                 for frame in frames:
                     writer.append_data(frame)
 
-            wandb.log({
-                f"videos/prior_rollout_{mode_name}": wandb.Video(video_path, format="mp4")
-            }, commit=False)
+            wandb.log(
+                {
+                    f"videos/prior_rollout_{mode_name}": wandb.Video(
+                        video_path, format="mp4"
+                    )
+                },
+                commit=False,
+            )
 
     def run_evaluation(
         self,
@@ -387,6 +408,7 @@ class MultiModePriorRolloutEvaluator:
                 self._render_rollout(states, step_count, eval_step, mode_name)
             except Exception as e:
                 import logging
+
                 logging.warning(f"Failed to render {mode_name} rollout: {e}")
 
         return {}

@@ -259,9 +259,10 @@ def main(cfg: DictConfig):
     )
 
     # Set the render env start frame to always be 0
+    # Use train_clips to ensure same clips as prior rollout evaluator
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=rollout_cfg))
+    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=rollout_cfg, clips=train_clips))
 
     # Define the jit reset/step functions for logging
     jit_reset = jax.jit(rollout_env.reset)

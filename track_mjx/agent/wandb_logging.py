@@ -66,6 +66,7 @@ def rollout_logging_fn(
     steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
         cfg.env_config.sim_dt * physics_steps_per_ctrl
     )
+
     episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
 
     for _ in range(episode_length):
@@ -136,7 +137,7 @@ def _log_rollout_video(
         with imageio.get_writer(video_path, fps=render_fps) as writer:
             video = env.render(
                 rollout,
-                camera=f"{cfg.render_config.render_camera_name}-ghost",
+                camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
                 height=480,
                 width=640,
             )

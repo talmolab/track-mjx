@@ -221,6 +221,7 @@ def train(
     kl_ramp_up_frac: float = 0.25,
     freeze_decoder: bool = False,
     checkpoint_callback: Callable[[int], None] | None = None,
+    grad_clip_threshold: float = 20.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
@@ -284,6 +285,7 @@ def train(
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
       checkpoint_callback: Callback called after checkpointing to update
         run state JSON for preemption recovery.
+      grad_clip_threshold: Maximum gradient norm for clipping.
       wrap_for_training: Function that wraps environment for training.
       use_pmap_on_reset: whether to use pmap instead of vmap for env.reset across devices.
     Returns:

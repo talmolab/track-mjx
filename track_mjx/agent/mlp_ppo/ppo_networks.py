@@ -19,10 +19,9 @@ from pathlib import Path
 import flax
 import jax
 from brax.training import distribution, networks, types
+from brax.training.acme import running_statistics
 from brax.training.types import PRNGKey
 from jax import numpy as jnp
-
-from brax.training.acme import running_statistics
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_ppo import intention_network
@@ -347,12 +346,15 @@ def make_decoder_policy_fn(
     )
 
     # Extract decoder normalizer params (proprioceptive portion only)
+    decoder_normalizer_params_dict = jax.tree.map(
+        lambda x: (
+            x[reference_obs_size:] if isinstance(x, jnp.ndarray) and x.ndim >= 1 else x
+        ),
+        intention_policy_params[0].__dict__,
+    )
+
     decoder_normalizer_params = running_statistics.RunningStatisticsState(
-        count=jnp.zeros(()),
-        mean=intention_policy_params[0].mean[reference_obs_size:],
-        summed_variance=intention_policy_params[0].summed_variance[reference_obs_size:],
-        std=intention_policy_params[0].std[reference_obs_size:],
-        std_eps=1e-6,
+        **decoder_normalizer_params_dict
     )
 
     decoder_params = (

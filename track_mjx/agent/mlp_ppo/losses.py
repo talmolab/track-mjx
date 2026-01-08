@@ -299,7 +299,6 @@ def compute_ppo_loss(
 
     total_loss = policy_loss + v_loss + entropy_loss + latent_loss
 
-
     return total_loss, {
         "total_loss": total_loss,
         "policy_loss": policy_loss,

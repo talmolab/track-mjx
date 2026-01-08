@@ -22,7 +22,9 @@ from brax.training import distribution, networks, types
 from brax.training.types import PRNGKey
 from jax import numpy as jnp
 
-from track_mjx.agent import checkpointing, masked_running_statistics
+from brax.training.acme import running_statistics
+
+from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_ppo import intention_network
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
@@ -340,16 +342,17 @@ def make_decoder_policy_fn(
         parametric_action_distribution.param_size,
         decoder_obs_size=(observation_size - reference_obs_size)
         + intention_latent_size,
-        preprocess_observations_fn=masked_running_statistics.normalize,
+        preprocess_observations_fn=running_statistics.normalize,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
     )
 
     # Extract decoder normalizer params (proprioceptive portion only)
-    decoder_normalizer_params = masked_running_statistics.RunningStatisticsState(
+    decoder_normalizer_params = running_statistics.RunningStatisticsState(
         count=jnp.zeros(()),
         mean=intention_policy_params[0].mean[reference_obs_size:],
         summed_variance=intention_policy_params[0].summed_variance[reference_obs_size:],
         std=intention_policy_params[0].std[reference_obs_size:],
+        std_eps=1e-6,
     )
 
     decoder_params = (

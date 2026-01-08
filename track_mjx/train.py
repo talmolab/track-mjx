@@ -174,7 +174,13 @@ def main(cfg: DictConfig) -> None:
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)
+    jit_step = jax.jit(rollout_env.step)
     policy_params_fn = functools.partial(
+        wandb_logging.rollout_logging_fn,
+        rollout_env,
+        jit_reset,
+        jit_step,
+        cfg,
         checkpoint_path,
     )
 

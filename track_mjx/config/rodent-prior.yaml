@@ -127,7 +127,6 @@ render_config:
 prior_rollout_config:
   enabled: true                       # Whether to run prior rollout evaluation
   eval_interval: 1                    # Run every N evals (1 = every eval)
-  num_rollouts: 4                     # Number of rollouts per mode
   max_steps: 400                      # Maximum steps per rollout
 
 # =============================================================================

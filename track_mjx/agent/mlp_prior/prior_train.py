@@ -574,7 +574,6 @@ def train(
             decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
             prior_hidden_layer_sizes=prior_hidden_layer_sizes,
             preprocess_observations_fn=normalize,
-            num_rollouts=prior_rollout_config.get("num_rollouts", 32),
             max_steps=prior_rollout_config.get("max_steps", 200),
             eval_interval=prior_rollout_config.get("eval_interval", 1),
             render_fps=render_config.get("render_fps", 50),
@@ -608,22 +607,27 @@ def train(
         logging.info("Running initial evaluation")
         policy_param = get_policy_params(training_state)
 
+        # Generate shared reset key for all rollouts (prior + encoder_decoder)
+        policy_params_fn_key, reset_key = jax.random.split(policy_params_fn_key)
+
         # Run multi-mode prior rollout evaluation during initial eval
         if multi_mode_evaluator is not None:
             prior_metrics = multi_mode_evaluator.run_evaluation(
                 policy_params=policy_param,
                 eval_step=0,
+                reset_key=reset_key,
             )
             if prior_metrics is not None:
                 metrics.update(prior_metrics)
                 logging.info(f"Initial prior rollout metrics: {prior_metrics}")
 
-        # Render initial video to wandb
+        # Render initial video to wandb (using same reset_key for same clip)
         _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
         policy_params_fn(
             current_step=0,
             params=policy_param,
             policy_params_fn_key=policy_params_fn_key,
+            reset_key=reset_key,
             render_video=True,
         )
 
@@ -671,16 +675,21 @@ def train(
 
             metrics = training_metrics.copy()
 
+            # Generate shared reset key for all rollouts (prior + encoder_decoder)
+            policy_params_fn_key, reset_key = jax.random.split(policy_params_fn_key)
+
             # Run multi-mode prior rollout evaluation if configured
             if multi_mode_evaluator is not None:
                 prior_metrics = multi_mode_evaluator.run_evaluation(
                     policy_params=policy_param,
                     eval_step=it,
+                    reset_key=reset_key,
                 )
                 if prior_metrics is not None:
                     metrics.update(prior_metrics)
                     logging.info(f"Prior rollout metrics: {prior_metrics}")
 
+            # Encoder-decoder logging (using same reset_key for same clip)
             _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
             render_config = config_dict.get("render_config", {})
             render_interval = render_config.get("render_interval", 1)
@@ -689,6 +698,7 @@ def train(
                     current_step=it,
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
+                    reset_key=reset_key,
                     render_video=True,
                 )
             else:
@@ -696,6 +706,7 @@ def train(
                     current_step=it,
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
+                    reset_key=reset_key,
                     render_video=False,
                 )
 

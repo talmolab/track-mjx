@@ -30,6 +30,7 @@ def prior_training_rollout_logging_fn(
     current_step: int,
     params,
     policy_params_fn_key,
+    reset_key: jax.Array,
     render_video: bool = False,
 ) -> None:
     """Rollout logging for prior training - logs latent statistics.
@@ -47,6 +48,7 @@ def prior_training_rollout_logging_fn(
         current_step: Current training step.
         params: Policy parameters (normalizer, {encoder, decoder, prior}).
         policy_params_fn_key: Random key for rollout.
+        reset_key: Random key for environment reset (shared with other evaluators).
         render_video: Whether to render video (default False for prior training).
     """
     physics_step_per_control_step = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
@@ -104,9 +106,10 @@ def prior_training_rollout_logging_fn(
     )
 
     # Run rollout and collect latent statistics
-    _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
+    _, act_rng = jax.random.split(policy_params_fn_key)
 
-    state = jit_reset(reset_rng)
+    # Use provided reset_key for environment reset (shared with other evaluators)
+    state = jit_reset(reset_key)
     rollout = [state]
     encoder_means = []
     encoder_logvars = []

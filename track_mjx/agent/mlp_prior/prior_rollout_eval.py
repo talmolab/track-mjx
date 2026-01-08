@@ -190,7 +190,6 @@ class MultiModePriorRolloutEvaluator:
         decoder_hidden_layer_sizes: Sequence[int],
         prior_hidden_layer_sizes: Sequence[int],
         preprocess_observations_fn: types.PreprocessObservationFn,
-        num_rollouts: int = 32,
         max_steps: int = 200,
         eval_interval: int = 1,
         render_fps: int = 50,
@@ -208,7 +207,6 @@ class MultiModePriorRolloutEvaluator:
             decoder_hidden_layer_sizes: Hidden layer sizes for decoder.
             prior_hidden_layer_sizes: Hidden layer sizes for prior.
             preprocess_observations_fn: Observation normalization function.
-            num_rollouts: Number of rollouts per evaluation per mode.
             max_steps: Maximum steps per rollout.
             eval_interval: Run evaluation every N evals (1 = every eval).
             render_fps: FPS for rendered video.
@@ -222,7 +220,6 @@ class MultiModePriorRolloutEvaluator:
         self.decoder_hidden_layer_sizes = decoder_hidden_layer_sizes
         self.prior_hidden_layer_sizes = prior_hidden_layer_sizes
         self.preprocess_observations_fn = preprocess_observations_fn
-        self.num_rollouts = num_rollouts
         self.max_steps = max_steps
         self.eval_interval = eval_interval
         self.render_fps = render_fps
@@ -238,8 +235,8 @@ class MultiModePriorRolloutEvaluator:
             {"name": "logvar_-2", "deterministic": False, "fixed_logvar": -2.0},
         ]
 
-    def _build_evaluate_fn(self, policy_params: Tuple, mode: Dict):
-        """Build the jitted evaluation function for a specific mode."""
+    def _build_single_rollout_fn(self, policy_params: Tuple, mode: Dict):
+        """Build the jitted single rollout function for a specific mode."""
         prior_params, decoder_params, normalizer_params = extract_prior_decoder_params(policy_params)
 
         # Create proprioceptive-only normalizer params
@@ -265,15 +262,12 @@ class MultiModePriorRolloutEvaluator:
             deterministic=mode["deterministic"],
         )
 
-        jit_reset = jax.jit(self.env.reset)
         jit_step = jax.jit(self.env.step)
 
-        def single_rollout_fn(rng_key: jax.Array) -> Tuple[jax.Array, jax.Array, Any]:
-            """Run a single prior rollout."""
-            key_reset, key_rollout = random.split(rng_key)
-
-            # Reset environment
-            state = jit_reset(key_reset)
+        @jax.jit
+        def single_rollout_fn(initial_state: Any, rng_key: jax.Array) -> Tuple[jax.Array, jax.Array, Any]:
+            """Run a single prior rollout from given initial state."""
+            state = initial_state
 
             def step_fn(carry, _):
                 state, key, nan_terminated = carry
@@ -300,7 +294,7 @@ class MultiModePriorRolloutEvaluator:
 
                 return (next_state, key, new_nan_terminated), next_state
 
-            initial_carry = (state, key_rollout, jnp.array(False))
+            initial_carry = (state, rng_key, jnp.array(False))
             (_, _, nan_terminated), all_states = jax.lax.scan(
                 step_fn, initial_carry, None, length=self.max_steps
             )
@@ -322,34 +316,7 @@ class MultiModePriorRolloutEvaluator:
 
             return step_count, terminated, all_states
 
-        # Vmap and jit the rollout function
-        vmapped_rollout = jax.vmap(single_rollout_fn)
-
-        @jax.jit
-        def evaluate_fn(rng_key: jax.Array) -> Tuple[Dict[str, jax.Array], Any, jax.Array]:
-            rollout_keys = random.split(rng_key, self.num_rollouts)
-            step_counts, terminated_flags, all_rollout_states = vmapped_rollout(rollout_keys)
-
-            avg_steps = jnp.mean(step_counts.astype(jnp.float32))
-            termination_rate = jnp.mean(terminated_flags.astype(jnp.float32))
-            max_steps_reached = jnp.mean((step_counts >= self.max_steps).astype(jnp.float32))
-
-            metrics = {
-                "avg_steps": avg_steps,
-                "termination_rate": termination_rate,
-                "max_steps_reached": max_steps_reached,
-                "min_steps": jnp.min(step_counts).astype(jnp.float32),
-                "max_steps": jnp.max(step_counts).astype(jnp.float32),
-            }
-
-            # Find best rollout (longest before termination)
-            best_idx = jnp.argmax(step_counts)
-            best_step_count = step_counts[best_idx]
-            best_states = jax.tree_util.tree_map(lambda x: x[best_idx], all_rollout_states)
-
-            return metrics, best_states, best_step_count
-
-        return evaluate_fn
+        return single_rollout_fn
 
     def _render_rollout(self, states: Any, step_count: int, current_step: int, mode_name: str) -> None:
         """Render a rollout and log to wandb."""
@@ -379,13 +346,15 @@ class MultiModePriorRolloutEvaluator:
         self,
         policy_params: Tuple,
         eval_step: int,
+        reset_key: jax.Array,
     ) -> Optional[Dict[str, float]]:
         """
-        Run prior rollout evaluation in all 3 modes.
+        Run prior rollout evaluation in all 3 modes from a shared initial state.
 
         Args:
             policy_params: Current policy parameters.
             eval_step: Current evaluation step number.
+            reset_key: Random key for resetting environment (shared with other evaluators).
 
         Returns:
             Dictionary of metrics if evaluation was run, None otherwise.
@@ -394,33 +363,45 @@ class MultiModePriorRolloutEvaluator:
         if eval_step % self.eval_interval != 0:
             return None
 
+        # Reset environment once with shared key to get initial state
+        jit_reset = jax.jit(self.env.reset)
+        initial_state = jit_reset(reset_key)
+
         all_metrics = {}
+        self._key, rollout_key = random.split(self._key)
 
         for mode in self.evaluation_modes:
             mode_name = mode["name"]
 
-            # Build the evaluate function for this mode
-            evaluate_fn = self._build_evaluate_fn(policy_params, mode)
+            # Build single-rollout function for this mode
+            single_rollout_fn = self._build_single_rollout_fn(policy_params, mode)
 
-            # Get new random key
-            self._key, eval_key = random.split(self._key)
+            # Get random key for this mode's rollout
+            rollout_key, mode_key = random.split(rollout_key)
 
-            # Run evaluation
+            # Run single rollout from shared initial state
             t_start = time.time()
-            metrics, best_states, best_step_count = evaluate_fn(eval_key)
-            # Block until complete and convert to Python floats
-            metrics = {k: float(v) for k, v in metrics.items()}
-            best_step_count = int(best_step_count)
+            step_count, terminated, states = single_rollout_fn(initial_state, mode_key)
+            # Block until complete and convert to Python types
+            step_count = int(step_count)
+            terminated = bool(terminated)
             eval_time = time.time() - t_start
+
+            # Compute metrics for single rollout
+            metrics = {
+                "steps": float(step_count),
+                "terminated": float(terminated),
+                "max_steps_reached": float(step_count >= self.max_steps),
+            }
 
             # Add metrics with mode prefix
             for k, v in metrics.items():
                 all_metrics[f"prior_rollout/{mode_name}/{k}"] = v
             all_metrics[f"prior_rollout/{mode_name}/eval_time"] = eval_time
 
-            # Render the best rollout for this mode
+            # Render the rollout for this mode
             try:
-                self._render_rollout(best_states, best_step_count, eval_step, mode_name)
+                self._render_rollout(states, step_count, eval_step, mode_name)
             except Exception as e:
                 import logging
                 logging.warning(f"Failed to render {mode_name} rollout: {e}")

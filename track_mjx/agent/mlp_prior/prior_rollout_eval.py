@@ -2,12 +2,13 @@
 Multi-mode prior rollout evaluation for prior training.
 
 This module provides functionality to evaluate the prior network's ability to
-generate plausible actions by running rollouts in 3 different modes:
+generate plausible actions by running rollouts in 4 different modes:
 1. Deterministic: z = prior_mean (no sampling)
 2. logvar=0: z sampled with std=1.0
 3. logvar=-2: z sampled with std≈0.368
+4. predicted_logvar: z sampled using network-predicted logvar per dimension
 
-All three modes are evaluated and rendered separately.
+All four modes are evaluated and rendered separately.
 """
 
 from typing import Callable, Optional, Sequence, Tuple, Any, Dict, List
@@ -184,10 +185,11 @@ class MultiModePriorRolloutEvaluator:
     """
     Evaluator class for running prior-only rollouts in multiple modes.
 
-    This class runs evaluation in 3 modes:
+    This class runs evaluation in 4 modes:
     1. deterministic: z = prior_mean (no sampling)
     2. logvar_0: z sampled with std=1.0 (logvar=0)
     3. logvar_-2: z sampled with std≈0.368 (logvar=-2)
+    4. predicted_logvar: z sampled using network-predicted logvar
 
     All modes are rendered separately.
     """
@@ -239,11 +241,12 @@ class MultiModePriorRolloutEvaluator:
 
         self._key = random.PRNGKey(0)
 
-        # Define 3 evaluation modes
+        # Define 4 evaluation modes
         self.evaluation_modes = [
             {"name": "deterministic", "deterministic": True, "fixed_logvar": -2.0},
             {"name": "logvar_0", "deterministic": False, "fixed_logvar": 0.0},
             {"name": "logvar_-2", "deterministic": False, "fixed_logvar": -2.0},
+            {"name": "predicted_logvar", "deterministic": False, "fixed_logvar": None},
         ]
 
     def _build_single_rollout_fn(self, policy_params: Tuple, mode: Dict):

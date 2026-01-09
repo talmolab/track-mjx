@@ -230,6 +230,8 @@ def make_logging_inference_fn(
 def make_intention_ppo_networks(
     obs_sizes: Mapping[str, int],
     action_size: int,
+    action_distribution: distribution.ParametricDistribution = distribution.NormalTanhDistribution,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     intention_latent_size: int = 60,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
@@ -261,9 +263,7 @@ def make_intention_ppo_networks(
     Returns:
         PPOImitationNetworks containing policy, value, and action distribution.
     """
-    parametric_action_distribution = distribution.NormalTanhDistribution(
-        event_size=action_size
-    )
+    parametric_action_distribution = action_distribution(event_size=action_size)
 
     policy_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,

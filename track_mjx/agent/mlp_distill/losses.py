@@ -5,6 +5,10 @@ The distillation loss consists of:
 1. MSE loss between student and teacher actions
 2. AR(1) loss between consecutive latent means (z_t - φ*z_{t-1}), matching PULSE
 3. KL divergence loss between encoder and prior distributions
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
 from typing import Any, Callable, Tuple

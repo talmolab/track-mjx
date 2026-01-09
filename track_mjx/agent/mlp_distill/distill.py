@@ -19,6 +19,10 @@ Trains a student network to mimic a pretrained teacher network using:
 1. MSE loss between student and teacher actions
 2. Autoregressive loss between consecutive encoder latent means
 3. KL divergence loss between encoder and prior distributions
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
 import functools
@@ -40,6 +44,12 @@ from track_mjx.agent import gradients
 from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_distill import losses, distill_networks
 from track_mjx.agent.mlp_distill import prior_rollout
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    get_obs_sizes,
+    init_dict_normalizer,
+    update_dict_normalizer,
+)
 from track_mjx.config import utils
 
 from mujoco_playground import wrapper as mp_wrapper
@@ -64,7 +74,7 @@ class TrainingState:
 
     optimizer_state: optax.OptState
     params: losses.DistillNetworkParams
-    normalizer_params: running_statistics.RunningStatisticsState
+    normalizer_params: DictRunningStatisticsState  # Dict-based normalizer
     env_steps: jnp.ndarray
 
 
@@ -273,7 +283,7 @@ def train(
     def minibatch_step(
         carry,
         data: types.Transition,
-        normalizer_params: running_statistics.RunningStatisticsState,
+        normalizer_params: DictRunningStatisticsState,
     ):
         optimizer_state, params, key, it = carry
         key, key_loss = jax.random.split(key)
@@ -292,7 +302,7 @@ def train(
         carry,
         unused_t,
         data: types.Transition,
-        normalizer_params: running_statistics.RunningStatisticsState,
+        normalizer_params: DictRunningStatisticsState,
     ):
         optimizer_state, params, key, it = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
@@ -348,8 +358,8 @@ def train(
         )
         assert data.discount.shape[1:] == (unroll_length,)
 
-        # Update normalization params
-        normalizer_params = running_statistics.update(
+        # Update normalization params (dict-based)
+        normalizer_params = update_dict_normalizer(
             training_state.normalizer_params,
             data.observation,
             pmap_axis_name=_PMAP_AXIS_NAME,
@@ -471,27 +481,22 @@ def train(
             reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
         )(key_envs)
 
+    # Get observation sizes from environment state
+    obs_sizes = get_obs_sizes(env_state.obs)
+
     # Update config with network info
     config_dict["network_config"].update(
         {
-            "observation_size": env_state.obs.shape[-1],
+            "obs_sizes": obs_sizes,
             "action_size": env.action_size,
             "normalize_observations": normalize_observations,
-            "reference_obs_size": reference_obs_size,
-            "proprioceptive_obs_size": proprioceptive_obs_size,
         }
     )
 
-    normalize = lambda x, y: x
-    if normalize_observations:
-        normalize = running_statistics.normalize
-
-    # Create student network
+    # Create student network with dict observations
     student_networks = network_factory(
-        env_state.obs.shape[-1],
-        reference_obs_size,
-        env.action_size,
-        preprocess_observations_fn=normalize,
+        obs_sizes=obs_sizes,
+        action_size=env.action_size,
         encoder_logvar_min=encoder_logvar_min,
         encoder_logvar_max=encoder_logvar_max,
         prior_logvar_min=prior_logvar_min,
@@ -550,9 +555,7 @@ def train(
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=running_statistics.init_state(
-            specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
-        ),
+        normalizer_params=init_dict_normalizer(env_state.obs),
         env_steps=0,
     )
 

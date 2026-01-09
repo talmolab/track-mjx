@@ -8,9 +8,13 @@ generate plausible actions by running rollouts in 3 different modes:
 3. logvar=-2: z sampled with std≈0.368
 
 All three modes are evaluated and rendered separately.
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
-from typing import Callable, Optional, Sequence, Tuple, Any, Dict, List
+from typing import Callable, Optional, Sequence, Tuple, Any, Dict, List, Union
 import functools
 import time
 
@@ -21,6 +25,7 @@ from brax.training import distribution, types
 from brax.training.acme import running_statistics
 
 from track_mjx.agent.mlp_prior import prior_networks
+from track_mjx.agent.observation_utils import DictRunningStatisticsState
 
 
 def reparameterize(rng: jax.Array, mean: jax.Array, logvar: jax.Array) -> jax.Array:
@@ -138,12 +143,13 @@ def create_prior_policy(
 
 def extract_prior_decoder_params(
     policy_params: Tuple,
-) -> Tuple[Dict, Dict, running_statistics.RunningStatisticsState]:
+) -> Tuple[Dict, Dict, DictRunningStatisticsState]:
     """
     Extract prior and decoder parameters from full policy params.
 
     Args:
         policy_params: Tuple of (normalizer_params, network_params).
+            normalizer_params is a DictRunningStatisticsState.
 
     Returns:
         Tuple of (prior_params, decoder_params, normalizer_params).
@@ -246,15 +252,8 @@ class MultiModePriorRolloutEvaluator:
             policy_params
         )
 
-        # Create proprioceptive-only normalizer params
-        proprio_normalizer_params = running_statistics.RunningStatisticsState(
-            count=normalizer_params.count,
-            mean=normalizer_params.mean[-self.proprioceptive_obs_size :],
-            summed_variance=normalizer_params.summed_variance[
-                -self.proprioceptive_obs_size :
-            ],
-            std=normalizer_params.std[-self.proprioceptive_obs_size :],
-        )
+        # Extract proprioceptive-only normalizer from dict normalizer
+        proprio_normalizer_params = normalizer_params.proprioception
 
         # Create policy function for this mode
         policy_fn = create_prior_policy(

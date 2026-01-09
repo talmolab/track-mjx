@@ -3,6 +3,10 @@ Loss functions for prior network training.
 
 The prior training loss consists of KL divergence between the encoder
 (frozen, from pretrained mlp_ppo) and the prior (trainable) distributions.
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
 from typing import Any, Callable, Dict, Tuple
@@ -13,6 +17,12 @@ from brax.training.acme import running_statistics
 import jax
 import jax.numpy as jnp
 import optax
+
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    normalize_dict_obs,
+    flatten_obs_dict,
+)
 
 
 def compute_encoder_prior_kl_loss(
@@ -110,7 +120,7 @@ def create_ramp_schedule(
 def compute_prior_training_loss(
     prior_params: Dict,
     frozen_encoder_params: Dict,
-    normalizer_params: running_statistics.RunningStatisticsState,
+    normalizer_params: DictRunningStatisticsState,
     data: types.Transition,
     rng: jnp.ndarray,
     step: int,
@@ -127,13 +137,13 @@ def compute_prior_training_loss(
     Args:
         prior_params: Trainable prior network parameters
         frozen_encoder_params: Frozen encoder network parameters (from mlp_ppo)
-        normalizer_params: Observation normalizer parameters
-        data: Transition data with shape [B, T]
+        normalizer_params: Dict observation normalizer parameters
+        data: Transition data with shape [B, T], observation is a dict
         rng: Random key
         step: Current training step (for scheduling)
         encoder_apply_fn: Function to apply encoder: (params, obs, key) -> (mean, logvar)
         prior_apply_fn: Function to apply prior: (params, obs) -> (mean, logvar)
-        reference_obs_size: Size of reference/trajectory observations
+        reference_obs_size: Size of reference/trajectory observations (unused with dict obs)
         kl_weight: Weight for KL divergence loss
         kl_schedule: Optional schedule function for KL weight
 
@@ -145,12 +155,13 @@ def compute_prior_training_loss(
     # Put the time dimension first: [B, T] -> [T, B]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
-    # Normalize observations
-    normalized_obs = running_statistics.normalize(data.observation, normalizer_params)
+    # Flatten and normalize dict observations
+    flat_obs = flatten_obs_dict(data.observation)
+    normalized_obs = normalize_dict_obs(flat_obs, normalizer_params)
 
-    # Split observations into trajectory and proprioceptive parts
-    traj_obs = normalized_obs[..., :reference_obs_size]
-    proprio_obs = normalized_obs[..., reference_obs_size:]
+    # Access observations by key
+    traj_obs = normalized_obs["imitation_target"]
+    proprio_obs = normalized_obs["proprioception"]
 
     # Get encoder outputs (frozen - apply stop_gradient)
     encoder_mean, encoder_logvar = encoder_apply_fn(

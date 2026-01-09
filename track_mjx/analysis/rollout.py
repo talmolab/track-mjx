@@ -8,7 +8,7 @@ Rollouts can be used for evaluation, visualization, or data collection.
 from typing import Any, Callable
 
 import jax
-from brax.envs.base import Env
+from mujoco_playground._src import mjx_env
 from jax import numpy as jnp
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
@@ -16,7 +16,7 @@ from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 
 
-def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
+def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
     """Create a VNL imitation learning environment from a configuration.
 
     Wraps the VNL Imitation environment with a FlattenObsWrapper for
@@ -47,7 +47,7 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
 
 def create_rollout_generator(
     cfg: dict[str, Any] | DictConfig,
-    env: Env,
+    env: mjx_env.MjxEnv,
     inference_fn: Callable[[jnp.ndarray, jax.Array], tuple[jnp.ndarray, dict]],
     log_activations: bool = False,
     log_metrics: bool = False,

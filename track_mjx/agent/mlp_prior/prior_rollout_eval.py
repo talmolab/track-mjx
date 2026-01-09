@@ -403,9 +403,9 @@ class MultiModePriorRolloutEvaluator:
             step_count, _, states = single_rollout_fn(initial_state, mode_key)
             step_count = int(step_count)
 
-            # Render the rollout for this mode
+            # Render the full rollout for this mode (even if terminated early)
             try:
-                self._render_rollout(states, step_count, eval_step, mode_name)
+                self._render_rollout(states, self.max_steps, eval_step, mode_name)
             except Exception as e:
                 import logging
 

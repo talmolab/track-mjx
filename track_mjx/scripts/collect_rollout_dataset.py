@@ -30,7 +30,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import orbax.checkpoint as ocp
-from brax.training import distribution, types
+from brax.training import distribution
 from brax.training.acme import running_statistics
 from jax import random
 from ml_collections import ConfigDict
@@ -291,7 +291,7 @@ def create_prior_policy_fn(
         proprioceptive_obs_size=proprioceptive_obs_size,
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         prior_hidden_layer_sizes=prior_hidden_layer_sizes,
-        preprocess_observations_fn=types.identity_observation_preprocessor,
+        preprocess_observations_fn=running_statistics.normalize,
         fixed_logvar=fixed_logvar,
         deterministic=deterministic,
     )

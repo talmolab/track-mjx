@@ -55,6 +55,7 @@ def _get_package_commit(package_name: str) -> str:
 from vnl_playground import registry as vnl_registry
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
+from vnl_playground.tasks.celegans import consts as celegans_consts
 
 # Project root directory (track-mjx/)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent

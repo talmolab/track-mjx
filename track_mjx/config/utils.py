@@ -97,7 +97,7 @@ def prepare_config(
 
     if walker_name == "rodent":
         logging.info("Using rodent walker")
-        walker_xml_path = str(rodent_consts.RODENT_FULL_COLLISION_XML)
+        walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
         arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
         reference_data_path = _resolve_data_path(
             "data/rodent/rodent_reference_clips.h5"

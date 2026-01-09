@@ -33,6 +33,10 @@ data_config:
   # Random seed for reproducible data splitting
   split_seed: 42
 
+  # Whether to exclude root position and quaternion (first 7 qpos dims)
+  # Set to true to omit root info and only use joint angles
+  exclude_root: false
+
 # =============================================================================
 # Network Architecture
 # =============================================================================

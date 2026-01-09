@@ -220,6 +220,7 @@ def train(
     config_dict: Dict,
     checkpoint_callback: Callable[[int], None] | None = None,
     checkpoint_every: int = 1,
+    exclude_root: bool = False,
 ) -> Tuple[TrainingState, Dict[str, Any]]:
     """Train discriminator network.
 
@@ -238,10 +239,22 @@ def train(
         config_dict: Configuration dictionary for checkpointing.
         checkpoint_callback: Optional callback called after each checkpoint save.
         checkpoint_every: Save checkpoint every N epochs (default: 1 = every epoch).
+        exclude_root: If True, exclude first 7 qpos dims (root pos + quat).
 
     Returns:
         Tuple of (final_training_state, final_metrics).
     """
+    # Optionally exclude root position and quaternion (first 7 dims)
+    if exclude_root:
+        logging.info("Excluding root (first 7 qpos dims): root position + quaternion")
+        dataset = MotionClipDataset(
+            train_real=dataset.train_real[:, :, 7:],
+            train_fake=dataset.train_fake[:, :, 7:],
+            test_real=dataset.test_real[:, :, 7:],
+            test_fake=dataset.test_fake[:, :, 7:],
+            metadata=dataset.metadata,
+        )
+
     # Determine input size from data shape
     sample_shape = dataset.train_real.shape[1:]  # (num_steps, qpos_dim)
     input_size = int(np.prod(sample_shape))  # num_steps * qpos_dim

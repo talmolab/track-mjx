@@ -14,7 +14,7 @@
 data_config:
   # Path to H5 file created by collect_rollout_dataset.py (REQUIRED)
   # This file contains multiple datasets with motion clips from different sources.
-  h5_path: null
+  h5_path: "/home/mila/a/aidan.sirbu/track-mjx/data/discriminator_dataset.h5"
 
   # Dataset names for real and fake classes.
   # Available datasets from collect_rollout_dataset.py:
@@ -79,7 +79,7 @@ train_setup:
 # Settings for wandb logging and checkpoint storage.
 logging_config:
   # Wandb project name
-  project_name: "discriminator_training"
+  project_name: "vnl_debug"
 
   # Wandb group name for organizing runs
   group_name: "motion_discriminator"
@@ -88,4 +88,4 @@ logging_config:
   exp_name: null
 
   # Base path for saving checkpoints
-  model_path: "/tmp/discriminator_checkpoints"
+  model_path: "/home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints"

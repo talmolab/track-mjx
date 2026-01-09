@@ -37,6 +37,10 @@ data_config:
   # Set to true to omit root info and only use joint angles
   exclude_root: false
 
+  # Whether to exclude joints that are always zero in the data
+  # Indices: [18, 24-48, 57, 65, 73]
+  exclude_zero_joints: false
+
 # =============================================================================
 # Network Architecture
 # =============================================================================

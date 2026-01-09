@@ -221,6 +221,7 @@ def train(
     checkpoint_callback: Callable[[int], None] | None = None,
     checkpoint_every: int = 1,
     exclude_root: bool = False,
+    exclude_zero_joints: bool = False,
 ) -> Tuple[TrainingState, Dict[str, Any]]:
     """Train discriminator network.
 
@@ -240,18 +241,44 @@ def train(
         checkpoint_callback: Optional callback called after each checkpoint save.
         checkpoint_every: Save checkpoint every N epochs (default: 1 = every epoch).
         exclude_root: If True, exclude first 7 qpos dims (root pos + quat).
+        exclude_zero_joints: If True, exclude joints that are always zero.
 
     Returns:
         Tuple of (final_training_state, final_metrics).
     """
-    # Optionally exclude root position and quaternion (first 7 dims)
+    # Indices of joints that are always zero in the data
+    ZERO_JOINT_INDICES = [
+        18, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+        40, 41, 42, 43, 44, 45, 46, 47, 48, 57, 65, 73
+    ]
+
+    # Determine which qpos indices to keep
+    all_indices = set(range(74))  # Original qpos has 74 dimensions
+    indices_to_exclude = set()
+
     if exclude_root:
-        logging.info("Excluding root (first 7 qpos dims): root position + quaternion")
+        # Exclude first 7 dims: root position (3) + root quaternion (4)
+        indices_to_exclude.update(range(7))
+        logging.info("Excluding root (indices 0-6): root position + quaternion")
+
+    if exclude_zero_joints:
+        indices_to_exclude.update(ZERO_JOINT_INDICES)
+        logging.info(f"Excluding zero joints ({len(ZERO_JOINT_INDICES)} indices)")
+
+    # Compute indices to keep
+    indices_to_keep = sorted(all_indices - indices_to_exclude)
+
+    if len(indices_to_keep) < 74:
+        logging.info(
+            f"Keeping {len(indices_to_keep)} of 74 qpos dimensions "
+            f"(excluding {74 - len(indices_to_keep)})"
+        )
+        # Slice data to keep only selected indices
         dataset = MotionClipDataset(
-            train_real=dataset.train_real[:, :, 7:],
-            train_fake=dataset.train_fake[:, :, 7:],
-            test_real=dataset.test_real[:, :, 7:],
-            test_fake=dataset.test_fake[:, :, 7:],
+            train_real=dataset.train_real[:, :, indices_to_keep],
+            train_fake=dataset.train_fake[:, :, indices_to_keep],
+            test_real=dataset.test_real[:, :, indices_to_keep],
+            test_fake=dataset.test_fake[:, :, indices_to_keep],
             metadata=dataset.metadata,
         )
 

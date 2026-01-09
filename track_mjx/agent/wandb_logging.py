@@ -159,7 +159,7 @@ def _log_rollout_video(
     try:
         with imageio.get_writer(video_path, fps=render_fps) as writer:
             video = env.render(
-                rollout,
+                trajectory=rollout,
                 camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
                 height=480,
                 width=640,

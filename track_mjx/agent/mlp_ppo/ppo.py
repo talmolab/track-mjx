@@ -181,7 +181,8 @@ def train(
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,
-    kl_weight: float = 1e-3,
+    latent_kl_weight: float = 1e-3,
+    latent_ar1_weight: float = 1e-3,
     discounting: float = 0.9,
     seed: int = 0,
     use_pmap_on_reset: bool = True,
@@ -201,6 +202,7 @@ def train(
     ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
+    vf_loss_coefficient: float = 0.5,
     eval_env: envs.Env | None = None,
     eval_env_test_set: envs.Env | None = None,
     policy_params_fn: Callable[..., None] = lambda *args: None,
@@ -212,6 +214,7 @@ def train(
     kl_ramp_up_frac: float = 0.25,
     freeze_decoder: bool = False,
     checkpoint_callback: Callable[[int], None] | None = None,
+    grad_clip_threshold: float = 20.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
@@ -262,6 +265,7 @@ def train(
         functions
       progress_fn: a user-defined callback function for reporting/plotting metrics
       normalize_advantage: whether to normalize advantage estimate
+      vf_loss_coefficient: Coefficient for value function loss.
       eval_env: an optional environment for eval only, defaults to `environment`
       policy_params_fn: a user-defined callback function that can be used for
         saving policy checkpoints
@@ -274,6 +278,7 @@ def train(
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
       checkpoint_callback: Callback called after checkpointing to update
         run state JSON for preemption recovery.
+      grad_clip_threshold: Maximum gradient norm for clipping.
       wrap_for_training: Function that wraps environment for training.
       use_pmap_on_reset: whether to use pmap instead of vmap for env.reset across devices.
     Returns:
@@ -573,14 +578,20 @@ def train(
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     optimizer = optax.chain(
-        optax.clip_by_global_norm(0.5),
+        optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
-    kl_schedule = None
+    latent_kl_schedule = None
+    latent_ar1_schedule = None
     if use_kl_schedule:
-        kl_schedule = losses.create_ramp_schedule(
-            max_value=kl_weight,
+        latent_kl_schedule = losses.create_ramp_schedule(
+            max_value=latent_kl_weight,
+            ramp_steps=int(num_evals * kl_ramp_up_frac),
+            schedule="linear",
+        )
+        latent_ar1_schedule = losses.create_ramp_schedule(
+            max_value=latent_ar1_weight,
             ramp_steps=int(num_evals * kl_ramp_up_frac),
             schedule="linear",
         )
@@ -589,13 +600,16 @@ def train(
         losses.compute_ppo_loss,
         ppo_network=ppo_network,
         entropy_cost=entropy_cost,
-        kl_weight=kl_weight,
+        latent_kl_weight=latent_kl_weight,
+        latent_ar1_weight=latent_ar1_weight,
         discounting=discounting,
         reward_scaling=reward_scaling,
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
-        kl_schedule=kl_schedule,
+        vf_coefficient=vf_loss_coefficient,
+        latent_kl_schedule=latent_kl_schedule,
+        latent_ar1_schedule=latent_ar1_schedule,
     )
 
     init_params = losses.PPONetworkParams(
@@ -675,7 +689,11 @@ def train(
 
     # gradient update function with the new optimizer and loss function
     gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
+        loss_fn,
+        optimizer,
+        pmap_axis_name=_PMAP_AXIS_NAME,
+        has_aux=True,
+        clip_threshold=grad_clip_threshold,
     )
 
     training_state = jax.device_put_replicated(

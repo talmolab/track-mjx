@@ -13,13 +13,14 @@ Output H5 contains:
 - prior_qpos_logvar_-2: Prior rollouts with logvar=-2 (std~0.37)
 - prior_qpos_logvar_0: Prior rollouts with logvar=0 (std=1.0)
 - prior_qpos_deterministic: Prior rollouts using mean (no sampling)
+- prior_qpos_predicted_logvar: Prior rollouts using network-predicted logvar
 """
 
 import argparse
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Sequence, Tuple
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = "egl"
@@ -246,7 +247,7 @@ def create_encoder_decoder_policy(
 def create_prior_policy_fn(
     policy_params: Tuple,
     cfg: Any,
-    fixed_logvar: float,
+    fixed_logvar: Optional[float],
     deterministic: bool,
 ) -> Callable:
     """Create prior policy using prior and decoder networks.
@@ -254,7 +255,7 @@ def create_prior_policy_fn(
     Args:
         policy_params: Tuple of (normalizer_params, network_params).
         cfg: Configuration from checkpoint.
-        fixed_logvar: Fixed log-variance for sampling.
+        fixed_logvar: Fixed log-variance for sampling. If None, uses predicted logvar.
         deterministic: If True, use mean instead of sampling.
 
     Returns:
@@ -659,6 +660,30 @@ def main():
     )
     print(f"  Completed in {time.time() - t_start:.1f}s")
     print(f"  Shape: {results['prior_deterministic'].shape}")
+
+    # 7. Prior rollouts with predicted logvar
+    print("\n" + "=" * 60)
+    print("Collecting prior rollouts (predicted logvar, per-dimension)...")
+    print("=" * 60)
+    prior_policy_predicted = create_prior_policy_fn(
+        policy_params, cfg, fixed_logvar=None, deterministic=False
+    )
+    rng, key = random.split(rng)
+    t_start = time.time()
+    results["prior_predicted_logvar"] = collect_rollouts(
+        env,
+        reference_clips,
+        prior_policy_predicted,
+        num_clips,
+        num_steps,
+        args.batch_size,
+        proprioceptive_obs_size,
+        is_prior_policy=True,
+        rng_key=key,
+        desc="Prior (predicted logvar)",
+    )
+    print(f"  Completed in {time.time() - t_start:.1f}s")
+    print(f"  Shape: {results['prior_predicted_logvar'].shape}")
 
     # Save results
     print("\n" + "=" * 60)

@@ -40,7 +40,7 @@ def create_prior_policy(
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     prior_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
-    fixed_logvar: float = -2.0,
+    fixed_logvar: Optional[float] = -2.0,
     deterministic: bool = False,
 ) -> Callable:
     """
@@ -56,7 +56,8 @@ def create_prior_policy(
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder.
         prior_hidden_layer_sizes: Hidden layer sizes for prior.
         preprocess_observations_fn: Function to normalize observations.
-        fixed_logvar: Fixed log-variance to use for latent sampling.
+        fixed_logvar: Fixed log-variance to use for latent sampling. If None, uses the
+            network-predicted logvar per dimension.
         deterministic: If True, use mean of prior distribution instead of sampling.
 
     Returns:
@@ -106,14 +107,19 @@ def create_prior_policy(
             {"params": prior_network_params}, normalized_obs
         )
 
-        # Use fixed logvar for more stable sampling
-        fixed_logvar_array = jnp.full_like(prior_mean, fixed_logvar)
+        # Determine which logvar to use for sampling
+        if fixed_logvar is not None:
+            # Use fixed logvar for more stable sampling
+            logvar_for_sampling = jnp.full_like(prior_mean, fixed_logvar)
+        else:
+            # Use network-predicted logvar per dimension
+            logvar_for_sampling = prior_logvar
 
         # Sample from prior
         if deterministic:
             z = prior_mean
         else:
-            z = reparameterize(key_sample, prior_mean, fixed_logvar_array)
+            z = reparameterize(key_sample, prior_mean, logvar_for_sampling)
 
         # Decode to action distribution parameters
         decoder_input = jnp.concatenate([z, normalized_obs], axis=-1)

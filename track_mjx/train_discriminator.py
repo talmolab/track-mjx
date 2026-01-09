@@ -176,6 +176,7 @@ def main(cfg: DictConfig) -> None:
         seed=cfg.train_setup.seed,
         ckpt_mgr=ckpt_mgr,
         config_dict=cfg_dict,
+        checkpoint_every=cfg.train_setup.checkpoint_every,
     )
 
     # Log final metrics

@@ -219,6 +219,7 @@ def train(
     ckpt_mgr: ocp.CheckpointManager,
     config_dict: Dict,
     checkpoint_callback: Callable[[int], None] | None = None,
+    checkpoint_every: int = 1,
 ) -> Tuple[TrainingState, Dict[str, Any]]:
     """Train discriminator network.
 
@@ -236,6 +237,7 @@ def train(
         ckpt_mgr: Orbax checkpoint manager.
         config_dict: Configuration dictionary for checkpointing.
         checkpoint_callback: Optional callback called after each checkpoint save.
+        checkpoint_every: Save checkpoint every N epochs (default: 1 = every epoch).
 
     Returns:
         Tuple of (final_training_state, final_metrics).
@@ -282,6 +284,37 @@ def train(
     # Create JIT-compiled step functions
     train_step_fn = create_train_step(apply_fn, optimizer)
     eval_step_fn = create_eval_step(apply_fn)
+
+    # Evaluate on test set BEFORE training (epoch 0 baseline)
+    initial_test_metrics = evaluate(
+        training_state.params.params,
+        eval_step_fn,
+        dataset.test_real,
+        dataset.test_fake,
+        batch_size,
+    )
+
+    # Update best accuracy from initial eval
+    training_state = training_state.replace(
+        best_test_accuracy=initial_test_metrics["accuracy"]
+    )
+
+    # Log initial metrics to wandb
+    wandb.log(
+        {
+            "test/loss": initial_test_metrics["loss"],
+            "test/accuracy": initial_test_metrics["accuracy"],
+            "test/best_accuracy": training_state.best_test_accuracy,
+            "epoch": 0,
+            "step": 0,
+        }
+    )
+
+    logging.info(
+        f"Epoch 0 (before training) - "
+        f"Test Loss: {initial_test_metrics['loss']:.4f}, "
+        f"Test Acc: {initial_test_metrics['accuracy']:.4f}"
+    )
 
     # Training loop
     rng = np.random.default_rng(seed)
@@ -362,18 +395,19 @@ def train(
             f"Time: {epoch_time:.1f}s"
         )
 
-        # Save checkpoint after each epoch
-        ckpt_mgr.save(
-            step=epoch + 1,
-            args=ocp.args.Composite(
-                params=ocp.args.StandardSave(training_state.params.params),
-                train_state=ocp.args.StandardSave(training_state),
-                config=ocp.args.JsonSave(config_dict),
-            ),
-        )
+        # Save checkpoint every checkpoint_every epochs
+        if (epoch + 1) % checkpoint_every == 0:
+            ckpt_mgr.save(
+                step=epoch + 1,
+                args=ocp.args.Composite(
+                    params=ocp.args.StandardSave(training_state.params.params),
+                    train_state=ocp.args.StandardSave(training_state),
+                    config=ocp.args.JsonSave(config_dict),
+                ),
+            )
 
-        if checkpoint_callback is not None:
-            checkpoint_callback(epoch + 1)
+            if checkpoint_callback is not None:
+                checkpoint_callback(epoch + 1)
 
     final_metrics = {
         "train_loss": train_loss,

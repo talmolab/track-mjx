@@ -73,6 +73,9 @@ train_setup:
   # If null, checkpoints are saved to logging_config.model_path / run_id
   checkpoint_path: null
 
+  # Save checkpoint every N epochs (1 = every epoch)
+  checkpoint_every: 1
+
 # =============================================================================
 # Logging Configuration
 # =============================================================================

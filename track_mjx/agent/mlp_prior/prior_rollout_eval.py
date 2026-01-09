@@ -353,7 +353,9 @@ class MultiModePriorRolloutEvaluator:
             states_list.append(state_i)
 
         # Render all frames at once
-        frames = self.env.render(states_list, camera=self.render_camera_name)
+        frames = self.env.render(
+            states_list, camera=self.render_camera_name, height=480, width=640
+        )
 
         if len(frames) > 0:
             video_path = (

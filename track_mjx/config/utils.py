@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
+from vnl_playground.tasks.celegans import consts as celegans_consts
 
 # Project root directory (track-mjx/)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -68,7 +69,9 @@ def prepare_config(
         raise NotImplementedError("Fruitfly reference data path not implemented yet.")
     elif walker_name == "celegans":
         logging.info("Using celegans walker")
-        raise NotImplementedError("Celegans walker not implemented yet.")
+        walker_xml_path = str(celegans_consts.CELEGANS_XML_PATH)
+        arena_xml_path = str(celegans_consts.ARENA_XML_PATH)
+        reference_data_path = _resolve_data_path(celegans_consts.REFERENCE_H5_PATH)
     elif walker_name == "mouse":
         logging.info("Using mouse walker")
         walker_xml_path = str(mouse_consts.MOUSE_XML_PATH)

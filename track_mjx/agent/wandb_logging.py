@@ -62,11 +62,9 @@ def rollout_logging_fn(
     latent_logvars = []
 
     # Calculate episode length from config
-    physics_steps_per_ctrl = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
-    steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
-        cfg.env_config.sim_dt * physics_steps_per_ctrl
-    )
-    episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
+    physics_steps_per_ctrl = env.ctrl_dt / env.sim_dt
+    steps_per_mocap_frame = (1 / env.mocap_hz) / (env.sim_dt * physics_steps_per_ctrl)
+    episode_length = int(env.clip_length * steps_per_mocap_frame)
 
     for _ in range(episode_length):
         _, act_rng = jax.random.split(act_rng)
@@ -135,8 +133,8 @@ def _log_rollout_video(
     try:
         with imageio.get_writer(video_path, fps=render_fps) as writer:
             video = env.render(
-                rollout,
-                camera=f"{cfg.render_config.render_camera_name}-ghost",
+                trajectory=rollout,
+                camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
                 height=480,
                 width=640,
             )

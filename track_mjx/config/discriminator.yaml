@@ -1,0 +1,91 @@
+# =============================================================================
+# Discriminator Training Configuration
+# =============================================================================
+# Configuration for training a discriminator to classify motion clips as
+# real (from reference data) or fake (from prior/encoder-decoder rollouts).
+#
+# The discriminator is a simple MLP that takes flattened motion clips as input.
+# =============================================================================
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+# Settings for loading and splitting the motion clip dataset.
+data_config:
+  # Path to H5 file created by collect_rollout_dataset.py (REQUIRED)
+  # This file contains multiple datasets with motion clips from different sources.
+  h5_path: null
+
+  # Dataset names for real and fake classes.
+  # Available datasets from collect_rollout_dataset.py:
+  #   - original_qpos: Original reference motion capture data
+  #   - encoder_decoder_qpos: Rollouts from encoder-decoder pipeline
+  #   - prior_logvar_-4_qpos: Prior rollouts with logvar=-4 (std~0.14)
+  #   - prior_logvar_-2_qpos: Prior rollouts with logvar=-2 (std~0.37)
+  #   - prior_logvar_0_qpos: Prior rollouts with logvar=0 (std=1.0)
+  #   - prior_deterministic_qpos: Prior rollouts using mean (no sampling)
+  real_dataset: "original_qpos"
+  fake_dataset: "prior_logvar_0_qpos"
+
+  # Train/test split ratio (fraction of data used for training)
+  train_ratio: 0.8
+
+  # Random seed for reproducible data splitting
+  split_seed: 42
+
+# =============================================================================
+# Network Architecture
+# =============================================================================
+# MLP architecture for the discriminator network.
+network_config:
+  # Hidden layer sizes for the MLP
+  # Input will be flattened motion clip (250 timesteps * 74 qpos dims = 18,500 features)
+  hidden_layer_sizes: [1024, 512, 256]
+
+  # Dropout rate for regularization (0.0 to disable)
+  dropout_rate: 0.1
+
+  # Whether to use layer normalization after each hidden layer
+  use_layer_norm: true
+
+# =============================================================================
+# Training Setup
+# =============================================================================
+# Training hyperparameters and settings.
+train_setup:
+  # Number of training epochs (one epoch = full pass through training data)
+  num_epochs: 100
+
+  # Batch size (must be even for balanced real/fake sampling)
+  batch_size: 64
+
+  # AdamW optimizer settings
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+
+  # Gradient clipping threshold
+  grad_clip_norm: 1.0
+
+  # Random seed for training reproducibility
+  seed: 0
+
+  # Checkpoint settings
+  # If null, checkpoints are saved to logging_config.model_path / run_id
+  checkpoint_path: null
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+# Settings for wandb logging and checkpoint storage.
+logging_config:
+  # Wandb project name
+  project_name: "discriminator_training"
+
+  # Wandb group name for organizing runs
+  group_name: "motion_discriminator"
+
+  # Experiment name (if null, auto-generated from dataset names)
+  exp_name: null
+
+  # Base path for saving checkpoints
+  model_path: "/tmp/discriminator_checkpoints"

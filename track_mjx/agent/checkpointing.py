@@ -55,7 +55,7 @@ def load_config_from_checkpoint(
             args=ocp.args.Composite(config=ocp.args.JsonRestore()),
         )["config"]
 
-        return OmegaConf.create(cfg)
+        return cfg
 
 
 def load_training_state(

@@ -183,3 +183,6 @@ cython_debug/
 *.out
 *.mp4
 *.h5
+
+.claude
+scratch

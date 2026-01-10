@@ -49,15 +49,14 @@ def create_rollout_generator(
     cfg: dict[str, Any] | DictConfig,
     env: mjx_env.MjxEnv,
     inference_fn: Callable[[jnp.ndarray, jax.Array], tuple[jnp.ndarray, dict]],
-    log_full_states: bool = True,
+    log_full_states: bool = False,
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
-) -> Callable[[int | None, int], dict[str, Any]]:
-    """Create a JIT-compiled rollout generator for a given environment and policy.
+) -> Callable[[int, int], dict[str, Any]]:
+    """Create a JIT-compatible rollout generator using jax.lax.scan.
 
-    Returns a function that generates full episode rollouts using pre-compiled
-    JAX functions for efficient repeated evaluation.
+    Uses jax.lax.scan for efficient JIT compilation and batching with jax.vmap.
 
     Args:
         cfg: Full configuration dict containing env_config with timing parameters
@@ -66,109 +65,153 @@ def create_rollout_generator(
         inference_fn: Policy function with signature (obs, rng) -> (action, extras).
             The extras dict should contain "activations" if log_activations=True.
         log_full_states: If True, include full State objects in the rollout output.
+            WARNING: This uses significant memory when batched.
         log_activations: If True, collect neural network activations at each step.
         log_metrics: If True, collect all metrics from state.metrics at each step.
         log_sensor_data: If True, collect contact forces and sensor readings.
 
     Returns:
         A generate_rollout function with signature:
-            generate_rollout(clip_idx=None, seed=42) -> dict
+            generate_rollout(clip_idx, seed=42) -> dict
+
+        The returned dict contains JAX arrays (not Python lists):
+            - qposes_ref: Reference poses, shape [num_steps, qpos_dim]
+            - qposes_rollout: Simulated poses, shape [num_steps, qpos_dim]
+            - ctrl: Control actions, shape [num_steps-1, ctrl_dim]
+            - state_rewards: Rewards, shape [num_steps]
+            - rollout_states: (if log_full_states) Stacked State objects
+            - activations: (if log_activations) Network activations per step
+            - rollout_metrics: (if log_metrics) Dict of metric arrays
+            - joint_forces: (if log_sensor_data) Contact forces per step
+            - sensor_readings: (if log_sensor_data) Sensor data per step
 
     Example:
         >>> generate_rollout = create_rollout_generator(cfg, env, policy_fn)
+        >>> # For single rollout:
         >>> rollout_data = generate_rollout(clip_idx=5, seed=123)
-        >>> print(len(rollout_data["qposes_rollout"]))
+        >>> # For batched rollouts:
+        >>> jit_vmap_rollout = jax.jit(jax.vmap(generate_rollout))
+        >>> batch_data = jit_vmap_rollout(jnp.arange(100))
     """
-    jit_inference_fn = jax.jit(inference_fn)
-    jit_reset = jax.jit(env.reset)
-    jit_step = jax.jit(env.step)
+    # Calculate total steps
+    mocap_dt = 1.0 / cfg.env_config.mocap_hz
+    steps_per_frame = int(mocap_dt / cfg.env_config.ctrl_dt)
+    num_steps = cfg.env_config.clip_length * steps_per_frame - 1
+    mocap_hz = cfg.env_config.mocap_hz
 
-    def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
+    # Get reference clips from the unwrapped environment
+    unwrapped_env = env
+    while hasattr(unwrapped_env, "_env"):
+        unwrapped_env = unwrapped_env._env
+    reference_clips = unwrapped_env.reference_clips
+
+    def step_fn(carry, _):
+        """Single step function for jax.lax.scan."""
+        state, act_rng = carry
+
+        # Split RNG for this step
+        act_rng, next_rng = jax.random.split(act_rng)
+
+        # Get action from policy
+        ctrl, extras = inference_fn(state.obs, act_rng)
+
+        # Extract reference pose for current state
+        time_in_frames = state.data.time * mocap_hz
+        frame = jnp.floor(time_in_frames + state.info["start_frame"]).astype(int)
+        clip = state.info["reference_clip"]
+        ref = reference_clips.at(clip=clip, frame=frame)
+
+        # Build step output dict - always include core fields
+        step_output = {
+            "qpos": state.data.qpos,
+            "qpos_ref": ref.qpos,
+            "ctrl": ctrl,
+            "reward": state.reward,
+        }
+
+        # Conditionally add optional fields
+        if log_activations:
+            step_output["activations"] = extras["activations"]
+
+        if log_metrics:
+            step_output["metrics"] = state.metrics
+
+        if log_sensor_data:
+            step_output["joint_forces"] = state.data.cfrc_ext
+            step_output["sensor_readings"] = state.data.sensordata
+
+        # Step environment
+        next_state = env.step(state, ctrl)
+
+        # Conditionally return full state
+        if log_full_states:
+            return (next_state, next_rng), (step_output, state)
+        else:
+            return (next_state, next_rng), step_output
+
+    def generate_rollout(clip_idx: int, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.
 
-        Runs the policy in the environment for the full clip length, collecting
-        states, actions, rewards, and optional diagnostic data.
-
         Args:
-            clip_idx: Reference clip index to track. If None, samples randomly.
+            clip_idx: Reference clip index to track.
             seed: Random seed for JAX PRNG initialization.
 
         Returns:
-            Dictionary containing:
-                - rollout_states: List of Brax State objects (for rendering)
-                - qposes_ref: Reference motion capture poses per timestep
-                - qposes_rollout: Actual simulated poses per timestep
-                - ctrl: Control actions applied at each step
-                - state_rewards: Reward at each timestep
-                - rollout_metrics: (if log_metrics) Dict of metric lists
-                - activations: (if log_activations) Network activations per step
-                - joint_forces: (if log_sensor_data) Contact forces per step
-                - sensor_readings: (if log_sensor_data) Sensor data per step
+            Dictionary containing JAX arrays (stacked over timesteps).
         """
         rollout_key = jax.random.PRNGKey(seed)
         rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
-        state = jit_reset(reset_rng, clip_idx=clip_idx, start_frame=0)
+        # Reset environment
+        initial_state = env.reset(reset_rng, clip_idx=clip_idx, start_frame=0)
 
-        # Calculate total steps: (clip_length * mocap_frames_per_ctrl_step) - 1
-        mocap_dt = 1.0 / cfg.env_config.mocap_hz
-        steps_per_frame = int(mocap_dt / cfg.env_config.ctrl_dt)
-        num_steps = cfg.env_config.clip_length * steps_per_frame - 1
-
-        rollout_states = [state]
-        ctrls = []
-        activations = []
-        joint_forces = []
-        sensor_readings = []
-
-        for _ in range(num_steps):
-            _, act_rng = jax.random.split(act_rng)
-            ctrl, extras = jit_inference_fn(state.obs, act_rng)
-            ctrls.append(ctrl)
-
-            if log_activations:
-                activations.append(extras["activations"])
-
-            state = jit_step(state, ctrl)
-            rollout_states.append(state)
-
-            if log_sensor_data:
-                joint_forces.append(state.data.cfrc_ext)
-                sensor_readings.append(state.data.sensordata)
-
-        # Extract reference poses for comparison
-        qposes_ref = []
-        for s in rollout_states:
-            time_in_frames = s.data.time * env._config.mocap_hz
-            frame = jnp.floor(time_in_frames + s.info["start_frame"]).astype(int)
-            clip = s.info["reference_clip"]
-            ref = env.reference_clips.at(clip=clip, frame=frame)
-            qposes_ref.append(ref.qpos)
-
-        result = {
-            "qposes_ref": qposes_ref,
-            "qposes_rollout": [s.data.qpos for s in rollout_states],
-            "ctrl": ctrls,
-            "state_rewards": [s.reward for s in rollout_states],
-        }
+        # Run rollout using scan
+        initial_carry = (initial_state, act_rng)
 
         if log_full_states:
-            result["rollout_states"] = rollout_states
+            (final_state, _), (outputs, states) = jax.lax.scan(
+                step_fn, initial_carry, None, length=num_steps
+            )
+        else:
+            (final_state, _), outputs = jax.lax.scan(
+                step_fn, initial_carry, None, length=num_steps
+            )
+
+        # Get final step outputs
+        final_time_in_frames = final_state.data.time * mocap_hz
+        final_frame = jnp.floor(
+            final_time_in_frames + final_state.info["start_frame"]
+        ).astype(int)
+        final_clip = final_state.info["reference_clip"]
+        final_ref = reference_clips.at(clip=final_clip, frame=final_frame)
+
+        # Build result dict with core fields
+        result = {
+            "qposes_ref": jnp.concatenate(
+                [outputs["qpos_ref"], final_ref.qpos[None]], axis=0
+            ),
+            "qposes_rollout": jnp.concatenate(
+                [outputs["qpos"], final_state.data.qpos[None]], axis=0
+            ),
+            "ctrl": outputs["ctrl"],
+            "state_rewards": jnp.concatenate(
+                [outputs["reward"], final_state.reward[None]], axis=0
+            ),
+        }
+
+        # Add optional fields
+        if log_full_states:
+            result["rollout_states"] = states
+
+        if log_activations:
+            result["activations"] = outputs["activations"]
 
         if log_metrics:
-            metric_keys = rollout_states[0].metrics.keys()
-            result["rollout_metrics"] = {
-                f"{k}s": [s.metrics[k] for s in rollout_states] for k in metric_keys
-            }
-
-        if log_activations and activations:
-            result["activations"] = activations
+            result["rollout_metrics"] = outputs["metrics"]
 
         if log_sensor_data:
-            if joint_forces:
-                result["joint_forces"] = joint_forces
-            if sensor_readings:
-                result["sensor_readings"] = sensor_readings
+            result["joint_forces"] = outputs["joint_forces"]
+            result["sensor_readings"] = outputs["sensor_readings"]
 
         return result
 

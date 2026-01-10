@@ -16,8 +16,8 @@ import optax
 import orbax.checkpoint as ocp
 import wandb
 
-from track_mjx.agent.discriminator.data_loading import MotionClipDataset, create_batches
-from track_mjx.agent.discriminator.discriminator_network import make_discriminator_network
+from track_mjx.analysis.discriminator.data_loading import MotionClipDataset, create_batches
+from track_mjx.analysis.discriminator.discriminator_network import make_discriminator_network
 
 
 @flax.struct.dataclass

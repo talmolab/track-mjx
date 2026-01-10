@@ -5,17 +5,17 @@ to distinguish between different sources of motion clips (e.g., original referen
 data vs prior-generated rollouts).
 """
 
-from track_mjx.agent.discriminator.data_loading import (
+from track_mjx.analysis.discriminator.data_loading import (
     MotionClipDataset,
     create_train_test_split,
     load_h5_dataset,
     load_h5_metadata,
 )
-from track_mjx.agent.discriminator.discriminator_network import (
+from track_mjx.analysis.discriminator.discriminator_network import (
     Discriminator,
     make_discriminator_network,
 )
-from track_mjx.agent.discriminator.discriminator_train import (
+from track_mjx.analysis.discriminator.discriminator_train import (
     DiscriminatorParams,
     TrainingState,
     train,

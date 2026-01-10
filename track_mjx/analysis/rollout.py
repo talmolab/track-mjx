@@ -49,6 +49,7 @@ def create_rollout_generator(
     cfg: dict[str, Any] | DictConfig,
     env: mjx_env.MjxEnv,
     inference_fn: Callable[[jnp.ndarray, jax.Array], tuple[jnp.ndarray, dict]],
+    log_full_states: bool = True,
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
@@ -64,6 +65,7 @@ def create_rollout_generator(
         env: The VNL environment to run rollouts in.
         inference_fn: Policy function with signature (obs, rng) -> (action, extras).
             The extras dict should contain "activations" if log_activations=True.
+        log_full_states: If True, include full State objects in the rollout output.
         log_activations: If True, collect neural network activations at each step.
         log_metrics: If True, collect all metrics from state.metrics at each step.
         log_sensor_data: If True, collect contact forces and sensor readings.
@@ -144,12 +146,14 @@ def create_rollout_generator(
             qposes_ref.append(ref.qpos)
 
         result = {
-            "rollout_states": rollout_states,
             "qposes_ref": qposes_ref,
             "qposes_rollout": [s.data.qpos for s in rollout_states],
             "ctrl": ctrls,
             "state_rewards": [s.reward for s in rollout_states],
         }
+
+        if log_full_states:
+            result["rollout_states"] = rollout_states
 
         if log_metrics:
             metric_keys = rollout_states[0].metrics.keys()

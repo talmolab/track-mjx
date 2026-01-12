@@ -533,7 +533,9 @@ def train(
         if "encoder_kl_start_weight" in schedule_params:
             encoder_kl_schedule_fn = losses.create_ramp_schedule(
                 start_value=schedule_params.get("encoder_kl_start_weight", 0.0),
-                end_value=schedule_params.get("encoder_kl_end_weight", encoder_kl_weight),
+                end_value=schedule_params.get(
+                    "encoder_kl_end_weight", encoder_kl_weight
+                ),
                 total_steps=num_evals,
                 start_frac=schedule_params.get("encoder_kl_start_ramp", 0.0),
                 end_frac=schedule_params.get("encoder_kl_end_ramp", 0.5),

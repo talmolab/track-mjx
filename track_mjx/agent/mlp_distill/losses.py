@@ -133,7 +133,9 @@ def compute_encoder_prior_kl_loss(
     # KL_j = 0.5 * (log(σ_p^2/σ_q^2) + σ_q^2/σ_p^2 + (μ_q - μ_p)^2/σ_p^2 - 1)
     log_var_diff = prior_logvar - encoder_logvar_sg  # log(σ_p^2) - log(σ_q^2)
     var_ratio = jnp.exp(encoder_logvar_sg - prior_logvar)  # σ_q^2 / σ_p^2
-    mean_diff_sq = jnp.square(encoder_mean_sg - prior_mean) / jnp.exp(prior_logvar)  # (μ_q - μ_p)^2 / σ_p^2
+    mean_diff_sq = jnp.square(encoder_mean_sg - prior_mean) / jnp.exp(
+        prior_logvar
+    )  # (μ_q - μ_p)^2 / σ_p^2
 
     # Element-wise KL for each latent dimension
     element_wise_kl = 0.5 * (log_var_diff + var_ratio + mean_diff_sq - 1)  # [T, B, d]
@@ -230,10 +232,8 @@ def compute_distillation_loss(
     """
     _, student_key, teacher_key = jax.random.split(rng, 3)
 
-
     # Put the time dimension first: [B, T] -> [T, B]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-
 
     # Get student outputs
     student_logits, encoder_mean, encoder_logvar, prior_mean, prior_logvar = (
@@ -242,7 +242,6 @@ def compute_distillation_loss(
         )
     )
 
-
     # Get teacher actions (frozen - no gradients)
     # Note: deterministic behavior is already captured in the teacher_policy_fn closure
     teacher_actions, teacher_extras = teacher_policy_fn(
@@ -250,14 +249,12 @@ def compute_distillation_loss(
     )
     teacher_actions = jax.lax.stop_gradient(teacher_actions)
 
-
     # Convert student logits to actions (using mean for distillation)
     # The logits contain (mean, log_std) for each action dimension
     action_dim = student_logits.shape[-1] // 2
     student_action_mean = student_logits[..., :action_dim]
     # Apply tanh to get actions in [-1, 1]
     student_actions = jnp.tanh(student_action_mean)
-
 
     # Compute individual losses
     action_loss = compute_action_loss(
@@ -288,10 +285,10 @@ def compute_distillation_loss(
 
     # Compute weighted total loss
     total_loss = (
-        action_loss_weight * action_loss +
-        current_ar_weight * ar_loss +
-        current_kl_weight * kl_prior_loss +
-        current_encoder_kl_weight * kl_encoder_loss
+        action_loss_weight * action_loss
+        + current_ar_weight * ar_loss
+        + current_kl_weight * kl_prior_loss
+        + current_encoder_kl_weight * kl_encoder_loss
     )
 
     metrics = {
@@ -304,7 +301,6 @@ def compute_distillation_loss(
         "encoder_kl_weight": current_encoder_kl_weight,
         "ar_weight": current_ar_weight,
     }
-
 
     return total_loss, metrics
 

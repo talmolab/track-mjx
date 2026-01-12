@@ -2,12 +2,13 @@
 Multi-mode prior rollout evaluation for prior training.
 
 This module provides functionality to evaluate the prior network's ability to
-generate plausible actions by running rollouts in 3 different modes:
+generate plausible actions by running rollouts in 4 different modes:
 1. Deterministic: z = prior_mean (no sampling)
 2. logvar=0: z sampled with std=1.0
 3. logvar=-2: z sampled with std≈0.368
+4. predicted_logvar: z sampled using network-predicted logvar per dimension
 
-All three modes are evaluated and rendered separately.
+All four modes are evaluated and rendered separately.
 """
 
 from typing import Callable, Optional, Sequence, Tuple, Any, Dict, List
@@ -40,7 +41,7 @@ def create_prior_policy(
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     prior_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
-    fixed_logvar: float = -2.0,
+    fixed_logvar: Optional[float] = -2.0,
     deterministic: bool = False,
 ) -> Callable:
     """
@@ -56,7 +57,8 @@ def create_prior_policy(
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder.
         prior_hidden_layer_sizes: Hidden layer sizes for prior.
         preprocess_observations_fn: Function to normalize observations.
-        fixed_logvar: Fixed log-variance to use for latent sampling.
+        fixed_logvar: Fixed log-variance to use for latent sampling. If None, uses the
+            network-predicted logvar per dimension.
         deterministic: If True, use mean of prior distribution instead of sampling.
 
     Returns:
@@ -106,14 +108,19 @@ def create_prior_policy(
             {"params": prior_network_params}, normalized_obs
         )
 
-        # Use fixed logvar for more stable sampling
-        fixed_logvar_array = jnp.full_like(prior_mean, fixed_logvar)
+        # Determine which logvar to use for sampling
+        if fixed_logvar is not None:
+            # Use fixed logvar for more stable sampling
+            logvar_for_sampling = jnp.full_like(prior_mean, fixed_logvar)
+        else:
+            # Use network-predicted logvar per dimension
+            logvar_for_sampling = prior_logvar
 
         # Sample from prior
         if deterministic:
             z = prior_mean
         else:
-            z = reparameterize(key_sample, prior_mean, fixed_logvar_array)
+            z = reparameterize(key_sample, prior_mean, logvar_for_sampling)
 
         # Decode to action distribution parameters
         decoder_input = jnp.concatenate([z, normalized_obs], axis=-1)
@@ -178,10 +185,11 @@ class MultiModePriorRolloutEvaluator:
     """
     Evaluator class for running prior-only rollouts in multiple modes.
 
-    This class runs evaluation in 3 modes:
+    This class runs evaluation in 4 modes:
     1. deterministic: z = prior_mean (no sampling)
     2. logvar_0: z sampled with std=1.0 (logvar=0)
     3. logvar_-2: z sampled with std≈0.368 (logvar=-2)
+    4. predicted_logvar: z sampled using network-predicted logvar
 
     All modes are rendered separately.
     """
@@ -233,11 +241,12 @@ class MultiModePriorRolloutEvaluator:
 
         self._key = random.PRNGKey(0)
 
-        # Define 3 evaluation modes
+        # Define 4 evaluation modes
         self.evaluation_modes = [
             {"name": "deterministic", "deterministic": True, "fixed_logvar": -2.0},
             {"name": "logvar_0", "deterministic": False, "fixed_logvar": 0.0},
             {"name": "logvar_-2", "deterministic": False, "fixed_logvar": -2.0},
+            {"name": "predicted_logvar", "deterministic": False, "fixed_logvar": None},
         ]
 
     def _build_single_rollout_fn(self, policy_params: Tuple, mode: Dict):
@@ -344,7 +353,9 @@ class MultiModePriorRolloutEvaluator:
             states_list.append(state_i)
 
         # Render all frames at once
-        frames = self.env.render(states_list, camera=self.render_camera_name)
+        frames = self.env.render(
+            states_list, camera=self.render_camera_name, height=480, width=640
+        )
 
         if len(frames) > 0:
             video_path = (
@@ -403,9 +414,9 @@ class MultiModePriorRolloutEvaluator:
             step_count, _, states = single_rollout_fn(initial_state, mode_key)
             step_count = int(step_count)
 
-            # Render the rollout for this mode
+            # Render the full rollout for this mode (even if terminated early)
             try:
-                self._render_rollout(states, step_count, eval_step, mode_name)
+                self._render_rollout(states, self.max_steps, eval_step, mode_name)
             except Exception as e:
                 import logging
 

@@ -239,24 +239,16 @@ def compute_ppo_loss(
             normalizer_params, params.policy, data.observation, policy_key
         )
     else:
-        # Deterministic replay: use stored RNGs per timestep
-        # policy_rng has shape [T, B, 2] after swapaxes (JAX PRNGKey is shape [2])
+        # Deterministic replay: use stored per-sample RNGs
+        # policy_rng has shape [T, B, 2] after swapaxes
+        # data.observation is a dict where each leaf has shape [T, B, obs_dim]
+        # We vmap over time only - the policy handles batched inputs with per-sample keys
         def _apply_policy(obs_t, rng_t):
             return policy_apply(normalizer_params, params.policy, obs_t, rng_t)
 
-        if policy_rng.ndim == 2:
-            # Shape [T, 2] - vmap over time only
-            policy_logits, latent_mean, latent_logvar = jax.vmap(
-                _apply_policy, in_axes=(0, 0)
-            )(data.observation, policy_rng)
-        else:
-            # Shape [T, B, 2] - nested vmap over time and batch
-            policy_logits, latent_mean, latent_logvar = jax.vmap(
-                lambda obs_t, rng_t: jax.vmap(_apply_policy, in_axes=(0, 0))(
-                    obs_t, rng_t
-                ),
-                in_axes=(0, 0),
-            )(data.observation, policy_rng)
+        policy_logits, latent_mean, latent_logvar = jax.vmap(
+            _apply_policy, in_axes=(0, 0)
+        )(data.observation, policy_rng)
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 

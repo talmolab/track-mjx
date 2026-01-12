@@ -88,17 +88,24 @@ def make_inference_fn(
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
 
+            # Get batch size from observations for per-sample key generation
+            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            batch_size = obs_leaf.shape[0]
+
+            # Generate per-sample keys for deterministic replay
+            per_sample_keys = jax.random.split(key_network, batch_size)
+
             if get_activation:
                 logits, latent_mean, latent_logvar, activations = policy_network.apply(
                     *params,
                     observations,
-                    key_network,
+                    per_sample_keys,
                     deterministic=deterministic,
                     get_activation=True,
                 )
             else:
                 logits, latent_mean, latent_logvar = policy_network.apply(
-                    *params, observations, key_network, deterministic=deterministic
+                    *params, observations, per_sample_keys, deterministic=deterministic
                 )
 
             if deterministic:
@@ -124,7 +131,7 @@ def make_inference_fn(
                 "raw_action": raw_actions,
                 "logits": logits,
                 "activations": activations,
-                "policy_rng": key_network,
+                "policy_rng": per_sample_keys,
             }
 
         return policy
@@ -169,8 +176,14 @@ def make_logging_inference_fn(
             key_sample: PRNGKey,
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
+
+            # Get batch size and generate per-sample keys
+            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            batch_size = obs_leaf.shape[0]
+            per_sample_keys = jax.random.split(key_network, batch_size)
+
             logits, latent_mean, latent_logvar = policy_network.apply(
-                *params, observations, key_network
+                *params, observations, per_sample_keys
             )
 
             if deterministic:

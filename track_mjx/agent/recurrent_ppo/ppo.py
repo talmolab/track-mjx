@@ -504,6 +504,10 @@ def train(
     )
     make_policy = networks.make_inference_fn(recurrent_ppo_network)
 
+    # Create logging inference function for evaluation/rollouts
+    make_logging_policy = networks.make_logging_inference_fn(recurrent_ppo_network)
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+
     # Number of environments per device
     envs_per_device = num_envs // device_count
 
@@ -901,9 +905,11 @@ def train(
             )
             policy_params_fn(
                 current_step=it,
+                jit_logging_inference_fn=jit_logging_inference_fn,
                 params=policy_param,
                 policy_params_fn_key=policy_params_fn_key,
                 render_video=render_video,
+                ppo_network=recurrent_ppo_network,
             )
 
             logging.info(metrics)

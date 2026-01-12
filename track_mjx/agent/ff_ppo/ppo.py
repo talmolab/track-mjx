@@ -844,6 +844,7 @@ def train(
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
                     render_video=True,
+                    ppo_network=ppo_network,
                 )
             else:
                 policy_params_fn(
@@ -852,6 +853,7 @@ def train(
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
                     render_video=False,
+                    ppo_network=ppo_network,
                 )
 
             # log metrics

@@ -27,6 +27,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
+from track_mjx.agent.recurrent_ppo import losses as recurrent_ppo_losses
+from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
 from track_mjx.agent.observation_utils import (
     convert_flat_to_dict_normalizer,
     init_dict_normalizer,
@@ -194,10 +196,17 @@ def make_abstract_policy(
     ppo_network = make_ppo_network_from_cfg(cfg)
     key_policy, key_value = jax.random.split(jax.random.key(seed))
 
-    init_params = ff_ppo_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key_policy),
-        value=ppo_network.value_network.init(key_value),
-    )
+    arch_name = cfg.network_config.get("arch_name", "intention")
+    if arch_name == "recurrent_intention":
+        init_params = recurrent_ppo_losses.RecurrentPPONetworkParams(
+            policy=ppo_network.policy_network.init(key_policy),
+            value=ppo_network.value_network.init(key_value),
+        )
+    else:
+        init_params = ff_ppo_losses.PPONetworkParams(
+            policy=ppo_network.policy_network.init(key_policy),
+            value=ppo_network.value_network.init(key_value),
+        )
 
     # Handle both new (dict-based) and legacy (flat) config formats
     network_config = cfg["network_config"]
@@ -231,12 +240,19 @@ def load_inference_fn(
         policy_params: Tuple of (normalizer_state, policy_params).
         deterministic: If True, use mean action (no sampling).
         get_activation: If True, return network activations in extras.
+            Only used for feedforward networks.
 
     Returns:
-        Inference function with signature (obs, rng) -> (action, extras).
+        For feedforward: Inference function (obs, rng) -> (action, extras).
+        For recurrent: Inference function (obs, hidden, rng) -> (action, extras, new_hidden).
     """
     ppo_network = make_ppo_network_from_cfg(cfg)
-    make_policy = ff_ppo_networks.make_inference_fn(ppo_network)
+    arch_name = cfg.network_config.get("arch_name", "intention")
+
+    if arch_name == "recurrent_intention":
+        make_policy = recurrent_ppo_networks.make_inference_fn(ppo_network)
+    else:
+        make_policy = ff_ppo_networks.make_inference_fn(ppo_network)
 
     # Convert legacy flat normalizer to dict normalizer if needed
     normalizer_state, network_params = policy_params
@@ -255,9 +271,12 @@ def load_inference_fn(
         )
         policy_params = (normalizer_state, network_params)
 
-    return make_policy(
-        policy_params, deterministic=deterministic, get_activation=get_activation
-    )
+    if arch_name == "recurrent_intention":
+        return make_policy(policy_params, deterministic=deterministic)
+    else:
+        return make_policy(
+            policy_params, deterministic=deterministic, get_activation=get_activation
+        )
 
 
 def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
@@ -267,37 +286,50 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
         cfg: Configuration with network_config and train_setup sections.
 
     Returns:
-        PPONetworks namedtuple with policy_network and value_network.
+        PPONetworks or RecurrentPPONetworks with policy_network and value_network.
 
     Raises:
         ValueError: If network architecture is not recognized.
     """
-    if cfg.network_config.arch_name == "intention":
-        # Handle both new (dict-based) and legacy (flat) config formats
-        network_config = cfg.network_config
-        if hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config:
-            # New dict-based format
-            obs_sizes = dict(network_config.obs_sizes)
-        else:
-            # Legacy flat format - convert to obs_sizes dict
-            obs_sizes = {
-                "imitation_target": network_config.reference_obs_size,
-                "proprioception": network_config.observation_size
-                - network_config.reference_obs_size,
-            }
+    arch_name = cfg.network_config.get("arch_name", "intention")
+    network_config = cfg.network_config
 
+    # Handle both new (dict-based) and legacy (flat) config formats
+    if hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config:
+        # New dict-based format
+        obs_sizes = dict(network_config.obs_sizes)
+    else:
+        # Legacy flat format - convert to obs_sizes dict
+        obs_sizes = {
+            "imitation_target": network_config.reference_obs_size,
+            "proprioception": network_config.observation_size
+            - network_config.reference_obs_size,
+        }
+
+    if arch_name == "intention":
         return ff_ppo_networks.make_intention_ppo_networks(
             obs_sizes=obs_sizes,
-            action_size=cfg.network_config.action_size,
-            intention_latent_size=cfg.network_config.intention_size,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            action_size=network_config.action_size,
+            intention_latent_size=network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
+        )
+    elif arch_name == "recurrent_intention":
+        return recurrent_ppo_networks.make_recurrent_intention_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            intention_latent_size=network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
+            rnn_type=network_config.get("rnn_type", "gru"),
+            rnn_hidden_sizes=tuple(network_config.get("rnn_hidden_sizes", [256])),
+            decoder_output_layers=tuple(
+                network_config.get("decoder_output_layers", [])
+            ),
+            value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
         )
     else:
-        raise ValueError(
-            f"Unknown network architecture: {cfg.network_config.arch_name}"
-        )
+        raise ValueError(f"Unknown network architecture: {arch_name}")
 
 
 def save(

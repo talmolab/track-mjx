@@ -3,6 +3,8 @@
 This module provides functions to create VNL environments and generate policy
 rollouts with optional logging of activations, metrics, and sensor data.
 Rollouts can be used for evaluation, visualization, or data collection.
+
+Supports both feedforward and recurrent policies.
 """
 
 from typing import Any, Callable
@@ -13,6 +15,8 @@ from jax import numpy as jnp
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
+
+from track_mjx.agent.recurrent_ppo import networks as recurrent_networks
 
 
 def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
@@ -48,25 +52,30 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
 def create_rollout_generator(
     cfg: dict[str, Any] | DictConfig,
     env: Env,
-    inference_fn: Callable[[jnp.ndarray, jax.Array], tuple[jnp.ndarray, dict]],
+    inference_fn: Callable,
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
+    ppo_network: Any = None,
 ) -> Callable[[int | None, int], dict[str, Any]]:
     """Create a JIT-compiled rollout generator for a given environment and policy.
 
     Returns a function that generates full episode rollouts using pre-compiled
-    JAX functions for efficient repeated evaluation.
+    JAX functions for efficient repeated evaluation. Supports both feedforward
+    and recurrent policies.
 
     Args:
         cfg: Full configuration dict containing env_config with timing parameters
-            (mocap_hz, ctrl_dt, clip_length).
+            (mocap_hz, ctrl_dt, clip_length) and network_config with arch_name.
         env: The VNL environment to run rollouts in.
-        inference_fn: Policy function with signature (obs, rng) -> (action, extras).
+        inference_fn: Policy function. For feedforward: (obs, rng) -> (action, extras).
+            For recurrent: (obs, hidden, rng) -> (action, extras, new_hidden).
             The extras dict should contain "activations" if log_activations=True.
         log_activations: If True, collect neural network activations at each step.
         log_metrics: If True, collect all metrics from state.metrics at each step.
         log_sensor_data: If True, collect contact forces and sensor readings.
+        ppo_network: PPO network container. Required for recurrent policies
+            to initialize hidden state.
 
     Returns:
         A generate_rollout function with signature:
@@ -80,6 +89,13 @@ def create_rollout_generator(
     jit_inference_fn = jax.jit(inference_fn)
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
+
+    # Check if using recurrent policy
+    arch_name = cfg.get("network_config", {}).get("arch_name", "intention")
+    is_recurrent = arch_name == "recurrent_intention"
+
+    if is_recurrent and ppo_network is None:
+        raise ValueError("ppo_network must be provided for recurrent policy rollouts")
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.
@@ -119,12 +135,21 @@ def create_rollout_generator(
         joint_forces = []
         sensor_readings = []
 
+        # Initialize hidden state for recurrent policies
+        if is_recurrent:
+            hidden = ppo_network.policy_network.init_hidden(1)
+
         for _ in range(num_steps):
             _, act_rng = jax.random.split(act_rng)
-            ctrl, extras = jit_inference_fn(state.obs, act_rng)
+
+            if is_recurrent:
+                ctrl, extras, hidden = jit_inference_fn(state.obs, hidden, act_rng)
+            else:
+                ctrl, extras = jit_inference_fn(state.obs, act_rng)
+
             ctrls.append(ctrl)
 
-            if log_activations:
+            if log_activations and "activations" in extras:
                 activations.append(extras["activations"])
 
             state = jit_step(state, ctrl)

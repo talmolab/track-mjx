@@ -400,6 +400,68 @@ def make_inference_fn(
     return make_policy
 
 
+def make_logging_inference_fn(
+    recurrent_ppo_networks: RecurrentPPONetworks,
+) -> Callable[[bool], Callable]:
+    """Create a logging policy factory for recurrent inference with explicit params.
+
+    Unlike make_inference_fn, the returned policy takes params as an argument,
+    allowing evaluation with different parameter sets without recreating the policy.
+
+    Args:
+        recurrent_ppo_networks: Recurrent PPO network components.
+
+    Returns:
+        A make_logging_policy function with signature:
+            make_logging_policy(deterministic) -> logging_policy_fn
+
+        Where logging_policy_fn has signature:
+            (params, obs, hidden, key) -> (action, extras, new_hidden)
+    """
+
+    def make_logging_policy(deterministic: bool = False) -> Callable:
+        """Create a logging policy that takes params as input.
+
+        Args:
+            deterministic: If True, return mode of action distribution.
+
+        Returns:
+            Policy function: (params, obs, hidden, key) -> (action, extras, new_hidden).
+        """
+        policy_network = recurrent_ppo_networks.policy_network
+        parametric_action_distribution = (
+            recurrent_ppo_networks.parametric_action_distribution
+        )
+
+        def logging_policy(
+            params: types.PolicyParams,
+            observations: types.Observation,
+            hidden: HiddenState | list[HiddenState],
+            key_sample: PRNGKey,
+        ) -> tuple[types.Action, types.Extra, HiddenState | list[HiddenState]]:
+            key_sample, key_network = jax.random.split(key_sample)
+
+            logits, latent_mean, latent_logvar, new_hidden = policy_network.apply(
+                *params, observations, hidden, key_network, deterministic=deterministic
+            )
+
+            if deterministic:
+                action = parametric_action_distribution.mode(logits)
+            else:
+                action = parametric_action_distribution.sample(logits, key_sample)
+
+            extras = {
+                "latent_mean": latent_mean,
+                "latent_logvar": latent_logvar,
+            }
+
+            return jnp.array(action), extras, new_hidden
+
+        return logging_policy
+
+    return make_logging_policy
+
+
 def make_dict_value_network(
     obs_sizes: Mapping[str, int],
     hidden_layer_sizes: Sequence[int] = (1024,) * 2,

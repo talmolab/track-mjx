@@ -29,6 +29,7 @@ def rollout_logging_fn(
     params: losses.PPONetworkParams,
     policy_params_fn_key: jax.Array,
     render_video: bool = True,
+    ppo_network: Any = None,
 ) -> None:
     """Log evaluation rollout metrics and video to Weights & Biases.
 
@@ -43,12 +44,15 @@ def rollout_logging_fn(
         cfg: Full configuration containing env_config and render_config.
         model_path: Directory path for saving video files.
         current_step: Current training step (used for video filename).
-        jit_logging_inference_fn: JIT-compiled inference function with signature
-            (params, obs, rng) -> (action, extras). Extras must contain
-            "latent_mean" and "latent_logvar" keys.
+        jit_logging_inference_fn: JIT-compiled inference function. For feedforward:
+            (params, obs, rng) -> (action, extras). For recurrent:
+            (params, obs, hidden, rng) -> (action, extras, new_hidden).
+            Extras must contain "latent_mean" and "latent_logvar" keys.
         params: PPO network parameters for the policy.
         policy_params_fn_key: JAX PRNG key for stochastic operations.
         render_video: If True, render and log a video of the rollout.
+        ppo_network: PPO network container. Required for recurrent policies
+            to initialize hidden state.
 
     Note:
         All metrics are logged with commit=False to batch with other logs.
@@ -69,9 +73,28 @@ def rollout_logging_fn(
 
     episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
 
+    # Check if using recurrent policy
+    arch_name = cfg.network_config.get("arch_name", "intention")
+    is_recurrent = arch_name == "recurrent_intention"
+
+    # Initialize hidden state for recurrent policies
+    if is_recurrent:
+        if ppo_network is None:
+            raise ValueError(
+                "ppo_network must be provided for recurrent policy rollouts"
+            )
+        hidden = ppo_network.policy_network.init_hidden(1)
+
     for _ in range(episode_length):
         _, act_rng = jax.random.split(act_rng)
-        ctrl, extras = jit_logging_inference_fn(params, state.obs, act_rng)
+
+        if is_recurrent:
+            ctrl, extras, hidden = jit_logging_inference_fn(
+                params, state.obs, hidden, act_rng
+            )
+        else:
+            ctrl, extras = jit_logging_inference_fn(params, state.obs, act_rng)
+
         ctrl = jnp.squeeze(ctrl, axis=0) if ctrl.shape[0] == 1 else ctrl
 
         latent_means.append(extras["latent_mean"])

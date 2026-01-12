@@ -21,7 +21,6 @@ import optax
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
     normalize_dict_obs,
-    flatten_obs_dict,
 )
 
 
@@ -155,9 +154,12 @@ def compute_prior_training_loss(
     # Put the time dimension first: [B, T] -> [T, B]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
-    # Flatten and normalize dict observations
-    flat_obs = flatten_obs_dict(data.observation)
-    normalized_obs = normalize_dict_obs(flat_obs, normalizer_params)
+    # Merge time and batch dimensions: [T, B, ...] -> [T*B, ...]
+    # This ensures observations have shape [T*B, features] for normalization
+    data = jax.tree_util.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), data)
+
+    # Normalize dict observations (flatten_obs_dict is called internally)
+    normalized_obs = normalize_dict_obs(data.observation, normalizer_params)
 
     # Access observations by key
     traj_obs = normalized_obs["imitation_target"]

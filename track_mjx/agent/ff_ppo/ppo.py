@@ -464,10 +464,7 @@ def train(
     training_epoch = jax.pmap(
         training_epoch,
         axis_name=_PMAP_AXIS_NAME,
-        donate_argnums=(
-            0,
-            1,
-        ),
+        donate_argnums=(0, 1),
     )
 
     # Note that this is NOT a pure jittable method.

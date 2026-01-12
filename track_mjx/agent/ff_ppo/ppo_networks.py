@@ -88,12 +88,15 @@ def make_inference_fn(
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
 
-            # Get batch size from observations for per-sample key generation
+            # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
             obs_leaf = jax.tree_util.tree_leaves(observations)[0]
-            batch_size = obs_leaf.shape[0]
-
-            # Generate per-sample keys for deterministic replay
-            per_sample_keys = jax.random.split(key_network, batch_size)
+            if obs_leaf.ndim >= 2:
+                # Batched observations - generate per-sample keys for deterministic replay
+                batch_size = obs_leaf.shape[0]
+                per_sample_keys = jax.random.split(key_network, batch_size)
+            else:
+                # Unbatched observation - use single key
+                per_sample_keys = key_network
 
             if get_activation:
                 logits, latent_mean, latent_logvar, activations = policy_network.apply(
@@ -177,10 +180,15 @@ def make_logging_inference_fn(
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
 
-            # Get batch size and generate per-sample keys
+            # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
             obs_leaf = jax.tree_util.tree_leaves(observations)[0]
-            batch_size = obs_leaf.shape[0]
-            per_sample_keys = jax.random.split(key_network, batch_size)
+            if obs_leaf.ndim >= 2:
+                # Batched observations - generate per-sample keys
+                batch_size = obs_leaf.shape[0]
+                per_sample_keys = jax.random.split(key_network, batch_size)
+            else:
+                # Unbatched observation - use single key
+                per_sample_keys = key_network
 
             logits, latent_mean, latent_logvar = policy_network.apply(
                 *params, observations, per_sample_keys

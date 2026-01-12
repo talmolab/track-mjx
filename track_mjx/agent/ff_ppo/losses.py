@@ -242,13 +242,27 @@ def compute_ppo_loss(
         # Deterministic replay: use stored per-sample RNGs
         # policy_rng has shape [T, B, 2] after swapaxes
         # data.observation is a dict where each leaf has shape [T, B, obs_dim]
-        # We vmap over time only - the policy handles batched inputs with per-sample keys
-        def _apply_policy(obs_t, rng_t):
-            return policy_apply(normalizer_params, params.policy, obs_t, rng_t)
+        # Flatten [T, B] into single batch dim to avoid vmap (better for buffer donation)
+        obs_leaf = jax.tree_util.tree_leaves(data.observation)[0]
+        T, B = obs_leaf.shape[:2]
 
-        policy_logits, latent_mean, latent_logvar = jax.vmap(
-            _apply_policy, in_axes=(0, 0)
-        )(data.observation, policy_rng)
+        # Flatten observations [T, B, ...] -> [T*B, ...]
+        flat_obs = jax.tree_util.tree_map(
+            lambda x: x.reshape((T * B,) + x.shape[2:]),
+            data.observation,
+        )
+        # Flatten keys [T, B, 2] -> [T*B, 2]
+        flat_rng = policy_rng.reshape((T * B, 2))
+
+        # Single call with combined batch (policy handles per-sample keys natively)
+        flat_logits, flat_mean, flat_logvar = policy_apply(
+            normalizer_params, params.policy, flat_obs, flat_rng
+        )
+
+        # Reshape outputs back to [T, B, ...]
+        policy_logits = flat_logits.reshape((T, B) + flat_logits.shape[1:])
+        latent_mean = flat_mean.reshape((T, B) + flat_mean.shape[1:])
+        latent_logvar = flat_logvar.reshape((T, B) + flat_logvar.shape[1:])
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 

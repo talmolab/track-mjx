@@ -162,6 +162,7 @@ def main(cfg: DictConfig):
         action_loss_weight=distill_cfg.action_loss_weight,
         autoregressive_weight=distill_cfg.autoregressive_weight,
         kl_weight=distill_cfg.kl_weight,
+        encoder_kl_weight=distill_cfg.get("encoder_kl_weight", 1e-3),
         use_l2_action_loss=distill_cfg.get("use_l2_action_loss", False),
         encoder_logvar_min=distill_cfg.get("encoder_logvar_min", None),
         encoder_logvar_max=distill_cfg.get("encoder_logvar_max", None),

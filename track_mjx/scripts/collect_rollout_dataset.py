@@ -421,7 +421,10 @@ def collect_rollouts(
 
         # Get initial qpos for this batch (first frame of each clip)
         initial_qpos_batch = jnp.stack(
-            [reference_clips.at(clip=i, frame=0).qpos for i in range(start_idx, end_idx)]
+            [
+                reference_clips.at(clip=i, frame=0).qpos
+                for i in range(start_idx, end_idx)
+            ]
         )
 
         # Clip indices for this batch

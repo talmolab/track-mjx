@@ -262,8 +262,35 @@ def train_discriminator(
     # Apply filtering if needed
     if exclude_root or exclude_zero_joints:
         ZERO_JOINT_INDICES = [
-            18, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-            40, 41, 42, 43, 44, 45, 46, 47, 48, 57, 65, 73
+            18,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            57,
+            65,
+            73,
         ]
         all_indices = set(range(74))
         indices_to_exclude = set()
@@ -350,7 +377,10 @@ def train_discriminator(
             batch_data_jax = jnp.array(batch_data)
             batch_labels_jax = jnp.array(batch_labels)
             state, metrics = train_step_fn(
-                state, batch_data_jax, batch_labels_jax, batch_keys[min(batch_idx, len(batch_keys) - 1)]
+                state,
+                batch_data_jax,
+                batch_labels_jax,
+                batch_keys[min(batch_idx, len(batch_keys) - 1)],
             )
             epoch_accuracies.append(float(metrics["accuracy"]))
             batch_idx += 1
@@ -429,12 +459,16 @@ def create_plot(
 
         # Plot mean with shaded std region
         ax.plot(
-            window_sizes_arr, means, color=colors[idx], linewidth=2,
-            marker="o", markersize=5, label=short_name
+            window_sizes_arr,
+            means,
+            color=colors[idx],
+            linewidth=2,
+            marker="o",
+            markersize=5,
+            label=short_name,
         )
         ax.fill_between(
-            window_sizes_arr, means - stds, means + stds,
-            color=colors[idx], alpha=0.15
+            window_sizes_arr, means - stds, means + stds, color=colors[idx], alpha=0.15
         )
 
     # Reference line
@@ -446,7 +480,7 @@ def create_plot(
     ax.set_title(
         f"Window Size vs Discriminator Accuracy by Dataset\n"
         f"Real: {real_dataset} (clip_length={clip_length})",
-        fontsize=14
+        fontsize=14,
     )
     ax.set_xlim(0, max(window_sizes_arr) + 10)
     ax.set_ylim(0.4, 1.0)
@@ -492,7 +526,9 @@ def main():
     print(f"Batch size: {args.batch_size}")
     print(f"Hidden layers: {args.hidden_layers}")
     total_runs = len(args.fake_datasets) * len(args.window_sizes)
-    print(f"Total training runs: {len(args.fake_datasets)} x {len(args.window_sizes)} = {total_runs}")
+    print(
+        f"Total training runs: {len(args.fake_datasets)} x {len(args.window_sizes)} = {total_runs}"
+    )
     print("=" * 70)
 
     # Initialize results

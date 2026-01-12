@@ -16,8 +16,13 @@ import optax
 import orbax.checkpoint as ocp
 import wandb
 
-from track_mjx.analysis.discriminator.data_loading import MotionClipDataset, create_batches
-from track_mjx.analysis.discriminator.discriminator_network import make_discriminator_network
+from track_mjx.analysis.discriminator.data_loading import (
+    MotionClipDataset,
+    create_batches,
+)
+from track_mjx.analysis.discriminator.discriminator_network import (
+    make_discriminator_network,
+)
 
 
 @flax.struct.dataclass
@@ -46,9 +51,7 @@ class TrainingState:
     best_test_accuracy: float
 
 
-def binary_cross_entropy_loss(
-    logits: jnp.ndarray, labels: jnp.ndarray
-) -> jnp.ndarray:
+def binary_cross_entropy_loss(logits: jnp.ndarray, labels: jnp.ndarray) -> jnp.ndarray:
     """Compute binary cross-entropy loss with numerical stability.
 
     Uses the numerically stable formulation:
@@ -248,8 +251,35 @@ def train(
     """
     # Indices of joints that are always zero in the data
     ZERO_JOINT_INDICES = [
-        18, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-        40, 41, 42, 43, 44, 45, 46, 47, 48, 57, 65, 73
+        18,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        57,
+        65,
+        73,
     ]
 
     # Determine which qpos indices to keep
@@ -369,8 +399,8 @@ def train(
         # Generate random keys for this epoch's dropout
         key, epoch_key = jax.random.split(key)
         # Pre-generate enough keys for all batches
-        max_batches = (
-            min(len(dataset.train_real), len(dataset.train_fake)) // (batch_size // 2)
+        max_batches = min(len(dataset.train_real), len(dataset.train_fake)) // (
+            batch_size // 2
         )
         batch_keys = jax.random.split(epoch_key, max_batches + 1)
         batch_idx = 0

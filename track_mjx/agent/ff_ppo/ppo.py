@@ -44,7 +44,7 @@ from mujoco_playground import wrapper as mp_wrapper
 from optax.transforms import freeze
 
 from track_mjx.agent import checkpointing, gradients, network_masks
-from track_mjx.agent.mlp_ppo import losses, ppo_networks
+from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
     get_obs_sizes,

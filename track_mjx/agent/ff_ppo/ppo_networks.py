@@ -24,7 +24,7 @@ from brax.training.types import PRNGKey
 from jax import numpy as jnp
 
 from track_mjx.agent import checkpointing
-from track_mjx.agent.mlp_ppo import intention_network
+from track_mjx.agent.ff_ppo import intention_network
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
     concat_flat_dict_obs,

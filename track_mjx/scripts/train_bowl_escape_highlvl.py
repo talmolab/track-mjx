@@ -36,7 +36,7 @@ from vnl_playground.tasks.rodent import bowl_escape
 from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
 import hydra
 from track_mjx.agent import checkpointing
-from track_mjx.agent.mlp_ppo import ppo_networks as track_networks
+from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
@@ -55,7 +55,7 @@ mimic_cfg = OmegaConf.create(
 env_cfg.ctrl_dt = mimic_cfg.env_config.ctrl_dt
 env_cfg.target_speed = 1.0
 
-decoder_policy_fn = track_networks.make_decoder_policy_fn(mimic_checkpoint_path)
+decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(mimic_checkpoint_path)
 print(f"env_cfg:\n{env_cfg}")
 
 

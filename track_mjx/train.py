@@ -20,7 +20,7 @@ from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
-from track_mjx.agent.mlp_ppo import ppo, ppo_networks
+from track_mjx.agent.ff_ppo import ppo, ppo_networks
 from track_mjx.agent.domain_randomization import domain_randomization_maker
 
 

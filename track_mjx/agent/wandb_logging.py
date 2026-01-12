@@ -15,7 +15,7 @@ import wandb
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
-from track_mjx.agent.mlp_ppo import losses
+from track_mjx.agent.ff_ppo import losses
 
 
 def rollout_logging_fn(

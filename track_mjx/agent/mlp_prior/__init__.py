@@ -2,7 +2,7 @@
 mlp_prior: Training pipeline for prior network alignment to pretrained encoder.
 
 This module trains a prior network to match the encoder distributions from a
-pretrained mlp_ppo checkpoint. The encoder and decoder remain frozen; only
+pretrained ff_ppo checkpoint. The encoder and decoder remain frozen; only
 the prior is trained using KL divergence loss.
 """
 

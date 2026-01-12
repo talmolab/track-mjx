@@ -25,8 +25,8 @@ from brax.training.acme import running_statistics, specs
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
-from track_mjx.agent.mlp_ppo import losses as mlp_losses
-from track_mjx.agent.mlp_ppo import ppo_networks as mlp_ppo_networks
+from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
+from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from track_mjx.agent.observation_utils import (
     convert_flat_to_dict_normalizer,
     init_dict_normalizer,
@@ -194,7 +194,7 @@ def make_abstract_policy(
     ppo_network = make_ppo_network_from_cfg(cfg)
     key_policy, key_value = jax.random.split(jax.random.key(seed))
 
-    init_params = mlp_losses.PPONetworkParams(
+    init_params = ff_ppo_losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
     )
@@ -236,7 +236,7 @@ def load_inference_fn(
         Inference function with signature (obs, rng) -> (action, extras).
     """
     ppo_network = make_ppo_network_from_cfg(cfg)
-    make_policy = mlp_ppo_networks.make_inference_fn(ppo_network)
+    make_policy = ff_ppo_networks.make_inference_fn(ppo_network)
 
     # Convert legacy flat normalizer to dict normalizer if needed
     normalizer_state, network_params = policy_params
@@ -286,7 +286,7 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
                 - network_config.reference_obs_size,
             }
 
-        return mlp_ppo_networks.make_intention_ppo_networks(
+        return ff_ppo_networks.make_intention_ppo_networks(
             obs_sizes=obs_sizes,
             action_size=cfg.network_config.action_size,
             intention_latent_size=cfg.network_config.intention_size,

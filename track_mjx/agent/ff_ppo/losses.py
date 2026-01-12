@@ -229,9 +229,34 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits, latent_mean, latent_logvar = policy_apply(
-        normalizer_params, params.policy, data.observation, policy_key
-    )
+
+    # Check for stored policy_rng for deterministic stochastic layer replay
+    policy_rng = data.extras["policy_extras"].get("policy_rng")
+
+    if policy_rng is None:
+        # Standard path: use fresh RNG
+        policy_logits, latent_mean, latent_logvar = policy_apply(
+            normalizer_params, params.policy, data.observation, policy_key
+        )
+    else:
+        # Deterministic replay: use stored RNGs per timestep
+        # policy_rng has shape [T, B, 2] after swapaxes (JAX PRNGKey is shape [2])
+        def _apply_policy(obs_t, rng_t):
+            return policy_apply(normalizer_params, params.policy, obs_t, rng_t)
+
+        if policy_rng.ndim == 2:
+            # Shape [T, 2] - vmap over time only
+            policy_logits, latent_mean, latent_logvar = jax.vmap(
+                _apply_policy, in_axes=(0, 0)
+            )(data.observation, policy_rng)
+        else:
+            # Shape [T, B, 2] - nested vmap over time and batch
+            policy_logits, latent_mean, latent_logvar = jax.vmap(
+                lambda obs_t, rng_t: jax.vmap(_apply_policy, in_axes=(0, 0))(
+                    obs_t, rng_t
+                ),
+                in_axes=(0, 0),
+            )(data.observation, policy_rng)
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 

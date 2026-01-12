@@ -124,6 +124,7 @@ def make_inference_fn(
                 "raw_action": raw_actions,
                 "logits": logits,
                 "activations": activations,
+                "policy_rng": key_network,
             }
 
         return policy

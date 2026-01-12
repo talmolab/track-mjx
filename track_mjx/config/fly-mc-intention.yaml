@@ -53,7 +53,8 @@ network_config:
   critic_layer_sizes: [256, 256]
   intention_size: 60
   kl_schedule: True
-  kl_weight: 1e-1
+  latent_kl_weight: 3e-2               # Weight for KL divergence to standard Gaussian prior
+  latent_ar1_weight: 7e-2              # Weight for AR(1) temporal smoothness loss
 
 train_setup:
   agent_name: fly

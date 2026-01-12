@@ -40,7 +40,7 @@ def create_decoder_mask(params: Any, decoder_name: str = "decoder") -> Any:
     param_mask = copy.deepcopy(params)
 
     for key in param_mask.policy["params"]:
-        param_mask.policy["params"][key] = (key == decoder_name)
+        param_mask.policy["params"][key] = key == decoder_name
 
     for key in param_mask.value:
         param_mask.value[key] = False

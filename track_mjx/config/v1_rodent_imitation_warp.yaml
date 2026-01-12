@@ -11,7 +11,7 @@
 # Settings for the MuJoCo simulation environment and imitation learning task.
 env_config:
   # MuJoCo backend: "jax" for GPU-accelerated simulation via MJX
-  mujoco_impl: "jax"
+  mujoco_impl: "warp"
 
   # -----------------------------------------------------------------------------
   # Physics Solver Settings
@@ -20,8 +20,8 @@ env_config:
   solver: "newton"
   iterations: 5           # Max solver iterations per step
   ls_iterations: 5        # Line search iterations for Newton solver
-  nconmax: 256            # Max contacts (increase if contact clipping occurs)
-  njmax: 128              # Max constraint rows
+  nconmax: 20            # Max contacts (increase if contact clipping occurs)
+  njmax: 600              # Max constraint rows
   noslip_iterations: 0    # No-slip solver iterations (0 = disabled)
 
   # -----------------------------------------------------------------------------
@@ -147,13 +147,14 @@ render_config:
 # Intention-based architecture with VAE-style latent encoding
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [2048,1024,1024]    # Reference trajectory encoder
+  encoder_layer_sizes: [1024,512,512,512,512]    # Reference trajectory encoder
   decoder_layer_sizes: [1024,1024,512]  # Policy decoder
-  critic_layer_sizes: [2048,1024,1024,1024,1024,512]   # Value function
+  critic_layer_sizes: [1024,1024,1024,512]   # Value function
   intention_size: 16                   # Latent intention vector dimension
   kl_schedule: true                    # Anneal KL divergence weight over training
   latent_kl_weight: 1e-1               # Weight for KL divergence to standard Gaussian prior
   latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss
+
 
 # =============================================================================
 # Training Setup
@@ -171,21 +172,20 @@ train_setup:
   train_subset_ratio: 0.8             # Fraction of clips for training
 
   # Evaluation and resets
-  eval_every: 25_000_000              # Eval frequency (env steps)
+  eval_every: 15_000_000              # Eval frequency (env steps)
   episode_length: 200                 # Max steps per episode
-  reset_every: 25_000_000             # JIT recompilation frequency (memory mgmt)
+  reset_every: 30_000_000             # JIT recompilation frequency (memory mgmt)
 
   # ---------------------------------------------------------------------------
   # PPO Training Hyperparameters
   # ---------------------------------------------------------------------------
   train_config:
-    num_envs: 4096                    # Parallel environments
+    num_envs: 2048                    # Parallel environments
     num_timesteps: 3_000_000_000      # Total training steps
     batch_size: 1024                  # Samples per gradient update
     num_minibatches: 16               # Minibatches per epoch
     num_updates_per_batch: 4          # Epochs per PPO update
     learning_rate: 1e-4               # Adam learning rate
-    grad_clip_threshold: 20.0         # Max gradient norm for clipping
     clipping_epsilon: 0.2             # PPO clip range
     discounting: 0.95                 # Discount factor (gamma)
     action_repeat: 1                  # Actions repeated per step
@@ -204,8 +204,8 @@ train_setup:
 # Weights & Biases logging settings
 logging_config:
   project_name: mimic-mjx
-  group_name: v1
-  exp_name: latent-reg
+  group_name: v1_warp
+  exp_name: full_collision
   clip_id: -1                         # Clip ID for single-clip runs (-1 = all)
   model_path: model_checkpoints/
 
@@ -217,3 +217,79 @@ walker_config:
   walker_name: "rodent"
   torque_actuators: true              # Use torque (vs position) control
   rescale_factor: 0.9                 # Model scale factor
+
+  # Joint names for tracking (order must match reference data)
+  joint_names:
+    # Spine
+    - vertebra_1_extend
+    # Left hind leg
+    - hip_L_supinate
+    - hip_L_abduct
+    - hip_L_extend
+    - knee_L
+    - ankle_L
+    - toe_L
+    # Right hind leg
+    - hip_R_supinate
+    - hip_R_abduct
+    - hip_R_extend
+    - knee_R
+    - ankle_R
+    - toe_R
+    # Neck and head
+    - vertebra_C11_extend
+    - vertebra_cervical_1_bend
+    - vertebra_axis_twist
+    - atlas
+    - mandible
+    # Left front leg
+    - scapula_L_supinate
+    - scapula_L_abduct
+    - scapula_L_extend
+    - shoulder_L
+    - shoulder_sup_L
+    - elbow_L
+    - wrist_L
+    # Right front leg
+    - scapula_R_supinate
+    - scapula_R_abduct
+    - scapula_R_extend
+    - shoulder_R
+    - shoulder_sup_R
+    - elbow_R
+    - wrist_R
+    - finger_R
+
+  # Body segment names for tracking
+  body_names:
+    - torso
+    - pelvis
+    # Left hind leg
+    - upper_leg_L
+    - lower_leg_L
+    - foot_L
+    # Right hind leg
+    - upper_leg_R
+    - lower_leg_R
+    - foot_R
+    # Head
+    - skull
+    - jaw
+    # Left front leg
+    - scapula_L
+    - upper_arm_L
+    - lower_arm_L
+    - finger_L
+    # Right front leg
+    - scapula_R
+    - upper_arm_R
+    - lower_arm_R
+    - finger_R
+
+  # End effector names for tracking (extremities)
+  end_eff_names:
+    - foot_L
+    - foot_R
+    - hand_L
+    - hand_R
+    - skull

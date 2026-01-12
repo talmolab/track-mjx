@@ -4,12 +4,53 @@ This module provides helper functions for preparing and updating OmegaConf
 configurations, including walker-specific path resolution and config merging.
 """
 
+import json
 import logging
+import subprocess
+from importlib.metadata import distribution
 from pathlib import Path
 from typing import Any
 
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
+
+
+def _get_package_commit(package_name: str) -> str:
+    """Get the git commit hash for an installed package.
+
+    Works for both editable installs (file://) and VCS installs (git+https://).
+
+    Args:
+        package_name: Name of the installed package.
+
+    Returns:
+        Git commit hash, or "unknown" if not available.
+    """
+    try:
+        dist = distribution(package_name)
+        direct_url = json.loads(dist.read_text("direct_url.json"))
+        url = direct_url.get("url", "")
+
+        # Editable install: file:// URL pointing to local repo
+        if url.startswith("file://"):
+            path = url[7:]
+            result = subprocess.run(
+                ["git", "-C", path, "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+
+        # VCS install: git+https:// with vcs_info
+        if "vcs_info" in direct_url:
+            return direct_url["vcs_info"].get("commit_id", "unknown")
+
+    except Exception:
+        pass
+    return "unknown"
+
+
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
@@ -58,7 +99,9 @@ def prepare_config(
         logging.info("Using rodent walker")
         walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
         arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path("data/rodent/rodent_reference_clips.h5")
+        reference_data_path = _resolve_data_path(
+            "data/rodent/rodent_reference_clips.h5"
+        )
     elif walker_name == "fruitfly":
         logging.info("Using fruitfly walker")
         walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
@@ -70,7 +113,9 @@ def prepare_config(
     elif walker_name == "mouse":
         logging.info("Using mouse walker")
         walker_xml_path = str(mouse_consts.MOUSE_XML_PATH)
-        raise NotImplementedError("Mouse arena and reference data paths not implemented yet.")
+        raise NotImplementedError(
+            "Mouse arena and reference data paths not implemented yet."
+        )
     elif walker_name == "stickbug":
         logging.info("Using stickbug walker")
         raise NotImplementedError("Stickbug walker not implemented yet.")
@@ -81,10 +126,27 @@ def prepare_config(
     OmegaConf.set_struct(cfg.env_config, False)
     OmegaConf.update(cfg.env_config, "walker_xml_path", walker_xml_path, merge=False)
     OmegaConf.update(cfg.env_config, "arena_xml_path", arena_xml_path, merge=False)
-    OmegaConf.update(cfg.env_config, "reference_data_path", reference_data_path, merge=False)
-    OmegaConf.update(cfg.env_config, "walker_name", cfg.walker_config.walker_name, merge=False)
-    OmegaConf.update(cfg.env_config, "torque_actuators", cfg.walker_config.torque_actuators, merge=False)
-    OmegaConf.update(cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False)
+    OmegaConf.update(
+        cfg.env_config, "reference_data_path", reference_data_path, merge=False
+    )
+    OmegaConf.update(
+        cfg.env_config, "walker_name", cfg.walker_config.walker_name, merge=False
+    )
+    OmegaConf.update(
+        cfg.env_config,
+        "torque_actuators",
+        cfg.walker_config.torque_actuators,
+        merge=False,
+    )
+    OmegaConf.update(
+        cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False
+    )
+    OmegaConf.update(
+        cfg.env_config,
+        "vnl_playground_commit",
+        _get_package_commit("vnl-playground"),
+        merge=False,
+    )
     OmegaConf.set_struct(cfg.env_config, True)
 
     # Create ml_collections ConfigDict for env_config

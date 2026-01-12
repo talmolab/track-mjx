@@ -21,6 +21,7 @@ import optax
 @flax.struct.dataclass
 class DistillNetworkParams:
     """Contains training parameters for the student network."""
+
     policy: Params  # Student policy parameters (encoder, decoder, prior)
 
 
@@ -75,7 +76,7 @@ def compute_autoregressive_loss(
 
     # Get consecutive latent means
     z_prev = latent_means[:-1]  # z_0, ..., z_{T-2}  [T-1, B, d]
-    z_curr = latent_means[1:]   # z_1, ..., z_{T-1}  [T-1, B, d]
+    z_curr = latent_means[1:]  # z_1, ..., z_{T-1}  [T-1, B, d]
 
     # AR(1) prediction error: z_t - φ * z_{t-1}
     error = z_curr - phi * z_prev  # [T-1, B, d]
@@ -229,13 +230,18 @@ def compute_distillation_loss(
     """
     _, student_key, teacher_key = jax.random.split(rng, 3)
 
+
     # Put the time dimension first: [B, T] -> [T, B]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
+
     # Get student outputs
-    student_logits, encoder_mean, encoder_logvar, prior_mean, prior_logvar = student_network.apply(
-        normalizer_params, params.policy, data.observation, student_key
+    student_logits, encoder_mean, encoder_logvar, prior_mean, prior_logvar = (
+        student_network.apply(
+            normalizer_params, params.policy, data.observation, student_key
+        )
     )
+
 
     # Get teacher actions (frozen - no gradients)
     # Note: deterministic behavior is already captured in the teacher_policy_fn closure
@@ -244,6 +250,7 @@ def compute_distillation_loss(
     )
     teacher_actions = jax.lax.stop_gradient(teacher_actions)
 
+
     # Convert student logits to actions (using mean for distillation)
     # The logits contain (mean, log_std) for each action dimension
     action_dim = student_logits.shape[-1] // 2
@@ -251,8 +258,11 @@ def compute_distillation_loss(
     # Apply tanh to get actions in [-1, 1]
     student_actions = jnp.tanh(student_action_mean)
 
+
     # Compute individual losses
-    action_loss = compute_action_loss(student_actions, teacher_actions, use_l2_action_loss)
+    action_loss = compute_action_loss(
+        student_actions, teacher_actions, use_l2_action_loss
+    )
     ar_loss = compute_autoregressive_loss(encoder_mean, data.discount)
 
     # KL loss between encoder (stop_grad) and prior - trains prior to match encoder
@@ -295,6 +305,7 @@ def compute_distillation_loss(
         "ar_weight": current_ar_weight,
     }
 
+
     return total_loss, metrics
 
 
@@ -308,7 +319,7 @@ def create_ramp_schedule(
 ) -> optax.Schedule:
     """
     Creates a schedule for loss weights.
-    
+
     Args:
         start_value: The starting value of the schedule.
         end_value: The ending value of the schedule.
@@ -323,7 +334,7 @@ def create_ramp_schedule(
 
     def schedule_fn(step):
         step = jnp.asarray(step, dtype=jnp.float32)
-        
+
         if schedule == "linear":
             effective_step = step - delay_steps
             progress = jnp.clip(effective_step / ramp_steps, 0.0, 1.0)
@@ -334,7 +345,9 @@ def create_ramp_schedule(
             effective_step = jnp.maximum(step - delay_steps, 0.0)
             is_delayed = step < delay_steps
             progress = jnp.clip(effective_step / ramp_steps, 0.0, 1.0)
-            cosine_value = start_value + 0.5 * (end_value - start_value) * (1 - jnp.cos(jnp.pi * progress))
+            cosine_value = start_value + 0.5 * (end_value - start_value) * (
+                1 - jnp.cos(jnp.pi * progress)
+            )
             return jnp.where(is_delayed, start_value, cosine_value)
         else:
             raise ValueError(f"schedule must be 'linear' or 'cosine', not {schedule}")

@@ -10,6 +10,9 @@
 # =============================================================================
 # Settings for the MuJoCo simulation environment and imitation learning task.
 env_config:
+  # Environment name for registry lookup
+  env_name: "RodentImitation"
+
   # MuJoCo backend: "jax" for GPU-accelerated simulation via MJX
   mujoco_impl: "jax"
 

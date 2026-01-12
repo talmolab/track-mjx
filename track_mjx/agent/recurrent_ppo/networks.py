@@ -155,6 +155,10 @@ class RecurrentDecoder(nn.Module):
             nn.Dense(size, name=f"output_{i}", kernel_init=self.kernel_init)
             for i, size in enumerate(self.output_layer_sizes)
         ]
+        self.output_layer_norms = [
+            nn.LayerNorm(name=f"output_ln_{i}")
+            for i in range(len(self.output_layer_sizes))
+        ]
 
         # Final output layer (no activation)
         self.final_layer = nn.Dense(
@@ -201,10 +205,10 @@ class RecurrentDecoder(nn.Module):
 
         # Apply output MLP layers
         output = rnn_input
-        for layer in self.output_layers:
+        for layer, ln in zip(self.output_layers, self.output_layer_norms):
             output = layer(output)
             output = self.activation(output)
-            output = nn.LayerNorm()(output)
+            output = ln(output)
 
         # Final output (no activation)
         output = self.final_layer(output)

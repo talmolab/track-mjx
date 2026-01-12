@@ -129,8 +129,25 @@ def compute_recurrent_ppo_loss(
     value_apply = recurrent_ppo_network.value_network.apply
     cell_type = recurrent_ppo_network.cell_type
 
+    initial_policy_hidden = data.extras["policy_extras"]["initial_policy_hidden"]
+
     # Put time dimension first: [B, T, ...] -> [T, B, ...]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+
+    # initial_policy_hidden has no time axis; keep it batch-major.
+    policy_extras = dict(data.extras["policy_extras"])
+    policy_extras["initial_policy_hidden"] = initial_policy_hidden
+    data = types.Transition(
+        observation=data.observation,
+        action=data.action,
+        reward=data.reward,
+        discount=data.discount,
+        next_observation=data.next_observation,
+        extras={
+            "policy_extras": policy_extras,
+            "state_extras": data.extras["state_extras"],
+        },
+    )
 
     # Extract initial hidden state (stored at first timestep of each trajectory)
     initial_hidden = _extract_initial_hidden(

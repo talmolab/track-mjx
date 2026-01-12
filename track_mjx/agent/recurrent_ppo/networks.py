@@ -151,11 +151,10 @@ class RecurrentDecoder(nn.Module):
         ]
 
         # Output MLP layers (with LayerNorm like ff_ppo decoder)
-        self.output_layers = []
-        for i, size in enumerate(self.output_layer_sizes):
-            self.output_layers.append(
-                nn.Dense(size, name=f"output_{i}", kernel_init=self.kernel_init)
-            )
+        self.output_layers = [
+            nn.Dense(size, name=f"output_{i}", kernel_init=self.kernel_init)
+            for i, size in enumerate(self.output_layer_sizes)
+        ]
 
         # Final output layer (no activation)
         self.final_layer = nn.Dense(

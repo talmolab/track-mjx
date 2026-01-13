@@ -14,7 +14,10 @@ import jax.numpy as jp
 from mujoco_playground import wrapper
 from mujoco_playground._src import mjx_env
 
-from track_mjx.agent.observation_utils import concat_flat_dict_obs, flatten_obs_dict
+from track_mjx.agent.task_transfer.bowl_escape.observation_utils import (
+    concat_flat_dict_obs,
+    flatten_obs_dict,
+)
 
 
 def _get_proprio(

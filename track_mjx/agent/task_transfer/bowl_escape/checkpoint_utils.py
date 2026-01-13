@@ -3,9 +3,11 @@
 This module provides functions to:
 - Load prior and decoder parameters from mlp_prior checkpoints
 - Create inference functions for the frozen prior and decoder networks
+
+Handles both legacy flat normalizer format and new dict normalizer format.
 """
 
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple, Union
 
 import jax
 import jax.numpy as jnp
@@ -16,7 +18,10 @@ from omegaconf import OmegaConf
 
 from track_mjx.agent.mlp_ppo import intention_network
 from track_mjx.agent.mlp_prior.prior_networks import Prior
-from track_mjx.agent.observation_utils import DictRunningStatisticsState
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    convert_flat_to_dict_normalizer,
+)
 
 
 def load_prior_checkpoint(
@@ -28,12 +33,15 @@ def load_prior_checkpoint(
     mlp_prior checkpoints have structure:
     (normalizer_params, {"params": {"encoder": ..., "decoder": ..., "prior": ...}})
 
+    Handles both legacy flat normalizer and new dict normalizer formats.
+
     Args:
         checkpoint_path: Path to the mlp_prior checkpoint directory.
         step: Specific step to load. If None, loads the latest.
 
     Returns:
         Tuple of (prior_params, decoder_params, normalizer_params, config_dict)
+        normalizer_params is always returned as DictRunningStatisticsState.
     """
     # mlp_prior checkpoints use "PriorNetwork" prefix
     mgr_options = ocp.CheckpointManagerOptions(create=False, step_prefix="PriorNetwork")
@@ -50,19 +58,49 @@ def load_prior_checkpoint(
 
     cfg = OmegaConf.create(cfg)
 
-    # Create abstract structure for checkpoint restoration
-    abstract_policy = _create_abstract_prior_policy(cfg)
+    # Check if using dict format or legacy flat format
+    obs_sizes = cfg.network_config.get("obs_sizes", None)
 
-    # Load actual policy
-    with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
-        policy_params = ckpt_mgr.restore(
-            step,
-            args=ocp.args.Composite(
-                policy=ocp.args.StandardRestore(abstract_policy)
-            ),
-        )["policy"]
+    if obs_sizes is not None:
+        # New dict format
+        abstract_policy = _create_abstract_prior_policy_dict(cfg)
 
-    normalizer_params, network_params = policy_params
+        with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
+            policy_params = ckpt_mgr.restore(
+                step,
+                args=ocp.args.Composite(
+                    policy=ocp.args.StandardRestore(abstract_policy)
+                ),
+            )["policy"]
+
+        normalizer_params, network_params = policy_params
+    else:
+        # Legacy flat format - need to convert
+        reference_obs_size = cfg.network_config.reference_obs_size
+        observation_size = cfg.network_config.observation_size
+
+        abstract_policy = _create_abstract_prior_policy_flat(cfg)
+
+        with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
+            policy_params = ckpt_mgr.restore(
+                step,
+                args=ocp.args.Composite(
+                    policy=ocp.args.StandardRestore(abstract_policy)
+                ),
+            )["policy"]
+
+        flat_normalizer_params, network_params = policy_params
+
+        # Convert flat normalizer to dict format
+        normalizer_params = convert_flat_to_dict_normalizer(
+            flat_normalizer_params, reference_obs_size
+        )
+
+        # Add obs_sizes to config for downstream use
+        cfg.network_config.obs_sizes = {
+            "imitation_target": reference_obs_size,
+            "proprioception": observation_size - reference_obs_size,
+        }
 
     # Extract prior and decoder params
     prior_params = network_params["params"]["prior"]
@@ -76,26 +114,21 @@ def load_prior_checkpoint(
     )
 
 
-def _create_abstract_prior_policy(cfg: OmegaConf) -> Tuple[Any, Any]:
-    """Create abstract policy structure for mlp_prior checkpoint restoration.
+def _create_abstract_prior_policy_dict(cfg: OmegaConf) -> Tuple[Any, Any]:
+    """Create abstract policy structure for dict-format checkpoint restoration.
 
     Args:
-        cfg: Configuration from checkpoint.
+        cfg: Configuration from checkpoint (must have obs_sizes).
 
     Returns:
         Tuple of (normalizer_state, combined_policy_params) with correct structure.
     """
     latent_size = cfg.network_config.intention_size
     action_size = cfg.network_config.action_size
+    obs_sizes = dict(cfg.network_config.obs_sizes)
 
-    obs_sizes = cfg.network_config.get("obs_sizes", None)
-    if obs_sizes is not None:
-        reference_obs_size = obs_sizes["imitation_target"]
-        proprioceptive_obs_size = obs_sizes["proprioception"]
-    else:
-        reference_obs_size = cfg.network_config.reference_obs_size
-        observation_size = cfg.network_config.observation_size
-        proprioceptive_obs_size = observation_size - reference_obs_size
+    reference_obs_size = obs_sizes["imitation_target"]
+    proprioceptive_obs_size = obs_sizes["proprioception"]
 
     encoder_hidden_layer_sizes = tuple(cfg.network_config.encoder_layer_sizes)
     decoder_hidden_layer_sizes = tuple(cfg.network_config.decoder_layer_sizes)
@@ -103,6 +136,80 @@ def _create_abstract_prior_policy(cfg: OmegaConf) -> Tuple[Any, Any]:
         cfg.network_config.get("prior_layer_sizes", [1024, 1024])
     )
 
+    # Create network modules and initialize
+    combined_params = _init_network_params(
+        latent_size,
+        action_size,
+        reference_obs_size,
+        proprioceptive_obs_size,
+        encoder_hidden_layer_sizes,
+        decoder_hidden_layer_sizes,
+        prior_hidden_layer_sizes,
+    )
+
+    # Create dict normalizer state
+    normalizer_state = DictRunningStatisticsState(
+        imitation_target=running_statistics.init_state(
+            specs.Array(reference_obs_size, jnp.dtype("float32"))
+        ),
+        proprioception=running_statistics.init_state(
+            specs.Array(proprioceptive_obs_size, jnp.dtype("float32"))
+        ),
+    )
+
+    return (normalizer_state, combined_params)
+
+
+def _create_abstract_prior_policy_flat(cfg: OmegaConf) -> Tuple[Any, Any]:
+    """Create abstract policy structure for flat-format (legacy) checkpoint restoration.
+
+    Args:
+        cfg: Configuration from checkpoint (has observation_size/reference_obs_size).
+
+    Returns:
+        Tuple of (normalizer_state, combined_policy_params) with correct structure.
+    """
+    latent_size = cfg.network_config.intention_size
+    action_size = cfg.network_config.action_size
+    observation_size = cfg.network_config.observation_size
+    reference_obs_size = cfg.network_config.reference_obs_size
+    proprioceptive_obs_size = observation_size - reference_obs_size
+
+    encoder_hidden_layer_sizes = tuple(cfg.network_config.encoder_layer_sizes)
+    decoder_hidden_layer_sizes = tuple(cfg.network_config.decoder_layer_sizes)
+    prior_hidden_layer_sizes = tuple(
+        cfg.network_config.get("prior_layer_sizes", [1024, 1024])
+    )
+
+    # Create network modules and initialize
+    combined_params = _init_network_params(
+        latent_size,
+        action_size,
+        reference_obs_size,
+        proprioceptive_obs_size,
+        encoder_hidden_layer_sizes,
+        decoder_hidden_layer_sizes,
+        prior_hidden_layer_sizes,
+    )
+
+    # Create flat normalizer state (legacy format)
+    normalizer_state = running_statistics.init_state(
+        specs.Array(observation_size, jnp.dtype("float32"))
+    )
+
+    return (normalizer_state, combined_params)
+
+
+def _init_network_params(
+    latent_size: int,
+    action_size: int,
+    reference_obs_size: int,
+    proprioceptive_obs_size: int,
+    encoder_hidden_layer_sizes: tuple,
+    decoder_hidden_layer_sizes: tuple,
+    prior_hidden_layer_sizes: tuple,
+) -> Dict:
+    """Initialize network parameters for checkpoint structure matching."""
     # Create encoder module
     encoder_module = intention_network.Encoder(
         layer_sizes=list(encoder_hidden_layer_sizes),
@@ -134,25 +241,13 @@ def _create_abstract_prior_policy(cfg: OmegaConf) -> Tuple[Any, Any]:
     prior_init = prior_module.init(key_prior, dummy_proprio_obs)
 
     # Combine into expected structure
-    combined_params = {
+    return {
         "params": {
             "encoder": encoder_init["params"],
             "decoder": decoder_init["params"],
             "prior": prior_init["params"],
         }
     }
-
-    # Create dict normalizer state
-    normalizer_state = DictRunningStatisticsState(
-        imitation_target=running_statistics.init_state(
-            specs.Array(reference_obs_size, jnp.dtype("float32"))
-        ),
-        proprioception=running_statistics.init_state(
-            specs.Array(proprioceptive_obs_size, jnp.dtype("float32"))
-        ),
-    )
-
-    return (normalizer_state, combined_params)
 
 
 def make_decoder_inference_fn(

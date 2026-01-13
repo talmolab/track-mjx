@@ -347,11 +347,22 @@ def make_decoder_policy_fn(
 
     # Load config and policy from checkpoint
     cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step=step)
-    observation_size = cfg["network_config"]["observation_size"]
-    reference_obs_size = cfg["network_config"]["reference_obs_size"]
-    action_size = cfg["network_config"]["action_size"]
-    intention_latent_size = cfg["network_config"]["intention_size"]
-    decoder_hidden_layer_sizes = cfg["network_config"]["decoder_layer_sizes"]
+    network_config = cfg["network_config"]
+
+    # Handle both new (dict-based) and legacy (flat) config formats
+    if "obs_sizes" in network_config:
+        # New dict-based format
+        obs_sizes = network_config["obs_sizes"]
+        reference_obs_size = obs_sizes["imitation_target"]
+        observation_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
+    else:
+        # Legacy flat format
+        observation_size = network_config["observation_size"]
+        reference_obs_size = network_config["reference_obs_size"]
+
+    action_size = network_config["action_size"]
+    intention_latent_size = network_config["intention_size"]
+    decoder_hidden_layer_sizes = network_config["decoder_layer_sizes"]
 
     intention_policy_params = checkpointing.load_policy(ckpt_path, cfg, step=step)
 
@@ -368,16 +379,24 @@ def make_decoder_policy_fn(
     )
 
     # Extract decoder normalizer params (proprioceptive portion only)
-    decoder_normalizer_params_dict = jax.tree.map(
-        lambda x: (
-            x[reference_obs_size:] if isinstance(x, jnp.ndarray) and x.ndim >= 1 else x
-        ),
-        intention_policy_params[0].__dict__,
-    )
+    normalizer_state = intention_policy_params[0]
 
-    decoder_normalizer_params = running_statistics.RunningStatisticsState(
-        **decoder_normalizer_params_dict
-    )
+    if "obs_sizes" in network_config:
+        # New dict-based format: normalizer has separate imitation_target/proprioception
+        decoder_normalizer_params = normalizer_state.proprioception
+    else:
+        # Legacy flat format: slice the arrays to get proprioception portion
+        decoder_normalizer_params_dict = jax.tree.map(
+            lambda x: (
+                x[reference_obs_size:]
+                if isinstance(x, jnp.ndarray) and x.ndim >= 1
+                else x
+            ),
+            normalizer_state.__dict__,
+        )
+        decoder_normalizer_params = running_statistics.RunningStatisticsState(
+            **decoder_normalizer_params_dict
+        )
 
     decoder_params = (
         decoder_normalizer_params,

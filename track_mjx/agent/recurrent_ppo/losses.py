@@ -158,6 +158,9 @@ def compute_recurrent_ppo_loss(
     # discount is 0 when episode ends
     done = data.discount < 0.5
 
+    # Check for stored policy_rng for deterministic stochastic layer replay
+    policy_rng = data.extras["policy_extras"].get("policy_rng")
+
     # Forward pass through policy network over sequence
     # This scans through time, resetting hidden on done
     policy_logits, latent_mean, latent_logvar, _ = policy_network.apply_sequence(
@@ -171,6 +174,7 @@ def compute_recurrent_ppo_loss(
         done,
         policy_key,
         deterministic=False,
+        stored_keys=policy_rng,  # Use stored keys if available for deterministic replay
     )
 
     # Value network is feedforward - apply to all timesteps at once

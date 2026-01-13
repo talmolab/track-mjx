@@ -44,7 +44,7 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = bowl_escape.default_config()
-mimic_run_id = "YYMMDD_HHMMSS_XXXXXX"  # Replace with your checkpoint run ID
+mimic_run_id = "260112_171421_124282"  # Replace with your checkpoint run ID
 mimic_checkpoint_path = hydra.utils.to_absolute_path(
     f"./model_checkpoints/{mimic_run_id}"
 )

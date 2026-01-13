@@ -261,17 +261,31 @@ class RecurrentIntentionNetwork(nn.Module):
         Args:
             obs: Dict with 'imitation_target' and 'proprioception' keys.
             hidden: RNN hidden state(s) from previous timestep.
-            key: JAX random key for sampling.
+            key: JAX random key for sampling. Either shape [2] (single key
+                for all samples) or [batch_size, 2] (per-sample keys for
+                deterministic replay).
             deterministic: If True, use latent mean instead of sampling.
 
         Returns:
             Tuple of (action_params, latent_mean, latent_logvar, new_hidden).
         """
-        _, encoder_rng = jax.random.split(key)
-
         # Encode trajectory observations to latent distribution
         traj = obs["imitation_target"]
         egocentric_obs = obs["proprioception"]
+
+        # Check if observations are actually batched (based on obs shape)
+        obs_is_batched = traj.ndim >= 2
+
+        # Handle key splitting based on both key shape AND observation shape
+        if key.ndim == 1:
+            # Single key - split for encoder
+            _, encoder_rng = jax.random.split(key)
+        elif not obs_is_batched:
+            # Per-sample keys but unbatched observation - use first key
+            _, encoder_rng = jax.random.split(key[0])
+        else:
+            # Per-sample keys [batch_size, 2] - vmap split over batch
+            _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
 
         latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
 
@@ -365,8 +379,22 @@ def make_inference_fn(
         ) -> tuple[types.Action, types.Extra, HiddenState | list[HiddenState]]:
             key_sample, key_network = jax.random.split(key_sample)
 
+            # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
+            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            if obs_leaf.ndim >= 2:
+                # Batched observations - generate per-sample keys for deterministic replay
+                batch_size = obs_leaf.shape[0]
+                per_sample_keys = jax.random.split(key_network, batch_size)
+            else:
+                # Unbatched observation - use single key
+                per_sample_keys = key_network
+
             logits, latent_mean, latent_logvar, new_hidden = policy_network.apply(
-                *params, observations, hidden, key_network, deterministic=deterministic
+                *params,
+                observations,
+                hidden,
+                per_sample_keys,
+                deterministic=deterministic,
             )
 
             if deterministic:
@@ -394,6 +422,7 @@ def make_inference_fn(
                     "log_prob": log_prob,
                     "raw_action": raw_actions,
                     "logits": logits,
+                    "policy_rng": per_sample_keys,
                 },
                 new_hidden,
             )
@@ -576,6 +605,7 @@ def make_recurrent_intention_ppo_networks(
         done_seq: jnp.ndarray,
         key: jax.Array,
         deterministic: bool = False,
+        stored_keys: jax.Array | None = None,
     ):
         """Apply policy over sequence with hidden state reset on done.
 
@@ -585,8 +615,11 @@ def make_recurrent_intention_ppo_networks(
             obs_seq: Observations with shape [T, B, ...] for each key.
             initial_hidden: Initial hidden state(s).
             done_seq: Done flags with shape [T, B].
-            key: Random key.
+            key: Random key (used only if stored_keys is None).
             deterministic: If True, use latent mean instead of sampling.
+            stored_keys: Optional pre-stored RNG keys with shape [T, B, 2].
+                If provided, uses these for deterministic replay of stochastic
+                layers instead of generating fresh keys.
 
         Returns:
             Tuple of (logits, latent_mean, latent_logvar, final_hidden).
@@ -594,27 +627,55 @@ def make_recurrent_intention_ppo_networks(
         """
         obs_seq = normalize_dict_obs(obs_seq, processor_params)
 
-        def step(carry, inputs):
-            hidden, step_key = carry
-            obs_t, done_t = inputs
-            step_key, next_key = jax.random.split(step_key)
+        if stored_keys is not None:
+            # Deterministic replay: use stored per-timestep, per-sample keys
+            def step_with_stored_keys(carry, inputs):
+                hidden = carry
+                obs_t, done_t, keys_t = inputs
 
-            logits, mean, logvar, new_hidden = policy_module.apply(
-                policy_params,
-                obs=obs_t,
-                hidden=hidden,
-                key=step_key,
-                deterministic=deterministic,
+                logits, mean, logvar, new_hidden = policy_module.apply(
+                    policy_params,
+                    obs=obs_t,
+                    hidden=hidden,
+                    key=keys_t,  # Per-sample keys [B, 2]
+                    deterministic=deterministic,
+                )
+
+                # Reset hidden state where episodes ended
+                new_hidden = [
+                    reset_hidden_on_done(h, done_t, rnn_type) for h in new_hidden
+                ]
+
+                return new_hidden, (logits, mean, logvar)
+
+            final_hidden, (logits, means, logvars) = jax.lax.scan(
+                step_with_stored_keys, initial_hidden, (obs_seq, done_seq, stored_keys)
             )
+        else:
+            # Standard path: generate fresh keys at each timestep
+            def step(carry, inputs):
+                hidden, step_key = carry
+                obs_t, done_t = inputs
+                step_key, next_key = jax.random.split(step_key)
 
-            # Reset hidden state where episodes ended
-            new_hidden = [reset_hidden_on_done(h, done_t, rnn_type) for h in new_hidden]
+                logits, mean, logvar, new_hidden = policy_module.apply(
+                    policy_params,
+                    obs=obs_t,
+                    hidden=hidden,
+                    key=step_key,
+                    deterministic=deterministic,
+                )
 
-            return (new_hidden, next_key), (logits, mean, logvar)
+                # Reset hidden state where episodes ended
+                new_hidden = [
+                    reset_hidden_on_done(h, done_t, rnn_type) for h in new_hidden
+                ]
 
-        (final_hidden, _), (logits, means, logvars) = jax.lax.scan(
-            step, (initial_hidden, key), (obs_seq, done_seq)
-        )
+                return (new_hidden, next_key), (logits, mean, logvar)
+
+            (final_hidden, _), (logits, means, logvars) = jax.lax.scan(
+                step, (initial_hidden, key), (obs_seq, done_seq)
+            )
 
         return logits, means, logvars, final_hidden
 

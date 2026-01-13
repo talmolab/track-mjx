@@ -112,14 +112,12 @@ def _log_rollout_video(
     video_path = f"{model_path}/{current_step}.mp4"
 
     try:
-        # Get the env suffix if available (for rodent environments)
-        suffix = getattr(env, "_suffix", "")
-        camera_name = f"{render_camera}{suffix}" if suffix else render_camera
-
+        # Use render_camera directly - it should already include any suffix
+        # (e.g., "close_profile-rodent" from config)
         with imageio.get_writer(video_path, fps=render_fps) as writer:
             frames = env.render(
                 rollout,
-                camera=camera_name,
+                camera=render_camera,
                 height=480,
                 width=640,
             )

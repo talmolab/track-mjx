@@ -105,7 +105,7 @@ def prepare_config(
     elif walker_name == "fruitfly":
         logging.info("Using fruitfly walker")
         walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
-        arena_xml_path = str(fruitfly_consts.WHITE_ARENA_XML_PATH)
+        arena_xml_path = str(fruitfly_consts.ARENA_XML_PATH)
         reference_data_path = _resolve_data_path(
             "data/fruitfly/fly_reference_clip.h5"
         )

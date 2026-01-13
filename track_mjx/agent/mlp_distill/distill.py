@@ -654,7 +654,7 @@ def train(
             proprioceptive_obs_size=proprioceptive_obs_size,
             decoder_hidden_layer_sizes=tuple(decoder_layer_sizes),
             prior_hidden_layer_sizes=tuple(prior_layer_sizes),
-            preprocess_observations_fn=normalize,
+            preprocess_observations_fn=running_statistics.normalize,
             num_rollouts=prior_rollout_config.get("num_rollouts", 32),
             max_steps=prior_rollout_config.get("max_steps", 200),
             fixed_logvar=prior_rollout_config.get("fixed_logvar", -2.0),

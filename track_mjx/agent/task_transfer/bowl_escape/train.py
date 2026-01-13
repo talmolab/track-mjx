@@ -133,7 +133,7 @@ def main(cfg: DictConfig) -> None:
         json.dump(config_dict, fp, indent=4, default=str)
 
     # Initialize wandb
-    wandb_run_id = f"{cfg.logging.exp_name}_{cfg.mode}_{run_id}"
+    wandb_run_id = f"{cfg.logging.exp_name}_{run_id}"
     wandb.init(
         project=cfg.logging.project,
         group=cfg.logging.group_name,

@@ -132,9 +132,13 @@ def main(cfg: DictConfig) -> None:
 
     # Initialize wandb
     wandb_run_id = f"{cfg.logging.exp_name}_{cfg.mode}_{run_id}"
+    wandb_run_name = f"{cfg.logging.exp_name}_{cfg.mode}_{run_id}"
+    wandb_group = cfg.logging.group_name
+    logging.info(f"Wandb config: project={cfg.logging.project}, group={wandb_group}, name={wandb_run_name}")
     wandb.init(
         project=cfg.logging.project,
-        group=cfg.logging.group_name,
+        group=wandb_group,
+        name=wandb_run_name,
         config=config_dict,
         id=wandb_run_id,
         notes=f"checkpoint: {cfg.checkpoint.path}, mode: {cfg.mode}",

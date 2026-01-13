@@ -60,6 +60,7 @@ env:
 # Logging settings
 logging:
   project: "vnl-playground"
+  group_name: "bowl_escape_transfer"
   exp_name: "bowl_escape_transfer"
   render_camera: "close_profile-rodent"
   render_fps: 50

@@ -3,6 +3,8 @@
 Two wrapper classes for different transfer learning modes:
 - DecoderHighLevelWrapper: Policy outputs latent → frozen decoder → ctrl
 - PriorDecoderHighLevelWrapper: Policy outputs residual → add to prior mean → decoder → ctrl
+
+Supports both legacy flat observations and new dict observations format.
 """
 
 from typing import Any, Callable, Mapping
@@ -11,6 +13,47 @@ import jax
 import jax.numpy as jp
 from mujoco_playground import wrapper
 from mujoco_playground._src import mjx_env
+
+from track_mjx.agent.observation_utils import concat_flat_dict_obs, flatten_obs_dict
+
+
+def _get_proprio(
+    obs: jax.Array | Mapping[str, Any], proprio_size: int
+) -> jax.Array:
+    """Extract proprioception from observation, handling both dict and flat formats.
+
+    Args:
+        obs: Either a flat array (legacy) or dict with 'proprioception' key (new).
+        proprio_size: Size of proprioceptive observations (used for flat format).
+
+    Returns:
+        Flattened proprioceptive observation array.
+    """
+    if isinstance(obs, Mapping):
+        # New dict format - use flatten_obs_dict to handle nested structures
+        flat_obs = flatten_obs_dict(obs)
+        return flat_obs["proprioception"]
+    else:
+        # Legacy flat format - proprio is last proprio_size elements
+        return obs[..., -proprio_size:]
+
+
+def _flatten_obs_for_policy(obs: jax.Array | Mapping[str, Any]) -> jax.Array:
+    """Flatten observations for the high-level policy network.
+
+    Args:
+        obs: Either a flat array (legacy) or dict with observation keys (new).
+
+    Returns:
+        Flat observation array suitable for the PPO policy network.
+    """
+    if isinstance(obs, Mapping):
+        # New dict format - flatten and concatenate
+        flat_obs = flatten_obs_dict(obs)
+        return concat_flat_dict_obs(flat_obs)
+    else:
+        # Legacy flat format - already flat
+        return obs
 
 
 class DecoderHighLevelWrapper(wrapper.Wrapper):
@@ -21,6 +64,8 @@ class DecoderHighLevelWrapper(wrapper.Wrapper):
 
     The policy learns to output latent vectors that the decoder converts
     to motor commands.
+
+    Supports both legacy flat observations and new dict observations format.
     """
 
     def __init__(
@@ -33,11 +78,11 @@ class DecoderHighLevelWrapper(wrapper.Wrapper):
         """Initialize the decoder wrapper.
 
         Args:
-            env: Base environment (should be FlattenObsWrapper wrapped).
+            env: Base environment (with dict or flat observations).
             decoder_inference_fn: Function (latent_proprio) -> (action, extras)
                 where latent_proprio is [latent, proprio] concatenated.
             latent_size: Dimension of the latent intention space.
-            proprio_size: Size of proprioceptive observations (last N elements of obs).
+            proprio_size: Size of proprioceptive observations.
         """
         self._decoder_fn = decoder_inference_fn
         self._latent_size = latent_size
@@ -59,7 +104,19 @@ class DecoderHighLevelWrapper(wrapper.Wrapper):
             Initial environment state with decoder extras initialized.
         """
         state = self.env.reset(rng, **kwargs)
-        state.info["decoder_extras"] = {}
+
+        # Initialize decoder_extras with correct pytree structure by running
+        # decoder once with dummy latent. This ensures lax.scan carry structure
+        # matches between reset and step.
+        proprio = _get_proprio(state.obs, self._proprio_size)
+        dummy_latent = jp.zeros(proprio.shape[:-1] + (self._latent_size,))
+        latent_proprio = jp.concatenate([dummy_latent, proprio], axis=-1)
+        _, extras = self._decoder_fn(latent_proprio)
+        state.info["decoder_extras"] = extras
+
+        # Flatten observations for the high-level policy network
+        state = state.replace(obs=_flatten_obs_for_policy(state.obs))
+
         return state
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
@@ -72,8 +129,8 @@ class DecoderHighLevelWrapper(wrapper.Wrapper):
         Returns:
             Next environment state after applying decoded control.
         """
-        # Extract proprioception from observation (last proprio_size elements)
-        proprio = state.obs[..., -self._proprio_size :]
+        # Extract proprioception from observation (handles both dict and flat)
+        proprio = _get_proprio(state.obs, self._proprio_size)
 
         # Concatenate latent and proprio for decoder
         latent_proprio = jp.concatenate([action, proprio], axis=-1)
@@ -85,7 +142,12 @@ class DecoderHighLevelWrapper(wrapper.Wrapper):
         state.info["decoder_extras"] = extras
 
         # Step the base environment with decoded control
-        return super().step(state, ctrl)
+        next_state = super().step(state, ctrl)
+
+        # Flatten observations for the high-level policy network
+        next_state = next_state.replace(obs=_flatten_obs_for_policy(next_state.obs))
+
+        return next_state
 
     @property
     def action_size(self) -> int:
@@ -101,6 +163,8 @@ class PriorDecoderHighLevelWrapper(wrapper.Wrapper):
 
     This allows the policy to learn task-specific corrections while leveraging
     the pretrained prior's knowledge of natural movements.
+
+    Supports both legacy flat observations and new dict observations format.
     """
 
     def __init__(
@@ -116,7 +180,7 @@ class PriorDecoderHighLevelWrapper(wrapper.Wrapper):
         """Initialize the prior+decoder wrapper.
 
         Args:
-            env: Base environment (should be FlattenObsWrapper wrapped).
+            env: Base environment (with dict or flat observations).
             prior_inference_fn: Function (proprio) -> (mean, logvar)
             decoder_inference_fn: Function (latent_proprio) -> (action, extras)
             latent_size: Dimension of the latent intention space.
@@ -148,10 +212,28 @@ class PriorDecoderHighLevelWrapper(wrapper.Wrapper):
             Initial environment state with prior/decoder extras initialized.
         """
         state = self.env.reset(rng, **kwargs)
-        state.info["decoder_extras"] = {}
-        state.info["prior_mean"] = jp.zeros(self._latent_size)
-        state.info["prior_logvar"] = jp.zeros(self._latent_size)
+
+        # Extract proprioception (handles both dict and flat formats)
+        proprio = _get_proprio(state.obs, self._proprio_size)
+
+        # Initialize prior_mean/prior_logvar with correct shape by running prior
+        prior_mean, prior_logvar = self._prior_fn(proprio)
+        state.info["prior_mean"] = prior_mean
+        state.info["prior_logvar"] = prior_logvar
+
+        # Initialize decoder_extras with correct pytree structure
+        dummy_latent = jp.zeros_like(prior_mean)
+        latent_proprio = jp.concatenate([dummy_latent, proprio], axis=-1)
+        _, decoder_extras = self._decoder_fn(latent_proprio)
+        state.info["decoder_extras"] = decoder_extras
+
+        # Initialize final_latent with correct shape
+        state.info["final_latent"] = jp.zeros_like(prior_mean)
         state.info["rng"] = rng
+
+        # Flatten observations for the high-level policy network
+        state = state.replace(obs=_flatten_obs_for_policy(state.obs))
+
         return state
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
@@ -164,8 +246,8 @@ class PriorDecoderHighLevelWrapper(wrapper.Wrapper):
         Returns:
             Next environment state after applying decoded control.
         """
-        # Extract proprioception from observation
-        proprio = state.obs[..., -self._proprio_size :]
+        # Extract proprioception from observation (handles both dict and flat)
+        proprio = _get_proprio(state.obs, self._proprio_size)
 
         # Get prior distribution from proprioception
         prior_mean, prior_logvar = self._prior_fn(proprio)
@@ -195,7 +277,12 @@ class PriorDecoderHighLevelWrapper(wrapper.Wrapper):
         state.info["final_latent"] = latent
 
         # Step the base environment
-        return super().step(state, ctrl)
+        next_state = super().step(state, ctrl)
+
+        # Flatten observations for the high-level policy network
+        next_state = next_state.replace(obs=_flatten_obs_for_policy(next_state.obs))
+
+        return next_state
 
     @property
     def action_size(self) -> int:

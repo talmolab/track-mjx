@@ -34,7 +34,6 @@ from brax.training.acme import running_statistics
 from mujoco_playground import wrapper
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import bowl_escape
-from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
 
 from track_mjx.agent.task_transfer.bowl_escape.checkpoint_utils import (
     load_prior_checkpoint,
@@ -97,10 +96,9 @@ def main(cfg: DictConfig) -> None:
     logging.info(f"Environment config: ctrl_dt={env_cfg.ctrl_dt}, target_speed={env_cfg.target_speed}")
 
     # Create training and eval environments with appropriate wrapper
+    # Wrappers handle both dict and flat observations natively
     def make_wrapped_env(is_eval: bool = False):
-        base_env = rodent_wrappers.FlattenObsWrapper(
-            bowl_escape.BowlEscape(config=env_cfg)
-        )
+        base_env = bowl_escape.BowlEscape(config=env_cfg)
 
         if cfg.mode == "decoder_only":
             return DecoderHighLevelWrapper(

@@ -11,10 +11,10 @@ Usage:
 
 import os
 
-# Must set rendering backend before importing MuJoCo
-# Use osmesa for software rendering (more reliable on headless systems)
-os.environ["MUJOCO_GL"] = "osmesa"
-os.environ["PYOPENGL_PLATFORM"] = "osmesa"
+# IMPORTANT: MUJOCO_GL is read at mujoco import time, so this MUST be set
+# before any module that imports mujoco (including mujoco_playground).
+os.environ["MUJOCO_GL"] = "egl"
+os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 # Set XLA flags for JAX
 xla_flags = os.environ.get("XLA_FLAGS", "")

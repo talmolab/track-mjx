@@ -239,6 +239,10 @@ def compute_distillation_loss(
     # Put the time dimension first: [B, T] -> [T, B]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
+    # Merge time and batch dimensions: [T, B, ...] -> [T*B, ...]
+    # This ensures observations have shape [T*B, features] for normalization
+    data = jax.tree_util.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), data)
+
     # Get student outputs
     student_logits, encoder_mean, encoder_logvar, prior_mean, prior_logvar = (
         student_network.apply(

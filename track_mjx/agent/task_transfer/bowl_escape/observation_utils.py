@@ -71,7 +71,10 @@ def flatten_obs_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
 def concat_flat_dict_obs(obs: Mapping[str, jnp.ndarray]) -> jnp.ndarray:
     """Concatenate flat observation dict to single array.
 
-    Concatenates all keys in sorted order for deterministic results.
+    Concatenates with proprioception LAST to match the extraction logic
+    in wrappers.py which uses obs[..., -proprio_size:].
+
+    For bowl_escape: [task_obs | proprioception]
 
     Args:
         obs: Observation dict with flat arrays at each key.
@@ -79,5 +82,8 @@ def concat_flat_dict_obs(obs: Mapping[str, jnp.ndarray]) -> jnp.ndarray:
     Returns:
         Single flat array with all observations concatenated.
     """
-    sorted_keys = sorted(obs.keys())
-    return jnp.concatenate([obs[k] for k in sorted_keys], axis=-1)
+    # Get all keys except proprioception, sort them for determinism
+    other_keys = sorted(k for k in obs.keys() if k != "proprioception")
+    # Concatenate with proprioception at the end
+    arrays = [obs[k] for k in other_keys] + [obs["proprioception"]]
+    return jnp.concatenate(arrays, axis=-1)

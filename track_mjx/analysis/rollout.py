@@ -16,7 +16,6 @@ from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
 
-from track_mjx.agent.recurrent_ppo import networks as recurrent_networks
 
 
 def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
@@ -56,7 +55,6 @@ def create_rollout_generator(
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
-    ppo_network: Any = None,
 ) -> Callable[[int | None, int], dict[str, Any]]:
     """Create a JIT-compiled rollout generator for a given environment and policy.
 
@@ -66,7 +64,8 @@ def create_rollout_generator(
 
     Args:
         cfg: Full configuration dict containing env_config with timing parameters
-            (mocap_hz, ctrl_dt, clip_length) and network_config with arch_name.
+            (mocap_hz, ctrl_dt, clip_length) and network_config with arch_name,
+            obs_sizes, and architecture hyperparameters.
         env: The VNL environment to run rollouts in.
         inference_fn: Policy function. For feedforward: (obs, rng) -> (action, extras).
             For recurrent: (obs, hidden, rng) -> (action, extras, new_hidden).
@@ -74,8 +73,6 @@ def create_rollout_generator(
         log_activations: If True, collect neural network activations at each step.
         log_metrics: If True, collect all metrics from state.metrics at each step.
         log_sensor_data: If True, collect contact forces and sensor readings.
-        ppo_network: PPO network container. Required for recurrent policies
-            to initialize hidden state.
 
     Returns:
         A generate_rollout function with signature:
@@ -91,11 +88,13 @@ def create_rollout_generator(
     jit_step = jax.jit(env.step)
 
     # Check if using recurrent policy
-    arch_name = cfg.get("network_config", {}).get("arch_name", "intention")
+    network_config = cfg.get("network_config", {})
+    arch_name = network_config.get("arch_name", "intention")
     is_recurrent = arch_name == "recurrent_intention"
 
-    if is_recurrent and ppo_network is None:
-        raise ValueError("ppo_network must be provided for recurrent policy rollouts")
+    # Get RNN config for hidden state initialization
+    rnn_type = network_config.rnn_type
+    rnn_hidden_sizes = tuple(network_config.rnn_hidden_sizes)
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.
@@ -135,9 +134,12 @@ def create_rollout_generator(
         joint_forces = []
         sensor_readings = []
 
-        # Initialize hidden state for recurrent policies
+        # Initialize hidden state for recurrent policies (unbatched for single rollout)
         if is_recurrent:
-            hidden = ppo_network.policy_network.init_hidden(1)
+            if rnn_type == "lstm":
+                hidden = [(jnp.zeros(size), jnp.zeros(size)) for size in rnn_hidden_sizes]
+            else:
+                hidden = [jnp.zeros(size) for size in rnn_hidden_sizes]
 
         for _ in range(num_steps):
             _, act_rng = jax.random.split(act_rng)

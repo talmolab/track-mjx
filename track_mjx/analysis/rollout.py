@@ -3,6 +3,8 @@
 This module provides functions to create VNL environments and generate policy
 rollouts with optional logging of activations, metrics, and sensor data.
 Rollouts can be used for evaluation, visualization, or data collection.
+
+Supports both feedforward and recurrent policies.
 """
 
 from typing import Any, Callable
@@ -13,26 +15,26 @@ from jax import numpy as jnp
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 
 
 def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
     """Create a VNL imitation learning environment from a configuration.
 
-    Wraps the VNL Imitation environment with a FlattenObsWrapper for
-    compatibility with standard RL algorithms expecting flat observations.
+    Creates the VNL Imitation environment directly, returning dictionary
+    observations with keys "imitation_target" and "proprioception".
 
     Args:
         cfg_dict: Configuration dictionary. Can be either:
-            - Full config with "data_path" key: extracts "env_config" section
+            - Full config with "walker_config" key: extracts "env_config" section
             - Direct env_config dict: used as-is
 
     Returns:
-        A Brax-compatible environment with flattened observations.
+        A Brax-compatible environment with dictionary observations.
 
     Example:
         >>> env = create_environment(cfg)
         >>> state = env.reset(jax.random.PRNGKey(0))
+        >>> print(state.obs.keys())  # dict_keys(['imitation_target', 'proprioception'])
     """
     if "walker_config" in cfg_dict:
         env_cfg = cfg_dict["env_config"]
@@ -42,7 +44,7 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
     else:
         env_cfg_ml = config_dict.ConfigDict(cfg_dict)
 
-    return vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml))
+    return imitation.Imitation(config=env_cfg_ml)
 
 
 def create_rollout_generator(
@@ -60,9 +62,11 @@ def create_rollout_generator(
 
     Args:
         cfg: Full configuration dict containing env_config with timing parameters
-            (mocap_hz, ctrl_dt, clip_length).
+            (mocap_hz, ctrl_dt, clip_length) and network_config with arch_name,
+            obs_sizes, and architecture hyperparameters.
         env: The VNL environment to run rollouts in.
-        inference_fn: Policy function with signature (obs, rng) -> (action, extras).
+        inference_fn: Policy function. For feedforward: (obs, rng) -> (action, extras).
+            For recurrent: (obs, hidden, rng) -> (action, extras, new_hidden).
             The extras dict should contain "activations" if log_activations=True.
         log_full_states: If True, include full State objects in the rollout output.
             WARNING: This uses significant memory when batched.

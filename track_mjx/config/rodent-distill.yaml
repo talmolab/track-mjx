@@ -186,7 +186,8 @@ network_config:
 distill_config:
   action_loss_weight: 1.0           # Weight for action reconstruction loss
   autoregressive_weight: 1e-3       # Weight for AR(1) temporal smoothness of latent means
-  kl_weight: 1e-3                   # Weight for KL divergence between encoder and prior
+  kl_weight: 1e-3                   # Weight for KL(encoder || prior) - trains prior only (encoder has stop_grad)
+  encoder_kl_weight: 1e-3           # Weight for KL(encoder || N(0,1)) - regularizes encoder
   use_l2_action_loss: false         # If true, use mean L2 norm (like PULSE). If false, use MSE.
   grad_clip_norm: 50.0              # Gradient clipping norm (PULSE uses 50.0)
 
@@ -213,6 +214,10 @@ distill_config:
     ar_end_weight: 0.005
     ar_start_ramp: 0.0
     ar_end_ramp: 0.25
+    encoder_kl_start_weight: 1e-3
+    encoder_kl_end_weight: 1e-3
+    encoder_kl_start_ramp: 0.0
+    encoder_kl_end_ramp: 0.5
 
 # =============================================================================
 # Training Setup

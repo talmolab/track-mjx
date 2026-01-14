@@ -2,8 +2,12 @@
 Prior network training.
 
 Trains a prior network to match the encoder distributions from a pretrained
-mlp_ppo checkpoint. The encoder and decoder remain frozen; only the prior
+ff_ppo checkpoint. The encoder and decoder remain frozen; only the prior
 is trained using KL divergence loss.
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
 import functools
@@ -25,6 +29,12 @@ from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_prior import losses
 from track_mjx.agent.mlp_prior import prior_networks
 from track_mjx.agent.mlp_prior import prior_rollout_eval
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    get_obs_sizes,
+    init_dict_normalizer,
+    update_dict_normalizer,
+)
 
 from mujoco_playground import wrapper as mp_wrapper
 
@@ -57,7 +67,7 @@ class TrainingState:
     params: PriorTrainingParams  # Only prior params (trainable)
     frozen_encoder_params: Dict  # Frozen - not in optimizer
     frozen_decoder_params: Dict  # Frozen - not in optimizer
-    normalizer_params: running_statistics.RunningStatisticsState
+    normalizer_params: DictRunningStatisticsState  # Dict-based normalizer
     env_steps: jnp.ndarray
 
 
@@ -79,8 +89,8 @@ def train(
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
     config_dict: dict,
-    mlp_ppo_checkpoint_path: str,
-    mlp_ppo_checkpoint_step: Optional[int] = None,
+    ff_ppo_checkpoint_path: str,
+    ff_ppo_checkpoint_step: Optional[int] = None,
     checkpoint_to_restore: Optional[str] = None,
     action_repeat: int = 1,
     num_envs: int = 1,
@@ -123,8 +133,8 @@ def train(
         episode_length: Length of an episode
         ckpt_mgr: Orbax checkpoint manager
         config_dict: Configuration dictionary for checkpointing
-        mlp_ppo_checkpoint_path: Path to the pretrained mlp_ppo checkpoint
-        mlp_ppo_checkpoint_step: Optional step to load from mlp_ppo checkpoint
+        ff_ppo_checkpoint_path: Path to the pretrained ff_ppo checkpoint
+        ff_ppo_checkpoint_step: Optional step to load from ff_ppo checkpoint
         checkpoint_to_restore: Optional path to restore prior training from
         action_repeat: Number of times to repeat actions
         num_envs: Number of parallel environments
@@ -191,11 +201,11 @@ def train(
         )
     ).astype(int)
 
-    # Load frozen encoder and decoder from mlp_ppo checkpoint
-    logging.info(f"Loading encoder/decoder from: {mlp_ppo_checkpoint_path}")
+    # Load frozen encoder and decoder from ff_ppo checkpoint
+    logging.info(f"Loading encoder/decoder from: {ff_ppo_checkpoint_path}")
     encoder_params, decoder_params, teacher_normalizer_params, teacher_cfg = (
         prior_networks.load_frozen_encoder_decoder(
-            mlp_ppo_checkpoint_path, step=mlp_ppo_checkpoint_step
+            ff_ppo_checkpoint_path, step=ff_ppo_checkpoint_step
         )
     )
     logging.info("Encoder and decoder loaded successfully")
@@ -208,10 +218,17 @@ def train(
     decoder_hidden_layer_sizes = tuple(
         teacher_cfg["network_config"]["decoder_layer_sizes"]
     )
-    reference_obs_size = teacher_cfg["network_config"]["reference_obs_size"]
     action_size = teacher_cfg["network_config"]["action_size"]
-    teacher_observation_size = teacher_cfg["network_config"]["observation_size"]
-    teacher_proprioceptive_obs_size = teacher_observation_size - reference_obs_size
+
+    # Get observation sizes - support both new dict format and legacy flat format
+    teacher_obs_sizes = teacher_cfg["network_config"].get("obs_sizes", None)
+    if teacher_obs_sizes is not None:
+        reference_obs_size = teacher_obs_sizes["imitation_target"]
+        teacher_proprioceptive_obs_size = teacher_obs_sizes["proprioception"]
+    else:
+        reference_obs_size = teacher_cfg["network_config"]["reference_obs_size"]
+        teacher_observation_size = teacher_cfg["network_config"]["observation_size"]
+        teacher_proprioceptive_obs_size = teacher_observation_size - reference_obs_size
 
     # Initialize keys
     key = jax.random.PRNGKey(seed)
@@ -274,14 +291,15 @@ def train(
             reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
         )(key_envs)
 
+    # Get observation sizes from environment state
+    obs_sizes = get_obs_sizes(env_state.obs)
+
     # Update config with network info
     config_dict["network_config"].update(
         {
-            "observation_size": env_state.obs.shape[-1],
+            "obs_sizes": obs_sizes,
             "action_size": action_size,
             "normalize_observations": normalize_observations,
-            "reference_obs_size": reference_obs_size,
-            "proprioceptive_obs_size": proprioceptive_obs_size,
             "intention_size": latent_size,
             "encoder_layer_sizes": list(encoder_hidden_layer_sizes),
             "decoder_layer_sizes": list(decoder_hidden_layer_sizes),
@@ -314,8 +332,6 @@ def train(
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         latent_size=latent_size,
         action_size=action_size,
-        reference_obs_size=reference_obs_size,
-        proprioceptive_obs_size=proprioceptive_obs_size,
         deterministic=True,
     )
 
@@ -373,7 +389,7 @@ def train(
     def minibatch_step(
         carry,
         data: types.Transition,
-        normalizer_params: running_statistics.RunningStatisticsState,
+        normalizer_params: DictRunningStatisticsState,
         frozen_encoder_params: Dict,
     ):
         optimizer_state, params, key, it = carry
@@ -394,7 +410,7 @@ def train(
         carry,
         unused_t,
         data: types.Transition,
-        normalizer_params: running_statistics.RunningStatisticsState,
+        normalizer_params: DictRunningStatisticsState,
         frozen_encoder_params: Dict,
     ):
         optimizer_state, params, key, it = carry
@@ -457,8 +473,8 @@ def train(
         )
         assert data.discount.shape[1:] == (unroll_length,)
 
-        # Update normalization params
-        normalizer_params = running_statistics.update(
+        # Update normalization params (dict-based)
+        normalizer_params = update_dict_normalizer(
             training_state.normalizer_params,
             data.observation,
             pmap_axis_name=_PMAP_AXIS_NAME,
@@ -571,8 +587,6 @@ def train(
             decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
             latent_size=latent_size,
             action_size=action_size,
-            reference_obs_size=reference_obs_size,
-            proprioceptive_obs_size=proprioceptive_obs_size,
             deterministic=deterministic,
         )
 

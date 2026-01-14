@@ -17,10 +17,16 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground import env_loader
+from vnl_playground.tasks.rodent import imitation
+from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
-from track_mjx.agent.mlp_ppo import ppo, ppo_networks
+from track_mjx.agent.ff_ppo import ppo as ff_ppo, ppo_networks as ff_networks
+from track_mjx.agent.recurrent_ppo import (
+    ppo as recurrent_ppo,
+    networks as recurrent_networks,
+)
 from track_mjx.agent.domain_randomization import domain_randomization_maker
 
 
@@ -102,13 +108,48 @@ def main(cfg: DictConfig) -> None:
 
     logging.info("Using PPO Pipeline")
 
-    network_factory = functools.partial(
-        ppo_networks.make_intention_ppo_networks,
-        intention_latent_size=cfg.network_config.intention_size,
-        encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-    )
+    # Select network factory and train function based on architecture
+    arch_name = cfg.network_config.get("arch_name", "intention")
+    logging.info(f"Using architecture: {arch_name}")
+
+    # Validate architecture name
+    valid_arch_names = {"intention", "recurrent_intention"}
+    if arch_name not in valid_arch_names:
+        raise ValueError(
+            f"Unknown architecture '{arch_name}'. "
+            f"Valid options are: {sorted(valid_arch_names)}"
+        )
+
+    if arch_name == "recurrent_intention":
+        # Validate required config keys for recurrent architecture
+        required_keys = ["rnn_type", "rnn_hidden_sizes"]
+        missing_keys = [k for k in required_keys if not hasattr(cfg.network_config, k)]
+        if missing_keys:
+            raise ValueError(
+                f"recurrent_intention architecture requires these config keys: {missing_keys}. "
+                f"Please add them to network_config in your YAML file."
+            )
+
+        # Recurrent intention network (MLP encoder + RNN decoder)
+        network_factory = functools.partial(
+            recurrent_networks.make_recurrent_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            rnn_type=cfg.network_config.rnn_type,
+            rnn_hidden_sizes=tuple(cfg.network_config.rnn_hidden_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        )
+        ppo_module = recurrent_ppo
+    else:
+        # Feedforward intention network (default)
+        network_factory = functools.partial(
+            ff_networks.make_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        )
+        ppo_module = ff_ppo
 
     # Determine wandb run ID for resuming
     wandb_logging.initialize_wandb_logging(
@@ -135,8 +176,8 @@ def main(cfg: DictConfig) -> None:
         wandb_run_id=wandb.run.id,
     )
 
-    train_fn = functools.partial(
-        ppo.train,
+    # Build common training arguments
+    train_kwargs = dict(
         **cfg.train_setup.train_config,
         num_evals=int(
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
@@ -151,7 +192,6 @@ def main(cfg: DictConfig) -> None:
         config_dict=cfg_dict,
         use_kl_schedule=cfg.network_config.kl_schedule,
         eval_env_test_set=test_env,
-        freeze_decoder=cfg.train_setup.get("freeze_decoder", False),
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
@@ -170,6 +210,15 @@ def main(cfg: DictConfig) -> None:
             else None
         ),
     )
+
+    # Add freeze_decoder only for feedforward PPO (not supported for recurrent)
+    if arch_name != "recurrent_intention":
+        train_kwargs["freeze_decoder"] = cfg.train_setup.get("freeze_decoder", False)
+        train_kwargs["get_activation"] = cfg.train_setup.train_config.get(
+            "get_activation", False
+        )
+
+    train_fn = functools.partial(ppo_module.train, **train_kwargs)
 
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()

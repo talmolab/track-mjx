@@ -18,7 +18,6 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from track_mjx.agent import checkpointing
@@ -86,12 +85,8 @@ def main(cfg: DictConfig):
         seed=key_split,
     )
     # Create environments
-    env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    )
-    test_env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=env_cfg_ml, clips=test_clips)
-    )
+    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
+    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -162,6 +157,7 @@ def main(cfg: DictConfig):
         action_loss_weight=distill_cfg.action_loss_weight,
         autoregressive_weight=distill_cfg.autoregressive_weight,
         kl_weight=distill_cfg.kl_weight,
+        encoder_kl_weight=distill_cfg.get("encoder_kl_weight", 1e-3),
         use_l2_action_loss=distill_cfg.get("use_l2_action_loss", False),
         encoder_logvar_min=distill_cfg.get("encoder_logvar_min", None),
         encoder_logvar_max=distill_cfg.get("encoder_logvar_max", None),
@@ -205,9 +201,7 @@ def main(cfg: DictConfig):
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=rollout_cfg)
-    )
+    rollout_env = imitation.Imitation(config=rollout_cfg)
 
     # Define the jit reset/step functions for logging
     jit_reset = jax.jit(rollout_env.reset)

@@ -6,6 +6,7 @@ outputs/
 rollouts/
 patch.ipynb
 jax_cache/
+results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -17,6 +18,9 @@ sbatch/
 
 # slurm output folder
 slurm_outputs/
+
+# uv.lock
+uv.lock
 
 # scratch notebooks
 scratch.ipynb

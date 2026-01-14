@@ -154,6 +154,7 @@ def train(
     action_loss_weight: float = 1.0,
     autoregressive_weight: float = 1e-3,
     kl_weight: float = 1e-3,
+    encoder_kl_weight: float = 1e-3,
     use_l2_action_loss: bool = False,
     encoder_logvar_min: float | None = None,
     encoder_logvar_max: float | None = None,
@@ -206,7 +207,8 @@ def train(
         learning_rate: Learning rate for optimizer
         action_loss_weight: Weight for action reconstruction loss
         autoregressive_weight: Weight for autoregressive loss
-        kl_weight: Weight for KL divergence loss
+        kl_weight: Weight for encoder-prior KL divergence loss (trains prior only)
+        encoder_kl_weight: Weight for encoder-to-standard-normal KL loss (regularizes encoder)
         use_l2_action_loss: If True, use mean L2 norm (like PULSE). If False, use MSE.
         encoder_logvar_min: Optional min clamp for encoder log-variance (PULSE uses -5)
         encoder_logvar_max: Optional max clamp for encoder log-variance (PULSE uses 2)
@@ -513,6 +515,7 @@ def train(
     # Setup schedules
     kl_schedule_fn = None
     ar_schedule_fn = None
+    encoder_kl_schedule_fn = None
     if use_schedule and schedule_params is not None:
         if "kl_start_weight" in schedule_params:
             kl_schedule_fn = losses.create_ramp_schedule(
@@ -532,6 +535,17 @@ def train(
                 end_frac=schedule_params.get("ar_end_ramp", 0.5),
                 schedule="linear",
             )
+        if "encoder_kl_start_weight" in schedule_params:
+            encoder_kl_schedule_fn = losses.create_ramp_schedule(
+                start_value=schedule_params.get("encoder_kl_start_weight", 0.0),
+                end_value=schedule_params.get(
+                    "encoder_kl_end_weight", encoder_kl_weight
+                ),
+                total_steps=num_evals,
+                start_frac=schedule_params.get("encoder_kl_start_ramp", 0.0),
+                end_frac=schedule_params.get("encoder_kl_end_ramp", 0.5),
+                schedule="linear",
+            )
 
     # Create loss function
     # Note: logvar clamping is now done in the network, not in the loss function
@@ -543,8 +557,10 @@ def train(
         action_loss_weight=action_loss_weight,
         autoregressive_weight=autoregressive_weight,
         kl_weight=kl_weight,
+        encoder_kl_weight=encoder_kl_weight,
         kl_schedule=kl_schedule_fn,
         ar_schedule=ar_schedule_fn,
+        encoder_kl_schedule=encoder_kl_schedule_fn,
         use_l2_action_loss=use_l2_action_loss,
     )
 
@@ -638,7 +654,7 @@ def train(
             proprioceptive_obs_size=proprioceptive_obs_size,
             decoder_hidden_layer_sizes=tuple(decoder_layer_sizes),
             prior_hidden_layer_sizes=tuple(prior_layer_sizes),
-            preprocess_observations_fn=normalize,
+            preprocess_observations_fn=running_statistics.normalize,
             num_rollouts=prior_rollout_config.get("num_rollouts", 32),
             max_steps=prior_rollout_config.get("max_steps", 200),
             fixed_logvar=prior_rollout_config.get("fixed_logvar", -2.0),

@@ -336,12 +336,12 @@ def make_student_policy(
     Returns:
         networks.FeedForwardNetwork: the created policy network
     """
-    # Default preprocessor just flattens and returns as-is
+    # Default preprocessor normalizes (which includes flattening)
     if preprocess_observations_fn is None:
 
         def preprocess_observations_fn(obs, processor_params):
-            flat_obs = flatten_obs_dict(obs)
-            return normalize_dict_obs(flat_obs, processor_params)
+            # normalize_dict_obs handles flattening internally
+            return normalize_dict_obs(obs, processor_params)
 
     policy_module = StudentNetwork(
         encoder_layers=list(encoder_hidden_layer_sizes),

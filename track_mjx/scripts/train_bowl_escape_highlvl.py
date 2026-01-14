@@ -55,6 +55,7 @@ mimic_cfg = OmegaConf.create(
 env_cfg.ctrl_dt = mimic_cfg.env_config.ctrl_dt
 env_cfg.target_speed = 1.0
 
+# TODO: support recurrent decoders
 decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(mimic_checkpoint_path)
 print(f"env_cfg:\n{env_cfg}")
 

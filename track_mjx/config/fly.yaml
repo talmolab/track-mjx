@@ -22,8 +22,8 @@ env_config:
   solver: "cg"
   iterations: 5
   ls_iterations: 5
-  naconmax: 11364
-  njmax: 128
+  naconmax: 10240
+  njmax: 20
   noslip_iterations: 0
 
   # ---------------------------------------------------------------------------
@@ -51,10 +51,10 @@ env_config:
     floor_friction: [0.9, 1.1]
     static_friction_scale: [0.9, 1.1]
     armature_scale: [1.0, 1.05]
-    # com_jitter: [-0.05, 0.05]
+    com_jitter: [-0.05, 0.05]
     link_mass_scale: [0.9, 1.1]
     torso_mass_jitter: [-0.02, 0.02]
-    # qpos0_jitter: [-0.05, 0.05]
+    qpos0_jitter: [-0.05, 0.05]
 
   # ---------------------------------------------------------------------------
   # Reward Terms
@@ -62,42 +62,42 @@ env_config:
   # Imitation rewards computed as: weight * exp(-exp_scale * error)
   # Higher exp_scale = sharper penalty for deviations
   reward_terms:
-    # Root (thorax) position tracking
+    # Root (pelvis) position tracking
     root_pos:
-      exp_scale: 400.0
+      exp_scale: 0.035
       weight: 1.0
 
     # Root orientation tracking (quaternion distance)
     root_quat:
-      exp_scale: 4.0
+      exp_scale: 20.0
       weight: 1.0
 
     # Joint angle tracking
     joints:
-      exp_scale: 0.25
+      exp_scale: 1.41
       weight: 1.0
 
     # Joint velocity tracking (disabled)
     joints_vel:
-      exp_scale: 0.5
+      exp_scale: 1.0
       weight: 0.0
 
     # Body position tracking (disabled, using end effectors instead)
     bodies_pos:
-      exp_scale: 8.0
-      weight: 0.0
+      exp_scale: 0.25
+      weight: 0.0 
 
-    # End effector (claw) position tracking
+    # End effector (feet, hands, head) position tracking
     end_eff:
-      exp_scale: 100.0
+      exp_scale: 0.5
       weight: 1.0
 
     # -------------------------------------------------------------------------
     # Regularization Costs
     # -------------------------------------------------------------------------
-    # Healthy thorax height range (terminates if outside)
+    # Healthy thorax height range (terminates if outside, floor is -0.13)
     thorax_z_range:
-      healthy_z_range: [-0.03, 0.1]
+      healthy_z_range: [-0.11, 0.1]
       weight: 1.0
 
     # Penalize large control signals
@@ -120,11 +120,11 @@ env_config:
   termination_criteria:
     # Root position deviates too far from reference
     root_too_far:
-      max_distance: 0.1     # meters
+      max_distance: 0.1
 
     # Root orientation deviates too much from reference
     root_too_rotated:
-      max_degrees: 15       # 0.075 rad
+      max_degrees: 15       
 
     # Overall pose error exceeds threshold
     pose_error:
@@ -153,7 +153,7 @@ network_config:
   intention_size: 60
   kl_schedule: true
   latent_kl_weight: 3e-2
-  latent_ar1_weight: 7e-2
+  latent_ar1_weight: 0
 
 # =============================================================================
 # Training Setup
@@ -171,7 +171,7 @@ train_setup:
   train_subset_ratio: 0.8
 
   # Evaluation and resets
-  eval_every: 5_000_000
+  eval_every: 10_000_000
   episode_length: 600
   reset_every: 20_000_000
 
@@ -179,7 +179,7 @@ train_setup:
   # PPO Training Hyperparameters
   # ---------------------------------------------------------------------------
   train_config:
-    num_envs: 1024
+    num_envs: 2048
     num_timesteps: 2_000_000_000
     batch_size: 1024
     num_minibatches: 16
@@ -205,7 +205,7 @@ train_setup:
 logging_config:
   project_name: mimic-mjx
   group_name: fruitfly
-  exp_name: fly-imitation
+  exp_name: fly-update-config
   clip_id: -1
   model_path: model_checkpoints/
 

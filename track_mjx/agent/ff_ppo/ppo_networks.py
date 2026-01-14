@@ -24,7 +24,7 @@ from brax.training.types import PRNGKey
 from jax import numpy as jnp
 
 from track_mjx.agent import checkpointing
-from track_mjx.agent.mlp_ppo import intention_network
+from track_mjx.agent.ff_ppo import intention_network
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
     concat_flat_dict_obs,
@@ -88,17 +88,27 @@ def make_inference_fn(
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
 
+            # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
+            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            if obs_leaf.ndim >= 2:
+                # Batched observations - generate per-sample keys for deterministic replay
+                batch_size = obs_leaf.shape[0]
+                per_sample_keys = jax.random.split(key_network, batch_size)
+            else:
+                # Unbatched observation - use single key
+                per_sample_keys = key_network
+
             if get_activation:
                 logits, latent_mean, latent_logvar, activations = policy_network.apply(
                     *params,
                     observations,
-                    key_network,
+                    per_sample_keys,
                     deterministic=deterministic,
                     get_activation=True,
                 )
             else:
                 logits, latent_mean, latent_logvar = policy_network.apply(
-                    *params, observations, key_network, deterministic=deterministic
+                    *params, observations, per_sample_keys, deterministic=deterministic
                 )
 
             if deterministic:
@@ -124,6 +134,7 @@ def make_inference_fn(
                 "raw_action": raw_actions,
                 "logits": logits,
                 "activations": activations,
+                "policy_rng": per_sample_keys,
             }
 
         return policy
@@ -168,8 +179,19 @@ def make_logging_inference_fn(
             key_sample: PRNGKey,
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
+
+            # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
+            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            if obs_leaf.ndim >= 2:
+                # Batched observations - generate per-sample keys
+                batch_size = obs_leaf.shape[0]
+                per_sample_keys = jax.random.split(key_network, batch_size)
+            else:
+                # Unbatched observation - use single key
+                per_sample_keys = key_network
+
             logits, latent_mean, latent_logvar = policy_network.apply(
-                *params, observations, key_network
+                *params, observations, per_sample_keys
             )
 
             if deterministic:
@@ -325,11 +347,22 @@ def make_decoder_policy_fn(
 
     # Load config and policy from checkpoint
     cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step=step)
-    observation_size = cfg["network_config"]["observation_size"]
-    reference_obs_size = cfg["network_config"]["reference_obs_size"]
-    action_size = cfg["network_config"]["action_size"]
-    intention_latent_size = cfg["network_config"]["intention_size"]
-    decoder_hidden_layer_sizes = cfg["network_config"]["decoder_layer_sizes"]
+    network_config = cfg["network_config"]
+
+    # Handle both new (dict-based) and legacy (flat) config formats
+    if "obs_sizes" in network_config:
+        # New dict-based format
+        obs_sizes = network_config["obs_sizes"]
+        reference_obs_size = obs_sizes["imitation_target"]
+        observation_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
+    else:
+        # Legacy flat format
+        observation_size = network_config["observation_size"]
+        reference_obs_size = network_config["reference_obs_size"]
+
+    action_size = network_config["action_size"]
+    intention_latent_size = network_config["intention_size"]
+    decoder_hidden_layer_sizes = network_config["decoder_layer_sizes"]
 
     intention_policy_params = checkpointing.load_policy(ckpt_path, cfg, step=step)
 
@@ -346,16 +379,24 @@ def make_decoder_policy_fn(
     )
 
     # Extract decoder normalizer params (proprioceptive portion only)
-    decoder_normalizer_params_dict = jax.tree.map(
-        lambda x: (
-            x[reference_obs_size:] if isinstance(x, jnp.ndarray) and x.ndim >= 1 else x
-        ),
-        intention_policy_params[0].__dict__,
-    )
+    normalizer_state = intention_policy_params[0]
 
-    decoder_normalizer_params = running_statistics.RunningStatisticsState(
-        **decoder_normalizer_params_dict
-    )
+    if "obs_sizes" in network_config:
+        # New dict-based format: normalizer has separate imitation_target/proprioception
+        decoder_normalizer_params = normalizer_state.proprioception
+    else:
+        # Legacy flat format: slice the arrays to get proprioception portion
+        decoder_normalizer_params_dict = jax.tree.map(
+            lambda x: (
+                x[reference_obs_size:]
+                if isinstance(x, jnp.ndarray) and x.ndim >= 1
+                else x
+            ),
+            normalizer_state.__dict__,
+        )
+        decoder_normalizer_params = running_statistics.RunningStatisticsState(
+            **decoder_normalizer_params_dict
+        )
 
     decoder_params = (
         decoder_normalizer_params,

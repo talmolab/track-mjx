@@ -3,6 +3,8 @@
 This module provides functions to create VNL environments and generate policy
 rollouts with optional logging of activations, metrics, and sensor data.
 Rollouts can be used for evaluation, visualization, or data collection.
+
+Supports both feedforward and recurrent policies.
 """
 
 from typing import Any, Callable
@@ -48,7 +50,7 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
 def create_rollout_generator(
     cfg: dict[str, Any] | DictConfig,
     env: Env,
-    inference_fn: Callable[[jnp.ndarray, jax.Array], tuple[jnp.ndarray, dict]],
+    inference_fn: Callable,
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
@@ -56,13 +58,16 @@ def create_rollout_generator(
     """Create a JIT-compiled rollout generator for a given environment and policy.
 
     Returns a function that generates full episode rollouts using pre-compiled
-    JAX functions for efficient repeated evaluation.
+    JAX functions for efficient repeated evaluation. Supports both feedforward
+    and recurrent policies.
 
     Args:
         cfg: Full configuration dict containing env_config with timing parameters
-            (mocap_hz, ctrl_dt, clip_length).
+            (mocap_hz, ctrl_dt, clip_length) and network_config with arch_name,
+            obs_sizes, and architecture hyperparameters.
         env: The VNL environment to run rollouts in.
-        inference_fn: Policy function with signature (obs, rng) -> (action, extras).
+        inference_fn: Policy function. For feedforward: (obs, rng) -> (action, extras).
+            For recurrent: (obs, hidden, rng) -> (action, extras, new_hidden).
             The extras dict should contain "activations" if log_activations=True.
         log_activations: If True, collect neural network activations at each step.
         log_metrics: If True, collect all metrics from state.metrics at each step.
@@ -80,6 +85,28 @@ def create_rollout_generator(
     jit_inference_fn = jax.jit(inference_fn)
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
+
+    # Check if using recurrent policy
+    network_config = cfg.get("network_config", {})
+    arch_name = network_config.get("arch_name", "intention")
+    is_recurrent = arch_name == "recurrent_intention"
+
+    # Get RNN config for hidden state initialization (only for recurrent)
+    rnn_type = None
+    rnn_hidden_sizes = None
+    if is_recurrent:
+        if "rnn_type" not in network_config:
+            raise ValueError(
+                "recurrent_intention architecture requires 'rnn_type' in network_config. "
+                "Check that your checkpoint config is complete."
+            )
+        if "rnn_hidden_sizes" not in network_config:
+            raise ValueError(
+                "recurrent_intention architecture requires 'rnn_hidden_sizes' in network_config. "
+                "Check that your checkpoint config is complete."
+            )
+        rnn_type = network_config["rnn_type"]
+        rnn_hidden_sizes = tuple(network_config["rnn_hidden_sizes"])
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.
@@ -119,12 +146,28 @@ def create_rollout_generator(
         joint_forces = []
         sensor_readings = []
 
+        # Initialize hidden state for recurrent policies (unbatched for single rollout).
+        # Shape: (hidden_size,) for each layer, vs (batch_size, hidden_size) during training.
+        # The inference function handles both batched and unbatched inputs.
+        if is_recurrent:
+            if rnn_type == "lstm":
+                hidden = [
+                    (jnp.zeros(size), jnp.zeros(size)) for size in rnn_hidden_sizes
+                ]
+            else:
+                hidden = [jnp.zeros(size) for size in rnn_hidden_sizes]
+
         for _ in range(num_steps):
             _, act_rng = jax.random.split(act_rng)
-            ctrl, extras = jit_inference_fn(state.obs, act_rng)
+
+            if is_recurrent:
+                ctrl, extras, hidden = jit_inference_fn(state.obs, hidden, act_rng)
+            else:
+                ctrl, extras = jit_inference_fn(state.obs, act_rng)
+
             ctrls.append(ctrl)
 
-            if log_activations:
+            if log_activations and "activations" in extras:
                 activations.append(extras["activations"])
 
             state = jit_step(state, ctrl)

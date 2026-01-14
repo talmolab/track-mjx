@@ -35,7 +35,7 @@ from omegaconf import DictConfig, OmegaConf
 import functools
 import wandb
 import orbax.checkpoint as ocp
-from track_mjx.agent.mlp_ppo import ppo, ppo_networks
+from track_mjx.agent.ff_ppo import ppo, ppo_networks
 import warnings
 from pathlib import Path
 from datetime import datetime

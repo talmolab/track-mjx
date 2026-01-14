@@ -2,7 +2,7 @@
 Loss functions for prior network training.
 
 The prior training loss consists of KL divergence between the encoder
-(frozen, from pretrained mlp_ppo) and the prior (trainable) distributions.
+(frozen, from pretrained ff_ppo) and the prior (trainable) distributions.
 
 Observations are expected as dictionaries with keys:
 - "imitation_target": Reference trajectory observations (flat array)
@@ -135,7 +135,7 @@ def compute_prior_training_loss(
 
     Args:
         prior_params: Trainable prior network parameters
-        frozen_encoder_params: Frozen encoder network parameters (from mlp_ppo)
+        frozen_encoder_params: Frozen encoder network parameters (from ff_ppo)
         normalizer_params: Dict observation normalizer parameters
         data: Transition data with shape [B, T], observation is a dict
         rng: Random key

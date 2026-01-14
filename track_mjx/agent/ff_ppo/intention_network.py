@@ -120,18 +120,18 @@ class Decoder(nn.Module):
         return x, {}
 
 
-def reparameterize(
+def reparameterize_single(
     rng: jax.Array, mean: jnp.ndarray, logvar: jnp.ndarray
 ) -> jnp.ndarray:
-    """Sample from Gaussian using reparameterization trick.
+    """Sample from Gaussian using reparameterization trick (single sample).
 
     Enables backpropagation through stochastic sampling by expressing the
     sample as a deterministic function of the parameters plus noise.
 
     Args:
-        rng: JAX random key for sampling.
-        mean: Mean of the Gaussian distribution.
-        logvar: Log-variance of the Gaussian distribution.
+        rng: JAX random key for sampling (shape [2]).
+        mean: Mean of the Gaussian distribution (shape [latent_dim]).
+        logvar: Log-variance of the Gaussian distribution (shape [latent_dim]).
 
     Returns:
         Sampled latent vector: mean + std * epsilon, where epsilon ~ N(0, I).
@@ -139,6 +139,38 @@ def reparameterize(
     std = jnp.exp(0.5 * logvar)
     eps = jax.random.normal(rng, logvar.shape)
     return mean + eps * std
+
+
+def reparameterize(
+    rng: jax.Array, mean: jnp.ndarray, logvar: jnp.ndarray
+) -> jnp.ndarray:
+    """Sample from Gaussian using reparameterization trick (batched).
+
+    Supports both single key (broadcasted) and per-sample keys for
+    deterministic replay.
+
+    Args:
+        rng: JAX random key(s) for sampling. Either shape [2] (single key
+            for all samples) or [batch_size, 2] (per-sample keys).
+        mean: Mean of the Gaussian distribution, shape [latent_dim] (unbatched)
+            or [batch_size, latent_dim] (batched).
+        logvar: Log-variance of the Gaussian distribution, same shape as mean.
+
+    Returns:
+        Sampled latent vectors with same shape as mean.
+    """
+    if rng.ndim == 1:
+        # Single key - use original behavior
+        std = jnp.exp(0.5 * logvar)
+        eps = jax.random.normal(rng, logvar.shape)
+        return mean + eps * std
+    elif mean.ndim == 1:
+        # Per-sample keys but unbatched mean/logvar - use first key
+        # This is a fallback safety for shape mismatches
+        return reparameterize_single(rng[0], mean, logvar)
+    else:
+        # Per-sample keys with batched mean/logvar - vmap over batch dimension
+        return jax.vmap(reparameterize_single)(rng, mean, logvar)
 
 
 class IntentionNetwork(nn.Module):
@@ -174,11 +206,25 @@ class IntentionNetwork(nn.Module):
         deterministic: bool = False,
         get_activation: bool = False,
     ):
-        _, encoder_rng = jax.random.split(key)
-
-        # Access observations by name instead of index
+        # Access observations by name
         traj = obs["imitation_target"]
         egocentric_obs = obs["proprioception"]
+
+        # Check if observations are actually batched (based on normalized obs shape)
+        obs_is_batched = traj.ndim >= 2
+
+        # Handle key splitting based on both key shape AND observation shape
+        if key.ndim == 1:
+            # Single key - split for encoder
+            _, encoder_rng = jax.random.split(key)
+        elif not obs_is_batched:
+            # Per-sample keys but unbatched observation - use first key
+            # This can happen when key batching was determined from nested obs structure
+            # before normalization flattened it to unbatched
+            _, encoder_rng = jax.random.split(key[0])
+        else:
+            # Per-sample keys [batch_size, 2] - vmap split over batch
+            _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
 
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(

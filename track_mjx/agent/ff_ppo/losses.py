@@ -189,10 +189,9 @@ def compute_ppo_loss(
     Computes the standard PPO clipped surrogate loss plus:
     - Value function MSE loss
     - Entropy bonus for exploration
-    - KL divergence loss for VAE latent space with autoregressive prior
-
-    The autoregressive prior p(z_t | z_{t-1}) = N(0.95 * z_{t-1}, 0.0975 * I)
-    encourages temporal smoothness in the latent intentions.
+    - KL divergence loss for VAE latent space regularization
+    - L2 temporal smoothness loss between consecutive latent means,
+      encouraging temporal consistency in the latent intentions.
 
     Args:
         params: PPO network parameters (policy and value).
@@ -229,9 +228,40 @@ def compute_ppo_loss(
 
     # Put the time dimension first.
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
-    policy_logits, latent_mean, latent_logvar = policy_apply(
-        normalizer_params, params.policy, data.observation, policy_key
-    )
+
+    # Check for stored policy_rng for deterministic stochastic layer replay
+    policy_rng = data.extras["policy_extras"].get("policy_rng")
+
+    if policy_rng is None:
+        # Standard path: use fresh RNG
+        policy_logits, latent_mean, latent_logvar = policy_apply(
+            normalizer_params, params.policy, data.observation, policy_key
+        )
+    else:
+        # Deterministic replay: use stored per-sample RNGs
+        # policy_rng has shape [T, B, 2] after swapaxes
+        # data.observation is a dict where each leaf has shape [T, B, obs_dim]
+        # Flatten [T, B] into single batch dim to avoid vmap (better for buffer donation)
+        obs_leaf = jax.tree_util.tree_leaves(data.observation)[0]
+        T, B = obs_leaf.shape[:2]
+
+        # Flatten observations [T, B, ...] -> [T*B, ...]
+        flat_obs = jax.tree_util.tree_map(
+            lambda x: x.reshape((T * B,) + x.shape[2:]),
+            data.observation,
+        )
+        # Flatten keys [T, B, 2] -> [T*B, 2]
+        flat_rng = policy_rng.reshape((T * B, 2))
+
+        # Single call with combined batch (policy handles per-sample keys natively)
+        flat_logits, flat_mean, flat_logvar = policy_apply(
+            normalizer_params, params.policy, flat_obs, flat_rng
+        )
+
+        # Reshape outputs back to [T, B, ...]
+        policy_logits = flat_logits.reshape((T, B) + flat_logits.shape[1:])
+        latent_mean = flat_mean.reshape((T, B) + flat_mean.shape[1:])
+        latent_logvar = flat_logvar.reshape((T, B) + flat_logvar.shape[1:])
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 

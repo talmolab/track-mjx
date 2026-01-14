@@ -116,11 +116,8 @@ def main(cfg: DictConfig) -> None:
             recurrent_networks.make_recurrent_intention_ppo_networks,
             intention_latent_size=cfg.network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            rnn_type=cfg.network_config.get("rnn_type", "gru"),
-            rnn_hidden_sizes=tuple(cfg.network_config.get("rnn_hidden_sizes", [256])),
-            decoder_output_layers=tuple(
-                cfg.network_config.get("decoder_output_layers", [512])
-            ),
+            rnn_type=cfg.network_config.rnn_type,
+            rnn_hidden_sizes=tuple(cfg.network_config.rnn_hidden_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
         ppo_module = recurrent_ppo

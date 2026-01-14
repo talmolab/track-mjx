@@ -321,11 +321,8 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             action_size=network_config.action_size,
             intention_latent_size=network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
-            rnn_type=network_config.get("rnn_type", "gru"),
-            rnn_hidden_sizes=tuple(network_config.get("rnn_hidden_sizes", [256])),
-            decoder_output_layers=tuple(
-                network_config.get("decoder_output_layers", [])
-            ),
+            rnn_type=network_config.rnn_type,
+            rnn_hidden_sizes=tuple(network_config.rnn_hidden_sizes),
             value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
         )
     else:

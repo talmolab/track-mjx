@@ -124,40 +124,26 @@ class RecurrentDecoder(nn.Module):
     """RNN-based decoder for recurrent intention policy.
 
     Processes concatenated [latent_z, proprioception] through stacked RNN cells
-    followed by output MLP layers to produce action distribution parameters.
+    to produce action distribution parameters.
 
     Attributes:
         output_size: Output dimension (action distribution param size).
         rnn_hidden_sizes: Hidden sizes for each RNN layer, e.g. [512, 256].
-        output_layer_sizes: MLP layer sizes after RNN (before final output).
         cell_type: Type of RNN cell ('simple', 'gru', 'lstm').
-        activation: Activation function for MLP layers.
         kernel_init: Weight initializer.
     """
 
     output_size: int
     rnn_hidden_sizes: Sequence[int] = (256,)
-    output_layer_sizes: Sequence[int] = ()
     cell_type: RNNCellType = "gru"
-    activation: ActivationFn = nn.silu
     kernel_init: Initializer = jax.nn.initializers.lecun_uniform()
 
     def setup(self):
-        """Initialize RNN cells and output layers."""
+        """Initialize RNN cells and final output layer."""
         # Create stacked RNN cells with different hidden sizes
         self.rnn_cells = [
             get_rnn_cell(self.cell_type, hidden_size, self.kernel_init)
             for hidden_size in self.rnn_hidden_sizes
-        ]
-
-        # Output MLP layers (with LayerNorm like ff_ppo decoder)
-        self.output_layers = [
-            nn.Dense(size, name=f"output_{i}", kernel_init=self.kernel_init)
-            for i, size in enumerate(self.output_layer_sizes)
-        ]
-        self.output_layer_norms = [
-            nn.LayerNorm(name=f"output_ln_{i}")
-            for i in range(len(self.output_layer_sizes))
         ]
 
         # Final output layer (no activation)
@@ -203,15 +189,8 @@ class RecurrentDecoder(nn.Module):
             else:
                 rnn_input = new_h
 
-        # Apply output MLP layers
-        output = rnn_input
-        for layer, ln in zip(self.output_layers, self.output_layer_norms):
-            output = layer(output)
-            output = self.activation(output)
-            output = ln(output)
-
-        # Final output (no activation)
-        output = self.final_layer(output)
+        # Final output layer (no activation)
+        output = self.final_layer(rnn_input)
 
         return output, new_hidden_list
 
@@ -228,7 +207,6 @@ class RecurrentIntentionNetwork(nn.Module):
         encoder_layers: Hidden layer sizes for encoder MLP.
         latents: Dimension of latent intention space.
         rnn_hidden_sizes: Hidden sizes for each RNN layer, e.g. [512, 256].
-        decoder_output_layers: MLP layer sizes after RNN in decoder.
         cell_type: Type of RNN cell ('simple', 'gru', 'lstm').
     """
 
@@ -236,7 +214,6 @@ class RecurrentIntentionNetwork(nn.Module):
     encoder_layers: Sequence[int]
     latents: int = 60
     rnn_hidden_sizes: Sequence[int] = (256,)
-    decoder_output_layers: Sequence[int] = ()
     cell_type: RNNCellType = "gru"
 
     def setup(self):
@@ -245,7 +222,6 @@ class RecurrentIntentionNetwork(nn.Module):
         self.decoder = RecurrentDecoder(
             output_size=self.output_size,
             rnn_hidden_sizes=self.rnn_hidden_sizes,
-            output_layer_sizes=self.decoder_output_layers,
             cell_type=self.cell_type,
         )
 
@@ -541,7 +517,6 @@ def make_recurrent_intention_ppo_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     rnn_type: RNNCellType = "gru",
     rnn_hidden_sizes: Sequence[int] = (256,),
-    decoder_output_layers: Sequence[int] = (512,),
     value_hidden_layer_sizes: Sequence[int] = (1024, 1024),
 ) -> RecurrentPPONetworks:
     """Create recurrent intention-based PPO networks.
@@ -558,7 +533,6 @@ def make_recurrent_intention_ppo_networks(
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         rnn_type: Type of RNN cell ('simple', 'gru', 'lstm').
         rnn_hidden_sizes: Hidden sizes for each RNN layer, e.g. (512, 256).
-        decoder_output_layers: MLP layer sizes after RNN in decoder.
         value_hidden_layer_sizes: MLP layer sizes for value network.
 
     Returns:
@@ -575,7 +549,6 @@ def make_recurrent_intention_ppo_networks(
         encoder_layers=list(encoder_hidden_layer_sizes),
         latents=intention_latent_size,
         rnn_hidden_sizes=rnn_hidden_sizes,
-        decoder_output_layers=list(decoder_output_layers),
         cell_type=rnn_type,
     )
 

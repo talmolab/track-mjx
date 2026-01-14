@@ -232,16 +232,25 @@ def main(cfg: DictConfig):
         teacher_net_cfg["decoder_layer_sizes"],
         merge=False,
     )
+    # Handle both new (dict-based) and legacy (flat) config formats
+    if "obs_sizes" in teacher_net_cfg:
+        # New dict-based format
+        reference_obs_size = teacher_net_cfg["obs_sizes"]["imitation_target"]
+        proprioceptive_obs_size = teacher_net_cfg["obs_sizes"]["proprioception"]
+    else:
+        # Legacy flat format
+        reference_obs_size = teacher_net_cfg["reference_obs_size"]
+        proprioceptive_obs_size = teacher_net_cfg["observation_size"] - reference_obs_size
     OmegaConf.update(
         cfg.network_config,
         "reference_obs_size",
-        teacher_net_cfg["reference_obs_size"],
+        reference_obs_size,
         merge=False,
     )
     OmegaConf.update(
         cfg.network_config,
         "proprioceptive_obs_size",
-        teacher_net_cfg["observation_size"] - teacher_net_cfg["reference_obs_size"],
+        proprioceptive_obs_size,
         merge=False,
     )
     OmegaConf.update(

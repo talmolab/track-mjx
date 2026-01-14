@@ -796,9 +796,11 @@ def train(
 
     # Handle checkpoint restoration iteration count
     start_it = 0
-    if ckpt_mgr is not None and ckpt_mgr.latest_step() is not None:
-        num_evals_after_init -= ckpt_mgr.latest_step()
-        start_it = ckpt_mgr.latest_step()
+    if ckpt_mgr is not None:
+        latest_step = ckpt_mgr.latest_step()
+        if latest_step is not None:
+            num_evals_after_init -= latest_step
+            start_it = latest_step
 
     logging.info(
         f"Starting at iteration: {start_it} with {num_evals_after_init} evals left"

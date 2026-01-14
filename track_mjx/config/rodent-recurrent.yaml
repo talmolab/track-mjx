@@ -138,10 +138,11 @@ train_setup:
   train_config:
     num_envs: 4096
     num_timesteps: 6_000_000_000
-    batch_size: 512                       
-    num_minibatches: 32                   
-    learning_rate: 5e-5                   
-    grad_clip_threshold: 10.0             
+    batch_size: 512
+    num_minibatches: 32
+    num_updates_per_batch: 4              # Epochs per PPO update
+    learning_rate: 5e-5
+    grad_clip_threshold: 10.0
     clipping_epsilon: 0.2
     discounting: 0.97                     
     gae_lambda: 0.97                      

@@ -31,9 +31,11 @@ from pathlib import Path
 import hydra
 import jax
 import wandb
+import mujoco
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as brax_ppo
 from brax.training.acme import running_statistics
+from mujoco import mjx
 from mujoco_playground import wrapper
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import bowl_escape
@@ -108,6 +110,18 @@ def main(cfg: DictConfig) -> None:
     # Wrappers handle both dict and flat observations natively
     def make_wrapped_env(is_eval: bool = False):
         base_env = bowl_escape.BowlEscape(config=env_cfg)
+
+        # Modify heightfield friction if specified
+        if cfg.env.get("hfield_friction") is not None:
+            for i in range(base_env._mj_model.ngeom):
+                if base_env._mj_model.geom_type[i] == mujoco.mjtGeom.mjGEOM_HFIELD:
+                    base_env._mj_model.geom_friction[i, 0] = cfg.env.hfield_friction
+                    logging.info(f"Heightfield geom {i} friction set to: {cfg.env.hfield_friction}")
+                    break
+            # Re-put model to MJX after modification
+            base_env._mjx_model = mjx.put_model(
+                base_env._mj_model, impl=env_cfg.mujoco_impl
+            )
 
         if cfg.mode == "decoder_only":
             return DecoderHighLevelWrapper(

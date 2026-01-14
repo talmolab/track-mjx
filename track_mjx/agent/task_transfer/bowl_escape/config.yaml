@@ -56,6 +56,8 @@ train:
 # Environment settings
 env:
   target_speed: 1.0
+  # Sliding friction for bowl heightfield (MuJoCo default is 1.0, rodent paws have 1.5)
+  hfield_friction: 1.0
   # Reward term weights (from vnl_playground bowl_escape task)
   reward_weights:
     escape_x_upright: 1.0

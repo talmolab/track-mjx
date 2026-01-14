@@ -9,10 +9,6 @@ generate plausible actions by running rollouts in 4 different modes:
 4. predicted_logvar: z sampled using network-predicted logvar per dimension
 
 All four modes are evaluated and rendered separately.
-
-Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
-- "proprioception": Proprioceptive state observations (flat array)
 """
 
 from typing import Callable, Optional, Sequence, Tuple, Any, Dict, List, Union

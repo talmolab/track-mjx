@@ -1,6 +1,6 @@
 """
 Network definitions for distillation training.
-Reuses the IntentionNetwork architecture from ff_ppo but with distillation-specific utilities.
+Reuses the IntentionNetwork architecture from mlp_ppo but with distillation-specific utilities.
 
 Observations are expected as dictionaries with keys:
 - "imitation_target": Reference trajectory observations (flat array)

@@ -5,6 +5,10 @@ This module provides logging functionality for prior training, including:
 - Latent statistics (encoder mean/logvar, prior mean/logvar)
 - KL divergence between encoder and prior over rollout
 - Video rendering (optional, since encoder+decoder is pretrained)
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
 import logging
@@ -19,6 +23,11 @@ from omegaconf import DictConfig
 
 from track_mjx.agent.mlp_prior import prior_networks
 from track_mjx.agent.mlp_prior import losses
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    normalize_dict_obs,
+    flatten_obs_dict,
+)
 
 
 def prior_training_rollout_logging_fn(
@@ -64,22 +73,27 @@ def prior_training_rollout_logging_fn(
     prior_hidden_layer_sizes = tuple(
         cfg.network_config.get("prior_layer_sizes", [1024, 1024])
     )
-    reference_obs_size = cfg.network_config.reference_obs_size
-    proprioceptive_obs_size = cfg.network_config.proprioceptive_obs_size
     action_size = cfg.network_config.action_size
+
+    # Get observation sizes from config (support both new dict format and legacy)
+    obs_sizes = cfg.network_config.get("obs_sizes", None)
+    if obs_sizes is not None:
+        reference_obs_size = obs_sizes["imitation_target"]
+    else:
+        reference_obs_size = cfg.network_config.reference_obs_size
 
     # Setup normalization
     normalize = lambda x, y: x
     if cfg.train_setup.train_config.normalize_observations:
         normalize = running_statistics.normalize
 
-    # Extract params
+    # Extract params - normalizer_params is now DictRunningStatisticsState
     normalizer_params, network_params = params
     encoder_params = network_params["params"]["encoder"]
     decoder_params = network_params["params"]["decoder"]
     prior_params = network_params["params"]["prior"]
 
-    # Create encoder+decoder policy for rollout
+    # Create encoder+decoder policy for rollout (now uses dict observations)
     policy = prior_networks.make_encoder_decoder_inference_fn(
         encoder_params=encoder_params,
         decoder_params=decoder_params,
@@ -88,8 +102,6 @@ def prior_training_rollout_logging_fn(
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         latent_size=latent_size,
         action_size=action_size,
-        reference_obs_size=reference_obs_size,
-        proprioceptive_obs_size=proprioceptive_obs_size,
         deterministic=True,
     )
     jit_policy = jax.jit(policy)
@@ -132,9 +144,10 @@ def prior_training_rollout_logging_fn(
         encoder_logvars.append(extras["latent_logvar"])
 
         # Get prior latent statistics
-        # Normalize observations
-        normalized_obs = running_statistics.normalize(obs, normalizer_params)
-        proprio_obs = normalized_obs[..., reference_obs_size:]
+        # Flatten and normalize dict observations
+        flat_obs = flatten_obs_dict(obs)
+        normalized_obs = normalize_dict_obs(flat_obs, normalizer_params)
+        proprio_obs = normalized_obs["proprioception"]
         prior_mean, prior_logvar = prior_module.apply(
             {"params": prior_params}, proprio_obs
         )

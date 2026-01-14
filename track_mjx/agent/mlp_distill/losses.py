@@ -5,6 +5,10 @@ The distillation loss consists of:
 1. MSE loss between student and teacher actions
 2. AR(1) loss between consecutive latent means (z_t - φ*z_{t-1}), matching PULSE
 3. KL divergence loss between encoder and prior distributions
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
 from typing import Any, Callable, Tuple
@@ -110,6 +114,9 @@ def compute_encoder_prior_kl_loss(
     - q(z|x) is the encoder distribution (Gaussian with encoder_mean, encoder_logvar)
     - p(z|x_proprio) is the prior distribution (Gaussian with prior_mean, prior_logvar)
 
+    Stop gradients are applied to the encoder outputs so that this loss only
+    trains the prior network to match the encoder distribution.
+
     Uses PULSE-style aggregation: sum over latent dimensions, then mean over samples.
     This is the mathematically correct KL for multivariate Gaussians with diagonal covariance.
 
@@ -122,11 +129,15 @@ def compute_encoder_prior_kl_loss(
     Returns:
         Scalar KL divergence loss
     """
+    # Stop gradients on encoder outputs - this loss only trains the prior
+    encoder_mean_sg = jax.lax.stop_gradient(encoder_mean)
+    encoder_logvar_sg = jax.lax.stop_gradient(encoder_logvar)
+
     # KL divergence between two Gaussians (element-wise per latent dimension):
     # KL_j = 0.5 * (log(σ_p^2/σ_q^2) + σ_q^2/σ_p^2 + (μ_q - μ_p)^2/σ_p^2 - 1)
-    log_var_diff = prior_logvar - encoder_logvar  # log(σ_p^2) - log(σ_q^2)
-    var_ratio = jnp.exp(encoder_logvar - prior_logvar)  # σ_q^2 / σ_p^2
-    mean_diff_sq = jnp.square(encoder_mean - prior_mean) / jnp.exp(
+    log_var_diff = prior_logvar - encoder_logvar_sg  # log(σ_p^2) - log(σ_q^2)
+    var_ratio = jnp.exp(encoder_logvar_sg - prior_logvar)  # σ_q^2 / σ_p^2
+    mean_diff_sq = jnp.square(encoder_mean_sg - prior_mean) / jnp.exp(
         prior_logvar
     )  # (μ_q - μ_p)^2 / σ_p^2
 
@@ -135,6 +146,38 @@ def compute_encoder_prior_kl_loss(
 
     # Sum over latent dimensions (correct KL for multivariate Gaussian)
     # Then mean over samples (T × B) - matches PULSE aggregation
+    kl_per_sample = jnp.sum(element_wise_kl, axis=-1)  # [T, B]
+    kl_loss = jnp.mean(kl_per_sample)  # scalar
+
+    return kl_loss
+
+
+def compute_encoder_kl_to_standard_normal(
+    encoder_mean: jnp.ndarray,
+    encoder_logvar: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute KL divergence between encoder distribution and standard normal.
+
+    KL(q(z|x) || N(0, I)) where:
+    - q(z|x) is the encoder distribution (Gaussian with encoder_mean, encoder_logvar)
+    - N(0, I) is the standard normal with mean=0 and variance=1
+
+    This regularizes the encoder to produce distributions close to the standard normal.
+
+    Args:
+        encoder_mean: Mean of encoder distribution [T, B, latent_dim]
+        encoder_logvar: Log-variance of encoder distribution [T, B, latent_dim]
+
+    Returns:
+        Scalar KL divergence loss
+    """
+    # KL(N(μ, σ²) || N(0, 1)) = 0.5 * (σ² + μ² - 1 - log(σ²))
+    # = 0.5 * (exp(log_var) + μ² - 1 - log_var)
+    element_wise_kl = 0.5 * (
+        jnp.exp(encoder_logvar) + jnp.square(encoder_mean) - 1 - encoder_logvar
+    )  # [T, B, d]
+
+    # Sum over latent dimensions, then mean over samples
     kl_per_sample = jnp.sum(element_wise_kl, axis=-1)  # [T, B]
     kl_loss = jnp.mean(kl_per_sample)  # scalar
 
@@ -153,19 +196,22 @@ def compute_distillation_loss(
     action_loss_weight: float = 1.0,
     autoregressive_weight: float = 1e-3,
     kl_weight: float = 1e-3,
+    encoder_kl_weight: float = 1e-3,
     kl_schedule: Callable | None = None,
     ar_schedule: Callable | None = None,
+    encoder_kl_schedule: Callable | None = None,
     use_l2_action_loss: bool = False,
 ) -> Tuple[jnp.ndarray, types.Metrics]:
     """Compute the combined distillation loss.
 
     The total loss is:
-    L = action_loss_weight * L_action + autoregressive_weight * L_ar + kl_weight * L_kl
+    L = action_loss_weight * L_action + autoregressive_weight * L_ar + kl_weight * L_kl_prior + encoder_kl_weight * L_kl_encoder
 
     Where:
     - L_action: Action reconstruction loss (MSE or mean L2 norm)
     - L_ar: AR(1) loss (mean L2 norm of z_t - φ*z_{t-1}), with episode boundary masking
-    - L_kl: KL divergence between encoder and prior distributions
+    - L_kl_prior: KL divergence between encoder (stop_grad) and prior (trains prior only)
+    - L_kl_encoder: KL divergence between encoder and standard normal N(0, I) (regularizes encoder)
 
     Args:
         params: Student network parameters
@@ -178,9 +224,11 @@ def compute_distillation_loss(
         teacher_params: Teacher policy parameters (frozen)
         action_loss_weight: Weight for action reconstruction loss
         autoregressive_weight: Weight for autoregressive loss
-        kl_weight: Weight for KL divergence loss
-        kl_schedule: Optional schedule function for KL weight
+        kl_weight: Weight for encoder-prior KL divergence loss (trains prior only)
+        encoder_kl_weight: Weight for encoder-to-standard-normal KL loss (regularizes encoder)
+        kl_schedule: Optional schedule function for encoder-prior KL weight
         ar_schedule: Optional schedule function for autoregressive weight
+        encoder_kl_schedule: Optional schedule function for encoder KL weight
         use_l2_action_loss: If True, use mean L2 norm (like PULSE). If False, use MSE.
 
     Returns:
@@ -190,6 +238,10 @@ def compute_distillation_loss(
 
     # Put the time dimension first: [B, T] -> [T, B]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+
+    # Merge time and batch dimensions: [T, B, ...] -> [T*B, ...]
+    # This ensures observations have shape [T*B, features] for normalization
+    data = jax.tree_util.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), data)
 
     # Get student outputs
     student_logits, encoder_mean, encoder_logvar, prior_mean, prior_logvar = (
@@ -217,31 +269,44 @@ def compute_distillation_loss(
         student_actions, teacher_actions, use_l2_action_loss
     )
     ar_loss = compute_autoregressive_loss(encoder_mean, data.discount)
-    kl_loss = compute_encoder_prior_kl_loss(
+
+    # KL loss between encoder (stop_grad) and prior - trains prior to match encoder
+    kl_prior_loss = compute_encoder_prior_kl_loss(
         encoder_mean, encoder_logvar, prior_mean, prior_logvar
+    )
+
+    # KL loss between encoder and standard normal N(0, I) - regularizes encoder
+    kl_encoder_loss = compute_encoder_kl_to_standard_normal(
+        encoder_mean, encoder_logvar
     )
 
     # Apply schedules if provided
     current_kl_weight = kl_weight
     current_ar_weight = autoregressive_weight
+    current_encoder_kl_weight = encoder_kl_weight
     if kl_schedule is not None:
         current_kl_weight = kl_schedule(step)
     if ar_schedule is not None:
         current_ar_weight = ar_schedule(step)
+    if encoder_kl_schedule is not None:
+        current_encoder_kl_weight = encoder_kl_schedule(step)
 
     # Compute weighted total loss
     total_loss = (
         action_loss_weight * action_loss
         + current_ar_weight * ar_loss
-        + current_kl_weight * kl_loss
+        + current_kl_weight * kl_prior_loss
+        + current_encoder_kl_weight * kl_encoder_loss
     )
 
     metrics = {
         "total_loss": total_loss,
         "action_loss": action_loss,
         "autoregressive_loss": ar_loss,
-        "kl_loss": kl_loss,
+        "kl_prior_loss": kl_prior_loss,
+        "kl_encoder_loss": kl_encoder_loss,
         "kl_weight": current_kl_weight,
+        "encoder_kl_weight": current_encoder_kl_weight,
         "ar_weight": current_ar_weight,
     }
 

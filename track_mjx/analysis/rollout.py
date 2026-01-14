@@ -17,7 +17,6 @@ from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
 
 
-
 def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
     """Create a VNL imitation learning environment from a configuration.
 
@@ -140,7 +139,9 @@ def create_rollout_generator(
         # Initialize hidden state for recurrent policies (unbatched for single rollout)
         if is_recurrent:
             if rnn_type == "lstm":
-                hidden = [(jnp.zeros(size), jnp.zeros(size)) for size in rnn_hidden_sizes]
+                hidden = [
+                    (jnp.zeros(size), jnp.zeros(size)) for size in rnn_hidden_sizes
+                ]
             else:
                 hidden = [jnp.zeros(size) for size in rnn_hidden_sizes]
 

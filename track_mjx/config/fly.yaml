@@ -14,7 +14,7 @@ env_config:
   env_name: "FruitflyImitation"
 
   # MuJoCo backend: "jax" or "warp"
-  mujoco_impl: "jax"
+  mujoco_impl: "warp"
 
   # ---------------------------------------------------------------------------
   # Physics Solver Settings

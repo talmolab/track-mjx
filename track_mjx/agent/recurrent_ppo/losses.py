@@ -28,7 +28,6 @@ from track_mjx.agent.ff_ppo.losses import (
 from track_mjx.agent.recurrent_ppo.networks import (
     HiddenState,
     RecurrentPPONetworks,
-    reset_hidden_on_done,
 )
 
 
@@ -59,11 +58,8 @@ def _extract_initial_hidden(
     Returns:
         Initial hidden state(s) at t=0.
     """
-    if isinstance(stored_hidden, list):
-        return [h[0] if h.ndim > 2 else h for h in stored_hidden]
-    else:
-        # Single hidden state
-        return [stored_hidden[0] if stored_hidden.ndim > 2 else stored_hidden]
+    hidden_list = stored_hidden if isinstance(stored_hidden, list) else [stored_hidden]
+    return [h[0] if h.ndim > 2 else h for h in hidden_list]
 
 
 def compute_recurrent_ppo_loss(
@@ -96,7 +92,9 @@ def compute_recurrent_ppo_loss(
     Args:
         params: Recurrent PPO network parameters (policy and value).
         normalizer_params: Running statistics for observation normalization.
-        data: Transition batch with shape [B, T]. Required extra fields:
+        data: Transition batch with shape [B, T, ...] (batch-major format).
+            Internally swapped to [T, B, ...] for sequence processing.
+            Required extra fields:
             - data.extras["state_extras"]["truncation"]
             - data.extras["policy_extras"]["raw_action"]
             - data.extras["policy_extras"]["log_prob"]
@@ -127,7 +125,6 @@ def compute_recurrent_ppo_loss(
     )
     policy_network = recurrent_ppo_network.policy_network
     value_apply = recurrent_ppo_network.value_network.apply
-    cell_type = recurrent_ppo_network.cell_type
 
     initial_policy_hidden = data.extras["policy_extras"]["initial_policy_hidden"]
 

@@ -39,6 +39,13 @@ ActivationFn = Callable[[jnp.ndarray], jnp.ndarray]
 Initializer = Callable[..., Any]
 
 
+_RNN_CELL_CLASSES: dict[RNNCellType, type[nn.RNNCellBase]] = {
+    "simple": nn.SimpleCell,
+    "gru": nn.GRUCell,
+    "lstm": nn.LSTMCell,
+}
+
+
 def get_rnn_cell(
     cell_type: RNNCellType,
     hidden_size: int,
@@ -57,17 +64,12 @@ def get_rnn_cell(
     Raises:
         ValueError: If cell_type is not one of 'simple', 'gru', 'lstm'.
     """
-    if cell_type == "simple":
-        return nn.SimpleCell(features=hidden_size, kernel_init=kernel_init)
-    elif cell_type == "gru":
-        return nn.GRUCell(features=hidden_size, kernel_init=kernel_init)
-    elif cell_type == "lstm":
-        return nn.LSTMCell(features=hidden_size, kernel_init=kernel_init)
-    else:
+    if cell_type not in _RNN_CELL_CLASSES:
         raise ValueError(
             f"Unsupported RNN cell type: {cell_type}. "
-            'Must be one of "simple", "gru", or "lstm".'
+            f"Must be one of {list(_RNN_CELL_CLASSES.keys())}."
         )
+    return _RNN_CELL_CLASSES[cell_type](features=hidden_size, kernel_init=kernel_init)
 
 
 def init_hidden_state(
@@ -84,33 +86,18 @@ def init_hidden_state(
 
     Returns:
         Initialized hidden state (zeros). For LSTM, returns tuple of
-        (carry, hidden). For SimpleCell/GRU, returns single array.
+        (cell_state, hidden_state). For SimpleCell/GRU, returns single array.
     """
-    if cell_type == "lstm":
-        return (
-            jnp.zeros((batch_size, hidden_size)),
-            jnp.zeros((batch_size, hidden_size)),
-        )
-    else:
-        return jnp.zeros((batch_size, hidden_size))
+    zeros = jnp.zeros((batch_size, hidden_size))
+    return (zeros, zeros) if cell_type == "lstm" else zeros
 
 
-def reset_hidden_on_done(
+def _reset_single_hidden(
     hidden: HiddenState,
-    done: jnp.ndarray,
+    done_expanded: jnp.ndarray,
     cell_type: RNNCellType,
 ) -> HiddenState:
-    """Reset hidden state to zeros where episodes ended.
-
-    Args:
-        hidden: Current hidden state.
-        done: Boolean array indicating episode termination, shape [batch].
-        cell_type: Type of RNN cell.
-
-    Returns:
-        Hidden state with zeros where done is True.
-    """
-    done_expanded = done[..., None]
+    """Reset a single hidden state where episodes ended."""
     if cell_type == "lstm":
         c, h = hidden
         return (
@@ -118,6 +105,27 @@ def reset_hidden_on_done(
             jnp.where(done_expanded, 0.0, h),
         )
     return jnp.where(done_expanded, 0.0, hidden)
+
+
+def reset_hidden_on_done(
+    hidden: HiddenState | list[HiddenState],
+    done: jnp.ndarray,
+    cell_type: RNNCellType,
+) -> HiddenState | list[HiddenState]:
+    """Reset hidden state to zeros where episodes ended.
+
+    Args:
+        hidden: Hidden state(s) - single state or list for multi-layer RNNs.
+        done: Boolean array indicating episode termination, shape [batch].
+        cell_type: Type of RNN cell.
+
+    Returns:
+        Hidden state with zeros where done is True.
+    """
+    done_expanded = done[..., None]
+    if isinstance(hidden, list):
+        return [_reset_single_hidden(h, done_expanded, cell_type) for h in hidden]
+    return _reset_single_hidden(hidden, done_expanded, cell_type)
 
 
 class RecurrentDecoder(nn.Module):
@@ -183,9 +191,9 @@ class RecurrentDecoder(nn.Module):
         for i, (cell, h) in enumerate(zip(self.rnn_cells, hidden_list)):
             new_h, _ = cell(h, rnn_input)
             new_hidden_list.append(new_h)
-            # For LSTM, output is the second element (h state)
+            # For LSTM, new_h is the carry tuple (c, h); extract h for next layer input
             if self.cell_type == "lstm":
-                rnn_input = new_h[1]
+                rnn_input = new_h[1]  # h from (c, h) carry tuple
             else:
                 rnn_input = new_h
 
@@ -600,6 +608,17 @@ def make_recurrent_intention_ppo_networks(
         """
         obs_seq = normalize_dict_obs(obs_seq, processor_params)
 
+        # Validate stored_keys shape if provided
+        if stored_keys is not None:
+            # Get expected shape from observations [T, B, ...]
+            ref_obs = obs_seq["imitation_target"]
+            expected_shape = (ref_obs.shape[0], ref_obs.shape[1], 2)
+            if stored_keys.shape != expected_shape:
+                raise ValueError(
+                    f"stored_keys has shape {stored_keys.shape}, expected {expected_shape}. "
+                    f"stored_keys must have shape [T, B, 2] matching the observation sequence."
+                )
+
         if stored_keys is not None:
             # Deterministic replay: use stored per-timestep, per-sample keys
             def step_with_stored_keys(carry, inputs):
@@ -615,9 +634,7 @@ def make_recurrent_intention_ppo_networks(
                 )
 
                 # Reset hidden state where episodes ended
-                new_hidden = [
-                    reset_hidden_on_done(h, done_t, rnn_type) for h in new_hidden
-                ]
+                new_hidden = reset_hidden_on_done(new_hidden, done_t, rnn_type)
 
                 return new_hidden, (logits, mean, logvar)
 
@@ -640,9 +657,7 @@ def make_recurrent_intention_ppo_networks(
                 )
 
                 # Reset hidden state where episodes ended
-                new_hidden = [
-                    reset_hidden_on_done(h, done_t, rnn_type) for h in new_hidden
-                ]
+                new_hidden = reset_hidden_on_done(new_hidden, done_t, rnn_type)
 
                 return (new_hidden, next_key), (logits, mean, logvar)
 

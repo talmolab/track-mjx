@@ -26,7 +26,7 @@ import optax
 import orbax.checkpoint as ocp
 from absl import logging
 from brax import base, envs
-from brax.training import acting, pmap, types
+from brax.training import pmap, types
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
 
@@ -83,26 +83,6 @@ def _strip_weak_type(tree: Any) -> Any:
     return jax.tree_util.tree_map(f, tree)
 
 
-def _reset_hidden_on_done(
-    hidden: HiddenState | list[HiddenState],
-    done: jnp.ndarray,
-    cell_type: networks.RNNCellType,
-) -> HiddenState | list[HiddenState]:
-    """Reset hidden state to zeros where episodes ended.
-
-    Args:
-        hidden: Hidden state(s) - single state or list for multi-layer.
-        done: Done flags with shape [batch].
-        cell_type: RNN cell type.
-
-    Returns:
-        Hidden state with zeros where done is True.
-    """
-    if isinstance(hidden, list):
-        return [networks.reset_hidden_on_done(h, done, cell_type) for h in hidden]
-    return networks.reset_hidden_on_done(hidden, done, cell_type)
-
-
 def actor_step_rnn(
     env: envs.Env,
     env_state: envs.State,
@@ -142,7 +122,9 @@ def actor_step_rnn(
     )
 
     # Reset hidden state where episodes ended
-    new_policy_hidden = _reset_hidden_on_done(new_policy_hidden, nstate.done, cell_type)
+    new_policy_hidden = networks.reset_hidden_on_done(
+        new_policy_hidden, nstate.done, cell_type
+    )
 
     return nstate, transition, new_policy_hidden
 

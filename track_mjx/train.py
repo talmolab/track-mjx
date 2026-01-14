@@ -110,6 +110,14 @@ def main(cfg: DictConfig) -> None:
     arch_name = cfg.network_config.get("arch_name", "intention")
     logging.info(f"Using architecture: {arch_name}")
 
+    # Validate architecture name
+    valid_arch_names = {"intention", "recurrent_intention"}
+    if arch_name not in valid_arch_names:
+        raise ValueError(
+            f"Unknown architecture '{arch_name}'. "
+            f"Valid options are: {sorted(valid_arch_names)}"
+        )
+
     if arch_name == "recurrent_intention":
         # Recurrent intention network (MLP encoder + RNN decoder)
         network_factory = functools.partial(

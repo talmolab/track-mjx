@@ -92,9 +92,12 @@ def create_rollout_generator(
     arch_name = network_config.get("arch_name", "intention")
     is_recurrent = arch_name == "recurrent_intention"
 
-    # Get RNN config for hidden state initialization
-    rnn_type = network_config.rnn_type
-    rnn_hidden_sizes = tuple(network_config.rnn_hidden_sizes)
+    # Get RNN config for hidden state initialization (only for recurrent)
+    rnn_type = None
+    rnn_hidden_sizes = None
+    if is_recurrent:
+        rnn_type = network_config.get("rnn_type", "gru")
+        rnn_hidden_sizes = tuple(network_config.get("rnn_hidden_sizes", [256]))
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.

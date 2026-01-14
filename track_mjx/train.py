@@ -92,8 +92,8 @@ def main(cfg: DictConfig) -> None:
         seed=key_split,
     )
     # Create environments using env_loader
-    env = env_loader.load(env_name, config=env_cfg_ml, clips=train_clips)
-    test_env = env_loader.load(env_name, config=env_cfg_ml, clips=test_clips)
+    env = env_loader.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
+    test_env = env_loader.load(env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -223,7 +223,7 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = env_loader.load(env_name, config=rollout_cfg, clips=None)
+    rollout_env = env_loader.load(env_name, config=rollout_cfg, clips=None, flatten_obs=False)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

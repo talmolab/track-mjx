@@ -60,35 +60,58 @@ def rollout_logging_fn(
         rollout.append(state)
 
     # Log reward breakdown per step
-    _log_reward_metrics(rollout)
+    _log_reward_metrics(rollout, current_step)
 
     # Render and log video
     _log_rollout_video(env, model_path, current_step, rollout, render_camera, render_fps)
 
 
-def _log_reward_metrics(rollout: list[Any]) -> None:
-    """Log per-step reward metrics as line plots.
+def _log_reward_metrics(rollout: list[Any], current_step: int) -> None:
+    """Log per-step reward metrics as line plots with step-based versioning.
+
+    Creates a combined table with all reward metrics that can be viewed
+    with a slider in WandB to compare different evaluation steps.
 
     Args:
         rollout: List of environment states from the episode.
+        current_step: Current training step for versioning.
     """
     # Get available reward metrics from first state
     if not rollout or not hasattr(rollout[0], "metrics"):
         return
 
     first_metrics = rollout[0].metrics
-    reward_keys = [k for k in first_metrics.keys() if k.startswith("rewards/")]
+    reward_keys = sorted([k for k in first_metrics.keys() if k.startswith("rewards/")])
 
-    for metric_name in reward_keys:
-        try:
-            data = [(i, float(s.metrics.get(metric_name, 0.0))) for i, s in enumerate(rollout)]
-            table = wandb.Table(data=data, columns=["frame", metric_name])
+    if not reward_keys:
+        return
+
+    # Build combined table with all reward metrics
+    columns = ["frame"] + reward_keys
+    data = []
+    for i, state in enumerate(rollout):
+        row = [i] + [float(state.metrics.get(k, 0.0)) for k in reward_keys]
+        data.append(row)
+
+    try:
+        table = wandb.Table(data=data, columns=columns)
+        # Log as versioned table that WandB can display with a step slider
+        wandb.log(
+            {"eval/reward_curves": table},
+            commit=False,
+        )
+        # Also log individual line plots for each metric
+        for metric_name in reward_keys:
             wandb.log(
-                {f"eval/{metric_name}": wandb.plot.line(table, "frame", metric_name)},
+                {
+                    f"eval/{metric_name}": wandb.plot.line(
+                        table, "frame", metric_name, title=f"{metric_name} (step {current_step})"
+                    )
+                },
                 commit=False,
             )
-        except Exception as e:
-            logging.warning(f"Failed to log reward metric {metric_name}: {e}")
+    except Exception as e:
+        logging.warning(f"Failed to log reward metrics: {e}")
 
 
 def _log_rollout_video(

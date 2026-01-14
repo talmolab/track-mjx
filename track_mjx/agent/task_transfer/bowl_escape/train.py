@@ -96,7 +96,13 @@ def main(cfg: DictConfig) -> None:
     env_cfg = bowl_escape.default_config()
     env_cfg.ctrl_dt = ckpt_cfg["env_config"]["ctrl_dt"]
     env_cfg.target_speed = cfg.env.target_speed
+    # Set reward term weights
+    env_cfg.reward_terms = {
+        "escape_x_upright": {"weight": cfg.env.reward_weights.escape_x_upright},
+        "speed": {"weight": cfg.env.reward_weights.speed},
+    }
     logging.info(f"Environment config: ctrl_dt={env_cfg.ctrl_dt}, target_speed={env_cfg.target_speed}")
+    logging.info(f"Reward weights: escape_x_upright={cfg.env.reward_weights.escape_x_upright}, speed={cfg.env.reward_weights.speed}")
 
     # Create training and eval environments with appropriate wrapper
     # Wrappers handle both dict and flat observations natively

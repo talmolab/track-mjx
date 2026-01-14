@@ -196,7 +196,13 @@ def make_abstract_policy(
     ppo_network = make_ppo_network_from_cfg(cfg)
     key_policy, key_value = jax.random.split(jax.random.key(seed))
 
-    arch_name = cfg.network_config.get("arch_name", "intention")
+    arch_name = cfg.network_config.get("arch_name")
+    if arch_name is None:
+        logging.warning(
+            "arch_name not found in network_config, defaulting to 'intention'. "
+            "If this is unexpected, check your config file."
+        )
+        arch_name = "intention"
     if arch_name == "recurrent_intention":
         init_params = recurrent_ppo_losses.RecurrentPPONetworkParams(
             policy=ppo_network.policy_network.init(key_policy),
@@ -247,7 +253,13 @@ def load_inference_fn(
         For recurrent: Inference function (obs, hidden, rng) -> (action, extras, new_hidden).
     """
     ppo_network = make_ppo_network_from_cfg(cfg)
-    arch_name = cfg.network_config.get("arch_name", "intention")
+    arch_name = cfg.network_config.get("arch_name")
+    if arch_name is None:
+        logging.warning(
+            "arch_name not found in network_config, defaulting to 'intention'. "
+            "If this is unexpected, check your config file."
+        )
+        arch_name = "intention"
 
     if arch_name == "recurrent_intention":
         make_policy = recurrent_ppo_networks.make_inference_fn(ppo_network)
@@ -291,7 +303,13 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
     Raises:
         ValueError: If network architecture is not recognized.
     """
-    arch_name = cfg.network_config.get("arch_name", "intention")
+    arch_name = cfg.network_config.get("arch_name")
+    if arch_name is None:
+        logging.warning(
+            "arch_name not found in network_config, defaulting to 'intention'. "
+            "If this is unexpected, check your config file."
+        )
+        arch_name = "intention"
     network_config = cfg.network_config
 
     # Handle both new (dict-based) and legacy (flat) config formats

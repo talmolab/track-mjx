@@ -189,10 +189,9 @@ def compute_ppo_loss(
     Computes the standard PPO clipped surrogate loss plus:
     - Value function MSE loss
     - Entropy bonus for exploration
-    - KL divergence loss for VAE latent space with autoregressive prior
-
-    The autoregressive prior p(z_t | z_{t-1}) = N(0.95 * z_{t-1}, 0.0975 * I)
-    encourages temporal smoothness in the latent intentions.
+    - KL divergence loss for VAE latent space regularization
+    - L2 temporal smoothness loss between consecutive latent means,
+      encouraging temporal consistency in the latent intentions.
 
     Args:
         params: PPO network parameters (policy and value).

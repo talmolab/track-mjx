@@ -95,8 +95,18 @@ def create_rollout_generator(
     rnn_type = None
     rnn_hidden_sizes = None
     if is_recurrent:
-        rnn_type = network_config.get("rnn_type", "gru")
-        rnn_hidden_sizes = tuple(network_config.get("rnn_hidden_sizes", [256]))
+        if "rnn_type" not in network_config:
+            raise ValueError(
+                "recurrent_intention architecture requires 'rnn_type' in network_config. "
+                "Check that your checkpoint config is complete."
+            )
+        if "rnn_hidden_sizes" not in network_config:
+            raise ValueError(
+                "recurrent_intention architecture requires 'rnn_hidden_sizes' in network_config. "
+                "Check that your checkpoint config is complete."
+            )
+        rnn_type = network_config["rnn_type"]
+        rnn_hidden_sizes = tuple(network_config["rnn_hidden_sizes"])
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.
@@ -136,7 +146,9 @@ def create_rollout_generator(
         joint_forces = []
         sensor_readings = []
 
-        # Initialize hidden state for recurrent policies (unbatched for single rollout)
+        # Initialize hidden state for recurrent policies (unbatched for single rollout).
+        # Shape: (hidden_size,) for each layer, vs (batch_size, hidden_size) during training.
+        # The inference function handles both batched and unbatched inputs.
         if is_recurrent:
             if rnn_type == "lstm":
                 hidden = [

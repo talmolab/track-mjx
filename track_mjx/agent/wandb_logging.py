@@ -26,7 +26,7 @@ def rollout_logging_fn(
     model_path: str,
     current_step: int,
     jit_logging_inference_fn: Callable,
-    params: losses.PPONetworkParams,
+    params: Any,  # PPONetworkParams or RecurrentPPONetworkParams
     policy_params_fn_key: jax.Array,
     render_video: bool = True,
     ppo_network: Any = None,

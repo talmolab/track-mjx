@@ -119,6 +119,17 @@ def main(cfg: DictConfig) -> None:
         )
 
     if arch_name == "recurrent_intention":
+        # Validate required config keys for recurrent architecture
+        required_keys = ["rnn_type", "rnn_hidden_sizes"]
+        missing_keys = [
+            k for k in required_keys if not hasattr(cfg.network_config, k)
+        ]
+        if missing_keys:
+            raise ValueError(
+                f"recurrent_intention architecture requires these config keys: {missing_keys}. "
+                f"Please add them to network_config in your YAML file."
+            )
+
         # Recurrent intention network (MLP encoder + RNN decoder)
         network_factory = functools.partial(
             recurrent_networks.make_recurrent_intention_ppo_networks,

@@ -834,8 +834,11 @@ def train(
             if checkpoint_callback is not None:
                 try:
                     checkpoint_callback(0)
-                except Exception as e:
-                    logging.warning(f"Initial checkpoint callback failed: {e}")
+                except (OSError, IOError) as e:
+                    logging.error(
+                        f"Initial checkpoint callback failed with I/O error: {e}. "
+                        "Training will continue but checkpoint state may be incomplete."
+                    )
 
     training_metrics = {}
     start_it += 1

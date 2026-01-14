@@ -131,7 +131,8 @@ def compute_recurrent_ppo_loss(
     # Put time dimension first: [B, T, ...] -> [T, B, ...]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
-    # initial_policy_hidden has no time axis; keep it batch-major.
+    # Restore initial_policy_hidden from before the swapaxes operation.
+    # It has no time dimension, so the swapaxes would corrupt it.
     policy_extras = dict(data.extras["policy_extras"])
     policy_extras["initial_policy_hidden"] = initial_policy_hidden
     data = types.Transition(

@@ -16,7 +16,7 @@ from brax.training import distribution
 from brax.training.acme import running_statistics, specs
 from omegaconf import OmegaConf
 
-from track_mjx.agent.mlp_ppo import intention_network
+from track_mjx.agent.ff_ppo import intention_network
 from track_mjx.agent.mlp_prior.prior_networks import Prior
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,

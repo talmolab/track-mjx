@@ -106,6 +106,12 @@ def _strip_weak_type(tree: Any) -> Any:
 
     return jax.tree_util.tree_map(f, tree)
 
+def _agg_fn(metric, fn, to_aggregate, to_normalize, episode_lengths):
+  if not to_aggregate:
+    return metric
+  if to_normalize:
+    return fn(metric / episode_lengths)
+  return fn(metric)
 
 def run_evaluation(
     self,
@@ -139,6 +145,7 @@ def run_evaluation(
     eval_metrics = eval_state.info["eval_metrics"]
     eval_metrics.active_episodes.block_until_ready()
     epoch_eval_time = time.time() - t
+    episode_lengths = np.maximum(eval_metrics.episode_steps, 1.0).astype(float)
 
     metrics = {}
     prefix = f"{data_split}/" if data_split else ""
@@ -147,9 +154,11 @@ def run_evaluation(
         suffix = "_std" if fn == np.std else ""
         metrics.update(
             {
-                f"eval/{prefix}episode_{name}{suffix}": (
-                    fn(value) if aggregate_episodes else value
-                )
+                f"eval/{prefix}episode_{name}{suffix}": _agg_fn(value,
+                                                                fn, 
+                                                                aggregate_episodes, 
+                                                                "per_step" in name, 
+                                                                episode_lengths)
                 for name, value in eval_metrics.episode_metrics.items()
             }
         )

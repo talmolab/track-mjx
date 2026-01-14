@@ -19,6 +19,9 @@ sbatch/
 # slurm output folder
 slurm_outputs/
 
+# uv.lock
+uv.lock
+
 # scratch notebooks
 scratch.ipynb
 

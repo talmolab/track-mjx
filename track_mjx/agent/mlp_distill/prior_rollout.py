@@ -9,9 +9,13 @@ prior network has learned to predict good actions from proprioceptive state alon
 The rollouts start from random clip states and step physics using prior-sampled
 actions, checking for terminations based on simple criteria (NaN detection,
 torso height range).
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
-from typing import Callable, Optional, Sequence, Tuple, Any, Dict
+from typing import Callable, Optional, Sequence, Tuple, Any, Dict, Union
 import functools
 
 import jax
@@ -21,6 +25,7 @@ from brax.training import distribution, types
 from brax.training.acme import running_statistics
 
 from track_mjx.agent.mlp_distill import student_network
+from track_mjx.agent.observation_utils import DictRunningStatisticsState
 
 
 def reparameterize(rng: jax.Array, mean: jax.Array, logvar: jax.Array) -> jax.Array:
@@ -150,12 +155,13 @@ def create_prior_policy(
 
 def extract_prior_decoder_params(
     policy_params: Tuple,
-) -> Tuple[Dict, Dict, running_statistics.RunningStatisticsState]:
+) -> Tuple[Dict, Dict, DictRunningStatisticsState]:
     """
     Extract prior and decoder parameters from full intention network policy params.
 
     Args:
         policy_params: Tuple of (normalizer_params, network_params).
+            normalizer_params is a DictRunningStatisticsState.
 
     Returns:
         Tuple of (prior_params, decoder_params, normalizer_params).
@@ -328,15 +334,8 @@ class PriorRolloutEvaluator:
             policy_params
         )
 
-        # Create proprioceptive-only normalizer params
-        proprio_normalizer_params = running_statistics.RunningStatisticsState(
-            count=normalizer_params.count,
-            mean=normalizer_params.mean[-self.proprioceptive_obs_size :],
-            summed_variance=normalizer_params.summed_variance[
-                -self.proprioceptive_obs_size :
-            ],
-            std=normalizer_params.std[-self.proprioceptive_obs_size :],
-        )
+        # Extract proprioceptive-only normalizer from dict normalizer
+        proprio_normalizer_params = normalizer_params.proprioception
 
         # Create policy function
         policy_fn = create_prior_policy(
@@ -602,15 +601,8 @@ class PriorRolloutEvaluatorNeutralState:
             policy_params
         )
 
-        # Create proprioceptive-only normalizer params
-        proprio_normalizer_params = running_statistics.RunningStatisticsState(
-            count=normalizer_params.count,
-            mean=normalizer_params.mean[-self.proprioceptive_obs_size :],
-            summed_variance=normalizer_params.summed_variance[
-                -self.proprioceptive_obs_size :
-            ],
-            std=normalizer_params.std[-self.proprioceptive_obs_size :],
-        )
+        # Extract proprioceptive-only normalizer from dict normalizer
+        proprio_normalizer_params = normalizer_params.proprioception
 
         # Create policy function
         policy_fn = create_prior_policy(

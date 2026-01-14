@@ -16,7 +16,6 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from track_mjx.config import utils
@@ -82,18 +81,13 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
-
     # Compute naconmax for warp backend (naconmax = nconmax * num_envs)
     if hasattr(env_cfg_ml, "nconmax"):
         env_cfg_ml.naconmax = env_cfg_ml.nconmax * cfg.train_setup.train_config.num_envs
 
-    # Create environments
-    env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    )
-    test_env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=env_cfg_ml, clips=test_clips)
-    )
+    # Create environments (dict observations, no flattening)
+    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
+    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -180,9 +174,7 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=rollout_cfg)
-    )
+    rollout_env = imitation.Imitation(config=rollout_cfg)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

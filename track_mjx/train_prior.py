@@ -19,7 +19,6 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from track_mjx.agent import checkpointing
@@ -164,12 +163,8 @@ def main(cfg: DictConfig):
         seed=key_split,
     )
     # Create environments
-    env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    )
-    test_env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=env_cfg_ml, clips=test_clips)
-    )
+    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
+    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -307,9 +302,7 @@ def main(cfg: DictConfig):
     # Use train_clips to ensure same clips as prior rollout evaluator
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=rollout_cfg, clips=train_clips)
-    )
+    rollout_env = imitation.Imitation(config=rollout_cfg, clips=train_clips)
 
     # Define the jit reset/step functions for logging
     jit_reset = jax.jit(rollout_env.reset)

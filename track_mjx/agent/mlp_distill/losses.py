@@ -5,6 +5,10 @@ The distillation loss consists of:
 1. MSE loss between student and teacher actions
 2. AR(1) loss between consecutive latent means (z_t - φ*z_{t-1}), matching PULSE
 3. KL divergence loss between encoder and prior distributions
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
 from typing import Any, Callable, Tuple
@@ -234,6 +238,10 @@ def compute_distillation_loss(
 
     # Put the time dimension first: [B, T] -> [T, B]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+
+    # Merge time and batch dimensions: [T, B, ...] -> [T*B, ...]
+    # This ensures observations have shape [T*B, features] for normalization
+    data = jax.tree_util.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), data)
 
     # Get student outputs
     student_logits, encoder_mean, encoder_logvar, prior_mean, prior_logvar = (

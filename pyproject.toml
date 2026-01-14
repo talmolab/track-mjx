@@ -18,15 +18,14 @@ classifiers = [
     "Programming Language :: Python :: 3.12"]
 dependencies = [
     # JAX core (both platforms)
-    "jax==0.7.2",
-    "jaxlib==0.7.2",
-    # Core ML dependencies
+    "jax>=0.8.2",
+    "jaxlib>=0.8.2",
     "brax==0.14.0",
-    "flax==0.10.2",
-    "optax==0.2.6",
+    "flax",
+    "optax>=0.2.6",
     "orbax-checkpoint",
     # MuJoCo
-    "mujoco-mjx[warp]>=3.3.5",
+    "mujoco-mjx[warp]>=3.4.0",
     # Rendering (EGL/osmesa support)
     "PyOpenGL==3.1.9",
     # Data & ML utilities
@@ -46,7 +45,7 @@ dependencies = [
     # HuggingFace for model/data downloads
     "huggingface-hub",
     # Other utilities
-    "playground==0.0.5",
+    "playground",
     "ipykernel",
     "vnl-playground",
 ]
@@ -58,8 +57,8 @@ version = {attr = "track_mjx.version.__version__"}
 readme = {file = ["README.md"], content-type="text/markdown"}
 
 [project.optional-dependencies]
-cuda12 = ["jax[cuda12]==0.7.2 ; sys_platform == 'linux'"]
-cuda13 = ["jax[cuda13]==0.7.2 ; sys_platform == 'linux'"]
+cuda12 = ["jax[cuda12]>=0.8.2 ; sys_platform == 'linux'"]
+cuda13 = ["jax[cuda13]>=0.8.2 ; sys_platform == 'linux'"]
 dev = [
     "pytest",
     "pytest-cov",
@@ -89,7 +88,7 @@ line-length = 88
 
 [tool.uv.sources]
 vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.8" }
-playground = { git = "https://github.com/google-deepmind/mujoco_playground" }
+playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
 
 [pydocstyle]
 convention = "google"

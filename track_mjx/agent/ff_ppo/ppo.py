@@ -44,7 +44,7 @@ from mujoco_playground import wrapper as mp_wrapper
 from optax.transforms import freeze
 
 from track_mjx.agent import checkpointing, gradients, network_masks
-from track_mjx.agent.mlp_ppo import losses, ppo_networks
+from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
     get_obs_sizes,
@@ -464,10 +464,7 @@ def train(
     training_epoch = jax.pmap(
         training_epoch,
         axis_name=_PMAP_AXIS_NAME,
-        donate_argnums=(
-            0,
-            1,
-        ),
+        donate_argnums=(0, 1),
     )
 
     # Note that this is NOT a pure jittable method.
@@ -844,6 +841,7 @@ def train(
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
                     render_video=True,
+                    ppo_network=ppo_network,
                 )
             else:
                 policy_params_fn(
@@ -852,6 +850,7 @@ def train(
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
                     render_video=False,
+                    ppo_network=ppo_network,
                 )
 
             # log metrics

@@ -2,7 +2,7 @@
 Prior network training.
 
 Trains a prior network to match the encoder distributions from a pretrained
-mlp_ppo checkpoint. The encoder and decoder remain frozen; only the prior
+ff_ppo checkpoint. The encoder and decoder remain frozen; only the prior
 is trained using KL divergence loss.
 
 Observations are expected as dictionaries with keys:
@@ -89,8 +89,8 @@ def train(
     episode_length: int,
     ckpt_mgr: ocp.CheckpointManager,
     config_dict: dict,
-    mlp_ppo_checkpoint_path: str,
-    mlp_ppo_checkpoint_step: Optional[int] = None,
+    ff_ppo_checkpoint_path: str,
+    ff_ppo_checkpoint_step: Optional[int] = None,
     checkpoint_to_restore: Optional[str] = None,
     action_repeat: int = 1,
     num_envs: int = 1,
@@ -133,8 +133,8 @@ def train(
         episode_length: Length of an episode
         ckpt_mgr: Orbax checkpoint manager
         config_dict: Configuration dictionary for checkpointing
-        mlp_ppo_checkpoint_path: Path to the pretrained mlp_ppo checkpoint
-        mlp_ppo_checkpoint_step: Optional step to load from mlp_ppo checkpoint
+        ff_ppo_checkpoint_path: Path to the pretrained ff_ppo checkpoint
+        ff_ppo_checkpoint_step: Optional step to load from ff_ppo checkpoint
         checkpoint_to_restore: Optional path to restore prior training from
         action_repeat: Number of times to repeat actions
         num_envs: Number of parallel environments
@@ -201,11 +201,11 @@ def train(
         )
     ).astype(int)
 
-    # Load frozen encoder and decoder from mlp_ppo checkpoint
-    logging.info(f"Loading encoder/decoder from: {mlp_ppo_checkpoint_path}")
+    # Load frozen encoder and decoder from ff_ppo checkpoint
+    logging.info(f"Loading encoder/decoder from: {ff_ppo_checkpoint_path}")
     encoder_params, decoder_params, teacher_normalizer_params, teacher_cfg = (
         prior_networks.load_frozen_encoder_decoder(
-            mlp_ppo_checkpoint_path, step=mlp_ppo_checkpoint_step
+            ff_ppo_checkpoint_path, step=ff_ppo_checkpoint_step
         )
     )
     logging.info("Encoder and decoder loaded successfully")

@@ -2,16 +2,16 @@
 # Rodent Prior Training Configuration
 # =============================================================================
 # Configuration for training a prior network to match encoder distributions
-# from a pretrained mlp_ppo model. The encoder and decoder are frozen; only
+# from a pretrained ff_ppo model. The encoder and decoder are frozen; only
 # the prior is trained using KL divergence loss.
 # =============================================================================
 
 # =============================================================================
-# Teacher Model Configuration (pretrained mlp_ppo)
+# Teacher Model Configuration (pretrained ff_ppo)
 # =============================================================================
-# Path to the pretrained mlp_ppo checkpoint with encoder and decoder
+# Path to the pretrained ff_ppo checkpoint with encoder and decoder
 teacher_config:
-  # Path to pretrained mlp_ppo checkpoint (REQUIRED)
+  # Path to pretrained ff_ppo checkpoint (REQUIRED)
   checkpoint_path: "/home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints/charlesrodent"
   checkpoint_step: null               # Specific step to load (null = latest)
 
@@ -132,12 +132,12 @@ prior_rollout_config:
 # =============================================================================
 # Network Architecture
 # =============================================================================
-# Prior network architecture. Encoder and decoder are loaded from mlp_ppo checkpoint.
+# Prior network architecture. Encoder and decoder are loaded from ff_ppo checkpoint.
 network_config:
   arch_name: prior
   # Prior network architecture (newly trained)
   prior_layer_sizes: [1536,1024,512]
-  # Encoder/decoder sizes and intention_size are loaded from mlp_ppo checkpoint
+  # Encoder/decoder sizes and intention_size are loaded from ff_ppo checkpoint
 
 # =============================================================================
 # Prior Training Loss Configuration

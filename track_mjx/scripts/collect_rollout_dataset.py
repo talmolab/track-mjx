@@ -48,6 +48,36 @@ from track_mjx.agent.mlp_prior.prior_rollout_eval import (
     extract_prior_decoder_params,
 )
 from track_mjx.agent.ff_ppo import intention_network
+from track_mjx.agent.observation_utils import (
+    convert_flat_to_dict_normalizer,
+    DictRunningStatisticsState,
+)
+
+
+def get_observation_sizes(cfg: Any) -> Tuple[int, int, int]:
+    """Extract observation sizes from config, supporting both legacy and dict formats.
+
+    Args:
+        cfg: OmegaConf configuration.
+
+    Returns:
+        Tuple of (reference_obs_size, proprioceptive_obs_size, total_obs_size).
+    """
+    network_config = cfg.network_config
+
+    # Check for new dict-based format
+    if hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config:
+        obs_sizes = network_config.obs_sizes
+        reference_obs_size = int(obs_sizes["imitation_target"])
+        proprioceptive_obs_size = int(obs_sizes["proprioception"])
+        total_obs_size = reference_obs_size + proprioceptive_obs_size
+    else:
+        # Legacy flat format
+        total_obs_size = int(network_config.observation_size)
+        reference_obs_size = int(network_config.reference_obs_size)
+        proprioceptive_obs_size = total_obs_size - reference_obs_size
+
+    return reference_obs_size, proprioceptive_obs_size, total_obs_size
 
 
 def parse_args() -> argparse.Namespace:
@@ -228,6 +258,13 @@ def create_encoder_decoder_policy(
     encoder_params = network_params["params"]["encoder"]
     decoder_params = network_params["params"]["decoder"]
 
+    # Convert legacy flat normalizer to dict normalizer if needed
+    if not isinstance(normalizer_params, DictRunningStatisticsState):
+        reference_obs_size, _, _ = get_observation_sizes(cfg)
+        normalizer_params = convert_flat_to_dict_normalizer(
+            normalizer_params, reference_obs_size
+        )
+
     return prior_networks.make_encoder_decoder_inference_fn(
         encoder_params=encoder_params,
         decoder_params=decoder_params,
@@ -236,10 +273,6 @@ def create_encoder_decoder_policy(
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         latent_size=cfg.network_config.intention_size,
         action_size=cfg.network_config.action_size,
-        reference_obs_size=cfg.network_config.reference_obs_size,
-        proprioceptive_obs_size=(
-            cfg.network_config.observation_size - cfg.network_config.reference_obs_size
-        ),
         deterministic=True,
     )
 
@@ -265,9 +298,7 @@ def create_prior_policy_fn(
         policy_params
     )
 
-    proprioceptive_obs_size = (
-        cfg.network_config.observation_size - cfg.network_config.reference_obs_size
-    )
+    _, proprioceptive_obs_size, _ = get_observation_sizes(cfg)
 
     # Create proprioceptive-only normalizer
     proprio_normalizer_params = running_statistics.RunningStatisticsState(
@@ -514,10 +545,16 @@ def main():
     # Fix paths in config
     cfg = fix_config_paths(cfg, args.data_path_override)
 
-    print(f"  Observation size: {cfg.network_config.observation_size}")
+    # Extract observation sizes (supports both legacy and dict formats)
+    reference_obs_size, proprioceptive_obs_size, total_obs_size = get_observation_sizes(
+        cfg
+    )
+
+    print(f"  Observation size: {total_obs_size}")
     print(f"  Action size: {cfg.network_config.action_size}")
     print(f"  Intention size: {cfg.network_config.intention_size}")
-    print(f"  Reference obs size: {cfg.network_config.reference_obs_size}")
+    print(f"  Reference obs size: {reference_obs_size}")
+    print(f"  Proprioceptive obs size: {proprioceptive_obs_size}")
 
     # Create environment
     print("\nCreating environment...")
@@ -526,9 +563,6 @@ def main():
     # reference_clips.qpos is already (num_clips, num_steps, qpos_dim)
     num_clips = reference_clips.qpos.shape[0]
     num_steps = reference_clips.qpos.shape[1]
-    proprioceptive_obs_size = (
-        cfg.network_config.observation_size - cfg.network_config.reference_obs_size
-    )
 
     print(f"  Number of clips: {num_clips}")
     print(f"  Steps per clip: {num_steps}")

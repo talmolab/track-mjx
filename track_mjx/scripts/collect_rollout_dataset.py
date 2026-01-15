@@ -175,12 +175,13 @@ def load_mlp_prior_checkpoint(
     return cfg, policy
 
 
-def fix_config_paths(cfg: Any, data_path_override: str | None = None) -> Any:
+def fix_config_paths(cfg: Any, data_path_override: str | None = None, batch_size: int = 1) -> Any:
     """Fix paths in config that may reference /tmp or other locations.
 
     Args:
         cfg: OmegaConf configuration.
         data_path_override: Optional override for reference_data_path.
+        batch_size: Batch size for computing naconmax (nconmax * batch_size).
 
     Returns:
         Updated configuration.
@@ -211,6 +212,14 @@ def fix_config_paths(cfg: Any, data_path_override: str | None = None) -> Any:
             cfg.env_config,
             "reference_data_path",
             fix_path(cfg.env_config.reference_data_path),
+        )
+
+    # Compute naconmax for warp backend (naconmax = nconmax * batch_size)
+    # Same pattern as train.py and train_prior.py
+    # Only compute if naconmax is not already set (legacy support)
+    if hasattr(cfg.env_config, "nconmax") and not hasattr(cfg.env_config, "naconmax"):
+        OmegaConf.update(
+            cfg.env_config, "naconmax", cfg.env_config.nconmax * batch_size
         )
 
     OmegaConf.set_struct(cfg.env_config, True)
@@ -543,7 +552,7 @@ def main():
     )
 
     # Fix paths in config
-    cfg = fix_config_paths(cfg, args.data_path_override)
+    cfg = fix_config_paths(cfg, args.data_path_override, args.batch_size)
 
     # Extract observation sizes (supports both legacy and dict formats)
     reference_obs_size, proprioceptive_obs_size, total_obs_size = get_observation_sizes(

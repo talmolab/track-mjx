@@ -309,13 +309,18 @@ def create_prior_policy_fn(
 
     _, proprioceptive_obs_size, _ = get_observation_sizes(cfg)
 
-    # Create proprioceptive-only normalizer
-    proprio_normalizer_params = running_statistics.RunningStatisticsState(
-        count=normalizer_params.count,
-        mean=normalizer_params.mean[-proprioceptive_obs_size:],
-        summed_variance=normalizer_params.summed_variance[-proprioceptive_obs_size:],
-        std=normalizer_params.std[-proprioceptive_obs_size:],
-    )
+    # Get proprioceptive-only normalizer
+    if isinstance(normalizer_params, DictRunningStatisticsState):
+        # Dict normalizer - proprioception is already separate
+        proprio_normalizer_params = normalizer_params.proprioception
+    else:
+        # Legacy flat normalizer - slice to get proprioceptive portion
+        proprio_normalizer_params = running_statistics.RunningStatisticsState(
+            count=normalizer_params.count,
+            mean=normalizer_params.mean[-proprioceptive_obs_size:],
+            summed_variance=normalizer_params.summed_variance[-proprioceptive_obs_size:],
+            std=normalizer_params.std[-proprioceptive_obs_size:],
+        )
 
     prior_hidden_layer_sizes = tuple(
         cfg.network_config.get(

@@ -300,9 +300,7 @@ def make_decoder_inference_fn(
         proprio = latent_proprio[..., latent_size:]
 
         # Normalize proprioception
-        normalized_proprio = running_statistics.normalize(
-            proprio, proprio_normalizer
-        )
+        normalized_proprio = running_statistics.normalize(proprio, proprio_normalizer)
 
         # Concatenate normalized input for decoder
         decoder_input = jnp.concatenate([latent, normalized_proprio], axis=-1)
@@ -359,9 +357,7 @@ def make_prior_inference_fn(
             Tuple of (mean, logvar) for latent distribution.
         """
         # Normalize proprioception
-        normalized_proprio = running_statistics.normalize(
-            proprio, proprio_normalizer
-        )
+        normalized_proprio = running_statistics.normalize(proprio, proprio_normalizer)
 
         # Apply prior
         mean, logvar = prior_module.apply({"params": prior_params}, normalized_proprio)

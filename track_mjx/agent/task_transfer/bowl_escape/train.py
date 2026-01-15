@@ -103,8 +103,12 @@ def main(cfg: DictConfig) -> None:
         "escape_x_upright": {"weight": cfg.env.reward_weights.escape_x_upright},
         "speed": {"weight": cfg.env.reward_weights.speed},
     }
-    logging.info(f"Environment config: ctrl_dt={env_cfg.ctrl_dt}, target_speed={env_cfg.target_speed}")
-    logging.info(f"Reward weights: escape_x_upright={cfg.env.reward_weights.escape_x_upright}, speed={cfg.env.reward_weights.speed}")
+    logging.info(
+        f"Environment config: ctrl_dt={env_cfg.ctrl_dt}, target_speed={env_cfg.target_speed}"
+    )
+    logging.info(
+        f"Reward weights: escape_x_upright={cfg.env.reward_weights.escape_x_upright}, speed={cfg.env.reward_weights.speed}"
+    )
 
     # Create training and eval environments with appropriate wrapper
     # Wrappers handle both dict and flat observations natively
@@ -116,7 +120,9 @@ def main(cfg: DictConfig) -> None:
             for i in range(base_env._mj_model.ngeom):
                 if base_env._mj_model.geom_type[i] == mujoco.mjtGeom.mjGEOM_HFIELD:
                     base_env._mj_model.geom_friction[i, 0] = cfg.env.hfield_friction
-                    logging.info(f"Heightfield geom {i} friction set to: {cfg.env.hfield_friction}")
+                    logging.info(
+                        f"Heightfield geom {i} friction set to: {cfg.env.hfield_friction}"
+                    )
                     break
             # Re-put model to MJX after modification
             base_env._mjx_model = mjx.put_model(

@@ -63,7 +63,9 @@ def rollout_logging_fn(
     _log_reward_metrics(rollout, current_step)
 
     # Render and log video
-    _log_rollout_video(env, model_path, current_step, rollout, render_camera, render_fps)
+    _log_rollout_video(
+        env, model_path, current_step, rollout, render_camera, render_fps
+    )
 
 
 def _log_reward_metrics(rollout: list[Any], current_step: int) -> None:
@@ -105,7 +107,10 @@ def _log_reward_metrics(rollout: list[Any], current_step: int) -> None:
             wandb.log(
                 {
                     f"eval/{metric_name}": wandb.plot.line(
-                        table, "frame", metric_name, title=f"{metric_name} (step {current_step})"
+                        table,
+                        "frame",
+                        metric_name,
+                        title=f"{metric_name} (step {current_step})",
                     )
                 },
                 commit=False,

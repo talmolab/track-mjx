@@ -244,7 +244,9 @@ def main(cfg: DictConfig):
     else:
         # Legacy flat format
         reference_obs_size = teacher_net_cfg["reference_obs_size"]
-        proprioceptive_obs_size = teacher_net_cfg["observation_size"] - reference_obs_size
+        proprioceptive_obs_size = (
+            teacher_net_cfg["observation_size"] - reference_obs_size
+        )
     OmegaConf.update(
         cfg.network_config,
         "reference_obs_size",

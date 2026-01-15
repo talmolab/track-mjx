@@ -20,9 +20,7 @@ from track_mjx.agent.task_transfer.bowl_escape.observation_utils import (
 )
 
 
-def _get_proprio(
-    obs: jax.Array | Mapping[str, Any], proprio_size: int
-) -> jax.Array:
+def _get_proprio(obs: jax.Array | Mapping[str, Any], proprio_size: int) -> jax.Array:
     """Extract proprioception from observation, handling both dict and flat formats.
 
     Args:

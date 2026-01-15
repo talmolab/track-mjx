@@ -343,6 +343,7 @@ def create_batched_rollout_fn(
     policy_fn: Callable,
     num_steps: int,
     proprioceptive_obs_size: int,
+    reference_obs_size: int,
     is_prior_policy: bool,
 ) -> Callable:
     """Create a batched rollout function for multiple clips.
@@ -352,6 +353,7 @@ def create_batched_rollout_fn(
         policy_fn: Policy function (obs, rng) -> (action, extras).
         num_steps: Number of physics steps per rollout.
         proprioceptive_obs_size: Size of proprioceptive observations.
+        reference_obs_size: Size of reference/imitation_target observations.
         is_prior_policy: If True, pass only proprioceptive obs to policy.
 
     Returns:
@@ -388,8 +390,12 @@ def create_batched_rollout_fn(
                 # Prior policy uses only proprioceptive observations
                 obs = state.obs[..., -proprioceptive_obs_size:]
             else:
-                # Encoder-decoder uses full observations
-                obs = state.obs
+                # Encoder-decoder expects dict observations
+                # Convert flat obs to dict format
+                obs = {
+                    "imitation_target": state.obs[..., :reference_obs_size],
+                    "proprioception": state.obs[..., reference_obs_size:],
+                }
 
             # Get action from policy
             action, _ = policy_fn(obs, action_key)
@@ -426,6 +432,7 @@ def collect_rollouts(
     num_steps: int,
     batch_size: int,
     proprioceptive_obs_size: int,
+    reference_obs_size: int,
     is_prior_policy: bool,
     rng_key: jax.Array,
     desc: str = "Collecting rollouts",
@@ -440,6 +447,7 @@ def collect_rollouts(
         num_steps: Steps per rollout.
         batch_size: Clips per batch.
         proprioceptive_obs_size: Size of proprioceptive observations.
+        reference_obs_size: Size of reference/imitation_target observations.
         is_prior_policy: If True, pass only proprioceptive obs to policy.
         rng_key: Random key.
         desc: Progress bar description.
@@ -448,7 +456,7 @@ def collect_rollouts(
         qpos array of shape (num_clips, num_steps, qpos_dim).
     """
     batched_rollout = create_batched_rollout_fn(
-        env, policy_fn, num_steps, proprioceptive_obs_size, is_prior_policy
+        env, policy_fn, num_steps, proprioceptive_obs_size, reference_obs_size, is_prior_policy
     )
 
     all_qpos = []
@@ -604,6 +612,7 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=False,
         rng_key=key,
         desc="Encoder-decoder",
@@ -628,6 +637,7 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=True,
         rng_key=key,
         desc="Prior (logvar=-4)",
@@ -652,6 +662,7 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=True,
         rng_key=key,
         desc="Prior (logvar=-2)",
@@ -676,6 +687,7 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=True,
         rng_key=key,
         desc="Prior (logvar=0)",
@@ -700,6 +712,7 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=True,
         rng_key=key,
         desc="Prior (deterministic)",
@@ -724,6 +737,7 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=True,
         rng_key=key,
         desc="Prior (predicted logvar)",

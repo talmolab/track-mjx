@@ -767,17 +767,6 @@ def train(
             )
         logging.info(metrics)
         progress_fn(start_it, metrics)
-
-        # Add rollout media logging for initial evaluation
-        _, policy_params_fn_key = jax.random.split(policy_params_fn_key)
-        policy_params_fn(
-            current_step=0,
-            jit_logging_inference_fn=jit_logging_inference_fn,
-            params=policy_param,
-            policy_params_fn_key=policy_params_fn_key,
-            render_video=True,  # Always render video for initial baseline
-        )
-
         # Save checkpoints
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:

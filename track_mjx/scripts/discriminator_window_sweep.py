@@ -33,6 +33,7 @@ import optax
 from track_mjx.analysis.discriminator import (
     MotionClipDataset,
     create_train_test_split,
+    list_h5_datasets,
     load_h5_dataset,
     load_h5_metadata,
     make_discriminator_network,
@@ -79,14 +80,9 @@ def parse_args() -> argparse.Namespace:
         "--fake-datasets",
         type=str,
         nargs="+",
-        default=[
-            "prior_logvar_-4_qpos",
-            "prior_logvar_-2_qpos",
-            "prior_logvar_0_qpos",
-            "prior_deterministic_qpos",
-            "prior_predicted_logvar_qpos",
-        ],
-        help="Names of 'fake' datasets to compare",
+        default=None,
+        help="Names of 'fake' datasets to compare. If not provided, uses all "
+        "other datasets in the H5 file except the real dataset.",
     )
 
     # Window/clip configuration
@@ -496,6 +492,16 @@ def create_plot(
 def main():
     """Main entry point."""
     args = parse_args()
+
+    # Auto-discover fake datasets if not provided
+    if args.fake_datasets is None:
+        all_datasets = list_h5_datasets(args.h5_path)
+        args.fake_datasets = [ds for ds in all_datasets if ds != args.real_dataset]
+        if not args.fake_datasets:
+            raise ValueError(
+                f"No fake datasets found. H5 file only contains: {all_datasets}"
+            )
+        print(f"Auto-discovered {len(args.fake_datasets)} fake datasets from H5 file")
 
     # Validate window sizes
     invalid_sizes = [ws for ws in args.window_sizes if args.clip_length % ws != 0]

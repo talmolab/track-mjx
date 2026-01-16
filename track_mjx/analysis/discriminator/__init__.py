@@ -8,6 +8,7 @@ data vs prior-generated rollouts).
 from track_mjx.analysis.discriminator.data_loading import (
     MotionClipDataset,
     create_train_test_split,
+    list_h5_datasets,
     load_h5_dataset,
     load_h5_metadata,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "MotionClipDataset",
     "TrainingState",
     "create_train_test_split",
+    "list_h5_datasets",
     "load_h5_dataset",
     "load_h5_metadata",
     "make_discriminator_network",

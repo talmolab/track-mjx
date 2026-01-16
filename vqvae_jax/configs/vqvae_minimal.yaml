@@ -167,7 +167,7 @@ logging_config:
   group_name: minimal_tests
   exp_name: vqvae_single_clip
   clip_id: 0
-  model_path: /home/jovyan/vast/kaiwen/track-mjx/scratch/vqvae_jax/checkpoints
+  model_path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints
 
 # =============================================================================
 # Walker Configuration (same as production)

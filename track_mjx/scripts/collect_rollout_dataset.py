@@ -39,8 +39,8 @@ from mujoco import mjx
 from omegaconf import OmegaConf
 from tqdm import tqdm
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks import wrappers as vnl_wrappers
+from vnl_playground.tasks.reference_clips import ReferenceClips
 
 from track_mjx.agent.mlp_prior import prior_networks
 from track_mjx.agent.mlp_prior.prior_rollout_eval import (

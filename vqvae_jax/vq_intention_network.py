@@ -17,12 +17,17 @@ Reference: van den Oord et al., "Neural Discrete Representation Learning", 2017
 https://arxiv.org/abs/1711.00937
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import jax
 import jax.numpy as jnp
 from brax.training import networks, types
 from flax import linen as nn
+
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    normalize_dict_obs,
+)
 
 
 class VQEncoder(nn.Module):
@@ -224,7 +229,6 @@ class VQIntentionNetwork(nn.Module):
     Attributes:
         encoder_layers: Hidden layer sizes for the encoder MLP.
         decoder_layers: Layer sizes for decoder (including action output).
-        reference_obs_size: Dimension of reference trajectory observations.
         latent_dim: Dimension of the latent/codebook embedding space.
         num_codes: Number of codebook entries.
         commitment_cost: Weight for commitment loss (beta).
@@ -233,7 +237,6 @@ class VQIntentionNetwork(nn.Module):
 
     encoder_layers: Sequence[int]
     decoder_layers: Sequence[int]
-    reference_obs_size: int
     latent_dim: int = 60
     num_codes: int = 512
     commitment_cost: float = 0.25
@@ -255,7 +258,7 @@ class VQIntentionNetwork(nn.Module):
 
     def __call__(
         self,
-        obs: jnp.ndarray,
+        obs: Mapping[str, jnp.ndarray],
         key: jax.Array,
         deterministic: bool = False,
         get_activation: bool = False,
@@ -267,7 +270,9 @@ class VQIntentionNetwork(nn.Module):
         VQ quantization is deterministic (nearest neighbor lookup).
 
         Args:
-            obs: Full observation, shape [..., obs_dim].
+            obs: Dictionary observation with keys:
+                - "imitation_target": Reference trajectory observations.
+                - "proprioception": Proprioceptive state observations.
             key: JAX random key (unused, for API compatibility).
             deterministic: Unused, VQ is always deterministic.
             get_activation: If True, return intermediate activations.
@@ -280,9 +285,9 @@ class VQIntentionNetwork(nn.Module):
                 Used for logging and analysis.
             (optional) extras: Dict of activations if get_activation=True.
         """
-        # Split observations
-        traj = obs[..., : self.reference_obs_size]
-        egocentric_obs = obs[..., self.reference_obs_size :]
+        # Access observations by key
+        traj = obs["imitation_target"]
+        egocentric_obs = obs["proprioception"]
 
         if get_activation:
             # Get encoder activations
@@ -323,9 +328,7 @@ class VQIntentionNetwork(nn.Module):
 def make_vq_intention_policy(
     action_param_size: int,
     latent_dim: int,
-    total_obs_size: int,
-    reference_obs_size: int,
-    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    obs_sizes: Mapping[str, int],
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     num_codes: int = 512,
@@ -343,9 +346,8 @@ def make_vq_intention_policy(
         action_param_size: Output dimension (typically 2x action_size for
             Gaussian mean and variance).
         latent_dim: Dimension of the latent/codebook embedding space.
-        total_obs_size: Total observation dimension.
-        reference_obs_size: Dimension of reference trajectory portion of obs.
-        preprocess_observations_fn: Observation normalization function.
+        obs_sizes: Dict mapping observation keys to their sizes, e.g.
+            {"imitation_target": 3716, "proprioception": 226}.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
         num_codes: Number of codebook entries.
@@ -359,7 +361,6 @@ def make_vq_intention_policy(
     policy_module = VQIntentionNetwork(
         encoder_layers=list(encoder_hidden_layer_sizes),
         decoder_layers=list(decoder_hidden_layer_sizes) + [action_param_size],
-        reference_obs_size=reference_obs_size,
         latent_dim=latent_dim,
         num_codes=num_codes,
         commitment_cost=commitment_cost,
@@ -367,9 +368,9 @@ def make_vq_intention_policy(
     )
 
     def apply(
-        processor_params,
+        processor_params: DictRunningStatisticsState,
         policy_params,
-        obs,
+        obs: Mapping[str, jnp.ndarray],
         key,
         deterministic: bool = False,
         get_activation: bool = False,
@@ -377,9 +378,9 @@ def make_vq_intention_policy(
         """Apply VQ policy with observation normalization.
 
         Args:
-            processor_params: Normalization statistics.
+            processor_params: Dict normalizer with per-key statistics.
             policy_params: Network weights.
-            obs: Observations, shape [..., total_obs_size].
+            obs: Dict observation with "imitation_target" and "proprioception".
             key: JAX random key (unused, for API compatibility).
             deterministic: Unused, VQ is always deterministic.
             get_activation: If True, return intermediate activations.
@@ -390,7 +391,7 @@ def make_vq_intention_policy(
             indices: Codebook indices (for logging).
             (optional) extras: Dict of activations if get_activation=True.
         """
-        obs = preprocess_observations_fn(obs, processor_params)
+        obs = normalize_dict_obs(obs, processor_params)
         return policy_module.apply(
             policy_params,
             obs=obs,
@@ -399,10 +400,14 @@ def make_vq_intention_policy(
             get_activation=get_activation,
         )
 
-    dummy_total_obs = jnp.zeros((1, total_obs_size))
+    # Create dummy dict observation for initialization
+    dummy_obs = {
+        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+    }
     dummy_key = jax.random.PRNGKey(0)
 
     return networks.FeedForwardNetwork(
-        init=lambda key: policy_module.init(key, dummy_total_obs, dummy_key),
+        init=lambda key: policy_module.init(key, dummy_obs, dummy_key),
         apply=apply,
     )

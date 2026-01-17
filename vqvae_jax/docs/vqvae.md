@@ -545,7 +545,7 @@ grads = jax.lax.pmean(grads, axis_name=_PMAP_AXIS_NAME)
 ### 6.1 File Structure
 
 ```
-track_mjx/agent/mlp_ppo/
+track_mjx/agent/ff_ppo/
 ├── intention_network.py          # EXISTING: VAE implementation
 ├── vq_intention_network.py       # NEW: VQ-VAE implementation
 ├── losses.py                     # MODIFY: Add compute_vq_ppo_loss

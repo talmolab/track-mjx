@@ -14,7 +14,7 @@ import orbax.checkpoint as ocp
 from mujoco_playground import wrapper as mp_wrapper
 
 # Import the main ppo module
-from track_mjx.agent.mlp_ppo import ppo, losses as original_losses
+from track_mjx.agent.ff_ppo import ppo, losses as original_losses
 
 # Import VQ-VAE specific modules
 from vq_ppo_networks import make_vq_intention_ppo_networks
@@ -135,7 +135,8 @@ def train(
             num_eval_envs=num_eval_envs,
             learning_rate=learning_rate,
             entropy_cost=entropy_cost,
-            kl_weight=0.0,  # Not used in VQ-VAE
+            latent_kl_weight=0.0,  # Not used in VQ-VAE
+            latent_ar1_weight=0.0,  # Not used in VQ-VAE
             discounting=discounting,
             seed=seed,
             use_pmap_on_reset=use_pmap_on_reset,

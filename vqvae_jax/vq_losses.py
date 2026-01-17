@@ -249,9 +249,9 @@ def compute_vq_ppo_loss(
 
     # Value function
     baseline = value_apply(normalizer_params, params.value, data.observation)
-    bootstrap_value = value_apply(
-        normalizer_params, params.value, data.next_observation[-1]
-    )
+    # Get the last timestep from dict observation (tree_map handles dict structure)
+    last_next_obs = jax.tree_util.tree_map(lambda x: x[-1], data.next_observation)
+    bootstrap_value = value_apply(normalizer_params, params.value, last_next_obs)
 
     # Reconstruct z_q from current codebook for loss computation
     # This ensures gradients flow to the current codebook parameters

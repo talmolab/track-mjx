@@ -7,15 +7,25 @@ The key components are:
 - VQPPOImitationNetworks: Container for policy, value, and action distribution
 - Inference functions that route observations through encoder/quantizer/decoder
 - Factory functions for creating VQ-VAE intention-based PPO networks
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import flax
 import jax
 from brax.training import distribution, networks, types
 from brax.training.types import PRNGKey
 from jax import numpy as jnp
+
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    concat_flat_dict_obs,
+    normalize_dict_obs,
+)
 
 # Import from local scratch directory
 from vq_intention_network import make_vq_intention_policy
@@ -196,11 +206,51 @@ def make_vq_logging_inference_fn(
     return make_logging_policy
 
 
+def make_vq_dict_value_network(
+    obs_sizes: Mapping[str, int],
+    hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+) -> networks.FeedForwardNetwork:
+    """Create a value network that accepts dictionary observations.
+
+    The value network normalizes each observation component, flattens them,
+    and concatenates before passing to the MLP.
+
+    Args:
+        obs_sizes: Dict mapping observation keys to their sizes.
+        hidden_layer_sizes: MLP layer sizes for value network.
+
+    Returns:
+        FeedForwardNetwork that accepts dict observations.
+    """
+    total_obs_size = sum(obs_sizes.values())
+
+    # Create underlying value network with flat observations
+    base_value_network = networks.make_value_network(
+        total_obs_size,
+        preprocess_observations_fn=types.identity_observation_preprocessor,
+        hidden_layer_sizes=hidden_layer_sizes,
+    )
+
+    def apply(
+        processor_params: DictRunningStatisticsState,
+        value_params,
+        obs: Mapping[str, jnp.ndarray],
+    ):
+        """Apply value network with dict observation normalization."""
+        # Normalize each component and flatten
+        normalized_obs = normalize_dict_obs(obs, processor_params)
+        flat_obs = concat_flat_dict_obs(normalized_obs)
+        return base_value_network.apply((), value_params, flat_obs)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: base_value_network.init(key),
+        apply=apply,
+    )
+
+
 def make_vq_intention_ppo_networks(
-    observation_size: int,
-    reference_obs_size: int,
+    obs_sizes: Mapping[str, int],
     action_size: int,
-    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     latent_dim: int = 60,
     num_codes: int = 512,
     commitment_cost: float = 0.25,
@@ -217,10 +267,9 @@ def make_vq_intention_ppo_networks(
     on proprioceptive state and quantized intention.
 
     Args:
-        observation_size: Total observation dimension.
-        reference_obs_size: Dimension of reference trajectory observations.
+        obs_sizes: Dict mapping observation keys to their sizes, e.g.
+            {"imitation_target": 3716, "proprioception": 226}.
         action_size: Action dimension.
-        preprocess_observations_fn: Observation preprocessing (e.g., normalize).
         latent_dim: Dimension of VQ-VAE latent/codebook embeddings.
         num_codes: Number of codebook entries (vocabulary size).
         commitment_cost: Weight for commitment loss (beta).
@@ -239,9 +288,7 @@ def make_vq_intention_ppo_networks(
     policy_network = make_vq_intention_policy(
         action_param_size=parametric_action_distribution.param_size,
         latent_dim=latent_dim,
-        total_obs_size=observation_size,
-        reference_obs_size=reference_obs_size,
-        preprocess_observations_fn=preprocess_observations_fn,
+        obs_sizes=obs_sizes,
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         num_codes=num_codes,
@@ -249,9 +296,8 @@ def make_vq_intention_ppo_networks(
         codebook_init_scale=codebook_init_scale,
     )
 
-    value_network = networks.make_value_network(
-        observation_size,
-        preprocess_observations_fn=preprocess_observations_fn,
+    value_network = make_vq_dict_value_network(
+        obs_sizes=obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
     )
 

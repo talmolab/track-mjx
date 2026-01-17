@@ -3,6 +3,7 @@ data/
 model_checkpoints/
 wandb/
 outputs/
+multirun/
 rollouts/
 patch.ipynb
 jax_cache/

@@ -82,6 +82,19 @@ python train_vqvae.py --config-name vqvae_minimal \
     network_config.latent_dim=64
 ```
 
+### Sweaping Parameters
+```bash
+# Install launcher
+pip install hydra-joblib-launcher
+
+# Run in parallel
+python train_vqvae.py --multirun \ 
+    hydra/launcher=joblib \
+    hydra.launcher.n_jobs=4 \
+    network_config.num_codes=12,16,20,24
+
+python train_vqvae.py --multirun network_config.num_codes=12,16,20,24
+
 ### Key Training Parameters
 
 | Parameter | Default | Description |

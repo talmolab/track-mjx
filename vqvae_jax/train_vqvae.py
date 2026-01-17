@@ -66,6 +66,7 @@ def vq_rollout_logging_fn(
     params,
     policy_params_fn_key,
     render_video=True,
+    ppo_network=None,  # Added for compatibility with main PPO code
 ):
     """Rollout logging with VQ-VAE specific metrics.
 

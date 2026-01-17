@@ -25,6 +25,11 @@ from vq_ppo_networks import (
     make_vq_intention_ppo_networks,
 )
 
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    convert_flat_to_dict_normalizer,
+)
+
 
 def load_config_from_checkpoint(
     checkpoint_path: str,
@@ -55,6 +60,35 @@ def load_config_from_checkpoint(
         return cfg
 
 
+def _get_obs_sizes_from_cfg(cfg: DictConfig) -> dict[str, int]:
+    """Extract obs_sizes dict from config, handling both old and new formats.
+
+    Args:
+        cfg: Configuration with network_config section.
+
+    Returns:
+        Dict mapping observation keys to sizes.
+    """
+    net_cfg = cfg.network_config
+    # New format: obs_sizes dict is directly available
+    if hasattr(net_cfg, "obs_sizes") and net_cfg.obs_sizes is not None:
+        return dict(net_cfg.obs_sizes)
+
+    # Old format: separate observation_size and reference_obs_size
+    # Convert to new format
+    if hasattr(net_cfg, "observation_size") and hasattr(net_cfg, "reference_obs_size"):
+        proprio_size = net_cfg.observation_size - net_cfg.reference_obs_size
+        return {
+            "imitation_target": net_cfg.reference_obs_size,
+            "proprioception": proprio_size,
+        }
+
+    raise ValueError(
+        "Config must have either 'obs_sizes' or both "
+        "'observation_size' and 'reference_obs_size'"
+    )
+
+
 def make_vq_ppo_network_from_cfg(
     cfg: DictConfig,
 ) -> VQPPOImitationNetworks:
@@ -74,15 +108,11 @@ def make_vq_ppo_network_from_cfg(
             f"Expected arch_name='vqvae_intention', got '{cfg.network_config.arch_name}'"
         )
 
-    normalize: Callable = lambda x, y: x
-    if cfg.train_setup.train_config.normalize_observations:
-        normalize = running_statistics.normalize
+    obs_sizes = _get_obs_sizes_from_cfg(cfg)
 
     return make_vq_intention_ppo_networks(
-        observation_size=cfg.network_config.observation_size,
-        reference_obs_size=cfg.network_config.reference_obs_size,
+        obs_sizes=obs_sizes,
         action_size=cfg.network_config.action_size,
-        preprocess_observations_fn=normalize,
         latent_dim=cfg.network_config.latent_dim,
         num_codes=cfg.network_config.num_codes,
         commitment_cost=cfg.network_config.commitment_cost,
@@ -111,8 +141,14 @@ def make_abstract_vq_policy(
 
     init_policy_params = ppo_network.policy_network.init(key_policy)
 
-    normalizer_state = running_statistics.init_state(
-        specs.Array(cfg.network_config.observation_size, jnp.dtype("float32"))
+    obs_sizes = _get_obs_sizes_from_cfg(cfg)
+    normalizer_state = DictRunningStatisticsState(
+        imitation_target=running_statistics.init_state(
+            specs.Array(obs_sizes["imitation_target"], jnp.dtype("float32"))
+        ),
+        proprioception=running_statistics.init_state(
+            specs.Array(obs_sizes["proprioception"], jnp.dtype("float32"))
+        ),
     )
 
     return (normalizer_state, init_policy_params)

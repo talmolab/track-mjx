@@ -84,13 +84,15 @@ class GenerationResult:
 
 
 def create_environment(cfg: DictConfig) -> Any:
-    """Create VNL imitation environment from config."""
+    """Create VNL imitation environment from config.
+
+    Returns environment with dict observations (imitation_target, proprioception).
+    """
     from vnl_playground.tasks.rodent import imitation
-    from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 
     env_cfg = cfg.env_config
     env_cfg_ml = config_dict.ConfigDict(OmegaConf.to_container(env_cfg, resolve=True))
-    return vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml))
+    return imitation.Imitation(config=env_cfg_ml)
 
 
 # =============================================================================

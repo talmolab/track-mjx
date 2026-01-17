@@ -37,6 +37,7 @@ from track_mjx.analysis.discriminator import (
     load_h5_dataset,
     load_h5_metadata,
     make_discriminator_network,
+    make_rnn_discriminator_network,
 )
 from track_mjx.analysis.discriminator.data_loading import create_batches
 from track_mjx.analysis.discriminator.discriminator_train import (
@@ -152,6 +153,46 @@ def parse_args() -> argparse.Namespace:
         help="Disable layer normalization",
     )
 
+    # Network type selection
+    parser.add_argument(
+        "--network-type",
+        type=str,
+        choices=["mlp", "rnn"],
+        default="mlp",
+        help="Type of discriminator network architecture",
+    )
+
+    # RNN-specific arguments
+    parser.add_argument(
+        "--rnn-hidden-size",
+        type=int,
+        default=128,
+        help="Hidden size for RNN (each direction if bidirectional)",
+    )
+    parser.add_argument(
+        "--rnn-num-layers",
+        type=int,
+        default=2,
+        help="Number of stacked RNN layers",
+    )
+    parser.add_argument(
+        "--rnn-bidirectional",
+        action="store_true",
+        default=True,
+        help="Use bidirectional RNN (default: True)",
+    )
+    parser.add_argument(
+        "--rnn-unidirectional",
+        action="store_true",
+        help="Use unidirectional RNN (overrides --rnn-bidirectional)",
+    )
+    parser.add_argument(
+        "--attention-hidden-size",
+        type=int,
+        default=64,
+        help="Hidden size for attention pooling mechanism",
+    )
+
     # Data configuration
     parser.add_argument(
         "--train-ratio",
@@ -220,6 +261,11 @@ def train_discriminator(
     exclude_zero_joints: bool = False,
     window_size: int = None,
     clip_length: int = None,
+    network_type: str = "mlp",
+    rnn_hidden_size: int = 128,
+    rnn_num_layers: int = 2,
+    rnn_bidirectional: bool = True,
+    attention_hidden_size: int = 64,
 ) -> Dict[str, List]:
     """Train a discriminator and return the training history."""
 
@@ -314,17 +360,31 @@ def train_discriminator(
             metadata=ds.metadata,
         )
 
-    # Determine input size
-    sample_shape = ds.train_real.shape[1:]
-    input_size = int(np.prod(sample_shape))
+    # Determine input shape
+    sample_shape = ds.train_real.shape[1:]  # (num_steps, qpos_dim)
 
-    # Create network
-    _, init_fn, apply_fn = make_discriminator_network(
-        input_size=input_size,
-        hidden_layer_sizes=hidden_layer_sizes,
-        dropout_rate=dropout_rate,
-        use_layer_norm=use_layer_norm,
-    )
+    # Create network based on type
+    if network_type == "mlp":
+        input_size = int(np.prod(sample_shape))
+        _, init_fn, apply_fn = make_discriminator_network(
+            input_size=input_size,
+            hidden_layer_sizes=hidden_layer_sizes,
+            dropout_rate=dropout_rate,
+            use_layer_norm=use_layer_norm,
+        )
+    elif network_type == "rnn":
+        num_steps, qpos_dim = sample_shape
+        _, init_fn, apply_fn = make_rnn_discriminator_network(
+            num_steps=num_steps,
+            qpos_dim=qpos_dim,
+            rnn_hidden_size=rnn_hidden_size,
+            num_layers=rnn_num_layers,
+            dropout_rate=dropout_rate,
+            bidirectional=rnn_bidirectional,
+            attention_hidden_size=attention_hidden_size,
+        )
+    else:
+        raise ValueError(f"Unknown network type: {network_type}")
 
     # Initialize
     key = jax.random.PRNGKey(seed)
@@ -493,6 +553,9 @@ def main():
     """Main entry point."""
     args = parse_args()
 
+    # Handle bidirectional flag
+    bidirectional = args.rnn_bidirectional and not args.rnn_unidirectional
+
     # Auto-discover fake datasets if not provided
     if args.fake_datasets is None:
         all_datasets = list_h5_datasets(args.h5_path)
@@ -530,7 +593,16 @@ def main():
     print(f"Window sizes: {args.window_sizes}")
     print(f"Num epochs: {args.num_epochs}")
     print(f"Batch size: {args.batch_size}")
-    print(f"Hidden layers: {args.hidden_layers}")
+    print(f"Network type: {args.network_type}")
+    if args.network_type == "mlp":
+        print(f"  Hidden layers: {args.hidden_layers}")
+        print(f"  Layer norm: {not args.no_layer_norm}")
+    else:
+        print(f"  RNN hidden size: {args.rnn_hidden_size}")
+        print(f"  RNN layers: {args.rnn_num_layers}")
+        print(f"  Bidirectional: {bidirectional}")
+        print(f"  Attention hidden size: {args.attention_hidden_size}")
+    print(f"Dropout rate: {args.dropout_rate}")
     total_runs = len(args.fake_datasets) * len(args.window_sizes)
     print(
         f"Total training runs: {len(args.fake_datasets)} x {len(args.window_sizes)} = {total_runs}"
@@ -573,6 +645,11 @@ def main():
                 exclude_zero_joints=args.exclude_zero_joints,
                 window_size=ws,
                 clip_length=args.clip_length,
+                network_type=args.network_type,
+                rnn_hidden_size=args.rnn_hidden_size,
+                rnn_num_layers=args.rnn_num_layers,
+                rnn_bidirectional=bidirectional,
+                attention_hidden_size=args.attention_hidden_size,
             )
 
             # Compute last 50 epochs statistics
@@ -607,20 +684,31 @@ def main():
         }
 
     # Add metadata
+    metadata = {
+        "h5_path": args.h5_path,
+        "real_dataset": args.real_dataset,
+        "fake_datasets": args.fake_datasets,
+        "clip_length": args.clip_length,
+        "window_sizes": args.window_sizes,
+        "num_epochs": args.num_epochs,
+        "batch_size": args.batch_size,
+        "learning_rate": args.learning_rate,
+        "dropout_rate": args.dropout_rate,
+        "network_type": args.network_type,
+        "timestamp": datetime.now().isoformat(),
+        "total_time_seconds": total_time,
+    }
+    if args.network_type == "mlp":
+        metadata["hidden_layers"] = args.hidden_layers
+        metadata["use_layer_norm"] = not args.no_layer_norm
+    else:
+        metadata["rnn_hidden_size"] = args.rnn_hidden_size
+        metadata["rnn_num_layers"] = args.rnn_num_layers
+        metadata["rnn_bidirectional"] = bidirectional
+        metadata["attention_hidden_size"] = args.attention_hidden_size
+
     output_data = {
-        "metadata": {
-            "h5_path": args.h5_path,
-            "real_dataset": args.real_dataset,
-            "fake_datasets": args.fake_datasets,
-            "clip_length": args.clip_length,
-            "window_sizes": args.window_sizes,
-            "num_epochs": args.num_epochs,
-            "batch_size": args.batch_size,
-            "hidden_layers": args.hidden_layers,
-            "learning_rate": args.learning_rate,
-            "timestamp": datetime.now().isoformat(),
-            "total_time_seconds": total_time,
-        },
+        "metadata": metadata,
         "results": results_summary,
     }
 

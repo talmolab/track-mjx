@@ -30,8 +30,18 @@ from absl import logging
 from brax.training import distribution
 from brax.training.acme import running_statistics
 
+# Local imports from distillation package
+from .vq_prior_networks import VQPrior
+
+# Imports from parent vqvae_jax directory
+import sys
+from pathlib import Path
+_DISTILL_DIR = Path(__file__).parent
+_VQVAE_DIR = _DISTILL_DIR.parent
+if str(_VQVAE_DIR) not in sys.path:
+    sys.path.insert(0, str(_VQVAE_DIR))
+
 from vq_intention_network import Decoder
-from vq_prior_networks import VQPrior
 from vq_losses import compute_codebook_metrics
 from track_mjx.agent.observation_utils import flatten_obs_dict
 

@@ -49,17 +49,26 @@ from track_mjx.agent.observation_utils import (
     flatten_obs_dict,
 )
 
-# Local imports from vqvae_jax
-from vq_prior_losses import (
+# Local imports from distillation package
+from .vq_prior_losses import (
     VQPriorDistillNetworkParams,
     compute_vq_prior_distill_loss,
     create_ar_schedule,
 )
-from vq_prior_networks import (
+from .vq_prior_networks import (
     VQPriorNetworks,
     make_vq_prior_networks,
     make_prior_inference_fn,
 )
+
+# Imports from parent vqvae_jax directory
+import sys
+from pathlib import Path
+_DISTILL_DIR = Path(__file__).parent
+_VQVAE_DIR = _DISTILL_DIR.parent
+if str(_VQVAE_DIR) not in sys.path:
+    sys.path.insert(0, str(_VQVAE_DIR))
+
 from vq_intention_network import VQEncoder, Decoder, VectorQuantizer
 from analysis.checkpoint_utils import (
     load_vq_checkpoint,

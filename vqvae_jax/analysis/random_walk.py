@@ -41,6 +41,8 @@ from brax.training import distribution
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
 
+from track_mjx.agent.observation_utils import flatten_obs_dict
+
 
 # =============================================================================
 # CONFIGURATION
@@ -302,7 +304,8 @@ def run_autoregressive_decoding(
         prev_code = code_idx
 
         z_q = codebook[code_idx]
-        proprio_obs = state.obs[..., -proprio_size:]
+        flat_obs = flatten_obs_dict(state.obs)
+        proprio_obs = flat_obs["proprioception"]
         action_params = jit_decoder(z_q, proprio_obs)
         action = action_distribution.mode(action_params)
 

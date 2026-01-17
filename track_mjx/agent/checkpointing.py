@@ -25,8 +25,14 @@ from brax.training.acme import running_statistics, specs
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
-from track_mjx.agent.mlp_ppo import losses as mlp_losses
-from track_mjx.agent.mlp_ppo import ppo_networks as mlp_ppo_networks
+from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
+from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
+from track_mjx.agent.recurrent_ppo import losses as recurrent_ppo_losses
+from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
+from track_mjx.agent.observation_utils import (
+    convert_flat_to_dict_normalizer,
+    init_dict_normalizer,
+)
 
 
 def load_config_from_checkpoint(
@@ -55,7 +61,7 @@ def load_config_from_checkpoint(
             args=ocp.args.Composite(config=ocp.args.JsonRestore()),
         )["config"]
 
-        return cfg
+        return OmegaConf.create(cfg)
 
 
 def load_training_state(
@@ -121,7 +127,9 @@ def load_policy(
     abstract_policy = make_abstract_policy(cfg)
 
     if ckpt_mgr is None:
-        mgr_options = ocp.CheckpointManagerOptions(create=False, step_prefix=step_prefix)
+        mgr_options = ocp.CheckpointManagerOptions(
+            create=False, step_prefix=step_prefix
+        )
         ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
     if step is None:
@@ -188,14 +196,39 @@ def make_abstract_policy(
     ppo_network = make_ppo_network_from_cfg(cfg)
     key_policy, key_value = jax.random.split(jax.random.key(seed))
 
-    init_params = mlp_losses.PPONetworkParams(
-        policy=ppo_network.policy_network.init(key_policy),
-        value=ppo_network.value_network.init(key_value),
-    )
+    arch_name = cfg.network_config.get("arch_name")
+    if arch_name is None:
+        logging.warning(
+            "arch_name not found in network_config, defaulting to 'intention'. "
+            "If this is unexpected, check your config file."
+        )
+        arch_name = "intention"
+    if arch_name == "recurrent_intention":
+        init_params = recurrent_ppo_losses.RecurrentPPONetworkParams(
+            policy=ppo_network.policy_network.init(key_policy),
+            value=ppo_network.value_network.init(key_value),
+        )
+    else:
+        init_params = ff_ppo_losses.PPONetworkParams(
+            policy=ppo_network.policy_network.init(key_policy),
+            value=ppo_network.value_network.init(key_value),
+        )
 
-    normalizer_state = running_statistics.init_state(
-        specs.Array(cfg["network_config"]["observation_size"], jnp.dtype("float32"))
-    )
+    # Handle both new (dict-based) and legacy (flat) config formats
+    network_config = cfg["network_config"]
+    if "obs_sizes" in network_config:
+        # New dict-based format
+        obs_sizes = network_config["obs_sizes"]
+        dummy_obs = {
+            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+            "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+        }
+        normalizer_state = init_dict_normalizer(dummy_obs)
+    else:
+        # Legacy flat format
+        normalizer_state = running_statistics.init_state(
+            specs.Array(network_config["observation_size"], jnp.dtype("float32"))
+        )
 
     return (normalizer_state, init_params.policy)
 
@@ -213,16 +246,49 @@ def load_inference_fn(
         policy_params: Tuple of (normalizer_state, policy_params).
         deterministic: If True, use mean action (no sampling).
         get_activation: If True, return network activations in extras.
+            Only used for feedforward networks.
 
     Returns:
-        Inference function with signature (obs, rng) -> (action, extras).
+        For feedforward: Inference function (obs, rng) -> (action, extras).
+        For recurrent: Inference function (obs, hidden, rng) -> (action, extras, new_hidden).
     """
     ppo_network = make_ppo_network_from_cfg(cfg)
-    make_policy = mlp_ppo_networks.make_inference_fn(ppo_network)
+    arch_name = cfg.network_config.get("arch_name")
+    if arch_name is None:
+        logging.warning(
+            "arch_name not found in network_config, defaulting to 'intention'. "
+            "If this is unexpected, check your config file."
+        )
+        arch_name = "intention"
 
-    return make_policy(
-        policy_params, deterministic=deterministic, get_activation=get_activation
+    if arch_name == "recurrent_intention":
+        make_policy = recurrent_ppo_networks.make_inference_fn(ppo_network)
+    else:
+        make_policy = ff_ppo_networks.make_inference_fn(ppo_network)
+
+    # Convert legacy flat normalizer to dict normalizer if needed
+    normalizer_state, network_params = policy_params
+    network_config = cfg.network_config
+
+    # Check if this is a legacy flat normalizer by looking at config format
+    is_legacy = not (
+        hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
     )
+
+    if is_legacy:
+        # Convert flat normalizer to dict normalizer
+        reference_obs_size = network_config.reference_obs_size
+        normalizer_state = convert_flat_to_dict_normalizer(
+            normalizer_state, reference_obs_size
+        )
+        policy_params = (normalizer_state, network_params)
+
+    if arch_name == "recurrent_intention":
+        return make_policy(policy_params, deterministic=deterministic)
+    else:
+        return make_policy(
+            policy_params, deterministic=deterministic, get_activation=get_activation
+        )
 
 
 def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
@@ -232,28 +298,53 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
         cfg: Configuration with network_config and train_setup sections.
 
     Returns:
-        PPONetworks namedtuple with policy_network and value_network.
+        PPONetworks or RecurrentPPONetworks with policy_network and value_network.
 
     Raises:
         ValueError: If network architecture is not recognized.
     """
-    normalize: Callable = lambda x, y: x
-    if cfg.train_setup.train_config.normalize_observations:
-        normalize = running_statistics.normalize
+    arch_name = cfg.network_config.get("arch_name")
+    if arch_name is None:
+        logging.warning(
+            "arch_name not found in network_config, defaulting to 'intention'. "
+            "If this is unexpected, check your config file."
+        )
+        arch_name = "intention"
+    network_config = cfg.network_config
 
-    if cfg.network_config.arch_name == "intention":
-        return mlp_ppo_networks.make_intention_ppo_networks(
-            observation_size=cfg.network_config.observation_size,
-            reference_obs_size=cfg.network_config.reference_obs_size,
-            action_size=cfg.network_config.action_size,
-            intention_latent_size=cfg.network_config.intention_size,
-            preprocess_observations_fn=normalize,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+    # Handle both new (dict-based) and legacy (flat) config formats
+    if hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config:
+        # New dict-based format
+        obs_sizes = dict(network_config.obs_sizes)
+    else:
+        # Legacy flat format - convert to obs_sizes dict
+        obs_sizes = {
+            "imitation_target": network_config.reference_obs_size,
+            "proprioception": network_config.observation_size
+            - network_config.reference_obs_size,
+        }
+
+    if arch_name == "intention":
+        return ff_ppo_networks.make_intention_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            intention_latent_size=network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
+        )
+    elif arch_name == "recurrent_intention":
+        return recurrent_ppo_networks.make_recurrent_intention_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            intention_latent_size=network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
+            rnn_type=network_config.rnn_type,
+            rnn_hidden_sizes=tuple(network_config.rnn_hidden_sizes),
+            value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
         )
     else:
-        raise ValueError(f"Unknown network architecture: {cfg.network_config.arch_name}")
+        raise ValueError(f"Unknown network architecture: {arch_name}")
 
 
 def save(
@@ -291,6 +382,7 @@ def save(
             checkpoint_callback(step)
         except Exception as e:
             logging.warning(f"Checkpoint callback failed: {e}")
+
 
 def _hash_config(cfg: DictConfig) -> str:
     """Create a short hash of the config for consistency checking.
@@ -447,7 +539,9 @@ def discover_existing_run_state(cfg: DictConfig) -> dict[str, Any] | None:
     try:
         ckpt_mgr = ocp.CheckpointManager(
             checkpoint_path,
-            options=ocp.CheckpointManagerOptions(create=False, step_prefix="PPONetwork"),
+            options=ocp.CheckpointManagerOptions(
+                create=False, step_prefix="PPONetwork"
+            ),
         )
         latest_step = ckpt_mgr.latest_step()
         if latest_step is None:

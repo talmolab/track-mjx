@@ -38,16 +38,22 @@ import orbax.checkpoint as ocp
 from absl import logging
 from brax import base, envs
 from brax.training import acting, pmap, types
-from brax.training.acme import running_statistics, specs
+from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
 from optax.transforms import freeze
 
 from track_mjx.agent import checkpointing, gradients, network_masks
-from track_mjx.agent.mlp_ppo import losses, ppo_networks
+from track_mjx.agent.ff_ppo import losses, ppo_networks
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    get_obs_sizes,
+    init_dict_normalizer,
+    update_dict_normalizer,
+)
 
 # Type aliases
-InferenceParams = tuple[running_statistics.NestedMeanStd, Params]
+InferenceParams = tuple[DictRunningStatisticsState, Params]
 Metrics = types.Metrics
 
 # Constants
@@ -62,13 +68,14 @@ class TrainingState:
     Attributes:
         optimizer_state: Optax optimizer state.
         params: PPO network parameters (policy and value).
-        normalizer_params: Running statistics for observation normalization.
+        normalizer_params: Running statistics for observation normalization
+            (per observation key).
         env_steps: Total environment steps taken (in thousands).
     """
 
     optimizer_state: optax.OptState
     params: losses.PPONetworkParams
-    normalizer_params: running_statistics.RunningStatisticsState
+    normalizer_params: DictRunningStatisticsState
     env_steps: jnp.ndarray
 
 
@@ -181,7 +188,8 @@ def train(
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,
-    kl_weight: float = 1e-3,
+    latent_kl_weight: float = 1e-3,
+    latent_ar1_weight: float = 1e-3,
     discounting: float = 0.9,
     seed: int = 0,
     use_pmap_on_reset: bool = True,
@@ -201,6 +209,7 @@ def train(
     ] = ppo_networks.make_intention_ppo_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     normalize_advantage: bool = True,
+    vf_loss_coefficient: float = 0.5,
     eval_env: envs.Env | None = None,
     eval_env_test_set: envs.Env | None = None,
     policy_params_fn: Callable[..., None] = lambda *args: None,
@@ -212,6 +221,7 @@ def train(
     kl_ramp_up_frac: float = 0.25,
     freeze_decoder: bool = False,
     checkpoint_callback: Callable[[int], None] | None = None,
+    grad_clip_threshold: float = 20.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
@@ -262,6 +272,7 @@ def train(
         functions
       progress_fn: a user-defined callback function for reporting/plotting metrics
       normalize_advantage: whether to normalize advantage estimate
+      vf_loss_coefficient: Coefficient for value function loss.
       eval_env: an optional environment for eval only, defaults to `environment`
       policy_params_fn: a user-defined callback function that can be used for
         saving policy checkpoints
@@ -274,6 +285,7 @@ def train(
       kl_ramp_up_frac: the fraction of the total number of evals to ramp up max kl weight
       checkpoint_callback: Callback called after checkpointing to update
         run state JSON for preemption recovery.
+      grad_clip_threshold: Maximum gradient norm for clipping.
       wrap_for_training: Function that wraps environment for training.
       use_pmap_on_reset: whether to use pmap instead of vmap for env.reset across devices.
     Returns:
@@ -402,27 +414,21 @@ def train(
         )
         assert data.discount.shape[1:] == (unroll_length,)
 
-        # Update normalization params and normalize observations.
-        normalizer_params = running_statistics.update(
-            training_state.normalizer_params,
-            data.observation,
-            pmap_axis_name=_PMAP_AXIS_NAME,
-        )
+        # Update normalization params (only if normalization is enabled).
+        # When disabled, normalizer stays at identity (mean=0, std=1).
+        if normalize_observations:
+            normalizer_params = update_dict_normalizer(
+                training_state.normalizer_params,
+                data.observation,
+                pmap_axis_name=_PMAP_AXIS_NAME,
+            )
+        else:
+            normalizer_params = training_state.normalizer_params
 
-        if (
-            proprioceptive_obs_size > 0
-            and frozen_proprioceptive_normalizer_params is not None
-        ):
+        # If decoder is frozen, preserve the proprioceptive normalizer params
+        if frozen_proprioceptive_normalizer_params is not None:
             normalizer_params = normalizer_params.replace(
-                mean=normalizer_params.mean.at[-proprioceptive_obs_size:].set(
-                    frozen_proprioceptive_normalizer_params.mean
-                ),
-                std=normalizer_params.std.at[-proprioceptive_obs_size:].set(
-                    frozen_proprioceptive_normalizer_params.std
-                ),
-                summed_variance=normalizer_params.summed_variance.at[
-                    -proprioceptive_obs_size:
-                ].set(frozen_proprioceptive_normalizer_params.summed_variance),
+                proprioception=frozen_proprioceptive_normalizer_params
             )
 
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
@@ -458,10 +464,7 @@ def train(
     training_epoch = jax.pmap(
         training_epoch,
         axis_name=_PMAP_AXIS_NAME,
-        donate_argnums=(
-            0,
-            1,
-        ),
+        donate_argnums=(0, 1),
     )
 
     # Note that this is NOT a pure jittable method.
@@ -515,9 +518,10 @@ def train(
         randomization_rng = jax.random.split(key_env, randomization_batch_size)
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
-    reference_obs_size = int(environment.non_proprioceptive_obs_size)
+    # Extract observation sizes from environment - observations are now dicts
+    # We'll extract the sizes after the first reset
+    # Legacy size extraction for compatibility (used in frozen decoder logic)
     proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
-    logging.info(f"Reference observation size: {reference_obs_size}")
     logging.info(f"Proprioceptive observation size: {proprioceptive_obs_size}")
 
     env = wrap_for_training(
@@ -547,40 +551,43 @@ def train(
             reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
         )(key_envs)
 
-    # TODO: reference_obs_size should be optional (network factory-dependent)
+    # Extract observation sizes from the dict observation
+    obs_sizes = get_obs_sizes(env_state.obs)
+    logging.info(f"Observation sizes: {obs_sizes}")
+
     config_dict["network_config"].update(
         {
-            "observation_size": env_state.obs.shape[-1],
+            "obs_sizes": obs_sizes,
             "action_size": env.action_size,
             "normalize_observations": normalize_observations,
-            "reference_obs_size": reference_obs_size,
-            "proprioceptive_obs_size": proprioceptive_obs_size,
         }
     )
 
-    normalize = lambda x, y: x
-    if normalize_observations:
-        normalize = running_statistics.normalize
     ppo_network = network_factory(
-        env_state.obs.shape[-1],
-        reference_obs_size,
+        obs_sizes,
         env.action_size,
-        preprocess_observations_fn=normalize,
     )
     make_policy = ppo_networks.make_inference_fn(ppo_network)
 
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
+    grad_clip_threshold = 20.0
     optimizer = optax.chain(
-        optax.clip_by_global_norm(0.5),
+        optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
 
-    kl_schedule = None
+    latent_kl_schedule = None
+    latent_ar1_schedule = None
     if use_kl_schedule:
-        kl_schedule = losses.create_ramp_schedule(
-            max_value=kl_weight,
+        latent_kl_schedule = losses.create_ramp_schedule(
+            max_value=latent_kl_weight,
+            ramp_steps=int(num_evals * kl_ramp_up_frac),
+            schedule="linear",
+        )
+        latent_ar1_schedule = losses.create_ramp_schedule(
+            max_value=latent_ar1_weight,
             ramp_steps=int(num_evals * kl_ramp_up_frac),
             schedule="linear",
         )
@@ -589,13 +596,16 @@ def train(
         losses.compute_ppo_loss,
         ppo_network=ppo_network,
         entropy_cost=entropy_cost,
-        kl_weight=kl_weight,
+        latent_kl_weight=latent_kl_weight,
+        latent_ar1_weight=latent_ar1_weight,
         discounting=discounting,
         reward_scaling=reward_scaling,
         gae_lambda=gae_lambda,
         clipping_epsilon=clipping_epsilon,
         normalize_advantage=normalize_advantage,
-        kl_schedule=kl_schedule,
+        vf_coefficient=vf_loss_coefficient,
+        latent_kl_schedule=latent_kl_schedule,
+        latent_ar1_schedule=latent_ar1_schedule,
     )
 
     init_params = losses.PPONetworkParams(
@@ -605,9 +615,7 @@ def train(
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=running_statistics.init_state(
-            specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
-        ),
+        normalizer_params=init_dict_normalizer(env_state.obs),
         env_steps=0,
     )
 
@@ -638,44 +646,49 @@ def train(
                 optimizer_state=optimizer.init(init_params)
             )
             logging.info("Freezing decoder parameters")
-            # TODO WIP
-            if proprioceptive_obs_size == 0:
-                raise ValueError(
-                    "Proprioceptive observation size is 0, "
-                    "but decoder parameters are being frozen."
+
+            # Extract proprioceptive normalizer params from loaded checkpoint
+            # Handle both dict-based (new) and flat-array (legacy) normalizer formats
+            if isinstance(loaded_normalizer_params, DictRunningStatisticsState):
+                # New dict-based format
+                frozen_proprioceptive_normalizer_params = (
+                    loaded_normalizer_params.proprioception
                 )
-            mean = loaded_normalizer_params.mean[-proprioceptive_obs_size:]
-            std = loaded_normalizer_params.std[-proprioceptive_obs_size:]
-            summed_variance = loaded_normalizer_params.summed_variance[
-                -proprioceptive_obs_size:
-            ]
-            # TODO, normalizer implementations
-            # this will remain unchanged, and use to set the decoder normalizer
-            frozen_proprioceptive_normalizer_params = (
-                running_statistics.RunningStatisticsState(
-                    count=jnp.zeros(()),
-                    mean=mean,
-                    summed_variance=summed_variance,
-                    std=std,
+            else:
+                # Legacy flat-array format - extract proprioceptive portion
+                if proprioceptive_obs_size == 0:
+                    raise ValueError(
+                        "Proprioceptive observation size is 0, "
+                        "but decoder parameters are being frozen."
+                    )
+                mean = loaded_normalizer_params.mean[-proprioceptive_obs_size:]
+                std = loaded_normalizer_params.std[-proprioceptive_obs_size:]
+                summed_variance = loaded_normalizer_params.summed_variance[
+                    -proprioceptive_obs_size:
+                ]
+                frozen_proprioceptive_normalizer_params = (
+                    running_statistics.RunningStatisticsState(
+                        count=jnp.zeros(()),
+                        mean=mean,
+                        summed_variance=summed_variance,
+                        std=std,
+                    )
                 )
-            )
+
+            # Set the proprioceptive normalizer in training state
             training_state = training_state.replace(
                 normalizer_params=training_state.normalizer_params.replace(
-                    mean=training_state.normalizer_params.mean.at[
-                        -proprioceptive_obs_size:
-                    ].set(frozen_proprioceptive_normalizer_params.mean),
-                    std=training_state.normalizer_params.std.at[
-                        -proprioceptive_obs_size:
-                    ].set(frozen_proprioceptive_normalizer_params.std),
-                    summed_variance=training_state.normalizer_params.summed_variance.at[
-                        -proprioceptive_obs_size:
-                    ].set(frozen_proprioceptive_normalizer_params.summed_variance),
+                    proprioception=frozen_proprioceptive_normalizer_params
                 )
             )
 
     # gradient update function with the new optimizer and loss function
     gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn, optimizer, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
+        loss_fn,
+        optimizer,
+        pmap_axis_name=_PMAP_AXIS_NAME,
+        has_aux=True,
+        clip_threshold=grad_clip_threshold,
     )
 
     training_state = jax.device_put_replicated(
@@ -828,6 +841,7 @@ def train(
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
                     render_video=True,
+                    ppo_network=ppo_network,
                 )
             else:
                 policy_params_fn(
@@ -836,6 +850,7 @@ def train(
                     params=policy_param,
                     policy_params_fn_key=policy_params_fn_key,
                     render_video=False,
+                    ppo_network=ppo_network,
                 )
 
             # log metrics

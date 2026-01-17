@@ -16,12 +16,15 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
-from track_mjx.agent.mlp_ppo import ppo, ppo_networks
+from track_mjx.agent.ff_ppo import ppo as ff_ppo, ppo_networks as ff_networks
+from track_mjx.agent.recurrent_ppo import (
+    ppo as recurrent_ppo,
+    networks as recurrent_networks,
+)
 from track_mjx.agent.domain_randomization import domain_randomization_maker
 
 
@@ -53,11 +56,12 @@ def main(cfg: DictConfig) -> None:
         n_devices = 1
         logging.info("Not using GPUs")
 
+    # Prepare config BEFORE load_from_run_state so the config hash is consistent
+    # between discovery and saving (prepare_config modifies cfg by adding paths)
+    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
+
     # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
-
-    # Prepare config
-    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
@@ -74,14 +78,20 @@ def main(cfg: DictConfig) -> None:
         keep_clips_idx=cfg.env_config.keep_clips_idx,
     )
     # Create train/test split
-    key_split, _ = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
+    key_split, _ = jax.random.split(
+        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
+    )
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
-    # Create environments
-    env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
-    test_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg_ml, clips=test_clips))
+    # Compute naconmax for warp backend (naconmax = nconmax * num_envs)
+    if hasattr(env_cfg_ml, "nconmax"):
+        env_cfg_ml.naconmax = env_cfg_ml.nconmax * cfg.train_setup.train_config.num_envs
+
+    # Create environments (dict observations, no flattening)
+    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
+    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -96,13 +106,48 @@ def main(cfg: DictConfig) -> None:
 
     logging.info("Using PPO Pipeline")
 
-    network_factory = functools.partial(
-        ppo_networks.make_intention_ppo_networks,
-        intention_latent_size=cfg.network_config.intention_size,
-        encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-    )
+    # Select network factory and train function based on architecture
+    arch_name = cfg.network_config.get("arch_name", "intention")
+    logging.info(f"Using architecture: {arch_name}")
+
+    # Validate architecture name
+    valid_arch_names = {"intention", "recurrent_intention"}
+    if arch_name not in valid_arch_names:
+        raise ValueError(
+            f"Unknown architecture '{arch_name}'. "
+            f"Valid options are: {sorted(valid_arch_names)}"
+        )
+
+    if arch_name == "recurrent_intention":
+        # Validate required config keys for recurrent architecture
+        required_keys = ["rnn_type", "rnn_hidden_sizes"]
+        missing_keys = [k for k in required_keys if not hasattr(cfg.network_config, k)]
+        if missing_keys:
+            raise ValueError(
+                f"recurrent_intention architecture requires these config keys: {missing_keys}. "
+                f"Please add them to network_config in your YAML file."
+            )
+
+        # Recurrent intention network (MLP encoder + RNN decoder)
+        network_factory = functools.partial(
+            recurrent_networks.make_recurrent_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            rnn_type=cfg.network_config.rnn_type,
+            rnn_hidden_sizes=tuple(cfg.network_config.rnn_hidden_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        )
+        ppo_module = recurrent_ppo
+    else:
+        # Feedforward intention network (default)
+        network_factory = functools.partial(
+            ff_networks.make_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        )
+        ppo_module = ff_ppo
 
     # Determine wandb run ID for resuming
     wandb_logging.initialize_wandb_logging(
@@ -129,41 +174,54 @@ def main(cfg: DictConfig) -> None:
         wandb_run_id=wandb.run.id,
     )
 
-    train_fn = functools.partial(
-        ppo.train,
+    # Build common training arguments
+    train_kwargs = dict(
         **cfg.train_setup.train_config,
         num_evals=int(
             cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
         ),
         num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         episode_length=episode_length,
-        kl_weight=cfg.network_config.kl_weight,
+        latent_kl_weight=cfg.network_config.latent_kl_weight,
+        latent_ar1_weight=cfg.network_config.latent_ar1_weight,
         network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
         use_kl_schedule=cfg.network_config.kl_schedule,
         eval_env_test_set=test_env,
-        freeze_decoder=cfg.train_setup.get("freeze_decoder", False),
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
-        randomization_fn=domain_randomization_maker(
-            floor_friction=cfg.env_config.domain_randomization.floor_friction,
-            static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
-            armature_scale=cfg.env_config.domain_randomization.armature_scale,
-            com_jitter=cfg.env_config.domain_randomization.com_jitter,
-            link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
-            torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
-            qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
-        ) if cfg.env_config.domain_randomization.use_domain_randomization else None,
+        randomization_fn=(
+            domain_randomization_maker(
+                floor_friction=cfg.env_config.domain_randomization.floor_friction,
+                static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
+                armature_scale=cfg.env_config.domain_randomization.armature_scale,
+                com_jitter=cfg.env_config.domain_randomization.com_jitter,
+                link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
+                torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
+                qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
+            )
+            if cfg.env_config.domain_randomization.use_domain_randomization
+            else None
+        ),
     )
+
+    # Add freeze_decoder only for feedforward PPO (not supported for recurrent)
+    if arch_name != "recurrent_intention":
+        train_kwargs["freeze_decoder"] = cfg.train_setup.get("freeze_decoder", False)
+        train_kwargs["get_activation"] = cfg.train_setup.train_config.get(
+            "get_activation", False
+        )
+
+    train_fn = functools.partial(ppo_module.train, **train_kwargs)
 
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(imitation.Imitation(config=rollout_cfg))
+    rollout_env = imitation.Imitation(config=rollout_cfg)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

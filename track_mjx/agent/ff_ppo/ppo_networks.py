@@ -7,19 +7,29 @@ The key components are:
 - PPOImitationNetworks: Container for policy, value, and action distribution
 - Inference functions that route observations through encoder/decoder
 - Factory functions for creating intention-based PPO networks
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import flax
 import jax
 from brax.training import distribution, networks, types
+from brax.training.acme import running_statistics
 from brax.training.types import PRNGKey
 from jax import numpy as jnp
 
-from track_mjx.agent import checkpointing, masked_running_statistics
-from track_mjx.agent.mlp_ppo import intention_network
+from track_mjx.agent import checkpointing
+from track_mjx.agent.ff_ppo import intention_network
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    concat_flat_dict_obs,
+    normalize_dict_obs,
+)
 
 
 @flax.struct.dataclass
@@ -78,17 +88,27 @@ def make_inference_fn(
             key_sample, key_network = jax.random.split(key_sample)
             activations = None
 
+            # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
+            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            if obs_leaf.ndim >= 2:
+                # Batched observations - generate per-sample keys for deterministic replay
+                batch_size = obs_leaf.shape[0]
+                per_sample_keys = jax.random.split(key_network, batch_size)
+            else:
+                # Unbatched observation - use single key
+                per_sample_keys = key_network
+
             if get_activation:
                 logits, latent_mean, latent_logvar, activations = policy_network.apply(
                     *params,
                     observations,
-                    key_network,
+                    per_sample_keys,
                     deterministic=deterministic,
                     get_activation=True,
                 )
             else:
                 logits, latent_mean, latent_logvar = policy_network.apply(
-                    *params, observations, key_network, deterministic=deterministic
+                    *params, observations, per_sample_keys, deterministic=deterministic
                 )
 
             if deterministic:
@@ -114,6 +134,7 @@ def make_inference_fn(
                 "raw_action": raw_actions,
                 "logits": logits,
                 "activations": activations,
+                "policy_rng": per_sample_keys,
             }
 
         return policy
@@ -158,8 +179,19 @@ def make_logging_inference_fn(
             key_sample: PRNGKey,
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
+
+            # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
+            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            if obs_leaf.ndim >= 2:
+                # Batched observations - generate per-sample keys
+                batch_size = obs_leaf.shape[0]
+                per_sample_keys = jax.random.split(key_network, batch_size)
+            else:
+                # Unbatched observation - use single key
+                per_sample_keys = key_network
+
             logits, latent_mean, latent_logvar = policy_network.apply(
-                *params, observations, key_network
+                *params, observations, per_sample_keys
             )
 
             if deterministic:
@@ -189,11 +221,51 @@ def make_logging_inference_fn(
     return make_logging_policy
 
 
+def make_dict_value_network(
+    obs_sizes: Mapping[str, int],
+    hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+) -> networks.FeedForwardNetwork:
+    """Create a value network that accepts dictionary observations.
+
+    The value network flattens the dict observation internally and normalizes
+    each component before concatenating.
+
+    Args:
+        obs_sizes: Dict mapping observation keys to their sizes.
+        hidden_layer_sizes: MLP layer sizes for value network.
+
+    Returns:
+        FeedForwardNetwork that accepts dict observations.
+    """
+    total_obs_size = sum(obs_sizes.values())
+
+    # Create underlying value network with flat observations
+    base_value_network = networks.make_value_network(
+        total_obs_size,
+        preprocess_observations_fn=types.identity_observation_preprocessor,
+        hidden_layer_sizes=hidden_layer_sizes,
+    )
+
+    def apply(
+        processor_params: DictRunningStatisticsState,
+        value_params,
+        obs: Mapping[str, jnp.ndarray],
+    ):
+        """Apply value network with dict observation normalization."""
+        # Normalize each component and flatten
+        normalized_obs = normalize_dict_obs(obs, processor_params)
+        flat_obs = concat_flat_dict_obs(normalized_obs)
+        return base_value_network.apply((), value_params, flat_obs)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: base_value_network.init(key),
+        apply=apply,
+    )
+
+
 def make_intention_ppo_networks(
-    observation_size: int,
-    reference_obs_size: int,
+    obs_sizes: Mapping[str, int],
     action_size: int,
-    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     intention_latent_size: int = 60,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
@@ -206,11 +278,9 @@ def make_intention_ppo_networks(
     conditioned on proprioceptive state and latent intention.
 
     Args:
-        observation_size: Total observation dimension.
-        reference_obs_size: Dimension of reference trajectory observations
-            (processed by encoder).
+        obs_sizes: Dict mapping observation keys to their sizes, e.g.
+            {"imitation_target": 3716, "proprioception": 226}.
         action_size: Action dimension.
-        preprocess_observations_fn: Observation preprocessing (e.g., normalize).
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
@@ -226,16 +296,13 @@ def make_intention_ppo_networks(
     policy_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,
-        total_obs_size=observation_size,
-        reference_obs_size=reference_obs_size,
-        preprocess_observations_fn=preprocess_observations_fn,
+        obs_sizes=obs_sizes,
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
     )
 
-    value_network = networks.make_value_network(
-        observation_size,
-        preprocess_observations_fn=preprocess_observations_fn,
+    value_network = make_dict_value_network(
+        obs_sizes=obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
     )
 
@@ -280,11 +347,22 @@ def make_decoder_policy_fn(
 
     # Load config and policy from checkpoint
     cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step=step)
-    observation_size = cfg["network_config"]["observation_size"]
-    reference_obs_size = cfg["network_config"]["reference_obs_size"]
-    action_size = cfg["network_config"]["action_size"]
-    intention_latent_size = cfg["network_config"]["intention_size"]
-    decoder_hidden_layer_sizes = cfg["network_config"]["decoder_layer_sizes"]
+    network_config = cfg["network_config"]
+
+    # Handle both new (dict-based) and legacy (flat) config formats
+    if "obs_sizes" in network_config:
+        # New dict-based format
+        obs_sizes = network_config["obs_sizes"]
+        reference_obs_size = obs_sizes["imitation_target"]
+        observation_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
+    else:
+        # Legacy flat format
+        observation_size = network_config["observation_size"]
+        reference_obs_size = network_config["reference_obs_size"]
+
+    action_size = network_config["action_size"]
+    intention_latent_size = network_config["intention_size"]
+    decoder_hidden_layer_sizes = network_config["decoder_layer_sizes"]
 
     intention_policy_params = checkpointing.load_policy(ckpt_path, cfg, step=step)
 
@@ -294,18 +372,31 @@ def make_decoder_policy_fn(
     )
     policy_network = intention_network.make_decoder_policy(
         parametric_action_distribution.param_size,
-        decoder_obs_size=(observation_size - reference_obs_size) + intention_latent_size,
-        preprocess_observations_fn=masked_running_statistics.normalize,
+        decoder_obs_size=(observation_size - reference_obs_size)
+        + intention_latent_size,
+        preprocess_observations_fn=running_statistics.normalize,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
     )
 
     # Extract decoder normalizer params (proprioceptive portion only)
-    decoder_normalizer_params = masked_running_statistics.RunningStatisticsState(
-        count=jnp.zeros(()),
-        mean=intention_policy_params[0].mean[reference_obs_size:],
-        summed_variance=intention_policy_params[0].summed_variance[reference_obs_size:],
-        std=intention_policy_params[0].std[reference_obs_size:],
-    )
+    normalizer_state = intention_policy_params[0]
+
+    if "obs_sizes" in network_config:
+        # New dict-based format: normalizer has separate imitation_target/proprioception
+        decoder_normalizer_params = normalizer_state.proprioception
+    else:
+        # Legacy flat format: slice the arrays to get proprioception portion
+        decoder_normalizer_params_dict = jax.tree.map(
+            lambda x: (
+                x[reference_obs_size:]
+                if isinstance(x, jnp.ndarray) and x.ndim >= 1
+                else x
+            ),
+            normalizer_state.__dict__,
+        )
+        decoder_normalizer_params = running_statistics.RunningStatisticsState(
+            **decoder_normalizer_params_dict
+        )
 
     decoder_params = (
         decoder_normalizer_params,

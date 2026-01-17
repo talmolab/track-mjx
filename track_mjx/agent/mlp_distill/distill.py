@@ -17,8 +17,12 @@ Distillation training for imitation learning.
 
 Trains a student network to mimic a pretrained teacher network using:
 1. MSE loss between student and teacher actions
-2. Autoregressive loss between consecutive encoder latent means  
+2. Autoregressive loss between consecutive encoder latent means
 3. KL divergence loss between encoder and prior distributions
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
 """
 
 import functools
@@ -40,6 +44,12 @@ from track_mjx.agent import gradients
 from track_mjx.agent import checkpointing
 from track_mjx.agent.mlp_distill import losses, distill_networks
 from track_mjx.agent.mlp_distill import prior_rollout
+from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
+    get_obs_sizes,
+    init_dict_normalizer,
+    update_dict_normalizer,
+)
 from track_mjx.config import utils
 
 from mujoco_playground import wrapper as mp_wrapper
@@ -61,9 +71,10 @@ _PMAP_AXIS_NAME = "i"
 @flax.struct.dataclass
 class TrainingState:
     """Contains training state for the learner."""
+
     optimizer_state: optax.OptState
     params: losses.DistillNetworkParams
-    normalizer_params: running_statistics.RunningStatisticsState
+    normalizer_params: DictRunningStatisticsState  # Dict-based normalizer
     env_steps: jnp.ndarray
 
 
@@ -75,7 +86,9 @@ def _strip_weak_type(tree):
     def f(leaf):
         leaf = jnp.asarray(leaf)
         return leaf.astype(leaf.dtype)
+
     return jax.tree_util.tree_map(f, tree)
+
 
 def run_evaluation(
     self,
@@ -141,6 +154,7 @@ def train(
     action_loss_weight: float = 1.0,
     autoregressive_weight: float = 1e-3,
     kl_weight: float = 1e-3,
+    encoder_kl_weight: float = 1e-3,
     use_l2_action_loss: bool = False,
     encoder_logvar_min: float | None = None,
     encoder_logvar_max: float | None = None,
@@ -157,7 +171,9 @@ def train(
     num_resets_per_eval: int = 0,
     normalize_observations: bool = False,
     deterministic_eval: bool = False,
-    network_factory: Callable[..., distill_networks.DistillNetworks] = distill_networks.make_student_networks,
+    network_factory: Callable[
+        ..., distill_networks.DistillNetworks
+    ] = distill_networks.make_student_networks,
     progress_fn: Callable[[int, Metrics], None] = lambda *args: None,
     eval_env: Optional[envs.Env] = None,
     eval_env_test_set: Optional[envs.Env] = None,
@@ -169,7 +185,8 @@ def train(
     schedule_params: Optional[dict] = None,
     checkpoint_callback: Optional[Callable[[int], None]] = None,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
-        mp_wrapper.wrap_for_brax_training, full_reset=False),
+        mp_wrapper.wrap_for_brax_training, full_reset=False
+    ),
     prior_rollout_config: Optional[dict] = None,
 ):
     """Distillation training.
@@ -190,7 +207,8 @@ def train(
         learning_rate: Learning rate for optimizer
         action_loss_weight: Weight for action reconstruction loss
         autoregressive_weight: Weight for autoregressive loss
-        kl_weight: Weight for KL divergence loss
+        kl_weight: Weight for encoder-prior KL divergence loss (trains prior only)
+        encoder_kl_weight: Weight for encoder-to-standard-normal KL loss (regularizes encoder)
         use_l2_action_loss: If True, use mean L2 norm (like PULSE). If False, use MSE.
         encoder_logvar_min: Optional min clamp for encoder log-variance (PULSE uses -5)
         encoder_logvar_max: Optional max clamp for encoder log-variance (PULSE uses 2)
@@ -255,8 +273,10 @@ def train(
 
     # Load teacher policy
     logging.info(f"Loading teacher from: {teacher_checkpoint_path}")
-    make_teacher_policy, teacher_params, teacher_cfg = distill_networks.create_teacher_inference_fn(
-        teacher_checkpoint_path, step=teacher_checkpoint_step
+    make_teacher_policy, teacher_params, teacher_cfg = (
+        distill_networks.create_teacher_inference_fn(
+            teacher_checkpoint_path, step=teacher_checkpoint_step
+        )
     )
     # Create teacher policy with deterministic=True captured in closure, then jit
     teacher_policy_fn = jax.jit(make_teacher_policy(deterministic=True))
@@ -265,7 +285,7 @@ def train(
     def minibatch_step(
         carry,
         data: types.Transition,
-        normalizer_params: running_statistics.RunningStatisticsState,
+        normalizer_params: DictRunningStatisticsState,
     ):
         optimizer_state, params, key, it = carry
         key, key_loss = jax.random.split(key)
@@ -284,7 +304,7 @@ def train(
         carry,
         unused_t,
         data: types.Transition,
-        normalizer_params: running_statistics.RunningStatisticsState,
+        normalizer_params: DictRunningStatisticsState,
     ):
         optimizer_state, params, key, it = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
@@ -333,15 +353,15 @@ def train(
             (),
             length=batch_size * num_minibatches // num_envs,
         )
-        
+
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(
             lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
         )
         assert data.discount.shape[1:] == (unroll_length,)
 
-        # Update normalization params
-        normalizer_params = running_statistics.update(
+        # Update normalization params (dict-based)
+        normalizer_params = update_dict_normalizer(
             training_state.normalizer_params,
             data.observation,
             pmap_axis_name=_PMAP_AXIS_NAME,
@@ -378,7 +398,7 @@ def train(
         return training_state, state, loss_metrics
 
     training_epoch = jax.pmap(
-        training_epoch, 
+        training_epoch,
         axis_name=_PMAP_AXIS_NAME,
         donate_argnums=(
             0,
@@ -447,7 +467,7 @@ def train(
 
     key_envs = jax.random.split(key_env, num_envs // process_count)
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
-    
+
     if local_devices_to_use > 1 or use_pmap_on_reset:
         reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
         env_state = reset_fn_(key_envs)
@@ -463,27 +483,22 @@ def train(
             reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
         )(key_envs)
 
+    # Get observation sizes from environment state
+    obs_sizes = get_obs_sizes(env_state.obs)
+
     # Update config with network info
     config_dict["network_config"].update(
         {
-            "observation_size": env_state.obs.shape[-1],
+            "obs_sizes": obs_sizes,
             "action_size": env.action_size,
             "normalize_observations": normalize_observations,
-            "reference_obs_size": reference_obs_size,
-            "proprioceptive_obs_size": proprioceptive_obs_size,
         }
     )
 
-    normalize = lambda x, y: x
-    if normalize_observations:
-        normalize = running_statistics.normalize
-
-    # Create student network
+    # Create student network with dict observations
     student_networks = network_factory(
-        env_state.obs.shape[-1],
-        reference_obs_size,
-        env.action_size,
-        preprocess_observations_fn=normalize,
+        obs_sizes=obs_sizes,
+        action_size=env.action_size,
         encoder_logvar_min=encoder_logvar_min,
         encoder_logvar_max=encoder_logvar_max,
         prior_logvar_min=prior_logvar_min,
@@ -500,6 +515,7 @@ def train(
     # Setup schedules
     kl_schedule_fn = None
     ar_schedule_fn = None
+    encoder_kl_schedule_fn = None
     if use_schedule and schedule_params is not None:
         if "kl_start_weight" in schedule_params:
             kl_schedule_fn = losses.create_ramp_schedule(
@@ -519,6 +535,17 @@ def train(
                 end_frac=schedule_params.get("ar_end_ramp", 0.5),
                 schedule="linear",
             )
+        if "encoder_kl_start_weight" in schedule_params:
+            encoder_kl_schedule_fn = losses.create_ramp_schedule(
+                start_value=schedule_params.get("encoder_kl_start_weight", 0.0),
+                end_value=schedule_params.get(
+                    "encoder_kl_end_weight", encoder_kl_weight
+                ),
+                total_steps=num_evals,
+                start_frac=schedule_params.get("encoder_kl_start_ramp", 0.0),
+                end_frac=schedule_params.get("encoder_kl_end_ramp", 0.5),
+                schedule="linear",
+            )
 
     # Create loss function
     # Note: logvar clamping is now done in the network, not in the loss function
@@ -530,8 +557,10 @@ def train(
         action_loss_weight=action_loss_weight,
         autoregressive_weight=autoregressive_weight,
         kl_weight=kl_weight,
+        encoder_kl_weight=encoder_kl_weight,
         kl_schedule=kl_schedule_fn,
         ar_schedule=ar_schedule_fn,
+        encoder_kl_schedule=encoder_kl_schedule_fn,
         use_l2_action_loss=use_l2_action_loss,
     )
 
@@ -542,9 +571,7 @@ def train(
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=running_statistics.init_state(
-            specs.Array(env_state.obs.shape[-1:], jnp.dtype("float32"))
-        ),
+        normalizer_params=init_dict_normalizer(env_state.obs),
         env_steps=0,
     )
 
@@ -608,12 +635,11 @@ def train(
         # Get network config from config_dict
         network_config = config_dict.get("network_config", {})
         prior_layer_sizes = network_config.get(
-            "prior_layer_sizes",
-            network_config.get("encoder_layer_sizes", [1024, 1024])
+            "prior_layer_sizes", network_config.get("encoder_layer_sizes", [1024, 1024])
         )
         decoder_layer_sizes = network_config.get("decoder_layer_sizes", [1024, 1024])
         intention_size = network_config.get("intention_size", 60)
-        
+
         # Get render config for optional best rollout rendering
         render_config = config_dict.get("render_config", {})
 
@@ -628,7 +654,7 @@ def train(
             proprioceptive_obs_size=proprioceptive_obs_size,
             decoder_hidden_layer_sizes=tuple(decoder_layer_sizes),
             prior_hidden_layer_sizes=tuple(prior_layer_sizes),
-            preprocess_observations_fn=normalize,
+            preprocess_observations_fn=running_statistics.normalize,
             num_rollouts=prior_rollout_config.get("num_rollouts", 32),
             max_steps=prior_rollout_config.get("max_steps", 200),
             fixed_logvar=prior_rollout_config.get("fixed_logvar", -2.0),
@@ -643,13 +669,23 @@ def train(
         # Select evaluator based on start_mode config
         start_mode = prior_rollout_config.get("start_mode", "random_clip")
         if start_mode == "neutral":
-            prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluatorNeutralState(**evaluator_kwargs)
-            logging.info(f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts (neutral start)")
+            prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluatorNeutralState(
+                **evaluator_kwargs
+            )
+            logging.info(
+                f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts (neutral start)"
+            )
         elif start_mode == "random_clip":
-            prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluator(**evaluator_kwargs)
-            logging.info(f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts (random clip start)")
+            prior_rollout_evaluator = prior_rollout.PriorRolloutEvaluator(
+                **evaluator_kwargs
+            )
+            logging.info(
+                f"Prior rollout evaluator initialized with {prior_rollout_config.get('num_rollouts', 32)} rollouts (random clip start)"
+            )
         else:
-            raise ValueError(f"Unknown prior_rollout start_mode: {start_mode}. Use 'neutral' or 'random_clip'.")
+            raise ValueError(
+                f"Unknown prior_rollout start_mode: {start_mode}. Use 'neutral' or 'random_clip'."
+            )
 
     # Get starting iteration from checkpoint
     start_it = 0
@@ -657,7 +693,9 @@ def train(
         num_evals_after_init -= ckpt_mgr.latest_step()
         start_it = ckpt_mgr.latest_step()
 
-    logging.info(f"Starting at iteration: {start_it} with {num_evals_after_init} evals left")
+    logging.info(
+        f"Starting at iteration: {start_it} with {num_evals_after_init} evals left"
+    )
 
     # Run initial eval
     metrics = {}
@@ -685,7 +723,7 @@ def train(
 
         logging.info(metrics)
         progress_fn(start_it, metrics)
-        
+
         if ckpt_mgr is not None:
             ckpt_mgr.save(
                 step=0,
@@ -705,10 +743,10 @@ def train(
     training_walltime = 0
     start_it += 1
     current_step = 0
-    
+
     for it in range(start_it, num_evals_after_init + start_it):
         logging.info("starting iteration %s %s", it, time.time() - xt)
-        
+
         for _ in range(max(num_resets_per_eval, 1)):
             epoch_key, local_key = jax.random.split(local_key)
             epoch_keys = jax.random.split(epoch_key, local_devices_to_use)
@@ -727,7 +765,7 @@ def train(
             policy_param = _unpmap(
                 (training_state.normalizer_params, training_state.params.policy)
             )
-            
+
             metrics = evaluator.run_evaluation(policy_param, training_metrics)
             if evaluator_test_set is not None:
                 metrics = evaluator_test_set.run_evaluation(
@@ -767,7 +805,7 @@ def train(
 
             logging.info(metrics)
             progress_fn(current_step, metrics)
-            
+
             if ckpt_mgr is not None:
                 checkpointing.save(
                     ckpt_mgr,

@@ -1,3 +1,11 @@
+"""
+Rollout logging for distillation training.
+
+Observations are expected as dictionaries with keys:
+- "imitation_target": Reference trajectory observations (flat array)
+- "proprioception": Proprioceptive state observations (flat array)
+"""
+
 import logging
 
 import imageio
@@ -31,22 +39,27 @@ def distill_rollout_logging_fn(
     )
     episode_length = int(cfg.env_config.clip_length * steps_per_frame)
 
-    # Create student inference function
-    normalize = lambda x, y: x
-    if cfg.train_setup.train_config.normalize_observations:
-        from brax.training.acme import running_statistics
-        normalize = running_statistics.normalize
+    # Get observation sizes - support both new dict format and legacy
+    obs_sizes = cfg.network_config.get("obs_sizes", None)
+    if obs_sizes is None:
+        # Legacy format - construct from env
+        obs_sizes = {
+            "imitation_target": int(env.non_proprioceptive_obs_size),
+            "proprioception": int(env.proprioceptive_obs_size),
+        }
 
     distill_cfg = cfg.distill_config
     student_networks = distill_networks.make_student_networks(
-        observation_size=env.observation_size,
-        reference_obs_size=int(env.non_proprioceptive_obs_size),
+        obs_sizes=obs_sizes,
         action_size=env.action_size,
-        preprocess_observations_fn=normalize,
         intention_latent_size=cfg.network_config.intention_size,
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-        prior_hidden_layer_sizes=tuple(cfg.network_config.get("prior_layer_sizes", cfg.network_config.encoder_layer_sizes)),
+        prior_hidden_layer_sizes=tuple(
+            cfg.network_config.get(
+                "prior_layer_sizes", cfg.network_config.encoder_layer_sizes
+            )
+        ),
         encoder_expansion_factor=cfg.network_config.get("encoder_expansion_factor", 1),
         encoder_logvar_min=distill_cfg.get("encoder_logvar_min", None),
         encoder_logvar_max=distill_cfg.get("encoder_logvar_max", None),
@@ -62,7 +75,9 @@ def distill_rollout_logging_fn(
     jit_teacher_policy = teacher_policy_fn
 
     # Split keys for student and teacher rollouts
-    _, reset_rng_student, reset_rng_teacher, act_rng_student, act_rng_teacher = jax.random.split(policy_params_fn_key, 5)
+    _, reset_rng_student, reset_rng_teacher, act_rng_student, act_rng_teacher = (
+        jax.random.split(policy_params_fn_key, 5)
+    )
 
     # Run student rollout
     state = jit_reset(reset_rng_student)
@@ -146,11 +161,17 @@ def distill_rollout_logging_fn(
                     writer.append_data(frame)
 
             wandb.log(
-                {"videos/student_rollout": wandb.Video(student_video_path, format="mp4")},
+                {
+                    "videos/student_rollout": wandb.Video(
+                        student_video_path, format="mp4"
+                    )
+                },
                 commit=False,
             )
         except mujoco.FatalError as e:
-            logging.warning(f"Student video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
+            logging.warning(
+                f"Student video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration."
+            )
 
         # Render teacher video
         teacher_video_path = f"{model_path}/{current_step}_teacher.mp4"
@@ -166,8 +187,14 @@ def distill_rollout_logging_fn(
                     writer.append_data(frame)
 
             wandb.log(
-                {"videos/teacher_rollout": wandb.Video(teacher_video_path, format="mp4")},
+                {
+                    "videos/teacher_rollout": wandb.Video(
+                        teacher_video_path, format="mp4"
+                    )
+                },
                 commit=False,
             )
         except mujoco.FatalError as e:
-            logging.warning(f"Teacher video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration.")
+            logging.warning(
+                f"Teacher video rendering failed due to MuJoCo error: {e}. Skipping video for this iteration."
+            )

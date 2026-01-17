@@ -147,12 +147,13 @@ render_config:
 # Intention-based architecture with VAE-style latent encoding
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [512, 256, 256]    # Reference trajectory encoder
-  decoder_layer_sizes: [512, 512, 256, 256]  # Policy decoder
-  critic_layer_sizes: [512, 512, 256, 256]   # Value function
-  intention_size: 60                   # Latent intention vector dimension
+  encoder_layer_sizes: [2048,1024,1024]    # Reference trajectory encoder
+  decoder_layer_sizes: [1024,1024,512]  # Policy decoder
+  critic_layer_sizes: [2048,1024,1024,1024,1024,512]   # Value function
+  intention_size: 16                   # Latent intention vector dimension
   kl_schedule: true                    # Anneal KL divergence weight over training
-  kl_weight: 1e-3                      # Initial KL divergence weight
+  latent_kl_weight: 1e-1               # Weight for KL divergence to standard Gaussian prior
+  latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss
 
 # =============================================================================
 # Training Setup
@@ -170,24 +171,26 @@ train_setup:
   train_subset_ratio: 0.8             # Fraction of clips for training
 
   # Evaluation and resets
-  eval_every: 20_000_000              # Eval frequency (env steps)
+  eval_every: 25_000_000              # Eval frequency (env steps)
   episode_length: 200                 # Max steps per episode
-  reset_every: 20_000_000             # JIT recompilation frequency (memory mgmt)
+  reset_every: 25_000_000             # JIT recompilation frequency (memory mgmt)
 
   # ---------------------------------------------------------------------------
   # PPO Training Hyperparameters
   # ---------------------------------------------------------------------------
   train_config:
     num_envs: 4096                    # Parallel environments
-    num_timesteps: 2_000_000_000      # Total training steps
+    num_timesteps: 3_000_000_000      # Total training steps
     batch_size: 1024                  # Samples per gradient update
     num_minibatches: 16               # Minibatches per epoch
     num_updates_per_batch: 4          # Epochs per PPO update
     learning_rate: 1e-4               # Adam learning rate
+    grad_clip_threshold: 20.0         # Max gradient norm for clipping
     clipping_epsilon: 0.2             # PPO clip range
     discounting: 0.95                 # Discount factor (gamma)
     action_repeat: 1                  # Actions repeated per step
     entropy_cost: 1e-2                # Entropy bonus coefficient
+    vf_loss_coefficient: 0.25          # Value function loss coefficient
     reward_scaling: 1                 # Reward multiplier
     normalize_observations: true      # Running mean/std normalization
     unroll_length: 20                 # Rollout length before update
@@ -200,11 +203,11 @@ train_setup:
 # =============================================================================
 # Weights & Biases logging settings
 logging_config:
-  project_name: vnl_debug
-  group_name: repo-refactor
-  exp_name: config_conversion_test
+  project_name: mimic-mjx
+  group_name: v1
+  exp_name: latent-reg
   clip_id: -1                         # Clip ID for single-clip runs (-1 = all)
-  model_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints
+  model_path: model_checkpoints/
 
 # =============================================================================
 # Walker Configuration
@@ -214,79 +217,3 @@ walker_config:
   walker_name: "rodent"
   torque_actuators: true              # Use torque (vs position) control
   rescale_factor: 0.9                 # Model scale factor
-
-  # Joint names for tracking (order must match reference data)
-  joint_names:
-    # Spine
-    - vertebra_1_extend
-    # Left hind leg
-    - hip_L_supinate
-    - hip_L_abduct
-    - hip_L_extend
-    - knee_L
-    - ankle_L
-    - toe_L
-    # Right hind leg
-    - hip_R_supinate
-    - hip_R_abduct
-    - hip_R_extend
-    - knee_R
-    - ankle_R
-    - toe_R
-    # Neck and head
-    - vertebra_C11_extend
-    - vertebra_cervical_1_bend
-    - vertebra_axis_twist
-    - atlas
-    - mandible
-    # Left front leg
-    - scapula_L_supinate
-    - scapula_L_abduct
-    - scapula_L_extend
-    - shoulder_L
-    - shoulder_sup_L
-    - elbow_L
-    - wrist_L
-    # Right front leg
-    - scapula_R_supinate
-    - scapula_R_abduct
-    - scapula_R_extend
-    - shoulder_R
-    - shoulder_sup_R
-    - elbow_R
-    - wrist_R
-    - finger_R
-
-  # Body segment names for tracking
-  body_names:
-    - torso
-    - pelvis
-    # Left hind leg
-    - upper_leg_L
-    - lower_leg_L
-    - foot_L
-    # Right hind leg
-    - upper_leg_R
-    - lower_leg_R
-    - foot_R
-    # Head
-    - skull
-    - jaw
-    # Left front leg
-    - scapula_L
-    - upper_arm_L
-    - lower_arm_L
-    - finger_L
-    # Right front leg
-    - scapula_R
-    - upper_arm_R
-    - lower_arm_R
-    - finger_R
-
-  # End effector names for tracking (extremities)
-  end_eff_names:
-    - foot_L
-    - foot_R
-    - hand_L
-    - hand_R
-    - skull

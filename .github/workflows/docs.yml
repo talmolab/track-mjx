@@ -1,18 +1,8 @@
-# Docs build
+# Docs build (disabled - run manually if needed)
 name: Docs
 
 on:
-  release:
-    types:
-      - published
-  push:
-    # branches:
-    #   - main
-    paths:
-      - "track_mjx/**"
-      - "docs/**"
-      - "mkdocs.yml"
-      - ".github/workflows/docs.yml"
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
   docs:

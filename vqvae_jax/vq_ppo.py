@@ -81,7 +81,7 @@ def train(
     # Store original compute_ppo_loss
     original_compute_ppo_loss = original_losses.compute_ppo_loss
 
-    # Create VQ-VAE loss function with same interface
+    # Create VQ-VAE loss function with same interface as ff_ppo losses.compute_ppo_loss
     def vq_compute_ppo_loss(
         params,
         normalizer_params,
@@ -90,13 +90,16 @@ def train(
         step,
         ppo_network,
         entropy_cost=1e-4,
-        kl_weight=1e-3,  # Ignored in VQ-VAE
+        latent_kl_weight=1e-3,  # Ignored in VQ-VAE
+        latent_ar1_weight=1e-3,  # Ignored in VQ-VAE
         discounting=0.9,
         reward_scaling=1.0,
         gae_lambda=0.95,
         clipping_epsilon=0.3,
         normalize_advantage=True,
-        kl_schedule=None,  # Ignored in VQ-VAE
+        vf_coefficient=0.5,
+        latent_kl_schedule=None,  # Ignored in VQ-VAE
+        latent_ar1_schedule=None,  # Ignored in VQ-VAE
     ):
         """VQ-VAE loss with same interface as compute_ppo_loss."""
         return compute_vq_ppo_loss(

@@ -20,19 +20,23 @@ from track_mjx.agent.task_transfer.maintain_velocity.observation_utils import (
 )
 
 
-def _get_proprio(obs: Mapping[str, Any], proprio_size: int) -> jax.Array:
-    """Extract proprioception from observation dict.
+def _get_proprio(obs: jax.Array | Mapping[str, Any], proprio_size: int) -> jax.Array:
+    """Extract proprioception from observation.
 
     Args:
-        obs: Dict with 'proprioception' key.
-        proprio_size: Size of proprioceptive observations (unused, for interface compat).
+        obs: Either a dict with 'proprioception' key, or a flat array where
+            proprioception is the last proprio_size elements.
+        proprio_size: Size of proprioceptive observations.
 
     Returns:
         Flattened proprioceptive observation array.
     """
-    del proprio_size
-    flat_obs = flatten_obs_dict(obs)
-    return flat_obs["proprioception"]
+    if isinstance(obs, Mapping):
+        flat_obs = flatten_obs_dict(obs)
+        return flat_obs["proprioception"]
+    else:
+        # Flat format - proprio is last proprio_size elements
+        return obs[..., -proprio_size:]
 
 
 def _flatten_obs_for_policy(obs: Mapping[str, Any]) -> jax.Array:

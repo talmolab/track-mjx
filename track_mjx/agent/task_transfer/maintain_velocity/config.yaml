@@ -60,6 +60,8 @@ env:
   # Reward term weights
   reward_weights:
     forward_velocity: 1.0
+    lateral_velocity: 0.5
+    angular_velocity_z: 0.1
 
 # Logging settings
 logging:

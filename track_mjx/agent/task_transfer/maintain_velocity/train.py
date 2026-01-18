@@ -100,12 +100,16 @@ def main(cfg: DictConfig) -> None:
     # Set reward term weights
     env_cfg.reward_terms = {
         "forward_velocity": {"weight": cfg.env.reward_weights.forward_velocity},
+        "lateral_velocity": {"weight": cfg.env.reward_weights.lateral_velocity},
+        "angular_velocity_z": {"weight": cfg.env.reward_weights.angular_velocity_z},
     }
     logging.info(
         f"Environment config: ctrl_dt={env_cfg.ctrl_dt}, target_speed={env_cfg.target_speed}"
     )
     logging.info(
-        f"Reward weights: forward_velocity={cfg.env.reward_weights.forward_velocity}"
+        f"Reward weights: forward_velocity={cfg.env.reward_weights.forward_velocity}, "
+        f"lateral_velocity={cfg.env.reward_weights.lateral_velocity}, "
+        f"angular_velocity_z={cfg.env.reward_weights.angular_velocity_z}"
     )
 
     # Create training and eval environments with appropriate wrapper

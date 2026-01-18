@@ -87,8 +87,8 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 line-length = 88
 
 [tool.uv.sources]
-vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.9" }
-# vnl-playground = { path = "/home/mila/a/aidan.sirbu/vnl-playground", editable = true }
+# vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.9" }
+vnl-playground = { path = "/home/mila/a/aidan.sirbu/vnl-playground", editable = true }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
 
 [pydocstyle]

@@ -182,7 +182,9 @@ def load_mlp_prior_checkpoint(
     return cfg, policy
 
 
-def fix_config_paths(cfg: Any, data_path_override: str | None = None, batch_size: int = 1) -> Any:
+def fix_config_paths(
+    cfg: Any, data_path_override: str | None = None, batch_size: int = 1
+) -> Any:
     """Fix paths in config that may reference /tmp or other locations.
 
     Args:
@@ -325,7 +327,9 @@ def create_prior_policy_fn(
         proprio_normalizer_params = running_statistics.RunningStatisticsState(
             count=normalizer_params.count,
             mean=normalizer_params.mean[-proprioceptive_obs_size:],
-            summed_variance=normalizer_params.summed_variance[-proprioceptive_obs_size:],
+            summed_variance=normalizer_params.summed_variance[
+                -proprioceptive_obs_size:
+            ],
             std=normalizer_params.std[-proprioceptive_obs_size:],
         )
 
@@ -468,7 +472,12 @@ def collect_rollouts(
         qpos array of shape (num_clips, num_steps, qpos_dim).
     """
     batched_rollout = create_batched_rollout_fn(
-        env, policy_fn, num_steps, proprioceptive_obs_size, reference_obs_size, is_prior_policy
+        env,
+        policy_fn,
+        num_steps,
+        proprioceptive_obs_size,
+        reference_obs_size,
+        is_prior_policy,
     )
 
     all_qpos = []
@@ -696,7 +705,11 @@ def main():
         rng, key = random.split(rng)
         t_start = time.time()
         # Format key name: use underscore for negative sign to avoid issues
-        key_name = f"prior_logvar_{int(logvar)}" if logvar == int(logvar) else f"prior_logvar_{logvar}"
+        key_name = (
+            f"prior_logvar_{int(logvar)}"
+            if logvar == int(logvar)
+            else f"prior_logvar_{logvar}"
+        )
         results[key_name] = collect_rollouts(
             env,
             reference_clips,

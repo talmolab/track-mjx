@@ -159,20 +159,45 @@ def update_dict_normalizer(
 
 
 def normalize_dict_obs(
-    obs: Mapping[str, Any],
+    obs: Mapping[str, Any] | jnp.ndarray,
     state: DictRunningStatisticsState,
 ) -> dict[str, jnp.ndarray]:
     """Normalize observation dict using running statistics.
 
     Handles nested observations by flattening each key before normalizing.
+    Also handles flat observations by splitting them using normalizer state shapes.
 
     Args:
-        obs: Observation dict with flat or nested arrays at each key.
+        obs: Observation dict with flat or nested arrays at each key,
+            or a flat JAX array (will be split using normalizer state shapes).
         state: Running statistics state for normalization.
 
     Returns:
         Dict with normalized flat observation arrays.
     """
+    # Check if obs is already a flat array (not a dict)
+    if not (hasattr(obs, "get") or isinstance(obs, Mapping)):
+        # obs is a flat JAX array - split it using normalizer state shapes
+        imitation_size = state.imitation_target.mean.shape[-1]
+        proprio_size = state.proprioception.mean.shape[-1]
+
+        # Handle both batched and unbatched observations
+        if obs.ndim == 1:
+            imitation_target = obs[:imitation_size]
+            proprioception = obs[imitation_size : imitation_size + proprio_size]
+        else:
+            imitation_target = obs[..., :imitation_size]
+            proprioception = obs[..., imitation_size : imitation_size + proprio_size]
+
+        return {
+            "imitation_target": running_statistics.normalize(
+                imitation_target, state.imitation_target
+            ),
+            "proprioception": running_statistics.normalize(
+                proprioception, state.proprioception
+            ),
+        }
+
     # Flatten nested observations first
     flat_obs = flatten_obs_dict(obs)
     return {

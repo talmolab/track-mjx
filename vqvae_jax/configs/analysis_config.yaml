@@ -19,7 +19,7 @@
 # =============================================================================
 checkpoint:
   # Path to VQ-VAE checkpoint directory
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260110_065324_633695
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260117_214649_852314
   # Checkpoint step to load (null = latest)
   step: null
 

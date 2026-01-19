@@ -298,7 +298,8 @@ def compute_vq_prior_distill_loss(
 
     # Get prior outputs (TRAINABLE - gradients flow here)
     # z_p shape: [T, B, latent_dim]
-    z_p = prior_network.apply(params.prior, normalizer_params, proprio)
+    # Prior only uses proprioception, so pass just the proprioception normalizer
+    z_p = prior_network.apply(params.prior, normalizer_params.proprioception, proprio)
 
     # Compute alignment loss based on loss_type
     if loss_type == "mse":

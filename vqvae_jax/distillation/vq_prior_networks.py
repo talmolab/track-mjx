@@ -230,7 +230,13 @@ def make_prior_inference_fn(
             Returns:
                 z_p: Predicted latent embedding [..., latent_dim].
             """
-            return prior_network.apply(prior_params, normalizer_params, proprio)
+            # Prior only uses proprioception normalizer
+            proprio_normalizer = (
+                normalizer_params.proprioception
+                if hasattr(normalizer_params, "proprioception")
+                else normalizer_params
+            )
+            return prior_network.apply(prior_params, proprio_normalizer, proprio)
 
         return prior_fn
 
@@ -288,8 +294,13 @@ def make_freeloop_policy_fn(
         flat_obs = flatten_obs_dict(observations)
         proprio = flat_obs["proprioception"]
 
-        # Prior predicts z_p from proprio
-        z_p = prior_network.apply(prior_params_inner, normalizer_params, proprio)
+        # Prior predicts z_p from proprio (only uses proprioception normalizer)
+        proprio_normalizer = (
+            normalizer_params.proprioception
+            if hasattr(normalizer_params, "proprioception")
+            else normalizer_params
+        )
+        z_p = prior_network.apply(prior_params_inner, proprio_normalizer, proprio)
 
         # Optionally quantize to nearest codebook entry
         if quantize_prior:

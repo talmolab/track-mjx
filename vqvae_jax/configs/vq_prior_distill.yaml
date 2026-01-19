@@ -113,7 +113,7 @@ network_config:
 # =============================================================================
 vqvae_config:
   # Path to frozen VQ-VAE checkpoint
-  checkpoint_path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260116_085350_409554/
+  checkpoint_path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260117_214649_852314/
   checkpoint_step: null  # null = latest step
 
 # =============================================================================
@@ -149,7 +149,7 @@ loss_config:
 # =============================================================================
 freeloop_config:
   enabled: true
-  num_rollouts: 32              # Number of freeloop rollouts per eval
+  num_rollouts: 1               # Number of freeloop rollouts per eval
   max_steps: 200                # Max steps per freeloop rollout
   quantize_prior: true          # Quantize z_p to nearest codebook entry
   deterministic: true           # Use deterministic actions

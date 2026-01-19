@@ -29,11 +29,10 @@ import functools
 import logging
 from pathlib import Path
 
-# Add paths
+# Add paths for package imports
 DISTILL_DIR = Path(__file__).parent
 VQVAE_DIR = DISTILL_DIR.parent
 REPO_ROOT = VQVAE_DIR.parent
-sys.path.insert(0, str(DISTILL_DIR))
 sys.path.insert(0, str(VQVAE_DIR))
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -44,7 +43,6 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 # Import from main codebase
@@ -52,9 +50,9 @@ from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.domain_randomization import domain_randomization_maker
 
-# Import VQ-VAE Prior modules
-from vq_prior_distill import train as vq_prior_train
-from vq_prior_rollout import VQPriorFreelloopEvaluator
+# Import VQ-VAE Prior modules (use package imports to enable relative imports)
+from distillation.vq_prior_distill import train as vq_prior_train
+from distillation.vq_prior_rollout import VQPriorFreelloopEvaluator
 
 
 def _setup_environment() -> None:
@@ -108,7 +106,7 @@ def vq_prior_rollout_logging_fn(
     )
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="vq_prior_distill")
+@hydra.main(version_base=None, config_path="../configs", config_name="vq_prior_distill")
 def main(cfg: DictConfig) -> None:
     """Main VQ-VAE Prior Distillation training entry point.
 
@@ -160,13 +158,9 @@ def main(cfg: DictConfig) -> None:
         seed=key_split,
     )
 
-    # Create environments
-    env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    )
-    test_env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=env_cfg_ml, clips=test_clips)
-    )
+    # Create environments (dict observations, no flattening - VQ-VAE uses dict obs)
+    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
+    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -218,6 +212,11 @@ def main(cfg: DictConfig) -> None:
         wandb_run_id=wandb.run.id,
     )
 
+    # Set the render env start frame to always be 0 (for freeloop and rollout logging)
+    rollout_cfg = env_cfg_ml.copy_and_resolve_references()
+    rollout_cfg.start_frame_range = [0, 0]
+    rollout_env = imitation.Imitation(config=rollout_cfg)
+
     # Training function
     train_fn = functools.partial(
         vq_prior_train,
@@ -266,13 +265,8 @@ def main(cfg: DictConfig) -> None:
         freeloop_config=OmegaConf.to_container(cfg.freeloop_config)
         if cfg.freeloop_config.enabled
         else None,
-    )
-
-    # Set the render env start frame to always be 0
-    rollout_cfg = env_cfg_ml.copy_and_resolve_references()
-    rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = vnl_wrappers.FlattenObsWrapper(
-        imitation.Imitation(config=rollout_cfg)
+        freeloop_env=rollout_env if cfg.freeloop_config.enabled else None,
+        model_path=str(checkpoint_path),
     )
 
     # Define policy params logging function

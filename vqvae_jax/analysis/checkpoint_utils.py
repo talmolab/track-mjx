@@ -154,6 +154,26 @@ def make_abstract_vq_policy(
     return (normalizer_state, init_policy_params)
 
 
+def _dict_to_running_statistics_state(d: dict) -> running_statistics.RunningStatisticsState:
+    """Convert a dict restored by orbax to RunningStatisticsState.
+
+    Handles both old and new Brax versions (with/without std_eps, mode fields).
+    """
+    # Required fields
+    state = running_statistics.RunningStatisticsState(
+        count=d["count"],
+        mean=d["mean"],
+        summed_variance=d["summed_variance"],
+        std=d["std"],
+    )
+    # Some versions have additional fields - replace if present
+    if "std_eps" in d:
+        state = state.replace(std_eps=d["std_eps"])
+    if "mode" in d:
+        state = state.replace(mode=d["mode"])
+    return state
+
+
 def load_vq_policy(
     checkpoint_path: str,
     cfg: DictConfig | None = None,
@@ -162,22 +182,17 @@ def load_vq_policy(
 ) -> tuple[Any, Any]:
     """Load VQ-VAE policy parameters from checkpoint.
 
+    Handles both flat normalizers (legacy) and dict normalizers (current).
+
     Args:
         checkpoint_path: Path to checkpoint directory.
-        cfg: Configuration. If None, loaded from checkpoint.
+        cfg: Configuration with env_config.reference_obs_size for flat->dict conversion.
         step_prefix: Prefix for checkpoint steps.
         step: Specific step to load. If None, loads latest.
 
     Returns:
         Tuple of (normalizer_state, policy_params).
     """
-    if cfg is None:
-        cfg = OmegaConf.create(
-            load_config_from_checkpoint(checkpoint_path, step_prefix, step)
-        )
-
-    abstract_policy = make_abstract_vq_policy(cfg)
-
     mgr_options = ocp.CheckpointManagerOptions(create=False, step_prefix=step_prefix)
     with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
         if step is None:
@@ -185,10 +200,62 @@ def load_vq_policy(
 
         logging.info(f"Loading VQ policy from {checkpoint_path} at step {step}")
 
-        return ckpt_mgr.restore(
+        # Restore without strict template matching to handle Brax version differences
+        # in running_statistics structure (e.g., NestedMeanStd count.hi/lo)
+        policy = ckpt_mgr.restore(
             step,
-            args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy)),
+            args=ocp.args.Composite(policy=ocp.args.StandardRestore(None)),
         )["policy"]
+
+        # Convert orbax-restored dicts back to proper dataclass types
+        normalizer_dict, policy_params = policy
+
+        # Check if it's a dict normalizer or flat normalizer
+        if "imitation_target" in normalizer_dict and "proprioception" in normalizer_dict:
+            # Already dict normalizer structure
+            normalizer_state = DictRunningStatisticsState(
+                imitation_target=_dict_to_running_statistics_state(
+                    normalizer_dict["imitation_target"]
+                ),
+                proprioception=_dict_to_running_statistics_state(
+                    normalizer_dict["proprioception"]
+                ),
+            )
+        else:
+            # Flat normalizer - need to convert
+            flat_state = _dict_to_running_statistics_state(normalizer_dict)
+
+            # Get reference_obs_size from config (in network_config, not env_config)
+            if cfg is None:
+                cfg = OmegaConf.create(
+                    load_config_from_checkpoint(checkpoint_path, step_prefix, step)
+                )
+
+            # Try to get obs_sizes first (newer format), fallback to reference_obs_size
+            net_cfg = cfg.network_config
+            if hasattr(net_cfg, "obs_sizes") and net_cfg.obs_sizes is not None:
+                reference_obs_size = net_cfg.obs_sizes.get("imitation_target")
+            elif hasattr(net_cfg, "reference_obs_size"):
+                reference_obs_size = net_cfg.reference_obs_size
+            else:
+                raise ValueError(
+                    "Checkpoint config missing both 'obs_sizes' and 'reference_obs_size'"
+                )
+
+            total_obs_size = flat_state.mean.shape[0]
+            proprio_size = total_obs_size - reference_obs_size
+
+            logging.info(
+                f"Converting flat normalizer to dict normalizer: "
+                f"total={total_obs_size}, imitation_target={reference_obs_size}, "
+                f"proprioception={proprio_size}"
+            )
+
+            normalizer_state = convert_flat_to_dict_normalizer(
+                flat_state, reference_obs_size
+            )
+
+        return (normalizer_state, policy_params)
 
 
 def load_vq_checkpoint(

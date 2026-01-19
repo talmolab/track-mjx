@@ -60,6 +60,7 @@ from .vq_prior_networks import (
     make_vq_prior_networks,
     make_prior_inference_fn,
 )
+from .vq_prior_rollout import VQPriorFreelloopEvaluator
 
 # Imports from parent vqvae_jax directory
 import sys
@@ -340,6 +341,8 @@ def train(
     deterministic_eval: bool = True,
     # Freeloop evaluation
     freeloop_config: dict | None = None,
+    freeloop_env: envs.Env | None = None,
+    model_path: str = "",
 ):
     """Train a Prior network using VQ-VAE prior distillation.
 
@@ -441,7 +444,13 @@ def train(
     frozen_normalizer_params = frozen_vqvae["normalizer_params"]
 
     latent_dim = vqvae_cfg.network_config.latent_dim
-    reference_obs_size = vqvae_cfg.network_config.reference_obs_size
+
+    # Handle both old format (reference_obs_size) and new format (obs_sizes)
+    net_cfg = vqvae_cfg.network_config
+    if hasattr(net_cfg, "obs_sizes") and net_cfg.obs_sizes is not None:
+        reference_obs_size = net_cfg.obs_sizes.get("imitation_target")
+    else:
+        reference_obs_size = net_cfg.reference_obs_size
 
     logging.info(f"VQ-VAE latent_dim: {latent_dim}")
     logging.info(f"VQ-VAE reference_obs_size: {reference_obs_size}")
@@ -477,6 +486,24 @@ def train(
 
     proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
     logging.info(f"Proprioceptive observation size: {proprioceptive_obs_size}")
+
+    # Validate observation sizes match VQ-VAE checkpoint
+    # Handle both old format (observation_size) and new format (obs_sizes)
+    if hasattr(net_cfg, "obs_sizes") and net_cfg.obs_sizes is not None:
+        vqvae_proprio_size = net_cfg.obs_sizes.get("proprioception")
+    elif hasattr(net_cfg, "observation_size"):
+        vqvae_proprio_size = net_cfg.observation_size - reference_obs_size
+    else:
+        vqvae_proprio_size = None
+
+    if vqvae_proprio_size is not None and vqvae_proprio_size != proprioceptive_obs_size:
+        raise ValueError(
+            f"Observation size mismatch between VQ-VAE checkpoint and current environment!\n"
+            f"  VQ-VAE checkpoint proprioception size: {vqvae_proprio_size}\n"
+            f"  Current environment proprioception size: {proprioceptive_obs_size}\n"
+            f"  VQ-VAE reference_obs_size: {reference_obs_size}\n"
+            f"Please ensure your env_config matches what the VQ-VAE was trained with."
+        )
 
     env = wrap_for_training(
         environment,
@@ -812,6 +839,37 @@ def train(
     )
 
     # ═══════════════════════════════════════════════════════════════════
+    # Setup Freeloop Evaluator (Prior controls rodent without trajectory)
+    # ═══════════════════════════════════════════════════════════════════
+    freeloop_evaluator = None
+    if freeloop_config is not None and freeloop_env is not None:
+        # Get decoder layer sizes from VQ-VAE config
+        decoder_hidden_layer_sizes = tuple(vqvae_cfg.network_config.decoder_layer_sizes)
+
+        freeloop_evaluator = VQPriorFreelloopEvaluator(
+            env=freeloop_env,
+            latent_dim=latent_dim,
+            action_size=environment.action_size,
+            proprioceptive_obs_size=proprioceptive_obs_size,
+            reference_obs_size=reference_obs_size,
+            decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+            prior_hidden_layer_sizes=tuple(prior_layer_sizes),
+            num_rollouts=freeloop_config.get("num_rollouts", 32),
+            max_steps=freeloop_config.get("max_steps", 200),
+            quantize_prior=freeloop_config.get("quantize_prior", True),
+            deterministic=freeloop_config.get("deterministic", True),
+            eval_interval=freeloop_config.get("eval_interval", 1),
+            render_best_rollout=freeloop_config.get("render_best_rollout", True),
+            render_fps=freeloop_config.get("render_fps", 50),
+            render_camera_name=freeloop_config.get("render_camera_name", "close_profile"),
+            model_path=model_path,
+        )
+        logging.info(
+            f"Freeloop evaluator initialized: {freeloop_config.get('num_rollouts', 32)} rollouts, "
+            f"eval every {freeloop_config.get('eval_interval', 1)} iterations"
+        )
+
+    # ═══════════════════════════════════════════════════════════════════
     # Training loop
     # ═══════════════════════════════════════════════════════════════════
     start_it = 0
@@ -831,8 +889,19 @@ def train(
             (training_state.normalizer_params, training_state.params.prior)
         )
 
+        # Run initial freeloop evaluation (step 0 passes eval_interval check)
+        if freeloop_evaluator is not None:
+            freeloop_metrics = freeloop_evaluator.run_evaluation(
+                prior_params=prior_params,
+                decoder_params=frozen_decoder_params,
+                codebook=frozen_codebook,
+                eval_step=0,
+            )
+            if freeloop_metrics is not None:
+                metrics.update(freeloop_metrics)
+
         # Log initial metrics
-        progress_fn(0, {"eval/initial": True})
+        progress_fn(0, {"eval/initial": True, **metrics})
 
         if ckpt_mgr is not None:
             # Save with prior params for freeloop evaluation
@@ -896,6 +965,17 @@ def train(
                 frozen_codebook=frozen_codebook,
                 policy_params_fn_key=policy_params_fn_key,
             )
+
+            # Run freeloop evaluation (Prior controls rodent without trajectory)
+            if freeloop_evaluator is not None:
+                freeloop_metrics = freeloop_evaluator.run_evaluation(
+                    prior_params=prior_params,
+                    decoder_params=frozen_decoder_params,
+                    codebook=frozen_codebook,
+                    eval_step=it,
+                )
+                if freeloop_metrics is not None:
+                    metrics.update(freeloop_metrics)
 
             logging.info(metrics)
             progress_fn(current_step, metrics)

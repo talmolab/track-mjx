@@ -116,13 +116,19 @@ def run_freeloop_rollout(
         flat_obs = flatten_obs_dict(obs)
         proprio = flat_obs["proprioception"]
 
-        # Normalize proprio
+        # Normalize proprio (use proprioception normalizer if dict format)
+        proprio_normalizer = (
+            normalizer_params.proprioception
+            if hasattr(normalizer_params, "proprioception")
+            else normalizer_params
+        )
         proprio_normalized = running_statistics.normalize(
-            proprio, normalizer_params
+            proprio, proprio_normalizer
         )
 
         # Prior predicts z_p from proprio
-        z_p = prior_module.apply({"params": prior_weights}, proprio_normalized)
+        # prior_weights already has {"params": ...} structure from network.init()
+        z_p = prior_module.apply(prior_weights, proprio_normalized)
         z_ps.append(z_p)
 
         # Optionally quantize to nearest codebook entry
@@ -253,7 +259,9 @@ class VQPriorFreelloopEvaluator:
         self.eval_interval = eval_interval
         self.render_best_rollout = render_best_rollout
         self.render_fps = render_fps
-        self.render_camera_name = render_camera_name
+        # Append environment suffix to camera name (e.g., "close_profile" -> "close_profile-rodent")
+        env_suffix = getattr(env, "_suffix", "-rodent")
+        self.render_camera_name = f"{render_camera_name}{env_suffix}"
         self.model_path = Path(model_path) if model_path else Path(".")
 
         # Create network modules
@@ -275,6 +283,7 @@ class VQPriorFreelloopEvaluator:
         decoder_params: dict[str, Any],
         codebook: jnp.ndarray,
         eval_step: int,
+        num_rollouts: int | None = None,
     ) -> dict[str, Any] | None:
         """Run freeloop evaluation and log to wandb.
 
@@ -283,6 +292,7 @@ class VQPriorFreelloopEvaluator:
             decoder_params: Frozen decoder parameters.
             codebook: Frozen VQ-VAE codebook.
             eval_step: Current evaluation step.
+            num_rollouts: Override number of rollouts (defaults to self.num_rollouts).
 
         Returns:
             Dictionary of metrics, or None if skipped due to eval_interval.
@@ -290,8 +300,11 @@ class VQPriorFreelloopEvaluator:
         if eval_step % self.eval_interval != 0:
             return None
 
+        # Use override or default
+        num_rollouts = num_rollouts if num_rollouts is not None else self.num_rollouts
+
         t_start = time.time()
-        logging.info(f"Running freeloop evaluation at step {eval_step}")
+        logging.info(f"Running freeloop evaluation at step {eval_step} ({num_rollouts} rollouts)")
 
         metrics = {
             "freeloop/survival_steps": [],
@@ -305,7 +318,7 @@ class VQPriorFreelloopEvaluator:
 
         all_indices = []
 
-        for i in range(self.num_rollouts):
+        for i in range(num_rollouts):
             result = run_freeloop_rollout(
                 env=self.env,
                 prior_params=prior_params,
@@ -347,7 +360,7 @@ class VQPriorFreelloopEvaluator:
             metrics["freeloop/survival_steps"]
         )
         metrics["freeloop/avg_total_reward"] = np.mean(metrics["freeloop/total_reward"])
-        metrics["freeloop/termination_rate"] /= self.num_rollouts
+        metrics["freeloop/termination_rate"] /= num_rollouts
 
         if self.quantize_prior and metrics["freeloop/unique_codes_used"]:
             metrics["freeloop/avg_unique_codes"] = np.mean(
@@ -419,14 +432,8 @@ class VQPriorFreelloopEvaluator:
             if len(states) < 2:
                 return
 
-            # Render frames
-            frames = []
-            for state in states:
-                self.env.step(state, jnp.zeros(self.action_size))  # Set state
-                frame = self.env.render(
-                    state.pipeline_state, camera=self.render_camera_name
-                )
-                frames.append(frame)
+            # Render all frames at once (env.render takes a list of states)
+            frames = self.env.render(states, camera=self.render_camera_name)
 
             # Save video
             video_path = self.model_path / f"freeloop_{eval_step}.mp4"

@@ -154,22 +154,22 @@ def make_scratch_policy(
         """Apply policy with observation normalization.
 
         Args:
-            processor_params: Brax's running statistics for flat observation.
+            processor_params: Brax's running statistics for dict observation.
             policy_params: Network parameters.
             obs: Dict observation with 'proprioception' and task keys.
 
         Returns:
             Tuple of (action_params, extras_dict).
         """
-        # Flatten dict observations to single array (task_obs, proprio)
-        flat_obs = flatten_obs_dict(obs)
+        # Normalize dict observation first (Brax normalizer handles dict structure)
+        normalized_obs = running_statistics.normalize(obs, processor_params)
+
+        # Then flatten the normalized dict to array (task_obs, proprio)
+        flat_obs = flatten_obs_dict(normalized_obs)
         flat_obs_array = concat_flat_dict_obs(flat_obs)
 
-        # Normalize using Brax's standard normalizer
-        normalized_obs = running_statistics.normalize(flat_obs_array, processor_params)
-
         # Apply the policy module
-        return policy_module.apply(policy_params, normalized_obs)
+        return policy_module.apply(policy_params, flat_obs_array)
 
     dummy_obs = jnp.zeros((1, total_obs_size))
 
@@ -207,14 +207,14 @@ def make_scratch_value_network(
         obs: Mapping[str, Any],
     ):
         """Apply value network with dict observation normalization."""
-        # Flatten dict observations to single array
-        flat_obs = flatten_obs_dict(obs)
+        # Normalize dict observation first (Brax normalizer handles dict structure)
+        normalized_obs = running_statistics.normalize(obs, processor_params)
+
+        # Then flatten the normalized dict to array
+        flat_obs = flatten_obs_dict(normalized_obs)
         flat_obs_array = concat_flat_dict_obs(flat_obs)
 
-        # Normalize using Brax's standard normalizer
-        normalized_obs = running_statistics.normalize(flat_obs_array, processor_params)
-
-        return base_value_network.apply((), value_params, normalized_obs)
+        return base_value_network.apply((), value_params, flat_obs_array)
 
     return networks.FeedForwardNetwork(
         init=lambda key: base_value_network.init(key),

@@ -1,10 +1,9 @@
 """Environment wrappers for bowl escape task transfer training.
 
-Two wrapper classes for different transfer learning modes:
+Three wrapper classes for different transfer learning modes:
 - DecoderHighLevelWrapper: Policy outputs latent → frozen decoder → ctrl
 - PriorDecoderHighLevelWrapper: Policy outputs residual → add to prior mean → decoder → ctrl
-
-Scratch mode uses no wrapper (network handles dict observations directly).
+- FlatObsWrapper: Converts dict observations to flat arrays (for scratch mode)
 
 Supports both legacy flat observations and new dict observations format.
 """
@@ -57,6 +56,53 @@ def _flatten_obs_for_policy(obs: jax.Array | Mapping[str, Any]) -> jax.Array:
     else:
         # Legacy flat format - already flat
         return obs
+
+
+class FlatObsWrapper(wrapper.Wrapper):
+    """Wrapper that converts dict observations to flat arrays.
+
+    This minimal wrapper enables scratch mode training with Brax's standard
+    normalizer by ensuring observations are flat arrays rather than dicts.
+    The flattening order is: sorted non-proprio keys, then proprioception.
+    """
+
+    def __init__(self, env: mjx_env.MjxEnv):
+        """Initialize the flat observation wrapper.
+
+        Args:
+            env: Base environment with dict observations.
+        """
+        super().__init__(env)
+
+    def reset(
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> mjx_env.State:
+        """Reset the environment and flatten observations.
+
+        Args:
+            rng: Random key for environment reset.
+            **kwargs: Additional arguments passed to base env reset.
+
+        Returns:
+            Initial environment state with flat observation array.
+        """
+        state = self.env.reset(rng, **kwargs)
+        return state.replace(obs=_flatten_obs_for_policy(state.obs))
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        """Take a step and flatten the resulting observation.
+
+        Args:
+            state: Current environment state.
+            action: Action to apply.
+
+        Returns:
+            Next environment state with flat observation array.
+        """
+        next_state = super().step(state, action)
+        return next_state.replace(obs=_flatten_obs_for_policy(next_state.obs))
 
 
 class DecoderHighLevelWrapper(wrapper.Wrapper):

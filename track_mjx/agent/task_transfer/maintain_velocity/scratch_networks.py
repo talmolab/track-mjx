@@ -7,11 +7,11 @@ combined with proprioception and passed through the decoder to produce actions.
 Unlike decoder_only mode where the decoder is frozen, here both networks
 are trainable end-to-end.
 
-Handles dict observations directly (no wrapper needed).
+Expects flat observations (via FlatObsWrapper).
 """
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Callable
+from collections.abc import Sequence
+from typing import Callable
 
 import flax
 import jax
@@ -21,10 +21,6 @@ from brax.training.acme import running_statistics
 from flax import linen as nn
 
 from track_mjx.agent.ff_ppo.intention_network import Decoder
-from track_mjx.agent.task_transfer.maintain_velocity.observation_utils import (
-    flatten_obs_dict,
-    concat_flat_dict_obs,
-)
 
 
 class ScratchPolicy(nn.Module):
@@ -149,27 +145,23 @@ def make_scratch_policy(
     def apply(
         processor_params: running_statistics.RunningStatisticsState,
         policy_params,
-        obs: Mapping[str, Any],
+        obs: jnp.ndarray,
     ) -> tuple[jnp.ndarray, dict]:
         """Apply policy with observation normalization.
 
         Args:
-            processor_params: Brax's running statistics for dict observation.
+            processor_params: Brax's running statistics for flat observation.
             policy_params: Network parameters.
-            obs: Dict observation with 'proprioception' and task keys.
+            obs: Flat observation array (task_obs, proprio).
 
         Returns:
             Tuple of (action_params, extras_dict).
         """
-        # Normalize dict observation first (Brax normalizer handles dict structure)
+        # Normalize using Brax's standard normalizer
         normalized_obs = running_statistics.normalize(obs, processor_params)
 
-        # Then flatten the normalized dict to array (task_obs, proprio)
-        flat_obs = flatten_obs_dict(normalized_obs)
-        flat_obs_array = concat_flat_dict_obs(flat_obs)
-
         # Apply the policy module
-        return policy_module.apply(policy_params, flat_obs_array)
+        return policy_module.apply(policy_params, normalized_obs)
 
     dummy_obs = jnp.zeros((1, total_obs_size))
 
@@ -204,17 +196,13 @@ def make_scratch_value_network(
     def apply(
         processor_params: running_statistics.RunningStatisticsState,
         value_params,
-        obs: Mapping[str, Any],
+        obs: jnp.ndarray,
     ):
-        """Apply value network with dict observation normalization."""
-        # Normalize dict observation first (Brax normalizer handles dict structure)
+        """Apply value network with observation normalization."""
+        # Normalize using Brax's standard normalizer
         normalized_obs = running_statistics.normalize(obs, processor_params)
 
-        # Then flatten the normalized dict to array
-        flat_obs = flatten_obs_dict(normalized_obs)
-        flat_obs_array = concat_flat_dict_obs(flat_obs)
-
-        return base_value_network.apply((), value_params, flat_obs_array)
+        return base_value_network.apply((), value_params, normalized_obs)
 
     return networks.FeedForwardNetwork(
         init=lambda key: base_value_network.init(key),
@@ -318,7 +306,7 @@ def make_scratch_inference_fn(
         policy_network = ppo_networks.policy_network
         parametric_action_distribution = ppo_networks.parametric_action_distribution
 
-        def policy(observations: Mapping[str, Any], key_sample: jax.Array):
+        def policy(observations: jnp.ndarray, key_sample: jax.Array):
             logits, extras = policy_network.apply(*params, observations)
 
             if deterministic:

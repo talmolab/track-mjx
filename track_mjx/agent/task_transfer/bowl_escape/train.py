@@ -53,13 +53,11 @@ from track_mjx.agent.task_transfer.bowl_escape.logging import (
 )
 from track_mjx.agent.task_transfer.bowl_escape.wrappers import (
     DecoderHighLevelWrapper,
+    FlatObsWrapper,
     PriorDecoderHighLevelWrapper,
 )
 from track_mjx.agent.task_transfer.bowl_escape.scratch_networks import (
     make_scratch_ppo_networks,
-)
-from track_mjx.agent.task_transfer.bowl_escape.observation_utils import (
-    flatten_obs_dict,
 )
 
 # Enable persistent compilation cache
@@ -142,8 +140,8 @@ def main(cfg: DictConfig) -> None:
                 base_env, decoder_fn, latent_size, proprio_size
             )
         elif cfg.mode == "scratch":
-            # Scratch mode: no wrapper, network handles dict observations directly
-            return base_env
+            # Scratch mode: use FlatObsWrapper to convert dict->array for Brax normalizer
+            return FlatObsWrapper(base_env)
         else:  # prior_decoder
             prior_fn = make_prior_inference_fn(
                 prior_params, normalizer_params, ckpt_cfg
@@ -195,11 +193,10 @@ def main(cfg: DictConfig) -> None:
     action_size = env.action_size
 
     if cfg.mode == "scratch":
-        # Scratch mode: use combined policy+decoder network with dict observations
-        # Get observation sizes from dict observation
-        flat_obs = flatten_obs_dict(start_state.obs)
-        other_keys = sorted(k for k in flat_obs.keys() if k != "proprioception")
-        task_obs_size = sum(flat_obs[k].shape[-1] for k in other_keys)
+        # Scratch mode: use combined policy+decoder network
+        # Observations are flat arrays (via FlatObsWrapper)
+        obs_size = start_state.obs.shape[-1]
+        task_obs_size = obs_size - proprio_size
 
         decoder_hidden_layer_sizes = tuple(
             ckpt_cfg["network_config"]["decoder_layer_sizes"]

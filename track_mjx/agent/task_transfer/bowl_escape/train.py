@@ -1,12 +1,14 @@
 """Bowl escape task transfer training with Brax PPO.
 
-Two training modes:
+Three training modes:
 - decoder_only: Freeze decoder, train new encoder
 - prior_decoder: Freeze prior + decoder, train residual encoder
+- scratch: Train both policy and decoder from random initialization
 
 Usage:
     python -m track_mjx.agent.task_transfer.bowl_escape.train mode=decoder_only
     python -m track_mjx.agent.task_transfer.bowl_escape.train mode=prior_decoder
+    python -m track_mjx.agent.task_transfer.bowl_escape.train mode=scratch
 """
 
 import os
@@ -52,6 +54,13 @@ from track_mjx.agent.task_transfer.bowl_escape.logging import (
 from track_mjx.agent.task_transfer.bowl_escape.wrappers import (
     DecoderHighLevelWrapper,
     PriorDecoderHighLevelWrapper,
+)
+from track_mjx.agent.task_transfer.bowl_escape.scratch_networks import (
+    init_scratch_normalizer,
+    make_scratch_ppo_networks,
+)
+from track_mjx.agent.task_transfer.bowl_escape.observation_utils import (
+    flatten_obs_dict,
 )
 
 # Enable persistent compilation cache
@@ -133,6 +142,9 @@ def main(cfg: DictConfig) -> None:
             return DecoderHighLevelWrapper(
                 base_env, decoder_fn, latent_size, proprio_size
             )
+        elif cfg.mode == "scratch":
+            # Scratch mode: no wrapper, network handles dict observations directly
+            return base_env
         else:  # prior_decoder
             prior_fn = make_prior_inference_fn(
                 prior_params, normalizer_params, ckpt_cfg
@@ -169,13 +181,6 @@ def main(cfg: DictConfig) -> None:
         notes=f"checkpoint: {cfg.checkpoint.path}, mode: {cfg.mode}",
     )
 
-    # Create network factory for standard MLP PPO
-    network_factory = functools.partial(
-        ppo_networks.make_ppo_networks,
-        policy_hidden_layer_sizes=tuple(cfg.network.policy_layers),
-        value_hidden_layer_sizes=tuple(cfg.network.value_layers),
-    )
-
     # Setup normalization
     normalize = lambda x, y: x
     if cfg.train.normalize_observations:
@@ -187,39 +192,94 @@ def main(cfg: DictConfig) -> None:
     rng = jax.random.PRNGKey(cfg.train.seed)
     start_state = jit_reset(rng)
 
-    ppo_network = network_factory(
-        start_state.obs.shape[-1],
-        eval_env.action_size,
-        preprocess_observations_fn=normalize,
-    )
+    # Get observation and action sizes
+    action_size = env.action_size
 
-    # Create logging inference function
-    def make_logging_inference_fn(ppo_networks):
-        """Create inference function for logging rollouts."""
+    if cfg.mode == "scratch":
+        # Scratch mode: use combined policy+decoder network with dict observations
+        # Get observation sizes from dict observation
+        flat_obs = flatten_obs_dict(start_state.obs)
+        other_keys = sorted(k for k in flat_obs.keys() if k != "proprioception")
+        task_obs_size = sum(flat_obs[k].shape[-1] for k in other_keys)
 
-        def make_logging_policy(deterministic=True):
-            policy_network = ppo_networks.policy_network
-            parametric_action_distribution = ppo_networks.parametric_action_distribution
+        decoder_hidden_layer_sizes = tuple(
+            ckpt_cfg["network_config"]["decoder_layer_sizes"]
+        )
+
+        network_factory = functools.partial(
+            make_scratch_ppo_networks,
+            task_obs_size=task_obs_size,
+            proprio_size=proprio_size,
+            action_size=action_size,
+            latent_size=latent_size,
+            policy_hidden_layer_sizes=tuple(cfg.network.policy_layers),
+            decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+            value_hidden_layer_sizes=tuple(cfg.network.value_layers),
+        )
+
+        # Create scratch network for inference
+        scratch_network = network_factory()
+
+        # Create logging inference function for scratch mode
+        def make_scratch_logging_policy(scratch_networks):
+            """Create logging policy for scratch mode."""
+            policy_network = scratch_networks.policy_network
+            parametric_action_distribution = scratch_networks.parametric_action_distribution
 
             def logging_policy(params, observations, key_sample):
+                del key_sample  # Deterministic
                 param_subset = (params[0], params[1])
-                logits = policy_network.apply(*param_subset, observations)
-                if deterministic:
-                    return parametric_action_distribution.mode(logits), {}
-                raw_actions = parametric_action_distribution.sample_no_postprocessing(
-                    logits, key_sample
-                )
-                postprocessed_actions = parametric_action_distribution.postprocess(
-                    raw_actions
-                )
-                return postprocessed_actions, {}
+                logits, extras = policy_network.apply(*param_subset, observations)
+                action = parametric_action_distribution.mode(logits)
+                return action, extras
 
             return logging_policy
 
-        return make_logging_policy
+        jit_logging_inference_fn = jax.jit(make_scratch_logging_policy(scratch_network))
+    else:
+        # decoder_only and prior_decoder modes: standard MLP PPO
+        # Wrapped envs have flat observations
+        obs_size = start_state.obs.shape[-1]
 
-    make_logging_policy = make_logging_inference_fn(ppo_network)
-    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+        network_factory = functools.partial(
+            ppo_networks.make_ppo_networks,
+            policy_hidden_layer_sizes=tuple(cfg.network.policy_layers),
+            value_hidden_layer_sizes=tuple(cfg.network.value_layers),
+        )
+
+        ppo_network = network_factory(
+            obs_size,
+            action_size,
+            preprocess_observations_fn=normalize,
+        )
+
+        # Create logging inference function
+        def make_logging_inference_fn(ppo_networks):
+            """Create inference function for logging rollouts."""
+
+            def make_logging_policy(deterministic=True):
+                policy_network = ppo_networks.policy_network
+                parametric_action_distribution = ppo_networks.parametric_action_distribution
+
+                def logging_policy(params, observations, key_sample):
+                    param_subset = (params[0], params[1])
+                    logits = policy_network.apply(*param_subset, observations)
+                    if deterministic:
+                        return parametric_action_distribution.mode(logits), {}
+                    raw_actions = parametric_action_distribution.sample_no_postprocessing(
+                        logits, key_sample
+                    )
+                    postprocessed_actions = parametric_action_distribution.postprocess(
+                        raw_actions
+                    )
+                    return postprocessed_actions, {}
+
+                return logging_policy
+
+            return make_logging_policy
+
+        make_logging_policy = make_logging_inference_fn(ppo_network)
+        jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     # Define policy_params_fn for logging during training
     def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):

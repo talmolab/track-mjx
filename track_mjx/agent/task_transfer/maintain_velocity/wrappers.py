@@ -4,6 +4,8 @@ Two wrapper classes for different transfer learning modes:
 - DecoderHighLevelWrapper: Policy outputs latent -> frozen decoder -> ctrl
 - PriorDecoderHighLevelWrapper: Policy outputs residual -> add to prior mean -> decoder -> ctrl
 
+Scratch mode uses no wrapper (network handles dict observations directly).
+
 Only supports dict observations format.
 """
 

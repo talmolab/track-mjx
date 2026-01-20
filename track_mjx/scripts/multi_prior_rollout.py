@@ -448,7 +448,9 @@ def parse_clip_configs(clip_config_strs: List[str]) -> List[Tuple[int, int]]:
     for s in clip_config_strs:
         parts = s.split(",")
         if len(parts) != 2:
-            raise ValueError(f"Invalid clip config: {s}. Expected 'clip_idx,start_frame'")
+            raise ValueError(
+                f"Invalid clip config: {s}. Expected 'clip_idx,start_frame'"
+            )
         configs.append((int(parts[0]), int(parts[1])))
     return configs
 
@@ -527,7 +529,12 @@ def main():
 
     if args.include_neutral:
         starting_pose_configs.append(
-            {"name": "neutral", "mode": "neutral", "clip_idx": None, "start_frame": None}
+            {
+                "name": "neutral",
+                "mode": "neutral",
+                "clip_idx": None,
+                "start_frame": None,
+            }
         )
 
     clip_configs = parse_clip_configs(args.clip_configs)
@@ -611,14 +618,18 @@ def main():
             if var_cfg["fixed_logvar"] is not None:
                 var_grp.attrs["fixed_logvar"] = var_cfg["fixed_logvar"]
             else:
-                var_grp.attrs["fixed_logvar"] = "predicted" if not var_cfg["deterministic"] else "N/A"
+                var_grp.attrs["fixed_logvar"] = (
+                    "predicted" if not var_cfg["deterministic"] else "N/A"
+                )
 
             # Loop through all starting poses
             for pose_cfg in starting_pose_configs:
                 pose_name = pose_cfg["name"]
                 config_count += 1
 
-                print(f"\n  [{config_count}/{total_configs}] Starting pose: {pose_name}")
+                print(
+                    f"\n  [{config_count}/{total_configs}] Starting pose: {pose_name}"
+                )
 
                 # Split RNG
                 rng, rng_init, rng_rollout = random.split(rng, 3)
@@ -640,20 +651,26 @@ def main():
                 )
 
                 # Determine number of rollouts (1 for deterministic, N for stochastic)
-                num_rollouts = 1 if var_cfg["deterministic"] else args.num_rollouts_per_config
+                num_rollouts = (
+                    1 if var_cfg["deterministic"] else args.num_rollouts_per_config
+                )
 
                 # Generate rollout keys
                 rollout_keys = random.split(rng_rollout, num_rollouts)
 
                 # Run rollouts
                 t_start = time.time()
-                step_counts, terminated_flags, all_states = vmapped_rollout(rollout_keys)
+                step_counts, terminated_flags, all_states = vmapped_rollout(
+                    rollout_keys
+                )
                 step_counts = jnp.array(step_counts)
                 step_counts.block_until_ready()
                 t_elapsed = time.time() - t_start
 
                 print(f"    Rollouts: {num_rollouts}, Time: {t_elapsed:.2f}s")
-                print(f"    Steps: {int(step_counts[0])} (terminated: {bool(terminated_flags[0])})")
+                print(
+                    f"    Steps: {int(step_counts[0])} (terminated: {bool(terminated_flags[0])})"
+                )
 
                 # Create H5 subgroup for this pose
                 pose_grp = var_grp.create_group(pose_name)
@@ -697,7 +714,9 @@ def main():
                         width=args.render_width,
                     )
 
-                    video_filename = f"{var_name}_{pose_name}_rollout{rollout_idx:02d}.mp4"
+                    video_filename = (
+                        f"{var_name}_{pose_name}_rollout{rollout_idx:02d}.mp4"
+                    )
                     video_path = output_dir / video_filename
                     with imageio.get_writer(
                         str(video_path), fps=args.render_fps

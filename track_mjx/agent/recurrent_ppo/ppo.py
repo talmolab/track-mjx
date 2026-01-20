@@ -39,7 +39,6 @@ from track_mjx.agent.observation_utils import (
     update_dict_normalizer,
 )
 
-
 # Type aliases
 InferenceParams = tuple[DictRunningStatisticsState, Params]
 Metrics = types.Metrics

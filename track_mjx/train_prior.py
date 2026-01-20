@@ -135,7 +135,7 @@ def main(cfg: DictConfig):
         )
 
     # Prepare config BEFORE load_from_run_state so the config hash is consistent
-    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
+    cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
 
     # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = _load_from_run_state_prior(cfg)

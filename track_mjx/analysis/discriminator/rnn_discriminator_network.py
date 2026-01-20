@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 
-
 ActivationFn = Callable[[jnp.ndarray], jnp.ndarray]
 Initializer = Callable[..., jnp.ndarray]
 

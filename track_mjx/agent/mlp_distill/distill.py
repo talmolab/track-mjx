@@ -750,7 +750,7 @@ def train(
         for _ in range(max(num_resets_per_eval, 1)):
             epoch_key, local_key = jax.random.split(local_key)
             epoch_keys = jax.random.split(epoch_key, local_devices_to_use)
-            (training_state, env_state, training_metrics) = training_epoch_with_timing(
+            training_state, env_state, training_metrics = training_epoch_with_timing(
                 training_state, env_state, epoch_keys, it
             )
             current_step = int(_unpmap(training_state.env_steps))

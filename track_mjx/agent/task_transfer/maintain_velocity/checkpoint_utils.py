@@ -65,9 +65,7 @@ def load_prior_checkpoint(
     with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
         policy_params = ckpt_mgr.restore(
             step,
-            args=ocp.args.Composite(
-                policy=ocp.args.StandardRestore(abstract_policy)
-            ),
+            args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy)),
         )["policy"]
 
     normalizer_params, network_params = policy_params

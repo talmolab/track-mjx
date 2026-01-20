@@ -10,11 +10,10 @@ authors = [
     {name = "Aidan Sirbu", email = "aidan.sirbu@mail.mcgill.ca"},
     {name = "Talmo Pereira", email = "talmo@salk.edu"}]
 description=  "Track-MJX: A Python package for fast reinforcement learning-based imitation learning tracking for agents"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.12,<3.13"
 keywords = ["tracking", "imitation learning", "deep learning"]
 license = {text = "BSD-3-Clause"}
 classifiers = [
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12"]
 dependencies = [
     # JAX core (both platforms)

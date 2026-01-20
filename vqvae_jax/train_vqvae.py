@@ -45,6 +45,7 @@ from track_mjx.agent.domain_randomization import domain_randomization_maker
 # Import VQ-VAE modules from scratch
 from vq_ppo_networks import make_vq_intention_ppo_networks
 from vq_ppo import train as vq_train
+from analysis.rendering import render_rollout_to_video, get_nature_colormap
 
 
 def _setup_environment() -> None:
@@ -68,11 +69,16 @@ def vq_rollout_logging_fn(
     render_video=True,
     ppo_network=None,  # Added for compatibility with main PPO code
 ):
-    """Rollout logging with VQ-VAE specific metrics.
+    """Rollout logging with VQ-VAE specific metrics and code visualization.
 
-    Wraps the standard rollout logging to add codebook usage metrics.
+    Wraps the standard rollout logging to add codebook usage metrics and
+    renders video with code transition timeline overlay.
     """
     import jax.numpy as jnp
+    import numpy as np
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
     from vq_losses import compute_codebook_metrics
 
     # Get network config for num_codes
@@ -92,6 +98,7 @@ def vq_rollout_logging_fn(
     rollout_states = [state]
     all_indices = []
     all_z_e = []
+    all_rewards = []
 
     # Collect rollout
     for _ in range(episode_length):
@@ -111,21 +118,75 @@ def vq_rollout_logging_fn(
 
         state = jit_step(state, action)
         rollout_states.append(state)
+        all_rewards.append(float(state.reward))
 
         if state.done:
             break
 
-    # Log VQ metrics
+    # Convert indices to numpy array
+    indices_array = None
     if all_indices:
-        indices = jnp.stack(all_indices)
+        indices_array = np.array([int(idx) for idx in all_indices])
+
+        # Log VQ metrics
+        indices_jnp = jnp.array(indices_array)
         perplexity, utilization, codes_used = compute_codebook_metrics(
-            indices, num_codes
+            indices_jnp, num_codes
         )
         wandb.log({
             "vq/perplexity": float(perplexity),
             "vq/codebook_utilization": float(utilization),
             "vq/codes_used": int(codes_used),
         }, commit=False)
+
+        # Compute transition rate for this rollout
+        code_transitions = np.sum(indices_array[1:] != indices_array[:-1])
+        transition_rate = code_transitions / max(len(indices_array) - 1, 1)
+        wandb.log({
+            "vq/eval_transition_rate": float(transition_rate),
+            "vq/eval_transitions": int(code_transitions),
+            "vq/eval_steps": len(indices_array),
+        }, commit=False)
+
+        # Create code sequence timeline plot
+        fig, axes = plt.subplots(2, 1, figsize=(12, 4), height_ratios=[1, 2])
+
+        # Top: code usage histogram
+        code_counts = np.bincount(indices_array, minlength=num_codes)
+        colors = get_nature_colormap(num_codes) / 255.0
+        axes[0].bar(range(num_codes), code_counts, color=colors, edgecolor='none')
+        axes[0].set_xlabel('Code Index')
+        axes[0].set_ylabel('Count')
+        axes[0].set_title(f'Code Usage (perplexity={float(perplexity):.2f}, used={int(codes_used)}/{num_codes})')
+        axes[0].set_xlim(-0.5, num_codes - 0.5)
+
+        # Bottom: code sequence timeline
+        timesteps = np.arange(len(indices_array))
+        for i in range(len(indices_array) - 1):
+            code = indices_array[i]
+            axes[1].axvspan(timesteps[i], timesteps[i+1], color=colors[code], alpha=0.8)
+        # Last segment
+        if len(indices_array) > 0:
+            axes[1].axvspan(timesteps[-1], timesteps[-1] + 1, color=colors[indices_array[-1]], alpha=0.8)
+
+        axes[1].set_xlabel('Timestep')
+        axes[1].set_ylabel('Code')
+        axes[1].set_title(f'Code Sequence (transitions={code_transitions}, rate={transition_rate:.2%})')
+        axes[1].set_xlim(0, len(indices_array))
+        axes[1].set_ylim(-0.5, num_codes - 0.5)
+
+        # Add code index markers for unique codes used
+        unique_codes = np.unique(indices_array)
+        axes[1].set_yticks(unique_codes)
+
+        plt.tight_layout()
+        wandb.log({"vq/code_sequence": wandb.Image(fig)}, commit=False)
+        plt.close(fig)
+
+        # Log code sequence as wandb Table for detailed inspection
+        table_data = [[int(t), int(c)] for t, c in enumerate(indices_array)]
+        table = wandb.Table(columns=["timestep", "code_index"], data=table_data)
+        wandb.log({"vq/code_sequence_table": table}, commit=False)
 
     if all_z_e:
         z_e = jnp.stack(all_z_e)
@@ -136,9 +197,35 @@ def vq_rollout_logging_fn(
                 f"latents/z_e_std{i}": float(jnp.std(z_e[..., i])),
             }, commit=False)
 
-    # Call original logging for video rendering
+    # Render video with code overlay
     if render_video:
-        wandb_logging._log_rollout_video(env, cfg, model_path, current_step, rollout_states)
+        import mujoco
+        render_fps = cfg.render_config.render_fps
+        video_path = f"{model_path}/{current_step}.mp4"
+
+        try:
+            # Use custom rendering with code transition bar
+            render_rollout_to_video(
+                env=env,
+                rollout_states=rollout_states,
+                output_path=video_path,
+                camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
+                width=640,
+                height=480,
+                fps=render_fps,
+                indices=indices_array,
+                num_codes=num_codes,
+                code_bar_height=40,
+            )
+
+            wandb.log(
+                {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                commit=False,
+            )
+        except mujoco.FatalError as e:
+            logging.warning(f"Rendering video failed with MuJoCo error: {e}")
+        except Exception as e:
+            logging.warning(f"Failed to render video: {e}")
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="vqvae_minimal")
@@ -228,6 +315,8 @@ def main(cfg: DictConfig) -> None:
         "arch": "vqvae_intention",
         "num_codes": cfg.network_config.get("num_codes", 512),
         "commitment_cost": cfg.network_config.get("commitment_cost", 0.25),
+        "codebook_loss_weight": cfg.network_config.get("codebook_loss_weight", 1.0),
+        "smoothness_cost": cfg.network_config.get("smoothness_cost", 0.1),
         "latent_dim": cfg.network_config.get("latent_dim", cfg.network_config.intention_size),
     })
 
@@ -279,6 +368,7 @@ def main(cfg: DictConfig) -> None:
         # VQ-VAE specific parameters
         commitment_cost=cfg.network_config.get("commitment_cost", 0.25),
         codebook_loss_weight=cfg.network_config.get("codebook_loss_weight", 1.0),
+        smoothness_cost=cfg.network_config.get("smoothness_cost", 0.1),
     )
 
     # Set the render env start frame to always be 0

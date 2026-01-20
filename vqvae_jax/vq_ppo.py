@@ -64,6 +64,7 @@ def train(
     # VQ-VAE specific parameters
     commitment_cost: float = 0.25,
     codebook_loss_weight: float = 1.0,
+    smoothness_cost: float = 0.0,
 ):
     """Train a VQ-VAE PPO agent.
 
@@ -74,6 +75,7 @@ def train(
         All standard PPO args, plus:
         commitment_cost: Weight for commitment loss (beta in VQ-VAE paper).
         codebook_loss_weight: Weight for codebook loss.
+        smoothness_cost: Weight for temporal smoothness loss on encoder outputs.
 
     Returns:
         Tuple of (make_policy, params, metrics).
@@ -112,6 +114,7 @@ def train(
             entropy_cost=entropy_cost,
             commitment_cost=commitment_cost,
             codebook_loss_weight=codebook_loss_weight,
+            smoothness_cost=smoothness_cost,
             discounting=discounting,
             reward_scaling=reward_scaling,
             gae_lambda=gae_lambda,

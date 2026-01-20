@@ -108,10 +108,11 @@ network_config:
   latent_dim: 32                # Same as intention_size
 
   # VQ-VAE specific settings
-  num_codes: 64                 # Smaller codebook for minimal test
+  num_codes: 8                 # Smaller codebook for minimal test
   commitment_cost: 0.1         # Beta in paper (standard value)
   codebook_loss_weight: 1.0     # Weight for codebook loss
   codebook_init_scale: 0.1      # Initialization scale
+  smoothness_cost: 0.2          # Weight for temporal smoothness loss on z_e
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false

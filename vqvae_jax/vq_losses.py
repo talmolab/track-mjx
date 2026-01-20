@@ -190,6 +190,7 @@ def compute_vq_ppo_loss(
     entropy_cost: float = 1e-4,
     commitment_cost: float = 0.25,
     codebook_loss_weight: float = 1.0,
+    smoothness_cost: float = 0.0,
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
@@ -204,6 +205,7 @@ def compute_vq_ppo_loss(
     - Entropy bonus for exploration
     - VQ-VAE commitment loss (encoder commits to codebook)
     - VQ-VAE codebook loss (codebook tracks encoder)
+    - Temporal smoothness loss on encoder outputs (encourages code persistence)
 
     Unlike the VAE version, there is no KL divergence loss. The
     commitment and codebook losses serve as regularization.
@@ -221,6 +223,7 @@ def compute_vq_ppo_loss(
         entropy_cost: Entropy bonus coefficient.
         commitment_cost: Weight for commitment loss (beta).
         codebook_loss_weight: Weight for codebook loss.
+        smoothness_cost: Weight for temporal smoothness loss on z_e.
         discounting: Discount factor (gamma) for GAE.
         reward_scaling: Multiplier applied to rewards.
         gae_lambda: GAE lambda parameter.
@@ -281,6 +284,35 @@ def compute_vq_ppo_loss(
     truncation = data.extras["state_extras"]["truncation"]
     termination = (1 - data.discount) * (1 - truncation)
 
+    # Temporal smoothness loss on encoder outputs
+    # Encourages consecutive timesteps to have similar z_e, indirectly
+    # encouraging code persistence (since similar z_e map to same code).
+    # Shapes after axis swap: z_e [T, B, D], indices [T, B], discount [T, B]
+    if z_e.shape[0] > 1:
+        z_e_prev = z_e[:-1]  # [T-1, B, D]
+        z_e_curr = z_e[1:]  # [T-1, B, D]
+
+        # Mean squared difference over latent dim
+        l2_diff = jnp.mean(jnp.square(z_e_curr - z_e_prev), axis=-1)  # [T-1, B]
+
+        # Mask: valid if episode continues (not done AND not truncated)
+        valid_mask = data.discount[:-1] * (1 - truncation[:-1])  # [T-1, B]
+
+        # Masked average
+        num_valid = jnp.sum(valid_mask) + 1e-8
+        smoothness_loss = jnp.sum(l2_diff * valid_mask) / num_valid
+
+        # Transition rate metric (monitoring only, no gradient)
+        indices_prev = indices[:-1]  # [T-1, B]
+        indices_curr = indices[1:]  # [T-1, B]
+        code_changed = (indices_curr != indices_prev).astype(jnp.float32)
+        transition_rate = jnp.sum(code_changed * valid_mask) / num_valid
+    else:
+        smoothness_loss = jnp.array(0.0)
+        transition_rate = jnp.array(0.0)
+
+    scaled_smoothness_loss = smoothness_cost * smoothness_loss
+
     target_action_log_probs = parametric_action_distribution.log_prob(
         policy_logits, data.extras["policy_extras"]["raw_action"]
     )
@@ -318,7 +350,9 @@ def compute_vq_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # Total loss
-    total_loss = policy_loss + v_loss + entropy_loss + scaled_vq_loss
+    total_loss = (
+        policy_loss + v_loss + entropy_loss + scaled_vq_loss + scaled_smoothness_loss
+    )
 
     return total_loss, {
         "total_loss": total_loss,
@@ -335,6 +369,10 @@ def compute_vq_ppo_loss(
         "perplexity": perplexity,
         "codebook_utilization": utilization,
         "codes_used": codes_used,
+        # Temporal stickiness metrics
+        "smoothness_loss": smoothness_loss,
+        "scaled_smoothness_loss": scaled_smoothness_loss,
+        "transition_rate": transition_rate,
     }
 
 

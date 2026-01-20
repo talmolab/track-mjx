@@ -146,7 +146,7 @@ def make_scratch_policy(
         processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, dict]:
+    ) -> jnp.ndarray:
         """Apply policy with observation normalization.
 
         Args:
@@ -155,13 +155,15 @@ def make_scratch_policy(
             obs: Flat observation array (task_obs, proprio).
 
         Returns:
-            Tuple of (action_params, extras_dict).
+            Action distribution parameters (logits).
         """
         # Normalize using Brax's standard normalizer
         normalized_obs = running_statistics.normalize(obs, processor_params)
 
-        # Apply the policy module
-        return policy_module.apply(policy_params, normalized_obs)
+        # Apply the policy module - returns (action_params, extras)
+        # Brax PPO expects just the action_params (logits)
+        action_params, _ = policy_module.apply(policy_params, normalized_obs)
+        return action_params
 
     dummy_obs = jnp.zeros((1, total_obs_size))
 

@@ -226,9 +226,9 @@ def main(cfg: DictConfig) -> None:
             def logging_policy(params, observations, key_sample):
                 del key_sample  # Deterministic
                 param_subset = (params[0], params[1])
-                logits, extras = policy_network.apply(*param_subset, observations)
+                logits = policy_network.apply(*param_subset, observations)
                 action = parametric_action_distribution.mode(logits)
-                return action, extras
+                return action, {}
 
             return logging_policy
 

@@ -206,16 +206,17 @@ def main(cfg: DictConfig) -> None:
             ckpt_cfg["network_config"]["decoder_layer_sizes"]
         )
 
-        network_factory = functools.partial(
-            make_scratch_ppo_networks,
-            task_obs_size=task_obs_size,
-            proprio_size=proprio_size,
-            action_size=action_size,
-            latent_size=latent_size,
-            policy_hidden_layer_sizes=tuple(cfg.network.policy_layers),
-            decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
-            value_hidden_layer_sizes=tuple(cfg.network.value_layers),
-        )
+        # Create wrapper that accepts Brax's calling convention but uses our values
+        def network_factory(*args, **kwargs):
+            return make_scratch_ppo_networks(
+                task_obs_size=task_obs_size,
+                proprio_size=proprio_size,
+                action_size=action_size,
+                latent_size=latent_size,
+                policy_hidden_layer_sizes=tuple(cfg.network.policy_layers),
+                decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+                value_hidden_layer_sizes=tuple(cfg.network.value_layers),
+            )
 
         # Create scratch network for inference
         scratch_network = network_factory()

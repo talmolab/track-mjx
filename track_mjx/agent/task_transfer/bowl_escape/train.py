@@ -56,7 +56,6 @@ from track_mjx.agent.task_transfer.bowl_escape.wrappers import (
     PriorDecoderHighLevelWrapper,
 )
 from track_mjx.agent.task_transfer.bowl_escape.scratch_networks import (
-    init_scratch_normalizer,
     make_scratch_ppo_networks,
 )
 from track_mjx.agent.task_transfer.bowl_escape.observation_utils import (

@@ -17,7 +17,7 @@ import flax
 import jax
 import jax.numpy as jnp
 from brax.training import distribution, networks
-from brax.training.acme import running_statistics, specs
+from brax.training.acme import running_statistics
 from flax import linen as nn
 
 from track_mjx.agent.ff_ppo.intention_network import Decoder
@@ -25,17 +25,6 @@ from track_mjx.agent.task_transfer.bowl_escape.observation_utils import (
     flatten_obs_dict,
     concat_flat_dict_obs,
 )
-
-
-@flax.struct.dataclass
-class ScratchNormalizerState:
-    """Running statistics state for scratch mode observations.
-
-    Holds separate RunningStatisticsState for proprioception and task observations.
-    """
-
-    proprioception: running_statistics.RunningStatisticsState
-    task_obs: running_statistics.RunningStatisticsState
 
 
 class ScratchPolicy(nn.Module):
@@ -85,11 +74,13 @@ class ScratchPolicyDecoder(nn.Module):
         policy_layers: Hidden layer sizes for the policy MLP.
         decoder_layers: Layer sizes for the decoder (including output).
         latent_size: Dimension of the latent intention space.
+        proprio_size: Size of proprioceptive observations (at end of flat obs).
     """
 
     policy_layers: Sequence[int]
     decoder_layers: Sequence[int]
     latent_size: int
+    proprio_size: int
 
     def setup(self):
         """Initialize policy and decoder submodules."""
@@ -99,23 +90,23 @@ class ScratchPolicyDecoder(nn.Module):
         )
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
 
-    def __call__(
-        self, task_obs: jnp.ndarray, proprio: jnp.ndarray
-    ) -> tuple[jnp.ndarray, dict]:
+    def __call__(self, flat_obs: jnp.ndarray) -> tuple[jnp.ndarray, dict]:
         """Forward pass through policy and decoder.
 
         Args:
-            task_obs: Flattened task observation array.
-            proprio: Flattened proprioceptive observation array.
+            flat_obs: Flattened normalized observation array where
+                proprioception is the last proprio_size elements.
 
         Returns:
             Tuple of (action_params, extras_dict) where action_params are
             the parameters for the action distribution and extras contains
             the latent intention.
         """
-        # Policy: concatenated observation -> latent
-        full_obs = jnp.concatenate([task_obs, proprio], axis=-1)
-        latent = self.policy(full_obs)
+        # Extract proprioception from end of flat observation
+        proprio = flat_obs[..., -self.proprio_size:]
+
+        # Policy: full observation -> latent
+        latent = self.policy(flat_obs)
 
         # Decoder: [latent, proprio] -> action params
         decoder_input = jnp.concatenate([latent, proprio], axis=-1)
@@ -146,52 +137,44 @@ def make_scratch_policy(
     Returns:
         FeedForwardNetwork with init and apply methods.
     """
+    total_obs_size = task_obs_size + proprio_size
+
     policy_module = ScratchPolicyDecoder(
         policy_layers=list(policy_hidden_layer_sizes),
         decoder_layers=list(decoder_hidden_layer_sizes) + [action_param_size],
         latent_size=latent_size,
+        proprio_size=proprio_size,
     )
 
     def apply(
-        processor_params: ScratchNormalizerState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs: Mapping[str, Any],
     ) -> tuple[jnp.ndarray, dict]:
         """Apply policy with observation normalization.
 
         Args:
-            processor_params: Running statistics for observation normalization.
+            processor_params: Brax's running statistics for flat observation.
             policy_params: Network parameters.
             obs: Dict observation with 'proprioception' and task keys.
 
         Returns:
             Tuple of (action_params, extras_dict).
         """
-        # Flatten dict observations
+        # Flatten dict observations to single array (task_obs, proprio)
         flat_obs = flatten_obs_dict(obs)
-        proprio = flat_obs["proprioception"]
+        flat_obs_array = concat_flat_dict_obs(flat_obs)
 
-        # Get task observations (all keys except proprioception)
-        other_keys = sorted(k for k in flat_obs.keys() if k != "proprioception")
-        task_obs = jnp.concatenate([flat_obs[k] for k in other_keys], axis=-1)
+        # Normalize using Brax's standard normalizer
+        normalized_obs = running_statistics.normalize(flat_obs_array, processor_params)
 
-        # Normalize each component
-        normalized_proprio = running_statistics.normalize(
-            proprio, processor_params.proprioception
-        )
-        normalized_task_obs = running_statistics.normalize(
-            task_obs, processor_params.task_obs
-        )
+        # Apply the policy module
+        return policy_module.apply(policy_params, normalized_obs)
 
-        return policy_module.apply(
-            policy_params, normalized_task_obs, normalized_proprio
-        )
-
-    dummy_task_obs = jnp.zeros((1, task_obs_size))
-    dummy_proprio = jnp.zeros((1, proprio_size))
+    dummy_obs = jnp.zeros((1, total_obs_size))
 
     return networks.FeedForwardNetwork(
-        init=lambda key: policy_module.init(key, dummy_task_obs, dummy_proprio),
+        init=lambda key: policy_module.init(key, dummy_obs),
         apply=apply,
     )
 
@@ -219,31 +202,18 @@ def make_scratch_value_network(
     )
 
     def apply(
-        processor_params: ScratchNormalizerState,
+        processor_params: running_statistics.RunningStatisticsState,
         value_params,
         obs: Mapping[str, Any],
     ):
         """Apply value network with dict observation normalization."""
-        # Flatten dict observations
+        # Flatten dict observations to single array
         flat_obs = flatten_obs_dict(obs)
-        proprio = flat_obs["proprioception"]
+        flat_obs_array = concat_flat_dict_obs(flat_obs)
 
-        # Get task observations (all keys except proprioception)
-        other_keys = sorted(k for k in flat_obs.keys() if k != "proprioception")
-        task_obs = jnp.concatenate([flat_obs[k] for k in other_keys], axis=-1)
+        # Normalize using Brax's standard normalizer
+        normalized_obs = running_statistics.normalize(flat_obs_array, processor_params)
 
-        # Normalize each component
-        normalized_proprio = running_statistics.normalize(
-            proprio, processor_params.proprioception
-        )
-        normalized_task_obs = running_statistics.normalize(
-            task_obs, processor_params.task_obs
-        )
-
-        # Concatenate for value network
-        normalized_obs = jnp.concatenate(
-            [normalized_task_obs, normalized_proprio], axis=-1
-        )
         return base_value_network.apply((), value_params, normalized_obs)
 
     return networks.FeedForwardNetwork(
@@ -316,34 +286,6 @@ def make_scratch_ppo_networks(
         policy_network=policy_network,
         value_network=value_network,
         parametric_action_distribution=parametric_action_distribution,
-    )
-
-
-def init_scratch_normalizer(
-    obs: Mapping[str, Any],
-) -> ScratchNormalizerState:
-    """Initialize normalizer state from an example observation dict.
-
-    Args:
-        obs: Example observation dict.
-
-    Returns:
-        Initialized ScratchNormalizerState.
-    """
-    flat_obs = flatten_obs_dict(obs)
-    proprio = flat_obs["proprioception"]
-
-    # Get task observations (all keys except proprioception)
-    other_keys = sorted(k for k in flat_obs.keys() if k != "proprioception")
-    task_obs = jnp.concatenate([flat_obs[k] for k in other_keys], axis=-1)
-
-    return ScratchNormalizerState(
-        proprioception=running_statistics.init_state(
-            specs.Array(proprio.shape[-1:], jnp.dtype("float32"))
-        ),
-        task_obs=running_statistics.init_state(
-            specs.Array(task_obs.shape[-1:], jnp.dtype("float32"))
-        ),
     )
 
 

@@ -69,6 +69,19 @@ def load_h5_metadata(h5_path: str) -> Dict:
     return metadata
 
 
+def list_h5_datasets(h5_path: str) -> list:
+    """List all dataset names in an H5 file.
+
+    Args:
+        h5_path: Path to H5 file.
+
+    Returns:
+        List of dataset names available in the file.
+    """
+    with h5py.File(h5_path, "r") as f:
+        return list(f.keys())
+
+
 def create_train_test_split(
     real_data: np.ndarray,
     fake_data: np.ndarray,

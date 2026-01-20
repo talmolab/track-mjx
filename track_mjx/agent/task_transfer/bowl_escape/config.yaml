@@ -46,6 +46,10 @@ train:
   learning_rate: 1e-4
   entropy_cost: 1e-4
   discounting: 0.99
+  clipping_epsilon: 0.2
+  gae_lambda: 0.95
+  max_grad_norm: 50.0
+  vf_loss_coefficient: 5.0
   reward_scaling: 1.0
   normalize_observations: true
   unroll_length: 20

@@ -313,6 +313,8 @@ def main(cfg: DictConfig) -> None:
     except Exception as e:
         logging.warning(f"Failed to cleanup run state: {e}")
 
+    wandb.finish()
+
 
 if __name__ == "__main__":
     main()

@@ -63,7 +63,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "pytest-watch",
-    "black[jupyter]",
+    "black[jupyter]>=26.1.0",
     "pydocstyle",
     "toml",
     "twine",

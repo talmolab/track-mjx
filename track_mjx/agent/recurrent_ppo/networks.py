@@ -31,7 +31,6 @@ from track_mjx.agent.observation_utils import (
     normalize_dict_obs,
 )
 
-
 # Type aliases
 RNNCellType = Literal["simple", "gru", "lstm"]
 HiddenState = Union[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]

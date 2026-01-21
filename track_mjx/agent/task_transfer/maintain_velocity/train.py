@@ -1,12 +1,12 @@
-"""Bowl escape task transfer training with Brax PPO.
+"""Maintain velocity task transfer training with Brax PPO.
 
 Two training modes:
 - decoder_only: Freeze decoder, train new encoder
 - prior_decoder: Freeze prior + decoder, train residual encoder
 
 Usage:
-    python -m track_mjx.agent.task_transfer.bowl_escape.train mode=decoder_only
-    python -m track_mjx.agent.task_transfer.bowl_escape.train mode=prior_decoder
+    python -m track_mjx.agent.task_transfer.maintain_velocity.train mode=decoder_only
+    python -m track_mjx.agent.task_transfer.maintain_velocity.train mode=prior_decoder
 """
 
 import os
@@ -31,25 +31,24 @@ from pathlib import Path
 import hydra
 import jax
 import wandb
-import mujoco
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as brax_ppo
 from brax.training.acme import running_statistics
-from mujoco import mjx
 from mujoco_playground import wrapper
 from omegaconf import DictConfig, OmegaConf
-from vnl_playground.tasks.rodent import bowl_escape
 
-from track_mjx.agent.task_transfer.bowl_escape.checkpoint_utils import (
+from vnl_playground.tasks.rodent import maintain_velocity
+
+from track_mjx.agent.task_transfer.maintain_velocity.checkpoint_utils import (
     load_prior_checkpoint,
     make_decoder_inference_fn,
     make_prior_inference_fn,
 )
-from track_mjx.agent.task_transfer.bowl_escape.logging import (
+from track_mjx.agent.task_transfer.maintain_velocity.logging import (
     rollout_logging_fn,
     wandb_progress,
 )
-from track_mjx.agent.task_transfer.bowl_escape.wrappers import (
+from track_mjx.agent.task_transfer.maintain_velocity.wrappers import (
     DecoderHighLevelWrapper,
     PriorDecoderHighLevelWrapper,
 )
@@ -74,7 +73,7 @@ def main(cfg: DictConfig) -> None:
     # Generate run ID and paths
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
     model_path = hydra.utils.to_absolute_path(
-        f"./model_checkpoints/bowl_escape_transfer_{cfg.mode}_{run_id}"
+        f"./model_checkpoints/maintain_velocity_transfer_{cfg.mode}_{run_id}"
     )
     Path(model_path).mkdir(parents=True, exist_ok=True)
     logging.info(f"Model checkpoint path: {model_path}")
@@ -95,39 +94,27 @@ def main(cfg: DictConfig) -> None:
     decoder_fn = make_decoder_inference_fn(decoder_params, normalizer_params, ckpt_cfg)
 
     # Create environment config
-    env_cfg = bowl_escape.default_config()
+    env_cfg = maintain_velocity.default_config()
     env_cfg.ctrl_dt = ckpt_cfg["env_config"]["ctrl_dt"]
     env_cfg.target_speed = cfg.env.target_speed
     # Set reward term weights
     env_cfg.reward_terms = {
-        "escape_x_upright": {"weight": cfg.env.reward_weights.escape_x_upright},
-        "speed": {"weight": cfg.env.reward_weights.speed},
+        "forward_velocity": {"weight": cfg.env.reward_weights.forward_velocity},
+        "lateral_velocity": {"weight": cfg.env.reward_weights.lateral_velocity},
+        "angular_velocity_z": {"weight": cfg.env.reward_weights.angular_velocity_z},
     }
     logging.info(
         f"Environment config: ctrl_dt={env_cfg.ctrl_dt}, target_speed={env_cfg.target_speed}"
     )
     logging.info(
-        f"Reward weights: escape_x_upright={cfg.env.reward_weights.escape_x_upright}, speed={cfg.env.reward_weights.speed}"
+        f"Reward weights: forward_velocity={cfg.env.reward_weights.forward_velocity}, "
+        f"lateral_velocity={cfg.env.reward_weights.lateral_velocity}, "
+        f"angular_velocity_z={cfg.env.reward_weights.angular_velocity_z}"
     )
 
     # Create training and eval environments with appropriate wrapper
-    # Wrappers handle both dict and flat observations natively
     def make_wrapped_env(is_eval: bool = False):
-        base_env = bowl_escape.BowlEscape(config=env_cfg)
-
-        # Modify heightfield friction if specified
-        if cfg.env.get("hfield_friction") is not None:
-            for i in range(base_env._mj_model.ngeom):
-                if base_env._mj_model.geom_type[i] == mujoco.mjtGeom.mjGEOM_HFIELD:
-                    base_env._mj_model.geom_friction[i, 0] = cfg.env.hfield_friction
-                    logging.info(
-                        f"Heightfield geom {i} friction set to: {cfg.env.hfield_friction}"
-                    )
-                    break
-            # Re-put model to MJX after modification
-            base_env._mjx_model = mjx.put_model(
-                base_env._mj_model, impl=env_cfg.mujoco_impl
-            )
+        base_env = maintain_velocity.MaintainVelocity(config=env_cfg)
 
         if cfg.mode == "decoder_only":
             return DecoderHighLevelWrapper(

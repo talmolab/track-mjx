@@ -6,14 +6,14 @@ This script generates qpos trajectories from:
 2. Encoder-decoder simulation rollouts
 3. Prior simulation rollouts with varying logvar values
 
-Output H5 contains:
+Output H5 always contains:
 - original_qpos: Reference data (num_clips, num_steps, 74)
 - encoder_decoder_qpos: Encoder-decoder rollouts
-- prior_qpos_logvar_-4: Prior rollouts with logvar=-4 (std~0.14)
-- prior_qpos_logvar_-2: Prior rollouts with logvar=-2 (std~0.37)
-- prior_qpos_logvar_0: Prior rollouts with logvar=0 (std=1.0)
-- prior_qpos_deterministic: Prior rollouts using mean (no sampling)
-- prior_qpos_predicted_logvar: Prior rollouts using network-predicted logvar
+- prior_deterministic_qpos: Prior rollouts using mean (no sampling)
+- prior_predicted_logvar_qpos: Prior rollouts using network-predicted logvar
+
+Additionally, for each logvar value specified via --logvars:
+- prior_logvar_X_qpos: Prior rollouts with the specified fixed logvar
 """
 
 import argparse
@@ -48,6 +48,36 @@ from track_mjx.agent.mlp_prior.prior_rollout_eval import (
     extract_prior_decoder_params,
 )
 from track_mjx.agent.ff_ppo import intention_network
+from track_mjx.agent.observation_utils import (
+    convert_flat_to_dict_normalizer,
+    DictRunningStatisticsState,
+)
+
+
+def get_observation_sizes(cfg: Any) -> Tuple[int, int, int]:
+    """Extract observation sizes from config, supporting both legacy and dict formats.
+
+    Args:
+        cfg: OmegaConf configuration.
+
+    Returns:
+        Tuple of (reference_obs_size, proprioceptive_obs_size, total_obs_size).
+    """
+    network_config = cfg.network_config
+
+    # Check for new dict-based format
+    if hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config:
+        obs_sizes = network_config.obs_sizes
+        reference_obs_size = int(obs_sizes["imitation_target"])
+        proprioceptive_obs_size = int(obs_sizes["proprioception"])
+        total_obs_size = reference_obs_size + proprioceptive_obs_size
+    else:
+        # Legacy flat format
+        total_obs_size = int(network_config.observation_size)
+        reference_obs_size = int(network_config.reference_obs_size)
+        proprioceptive_obs_size = total_obs_size - reference_obs_size
+
+    return reference_obs_size, proprioceptive_obs_size, total_obs_size
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,6 +121,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Override reference data path from checkpoint config",
+    )
+    parser.add_argument(
+        "--logvars",
+        type=float,
+        nargs="*",
+        default=[-4.0, -2.0, 0.0],
+        help="Logvar values for non-deterministic prior rollouts (default: -4 -2 0)",
     )
 
     return parser.parse_args()
@@ -145,12 +182,15 @@ def load_mlp_prior_checkpoint(
     return cfg, policy
 
 
-def fix_config_paths(cfg: Any, data_path_override: str | None = None) -> Any:
+def fix_config_paths(
+    cfg: Any, data_path_override: str | None = None, batch_size: int = 1
+) -> Any:
     """Fix paths in config that may reference /tmp or other locations.
 
     Args:
         cfg: OmegaConf configuration.
         data_path_override: Optional override for reference_data_path.
+        batch_size: Batch size for computing naconmax (nconmax * batch_size).
 
     Returns:
         Updated configuration.
@@ -181,6 +221,14 @@ def fix_config_paths(cfg: Any, data_path_override: str | None = None) -> Any:
             cfg.env_config,
             "reference_data_path",
             fix_path(cfg.env_config.reference_data_path),
+        )
+
+    # Compute naconmax for warp backend (naconmax = nconmax * batch_size)
+    # Same pattern as train.py and train_prior.py
+    # Only compute if naconmax is not already set (legacy support)
+    if hasattr(cfg.env_config, "nconmax") and not hasattr(cfg.env_config, "naconmax"):
+        OmegaConf.update(
+            cfg.env_config, "naconmax", cfg.env_config.nconmax * batch_size
         )
 
     OmegaConf.set_struct(cfg.env_config, True)
@@ -228,6 +276,13 @@ def create_encoder_decoder_policy(
     encoder_params = network_params["params"]["encoder"]
     decoder_params = network_params["params"]["decoder"]
 
+    # Convert legacy flat normalizer to dict normalizer if needed
+    if not isinstance(normalizer_params, DictRunningStatisticsState):
+        reference_obs_size, _, _ = get_observation_sizes(cfg)
+        normalizer_params = convert_flat_to_dict_normalizer(
+            normalizer_params, reference_obs_size
+        )
+
     return prior_networks.make_encoder_decoder_inference_fn(
         encoder_params=encoder_params,
         decoder_params=decoder_params,
@@ -236,10 +291,6 @@ def create_encoder_decoder_policy(
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         latent_size=cfg.network_config.intention_size,
         action_size=cfg.network_config.action_size,
-        reference_obs_size=cfg.network_config.reference_obs_size,
-        proprioceptive_obs_size=(
-            cfg.network_config.observation_size - cfg.network_config.reference_obs_size
-        ),
         deterministic=True,
     )
 
@@ -265,17 +316,22 @@ def create_prior_policy_fn(
         policy_params
     )
 
-    proprioceptive_obs_size = (
-        cfg.network_config.observation_size - cfg.network_config.reference_obs_size
-    )
+    _, proprioceptive_obs_size, _ = get_observation_sizes(cfg)
 
-    # Create proprioceptive-only normalizer
-    proprio_normalizer_params = running_statistics.RunningStatisticsState(
-        count=normalizer_params.count,
-        mean=normalizer_params.mean[-proprioceptive_obs_size:],
-        summed_variance=normalizer_params.summed_variance[-proprioceptive_obs_size:],
-        std=normalizer_params.std[-proprioceptive_obs_size:],
-    )
+    # Get proprioceptive-only normalizer
+    if isinstance(normalizer_params, DictRunningStatisticsState):
+        # Dict normalizer - proprioception is already separate
+        proprio_normalizer_params = normalizer_params.proprioception
+    else:
+        # Legacy flat normalizer - slice to get proprioceptive portion
+        proprio_normalizer_params = running_statistics.RunningStatisticsState(
+            count=normalizer_params.count,
+            mean=normalizer_params.mean[-proprioceptive_obs_size:],
+            summed_variance=normalizer_params.summed_variance[
+                -proprioceptive_obs_size:
+            ],
+            std=normalizer_params.std[-proprioceptive_obs_size:],
+        )
 
     prior_hidden_layer_sizes = tuple(
         cfg.network_config.get(
@@ -303,6 +359,7 @@ def create_batched_rollout_fn(
     policy_fn: Callable,
     num_steps: int,
     proprioceptive_obs_size: int,
+    reference_obs_size: int,
     is_prior_policy: bool,
 ) -> Callable:
     """Create a batched rollout function for multiple clips.
@@ -312,6 +369,7 @@ def create_batched_rollout_fn(
         policy_fn: Policy function (obs, rng) -> (action, extras).
         num_steps: Number of physics steps per rollout.
         proprioceptive_obs_size: Size of proprioceptive observations.
+        reference_obs_size: Size of reference/imitation_target observations.
         is_prior_policy: If True, pass only proprioceptive obs to policy.
 
     Returns:
@@ -348,8 +406,12 @@ def create_batched_rollout_fn(
                 # Prior policy uses only proprioceptive observations
                 obs = state.obs[..., -proprioceptive_obs_size:]
             else:
-                # Encoder-decoder uses full observations
-                obs = state.obs
+                # Encoder-decoder expects dict observations
+                # Convert flat obs to dict format
+                obs = {
+                    "imitation_target": state.obs[..., :reference_obs_size],
+                    "proprioception": state.obs[..., reference_obs_size:],
+                }
 
             # Get action from policy
             action, _ = policy_fn(obs, action_key)
@@ -386,6 +448,7 @@ def collect_rollouts(
     num_steps: int,
     batch_size: int,
     proprioceptive_obs_size: int,
+    reference_obs_size: int,
     is_prior_policy: bool,
     rng_key: jax.Array,
     desc: str = "Collecting rollouts",
@@ -400,6 +463,7 @@ def collect_rollouts(
         num_steps: Steps per rollout.
         batch_size: Clips per batch.
         proprioceptive_obs_size: Size of proprioceptive observations.
+        reference_obs_size: Size of reference/imitation_target observations.
         is_prior_policy: If True, pass only proprioceptive obs to policy.
         rng_key: Random key.
         desc: Progress bar description.
@@ -408,7 +472,12 @@ def collect_rollouts(
         qpos array of shape (num_clips, num_steps, qpos_dim).
     """
     batched_rollout = create_batched_rollout_fn(
-        env, policy_fn, num_steps, proprioceptive_obs_size, is_prior_policy
+        env,
+        policy_fn,
+        num_steps,
+        proprioceptive_obs_size,
+        reference_obs_size,
+        is_prior_policy,
     )
 
     all_qpos = []
@@ -463,6 +532,7 @@ def save_results(
     checkpoint_path: str,
     num_clips: int,
     num_steps: int,
+    logvars: Sequence[float],
 ) -> None:
     """Save all rollout data to H5 file.
 
@@ -473,6 +543,7 @@ def save_results(
         checkpoint_path: Path to source checkpoint.
         num_clips: Number of clips.
         num_steps: Steps per clip.
+        logvars: List of logvar values used for non-deterministic rollouts.
     """
     # Create output directory if needed
     output_dir = Path(output_path).parent
@@ -492,7 +563,7 @@ def save_results(
         f.attrs["num_steps"] = num_steps
         f.attrs["qpos_dim"] = original_qpos.shape[-1]
         f.attrs["checkpoint_path"] = checkpoint_path
-        f.attrs["logvars"] = [-4.0, -2.0, 0.0]
+        f.attrs["logvars"] = list(logvars)
 
     print(f"Saved results to {output_path}")
 
@@ -512,12 +583,18 @@ def main():
     )
 
     # Fix paths in config
-    cfg = fix_config_paths(cfg, args.data_path_override)
+    cfg = fix_config_paths(cfg, args.data_path_override, args.batch_size)
 
-    print(f"  Observation size: {cfg.network_config.observation_size}")
+    # Extract observation sizes (supports both legacy and dict formats)
+    reference_obs_size, proprioceptive_obs_size, total_obs_size = get_observation_sizes(
+        cfg
+    )
+
+    print(f"  Observation size: {total_obs_size}")
     print(f"  Action size: {cfg.network_config.action_size}")
     print(f"  Intention size: {cfg.network_config.intention_size}")
-    print(f"  Reference obs size: {cfg.network_config.reference_obs_size}")
+    print(f"  Reference obs size: {reference_obs_size}")
+    print(f"  Proprioceptive obs size: {proprioceptive_obs_size}")
 
     # Create environment
     print("\nCreating environment...")
@@ -526,9 +603,6 @@ def main():
     # reference_clips.qpos is already (num_clips, num_steps, qpos_dim)
     num_clips = reference_clips.qpos.shape[0]
     num_steps = reference_clips.qpos.shape[1]
-    proprioceptive_obs_size = (
-        cfg.network_config.observation_size - cfg.network_config.reference_obs_size
-    )
 
     print(f"  Number of clips: {num_clips}")
     print(f"  Steps per clip: {num_steps}")
@@ -546,7 +620,7 @@ def main():
     original_qpos = get_original_qpos(reference_clips)
     print(f"  Shape: {original_qpos.shape}")
 
-    # 2. Encoder-decoder rollouts
+    # 2. Encoder-decoder rollouts (always collected)
     print("\n" + "=" * 60)
     print("Collecting encoder-decoder rollouts...")
     print("=" * 60)
@@ -561,6 +635,7 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=False,
         rng_key=key,
         desc="Encoder-decoder",
@@ -568,79 +643,7 @@ def main():
     print(f"  Completed in {time.time() - t_start:.1f}s")
     print(f"  Shape: {results['encoder_decoder'].shape}")
 
-    # 3. Prior rollouts with logvar=-4
-    print("\n" + "=" * 60)
-    print("Collecting prior rollouts (logvar=-4, std~0.14)...")
-    print("=" * 60)
-    prior_policy_lv4 = create_prior_policy_fn(
-        policy_params, cfg, fixed_logvar=-4.0, deterministic=False
-    )
-    rng, key = random.split(rng)
-    t_start = time.time()
-    results["prior_logvar_-4"] = collect_rollouts(
-        env,
-        reference_clips,
-        prior_policy_lv4,
-        num_clips,
-        num_steps,
-        args.batch_size,
-        proprioceptive_obs_size,
-        is_prior_policy=True,
-        rng_key=key,
-        desc="Prior (logvar=-4)",
-    )
-    print(f"  Completed in {time.time() - t_start:.1f}s")
-    print(f"  Shape: {results['prior_logvar_-4'].shape}")
-
-    # 4. Prior rollouts with logvar=-2
-    print("\n" + "=" * 60)
-    print("Collecting prior rollouts (logvar=-2, std~0.37)...")
-    print("=" * 60)
-    prior_policy_lv2 = create_prior_policy_fn(
-        policy_params, cfg, fixed_logvar=-2.0, deterministic=False
-    )
-    rng, key = random.split(rng)
-    t_start = time.time()
-    results["prior_logvar_-2"] = collect_rollouts(
-        env,
-        reference_clips,
-        prior_policy_lv2,
-        num_clips,
-        num_steps,
-        args.batch_size,
-        proprioceptive_obs_size,
-        is_prior_policy=True,
-        rng_key=key,
-        desc="Prior (logvar=-2)",
-    )
-    print(f"  Completed in {time.time() - t_start:.1f}s")
-    print(f"  Shape: {results['prior_logvar_-2'].shape}")
-
-    # 5. Prior rollouts with logvar=0
-    print("\n" + "=" * 60)
-    print("Collecting prior rollouts (logvar=0, std=1.0)...")
-    print("=" * 60)
-    prior_policy_lv0 = create_prior_policy_fn(
-        policy_params, cfg, fixed_logvar=0.0, deterministic=False
-    )
-    rng, key = random.split(rng)
-    t_start = time.time()
-    results["prior_logvar_0"] = collect_rollouts(
-        env,
-        reference_clips,
-        prior_policy_lv0,
-        num_clips,
-        num_steps,
-        args.batch_size,
-        proprioceptive_obs_size,
-        is_prior_policy=True,
-        rng_key=key,
-        desc="Prior (logvar=0)",
-    )
-    print(f"  Completed in {time.time() - t_start:.1f}s")
-    print(f"  Shape: {results['prior_logvar_0'].shape}")
-
-    # 6. Prior rollouts deterministic
+    # 3. Prior rollouts deterministic (always collected)
     print("\n" + "=" * 60)
     print("Collecting prior rollouts (deterministic, mean only)...")
     print("=" * 60)
@@ -657,6 +660,7 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=True,
         rng_key=key,
         desc="Prior (deterministic)",
@@ -664,7 +668,7 @@ def main():
     print(f"  Completed in {time.time() - t_start:.1f}s")
     print(f"  Shape: {results['prior_deterministic'].shape}")
 
-    # 7. Prior rollouts with predicted logvar
+    # 4. Prior rollouts with predicted logvar (always collected)
     print("\n" + "=" * 60)
     print("Collecting prior rollouts (predicted logvar, per-dimension)...")
     print("=" * 60)
@@ -681,12 +685,46 @@ def main():
         num_steps,
         args.batch_size,
         proprioceptive_obs_size,
+        reference_obs_size,
         is_prior_policy=True,
         rng_key=key,
         desc="Prior (predicted logvar)",
     )
     print(f"  Completed in {time.time() - t_start:.1f}s")
     print(f"  Shape: {results['prior_predicted_logvar'].shape}")
+
+    # 5. Prior rollouts with specified fixed logvar values (configurable)
+    for logvar in args.logvars:
+        std = np.exp(logvar / 2)
+        print("\n" + "=" * 60)
+        print(f"Collecting prior rollouts (logvar={logvar}, std~{std:.2f})...")
+        print("=" * 60)
+        prior_policy = create_prior_policy_fn(
+            policy_params, cfg, fixed_logvar=logvar, deterministic=False
+        )
+        rng, key = random.split(rng)
+        t_start = time.time()
+        # Format key name: use underscore for negative sign to avoid issues
+        key_name = (
+            f"prior_logvar_{int(logvar)}"
+            if logvar == int(logvar)
+            else f"prior_logvar_{logvar}"
+        )
+        results[key_name] = collect_rollouts(
+            env,
+            reference_clips,
+            prior_policy,
+            num_clips,
+            num_steps,
+            args.batch_size,
+            proprioceptive_obs_size,
+            reference_obs_size,
+            is_prior_policy=True,
+            rng_key=key,
+            desc=f"Prior (logvar={logvar})",
+        )
+        print(f"  Completed in {time.time() - t_start:.1f}s")
+        print(f"  Shape: {results[key_name].shape}")
 
     # Save results
     print("\n" + "=" * 60)
@@ -699,6 +737,7 @@ def main():
         args.checkpoint_path,
         num_clips,
         num_steps,
+        args.logvars,
     )
 
     # Summary

@@ -1,12 +1,12 @@
-# Bowl Escape Task Transfer Training Config
+# Maintain Velocity Task Transfer Training Config
 #
 # Two training modes:
 #   decoder_only: Freeze decoder, train new encoder
 #   prior_decoder: Freeze prior + decoder, train residual encoder
 #
 # Usage:
-#   python -m track_mjx.agent.task_transfer.bowl_escape.train mode=decoder_only
-#   python -m track_mjx.agent.task_transfer.bowl_escape.train mode=prior_decoder
+#   python -m track_mjx.agent.task_transfer.maintain_velocity.train mode=decoder_only
+#   python -m track_mjx.agent.task_transfer.maintain_velocity.train mode=prior_decoder
 
 defaults:
   - _self_
@@ -21,13 +21,10 @@ checkpoint:
 
 # Mode-specific settings
 decoder_only:
-  # No extra config needed for decoder_only mode
   _placeholder: true
 
 prior_decoder:
-  # Whether to use prior mean only (no noise)
   deterministic_prior: true
-  # Fixed log-variance for noise sampling (used when deterministic_prior=false)
   noise_logvar: -2.0
 
 # Network architecture
@@ -37,7 +34,7 @@ network:
 
 # Training parameters
 train:
-  num_timesteps: 2_000_000_000  # 300M
+  num_timesteps: 2_000_000_000
   episode_length: 2000
   num_envs: 4096
   batch_size: 1024
@@ -59,18 +56,17 @@ train:
 
 # Environment settings
 env:
-  target_speed: 1.0
-  # Sliding friction for bowl heightfield (MuJoCo default is 1.0, rodent paws have 1.5)
-  hfield_friction: 1.0
-  # Reward term weights (from vnl_playground bowl_escape task)
+  target_speed: 0.5
+  # Reward term weights
   reward_weights:
-    escape_x_upright: 1.0
-    speed: 1.0
+    forward_velocity: 1.0
+    lateral_velocity: 0.5
+    angular_velocity_z: 0.1
 
 # Logging settings
 logging:
   project: "vnl-playground"
-  group_name: "bowl_escape_transfer"
-  exp_name: "bowl_escape_transfer"
+  group_name: "maintain_velocity_transfer"
+  exp_name: "maintain_velocity_transfer"
   render_camera: "close_profile-rodent"
   render_fps: 50

@@ -58,7 +58,7 @@ def main(cfg: DictConfig) -> None:
 
     # Prepare config BEFORE load_from_run_state so the config hash is consistent
     # between discovery and saving (prepare_config modifies cfg by adding paths)
-    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
+    cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
 
     # Get environment name from config
     env_name = cfg.env_config.env_name

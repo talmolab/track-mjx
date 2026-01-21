@@ -106,9 +106,7 @@ def prepare_config(
         logging.info("Using fruitfly walker")
         walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
         arena_xml_path = str(fruitfly_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path(
-            "data/fruitfly/fly_reference_clip.h5"
-        )
+        reference_data_path = _resolve_data_path("data/fruitfly/fly_reference_clip.h5")
     elif walker_name == "celegans":
         logging.info("Using celegans walker")
         raise NotImplementedError("Celegans walker not implemented yet.")

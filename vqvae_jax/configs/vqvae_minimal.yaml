@@ -91,6 +91,7 @@ render_config:
   render_camera_name: close_profile
   render_fps: 50
   render_interval: 5            # Render more frequently for debugging
+  render_per_code_videos: true # Render individual videos per code (slow)
 
 # =============================================================================
 # Network Architecture - VQ-VAE
@@ -104,15 +105,15 @@ network_config:
   critic_layer_sizes: [512, 512, 256, 256]   # Value function
 
   # Latent space settings
-  intention_size: 32            # Smaller latent for minimal test
-  latent_dim: 32                # Same as intention_size
+  intention_size: 16            # Smaller latent for minimal test
+  latent_dim: 16                # Same as intention_size
 
   # VQ-VAE specific settings
   num_codes: 8                 # Smaller codebook for minimal test
-  commitment_cost: 0.1         # Beta in paper (standard value)
+  commitment_cost: 1.0         # Beta in paper (increased for tighter coupling)
   codebook_loss_weight: 1.0     # Weight for codebook loss
   codebook_init_scale: 0.1      # Initialization scale
-  smoothness_cost: 0.2          # Weight for temporal smoothness loss on z_e
+  smoothness_cost: 0.5          # Weight for temporal smoothness loss on z_e
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false

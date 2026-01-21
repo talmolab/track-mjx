@@ -663,6 +663,103 @@ def render_grid_video(
     return str(output_path)
 
 
+def render_per_code_videos(
+    env: Any,
+    rollout_states: Sequence[Any],
+    indices: np.ndarray,
+    output_dir: str | Path,
+    num_codes: int,
+    camera: str | None = None,
+    width: int = 640,
+    height: int = 480,
+    fps: int = 50,
+    min_frames_per_code: int = 5,
+    code_bar_height: int = 40,
+) -> dict[int, str]:
+    """Render separate videos for each code, showing only frames where that code was active.
+
+    This helps visualize what behavior each discrete code corresponds to by showing
+    all the frames where that particular code was selected by the policy.
+
+    Args:
+        env: Environment with render method.
+        rollout_states: Sequence of environment states from the rollout.
+        indices: Array of code indices for each frame, shape [num_frames].
+        output_dir: Directory to save per-code videos.
+        num_codes: Total number of codes in the codebook.
+        camera: Camera name for rendering.
+        width: Video width.
+        height: Video height.
+        fps: Frames per second.
+        min_frames_per_code: Minimum frames required to create a video for a code.
+        code_bar_height: Height of the code indicator bar.
+
+    Returns:
+        Dict mapping code index to video path for codes that had enough frames.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Render all frames first
+    logging.info(f"  Rendering {len(rollout_states)} frames for per-code videos...")
+    all_frames = env.render(rollout_states, camera=camera, height=height, width=width)
+
+    # Get colormap
+    code_colors = get_nature_colormap(num_codes)
+
+    # Group frame indices by code
+    code_to_frame_indices: dict[int, list[int]] = {i: [] for i in range(num_codes)}
+    for frame_idx, code_idx in enumerate(indices):
+        code_to_frame_indices[int(code_idx)].append(frame_idx)
+
+    # Create video for each code that has enough frames
+    output_paths: dict[int, str] = {}
+    codes_used = [code for code, frames in code_to_frame_indices.items() if len(frames) >= min_frames_per_code]
+
+    logging.info(f"  Creating videos for {len(codes_used)} codes with >= {min_frames_per_code} frames")
+
+    for code_idx in codes_used:
+        frame_indices = code_to_frame_indices[code_idx]
+        code_color = code_colors[code_idx]
+
+        # Collect frames for this code
+        code_frames = []
+        for i, frame_idx in enumerate(frame_indices):
+            if frame_idx < len(all_frames):
+                frame = all_frames[frame_idx].copy()
+
+                # Add code label overlay
+                frame = add_text_overlay(
+                    frame,
+                    f"Code {code_idx} | Frame {frame_idx}",
+                    position=(10, 10),
+                    font_size=16,
+                    bg_color=(int(code_color[0]), int(code_color[1]), int(code_color[2]), 200),
+                    text_color=(255, 255, 255) if sum(code_color) < 384 else (0, 0, 0),
+                )
+
+                # Add progress indicator bar at bottom
+                bar = np.zeros((code_bar_height, width, 3), dtype=np.uint8)
+                bar[:] = code_color
+                # Add progress marker
+                progress = int((i / max(len(frame_indices) - 1, 1)) * width)
+                bar[:, max(0, progress - 2):min(width, progress + 2)] = [255, 255, 255]
+
+                # Combine frame and bar
+                combined = np.vstack([frame, bar])
+                code_frames.append(combined)
+
+        if code_frames:
+            video_path = output_dir / f"code_{code_idx}.mp4"
+            with imageio.get_writer(str(video_path), fps=fps) as writer:
+                for frame in code_frames:
+                    writer.append_data(frame)
+            output_paths[code_idx] = str(video_path)
+            logging.info(f"    Code {code_idx}: {len(code_frames)} frames -> {video_path.name}")
+
+    return output_paths
+
+
 def render_comparison_video(
     env: Any,
     rollout_states: Sequence[Any],

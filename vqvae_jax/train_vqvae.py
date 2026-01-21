@@ -45,7 +45,7 @@ from track_mjx.agent.domain_randomization import domain_randomization_maker
 # Import VQ-VAE modules from scratch
 from vq_ppo_networks import make_vq_intention_ppo_networks
 from vq_ppo import train as vq_train
-from analysis.rendering import render_rollout_to_video, get_nature_colormap
+from analysis.rendering import render_rollout_to_video, render_per_code_videos, get_nature_colormap
 
 
 def _setup_environment() -> None:
@@ -197,6 +197,78 @@ def vq_rollout_logging_fn(
                 f"latents/z_e_std{i}": float(jnp.std(z_e[..., i])),
             }, commit=False)
 
+        # PCA visualization of latent space: z_e and codebook vectors
+        if indices_array is not None and len(indices_array) > 0:
+            from sklearn.decomposition import PCA
+
+            # Get codebook from params (params is tuple of (normalizer_params, policy_params))
+            policy_params = params[1]
+            codebook = np.array(policy_params["params"]["quantizer"]["embeddings"])
+            z_e_np = np.array(z_e)
+
+            # Fit PCA on combined z_e and codebook for consistent projection
+            combined = np.vstack([z_e_np, codebook])
+            pca = PCA(n_components=2)
+            combined_2d = pca.fit_transform(combined)
+
+            # Split back into z_e and codebook projections
+            z_e_2d = combined_2d[:len(z_e_np)]
+            codebook_2d = combined_2d[len(z_e_np):]
+
+            # Create PCA visualization
+            fig, ax = plt.subplots(figsize=(10, 8))
+
+            # Plot z_e points colored by their assigned code
+            colors = get_nature_colormap(num_codes) / 255.0
+            for code_idx in range(num_codes):
+                mask = indices_array == code_idx
+                if np.any(mask):
+                    ax.scatter(
+                        z_e_2d[mask, 0],
+                        z_e_2d[mask, 1],
+                        c=[colors[code_idx]],
+                        label=f"z_e → code {code_idx}",
+                        alpha=0.6,
+                        s=30,
+                    )
+
+            # Plot codebook vectors as larger stars
+            for code_idx in range(num_codes):
+                ax.scatter(
+                    codebook_2d[code_idx, 0],
+                    codebook_2d[code_idx, 1],
+                    c=[colors[code_idx]],
+                    marker="*",
+                    s=400,
+                    edgecolors="black",
+                    linewidths=1.5,
+                    zorder=10,
+                )
+
+            # Compute mean distance from z_e to their assigned codebook vectors
+            z_e_to_codebook_dist = np.mean([
+                np.linalg.norm(z_e_np[i] - codebook[indices_array[i]])
+                for i in range(len(z_e_np))
+            ])
+
+            ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.1%} var)")
+            ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.1%} var)")
+            ax.set_title(
+                f"Latent Space PCA: z_e (dots) and Codebook (stars)\n"
+                f"Mean z_e-to-codebook distance: {z_e_to_codebook_dist:.3f}"
+            )
+            ax.legend(loc="upper right", fontsize=8)
+            ax.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            wandb.log({"vq/latent_pca": wandb.Image(fig)}, commit=False)
+            plt.close(fig)
+
+            # Also log the mean distance as a metric
+            wandb.log({
+                "vq/eval_z_e_to_codebook_dist": float(z_e_to_codebook_dist),
+            }, commit=False)
+
     # Render video with code overlay
     if render_video:
         import mujoco
@@ -222,6 +294,35 @@ def vq_rollout_logging_fn(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
                 commit=False,
             )
+
+            # Render per-code videos showing frames grouped by code (if enabled)
+            render_per_code = cfg.render_config.get("render_per_code_videos", False)
+            if render_per_code and indices_array is not None and len(indices_array) > 0:
+                per_code_dir = f"{model_path}/per_code_videos/{current_step}"
+                try:
+                    per_code_paths = render_per_code_videos(
+                        env=env,
+                        rollout_states=rollout_states,
+                        indices=indices_array,
+                        output_dir=per_code_dir,
+                        num_codes=num_codes,
+                        camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
+                        width=640,
+                        height=480,
+                        fps=render_fps,
+                        min_frames_per_code=5,
+                    )
+
+                    # Log each per-code video to wandb
+                    for code_idx, video_path in per_code_paths.items():
+                        wandb.log(
+                            {f"videos/per_code/code_{code_idx}": wandb.Video(video_path, format="mp4")},
+                            commit=False,
+                        )
+                    logging.info(f"Logged {len(per_code_paths)} per-code videos to wandb")
+                except Exception as e:
+                    logging.warning(f"Failed to render per-code videos: {e}")
+
         except mujoco.FatalError as e:
             logging.warning(f"Rendering video failed with MuJoCo error: {e}")
         except Exception as e:

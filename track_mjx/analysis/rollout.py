@@ -55,7 +55,7 @@ def create_rollout_generator(
     log_activations: bool = False,
     log_metrics: bool = False,
     log_sensor_data: bool = False,
-) -> Callable[[int, int], dict[str, Any]]:
+) -> Callable[[int | None, int], dict[str, Any]]:
     """Create a JIT-compatible rollout generator using jax.lax.scan.
 
     Uses jax.lax.scan for efficient JIT compilation and batching with jax.vmap.
@@ -76,7 +76,7 @@ def create_rollout_generator(
 
     Returns:
         A generate_rollout function with signature:
-            generate_rollout(clip_idx, seed=42) -> dict
+            generate_rollout(clip_idx=None, seed=42) -> dict
 
         The returned dict contains JAX arrays (not Python lists):
             - qposes_ref: Reference poses, shape [num_steps, qpos_dim]
@@ -153,11 +153,11 @@ def create_rollout_generator(
         else:
             return (next_state, next_rng), step_output
 
-    def generate_rollout(clip_idx: int, seed: int = 42) -> dict[str, Any]:
+    def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.
 
         Args:
-            clip_idx: Reference clip index to track.
+            clip_idx: Reference clip index to track. If None, samples randomly.
             seed: Random seed for JAX PRNG initialization.
 
         Returns:
@@ -166,7 +166,7 @@ def create_rollout_generator(
         rollout_key = jax.random.PRNGKey(seed)
         rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
-        # Reset environment
+        # Reset environment (clip_idx=None lets the environment sample randomly)
         initial_state = env.reset(reset_rng, clip_idx=clip_idx, start_frame=0)
 
         # Run rollout using scan

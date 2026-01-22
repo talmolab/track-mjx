@@ -76,3 +76,6 @@ logging:
   exp_name: "maintain_velocity_transfer"
   render_camera: "close_profile-rodent"
   render_fps: 50
+  render_height: 480
+  render_width: 640
+  render_every: 1  # Render video every N evaluation steps (always renders first eval)

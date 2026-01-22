@@ -266,6 +266,8 @@ def main(cfg: DictConfig) -> None:
         jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     # Define policy_params_fn for logging during training
+    eval_counter = [0]  # Mutable container to track evaluation count
+
     def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
         del make_policy  # Unused, use our custom logging inference
 
@@ -280,7 +282,12 @@ def main(cfg: DictConfig) -> None:
             episode_length=cfg.train.episode_length,
             render_camera=cfg.logging.render_camera,
             render_fps=cfg.logging.render_fps,
+            render_height=cfg.logging.render_height,
+            render_width=cfg.logging.render_width,
+            render_every=cfg.logging.render_every,
+            eval_count=eval_counter[0],
         )
+        eval_counter[0] += 1
 
     # Build training config
     training_params = {

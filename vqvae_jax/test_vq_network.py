@@ -13,6 +13,7 @@ import pytest
 
 # Add scratch directory to path for imports
 import sys
+
 sys.path.insert(0, "/home/jovyan/vast/kaiwen/track-mjx/scratch/vqvae_jax")
 
 from vq_intention_network import (
@@ -25,6 +26,7 @@ from vq_intention_network import (
 from vq_losses import (
     compute_vq_loss,
     compute_codebook_metrics,
+    compute_ce_stickiness_cost,
     compute_vq_ppo_loss,
     PPONetworkParams,
 )
@@ -114,7 +116,7 @@ class TestVectorQuantizer:
 
         def loss_fn(z_e_input):
             z_q_st, _, _ = quantizer.apply(params, z_e_input)
-            return jnp.mean(z_q_st ** 2)
+            return jnp.mean(z_q_st**2)
 
         # Gradient should flow through straight-through estimator
         grad = jax.grad(loss_fn)(z_e)
@@ -142,7 +144,9 @@ class TestVectorQuantizer:
         assert codebook_grad is not None
         assert codebook_grad.shape == (512, 64)
         # Only used codes should have non-zero gradients
-        assert jnp.any(codebook_grad != 0), "Some codebook entries should have gradients"
+        assert jnp.any(
+            codebook_grad != 0
+        ), "Some codebook entries should have gradients"
 
 
 class TestDecoder:
@@ -217,7 +221,7 @@ class TestVQIntentionNetwork:
 
         def loss_fn(params):
             action, z_e, indices = network.apply(params, obs, key)
-            return jnp.mean(action ** 2)
+            return jnp.mean(action**2)
 
         grad = jax.grad(loss_fn)(params)
         # Check encoder gradients exist
@@ -270,6 +274,217 @@ class TestVQLoss:
         grad_z_e, grad_z_q = jax.grad(codebook_fn, argnums=(0, 1))(z_e, z_q)
         assert jnp.allclose(grad_z_e, 0.0), "z_e should NOT have gradients"
         assert not jnp.allclose(grad_z_q, 0.0), "z_q should have gradients"
+
+
+class TestCEStickinessCost:
+    """Test cross-entropy stickiness cost computation."""
+
+    def test_output_shape(self):
+        """Verify CE stickiness loss returns scalar."""
+        T, B, D, K = 10, 4, 64, 8
+        z_e = jnp.ones((T, B, D))
+        indices = jax.random.randint(jax.random.PRNGKey(0), (T, B), 0, K)
+        codebook = jnp.ones((K, D))
+        valid_mask = jnp.ones((T - 1, B))
+
+        loss, metrics = compute_ce_stickiness_cost(
+            z_e=z_e,
+            indices=indices,
+            codebook=codebook,
+            valid_mask=valid_mask,
+            temperature=1.0,
+        )
+
+        assert loss.shape == (), f"Expected scalar, got {loss.shape}"
+        assert "ce_stickiness_loss" in metrics
+        assert "prob_of_prev_code" in metrics
+
+    def test_same_code_low_loss(self):
+        """When z_e is always close to same code, loss should be low."""
+        T, B, D, K = 10, 4, 64, 8
+        key = jax.random.PRNGKey(42)
+
+        # Create codebook with well-separated codes
+        codebook = jnp.eye(K, D) * 10.0  # Each code is far from others
+
+        # All timesteps have z_e very close to code 0
+        z_e = jnp.broadcast_to(codebook[0:1] + 0.01, (T, B, D))
+        indices = jnp.zeros((T, B), dtype=jnp.int32)  # All code 0
+        valid_mask = jnp.ones((T - 1, B))
+
+        loss, metrics = compute_ce_stickiness_cost(
+            z_e=z_e,
+            indices=indices,
+            codebook=codebook,
+            valid_mask=valid_mask,
+            temperature=1.0,
+        )
+
+        # Loss should be low (high prob of staying with same code)
+        assert loss < 1.0, f"Expected low loss when staying at same code, got {loss}"
+        # prob_of_prev_code should be high
+        assert (
+            metrics["prob_of_prev_code"] > 0.5
+        ), f"Expected high prob, got {metrics['prob_of_prev_code']}"
+
+    def test_code_switch_high_loss(self):
+        """When z_e switches to different code, loss should be high."""
+        T, B, D, K = 10, 4, 64, 8
+
+        # Create codebook with well-separated codes
+        codebook = jnp.eye(K, D) * 10.0
+
+        # Create z_e that switches from code 0 to code 1
+        z_e_list = []
+        for t in range(T):
+            if t < T // 2:
+                z_e_list.append(jnp.broadcast_to(codebook[0:1] + 0.01, (1, B, D)))
+            else:
+                z_e_list.append(jnp.broadcast_to(codebook[1:2] + 0.01, (1, B, D)))
+        z_e = jnp.concatenate(z_e_list, axis=0)
+
+        # Indices reflect that prev timestep was code 0 until switch
+        indices = jnp.zeros((T, B), dtype=jnp.int32)
+        indices = indices.at[T // 2 :].set(1)
+
+        valid_mask = jnp.ones((T - 1, B))
+
+        loss, metrics = compute_ce_stickiness_cost(
+            z_e=z_e,
+            indices=indices,
+            codebook=codebook,
+            valid_mask=valid_mask,
+            temperature=1.0,
+        )
+
+        # Loss at the switch point should be high
+        # Overall loss is averaged, so it will be moderate
+        assert loss > 0.1, f"Expected non-trivial loss when code switches, got {loss}"
+
+    def test_temperature_effect(self):
+        """Lower temperature should give sharper probabilities."""
+        T, B, D, K = 10, 4, 64, 8
+
+        codebook = jnp.eye(K, D) * 5.0
+        z_e = jnp.broadcast_to(
+            codebook[0:1] + 0.5, (T, B, D)
+        )  # Slightly off from code 0
+        indices = jnp.zeros((T, B), dtype=jnp.int32)
+        valid_mask = jnp.ones((T - 1, B))
+
+        # Low temperature
+        loss_low_temp, metrics_low = compute_ce_stickiness_cost(
+            z_e=z_e,
+            indices=indices,
+            codebook=codebook,
+            valid_mask=valid_mask,
+            temperature=0.1,
+        )
+
+        # High temperature
+        loss_high_temp, metrics_high = compute_ce_stickiness_cost(
+            z_e=z_e,
+            indices=indices,
+            codebook=codebook,
+            valid_mask=valid_mask,
+            temperature=10.0,
+        )
+
+        # Low temperature should have higher prob of correct code
+        assert (
+            metrics_low["prob_of_prev_code"] > metrics_high["prob_of_prev_code"]
+        ), "Lower temp should give sharper probs"
+
+    def test_gradient_flows_to_encoder(self):
+        """Verify gradients flow to encoder z_e."""
+        T, B, D, K = 5, 2, 16, 4
+        codebook = jnp.eye(K, D) * 2.0
+        z_e = jnp.ones((T, B, D))
+        indices = jnp.zeros((T, B), dtype=jnp.int32)
+        valid_mask = jnp.ones((T - 1, B))
+
+        def loss_fn(z_e_input):
+            loss, _ = compute_ce_stickiness_cost(
+                z_e=z_e_input,
+                indices=indices,
+                codebook=codebook,
+                valid_mask=valid_mask,
+                temperature=1.0,
+            )
+            return loss
+
+        grad = jax.grad(loss_fn)(z_e)
+        assert grad is not None
+        assert grad.shape == z_e.shape
+        assert not jnp.allclose(grad, 0.0), "Gradients should not be zero"
+
+    def test_codebook_gradient_stopped(self):
+        """Verify gradients do NOT flow to codebook (stop_gradient)."""
+        T, B, D, K = 5, 2, 16, 4
+        z_e = jnp.ones((T, B, D))
+        indices = jnp.zeros((T, B), dtype=jnp.int32)
+        valid_mask = jnp.ones((T - 1, B))
+
+        def loss_fn(codebook_input):
+            loss, _ = compute_ce_stickiness_cost(
+                z_e=z_e,
+                indices=indices,
+                codebook=codebook_input,
+                valid_mask=valid_mask,
+                temperature=1.0,
+            )
+            return loss
+
+        codebook = jnp.eye(K, D) * 2.0
+        grad = jax.grad(loss_fn)(codebook)
+        assert jnp.allclose(
+            grad, 0.0
+        ), "Codebook should NOT have gradients (stop_gradient)"
+
+    def test_masking_episode_boundaries(self):
+        """Verify masking correctly excludes episode boundaries."""
+        T, B, D, K = 10, 4, 64, 8
+        codebook = jnp.eye(K, D) * 10.0
+
+        # z_e switches codes to create high loss transitions
+        z_e_list = []
+        for t in range(T):
+            code_idx = t % K  # Cycle through codes
+            z_e_list.append(
+                jnp.broadcast_to(codebook[code_idx : code_idx + 1], (1, B, D))
+            )
+        z_e = jnp.concatenate(z_e_list, axis=0)
+        indices = jnp.array(
+            [[t % K for _ in range(B)] for t in range(T)], dtype=jnp.int32
+        )
+
+        # Mask out all transitions (pretend all are episode boundaries)
+        valid_mask_none = jnp.zeros((T - 1, B))
+        loss_none, _ = compute_ce_stickiness_cost(
+            z_e=z_e,
+            indices=indices,
+            codebook=codebook,
+            valid_mask=valid_mask_none,
+            temperature=1.0,
+        )
+
+        # All transitions valid
+        valid_mask_all = jnp.ones((T - 1, B))
+        loss_all, _ = compute_ce_stickiness_cost(
+            z_e=z_e,
+            indices=indices,
+            codebook=codebook,
+            valid_mask=valid_mask_all,
+            temperature=1.0,
+        )
+
+        # With no valid transitions, loss should be essentially zero
+        # (numerator is 0, denominator is 1e-8, so result is 0)
+        assert jnp.isclose(
+            loss_none, 0.0, atol=1e-6
+        ), f"Masked loss should be zero, got {loss_none}"
+        # With all valid, loss should be positive (code switching creates loss)
+        assert loss_all > 0.1, f"Unmasked loss should be positive, got {loss_all}"
 
 
 class TestCodebookMetrics:
@@ -392,6 +607,7 @@ def run_tests():
         TestDecoder,
         TestVQIntentionNetwork,
         TestVQLoss,
+        TestCEStickinessCost,
         TestCodebookMetrics,
         TestMakeVQIntentionPolicy,
         TestMakeVQIntentionPPONetworks,

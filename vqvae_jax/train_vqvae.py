@@ -45,7 +45,11 @@ from track_mjx.agent.domain_randomization import domain_randomization_maker
 # Import VQ-VAE modules from scratch
 from vq_ppo_networks import make_vq_intention_ppo_networks
 from vq_ppo import train as vq_train
-from analysis.rendering import render_rollout_to_video, render_per_code_videos, get_nature_colormap
+from analysis.rendering import (
+    render_rollout_to_video,
+    render_per_code_videos,
+    get_nature_colormap,
+)
 
 
 def _setup_environment() -> None:
@@ -77,7 +81,8 @@ def vq_rollout_logging_fn(
     import jax.numpy as jnp
     import numpy as np
     import matplotlib
-    matplotlib.use('Agg')
+
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from vq_losses import compute_codebook_metrics
 
@@ -133,20 +138,26 @@ def vq_rollout_logging_fn(
         perplexity, utilization, codes_used = compute_codebook_metrics(
             indices_jnp, num_codes
         )
-        wandb.log({
-            "vq/perplexity": float(perplexity),
-            "vq/codebook_utilization": float(utilization),
-            "vq/codes_used": int(codes_used),
-        }, commit=False)
+        wandb.log(
+            {
+                "vq/perplexity": float(perplexity),
+                "vq/codebook_utilization": float(utilization),
+                "vq/codes_used": int(codes_used),
+            },
+            commit=False,
+        )
 
         # Compute transition rate for this rollout
         code_transitions = np.sum(indices_array[1:] != indices_array[:-1])
         transition_rate = code_transitions / max(len(indices_array) - 1, 1)
-        wandb.log({
-            "vq/eval_transition_rate": float(transition_rate),
-            "vq/eval_transitions": int(code_transitions),
-            "vq/eval_steps": len(indices_array),
-        }, commit=False)
+        wandb.log(
+            {
+                "vq/eval_transition_rate": float(transition_rate),
+                "vq/eval_transitions": int(code_transitions),
+                "vq/eval_steps": len(indices_array),
+            },
+            commit=False,
+        )
 
         # Create code sequence timeline plot
         fig, axes = plt.subplots(2, 1, figsize=(12, 4), height_ratios=[1, 2])
@@ -154,24 +165,35 @@ def vq_rollout_logging_fn(
         # Top: code usage histogram
         code_counts = np.bincount(indices_array, minlength=num_codes)
         colors = get_nature_colormap(num_codes) / 255.0
-        axes[0].bar(range(num_codes), code_counts, color=colors, edgecolor='none')
-        axes[0].set_xlabel('Code Index')
-        axes[0].set_ylabel('Count')
-        axes[0].set_title(f'Code Usage (perplexity={float(perplexity):.2f}, used={int(codes_used)}/{num_codes})')
+        axes[0].bar(range(num_codes), code_counts, color=colors, edgecolor="none")
+        axes[0].set_xlabel("Code Index")
+        axes[0].set_ylabel("Count")
+        axes[0].set_title(
+            f"Code Usage (perplexity={float(perplexity):.2f}, used={int(codes_used)}/{num_codes})"
+        )
         axes[0].set_xlim(-0.5, num_codes - 0.5)
 
         # Bottom: code sequence timeline
         timesteps = np.arange(len(indices_array))
         for i in range(len(indices_array) - 1):
             code = indices_array[i]
-            axes[1].axvspan(timesteps[i], timesteps[i+1], color=colors[code], alpha=0.8)
+            axes[1].axvspan(
+                timesteps[i], timesteps[i + 1], color=colors[code], alpha=0.8
+            )
         # Last segment
         if len(indices_array) > 0:
-            axes[1].axvspan(timesteps[-1], timesteps[-1] + 1, color=colors[indices_array[-1]], alpha=0.8)
+            axes[1].axvspan(
+                timesteps[-1],
+                timesteps[-1] + 1,
+                color=colors[indices_array[-1]],
+                alpha=0.8,
+            )
 
-        axes[1].set_xlabel('Timestep')
-        axes[1].set_ylabel('Code')
-        axes[1].set_title(f'Code Sequence (transitions={code_transitions}, rate={transition_rate:.2%})')
+        axes[1].set_xlabel("Timestep")
+        axes[1].set_ylabel("Code")
+        axes[1].set_title(
+            f"Code Sequence (transitions={code_transitions}, rate={transition_rate:.2%})"
+        )
         axes[1].set_xlim(0, len(indices_array))
         axes[1].set_ylim(-0.5, num_codes - 0.5)
 
@@ -192,10 +214,13 @@ def vq_rollout_logging_fn(
         z_e = jnp.stack(all_z_e)
         # Log z_e statistics (similar to latent_mean in VAE)
         for i in range(min(5, z_e.shape[-1])):  # Log first 5 dims
-            wandb.log({
-                f"latents/z_e_mean{i}": float(jnp.mean(z_e[..., i])),
-                f"latents/z_e_std{i}": float(jnp.std(z_e[..., i])),
-            }, commit=False)
+            wandb.log(
+                {
+                    f"latents/z_e_mean{i}": float(jnp.mean(z_e[..., i])),
+                    f"latents/z_e_std{i}": float(jnp.std(z_e[..., i])),
+                },
+                commit=False,
+            )
 
         # PCA visualization of latent space: z_e and codebook vectors
         if indices_array is not None and len(indices_array) > 0:
@@ -212,8 +237,8 @@ def vq_rollout_logging_fn(
             combined_2d = pca.fit_transform(combined)
 
             # Split back into z_e and codebook projections
-            z_e_2d = combined_2d[:len(z_e_np)]
-            codebook_2d = combined_2d[len(z_e_np):]
+            z_e_2d = combined_2d[: len(z_e_np)]
+            codebook_2d = combined_2d[len(z_e_np) :]
 
             # Create PCA visualization
             fig, ax = plt.subplots(figsize=(10, 8))
@@ -246,10 +271,12 @@ def vq_rollout_logging_fn(
                 )
 
             # Compute mean distance from z_e to their assigned codebook vectors
-            z_e_to_codebook_dist = np.mean([
-                np.linalg.norm(z_e_np[i] - codebook[indices_array[i]])
-                for i in range(len(z_e_np))
-            ])
+            z_e_to_codebook_dist = np.mean(
+                [
+                    np.linalg.norm(z_e_np[i] - codebook[indices_array[i]])
+                    for i in range(len(z_e_np))
+                ]
+            )
 
             ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.1%} var)")
             ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.1%} var)")
@@ -265,13 +292,17 @@ def vq_rollout_logging_fn(
             plt.close(fig)
 
             # Also log the mean distance as a metric
-            wandb.log({
-                "vq/eval_z_e_to_codebook_dist": float(z_e_to_codebook_dist),
-            }, commit=False)
+            wandb.log(
+                {
+                    "vq/eval_z_e_to_codebook_dist": float(z_e_to_codebook_dist),
+                },
+                commit=False,
+            )
 
     # Render video with code overlay
     if render_video:
         import mujoco
+
         render_fps = cfg.render_config.render_fps
         video_path = f"{model_path}/{current_step}.mp4"
 
@@ -316,10 +347,16 @@ def vq_rollout_logging_fn(
                     # Log each per-code video to wandb
                     for code_idx, video_path in per_code_paths.items():
                         wandb.log(
-                            {f"videos/per_code/code_{code_idx}": wandb.Video(video_path, format="mp4")},
+                            {
+                                f"videos/per_code/code_{code_idx}": wandb.Video(
+                                    video_path, format="mp4"
+                                )
+                            },
                             commit=False,
                         )
-                    logging.info(f"Logged {len(per_code_paths)} per-code videos to wandb")
+                    logging.info(
+                        f"Logged {len(per_code_paths)} per-code videos to wandb"
+                    )
                 except Exception as e:
                     logging.warning(f"Failed to render per-code videos: {e}")
 
@@ -368,7 +405,9 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Create train/test split
-    key_split, _ = jax.random.split(jax.random.PRNGKey(cfg.train_setup.train_config.seed))
+    key_split, _ = jax.random.split(
+        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
+    )
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
@@ -394,7 +433,9 @@ def main(cfg: DictConfig) -> None:
     # VQ-VAE network factory
     network_factory = functools.partial(
         make_vq_intention_ppo_networks,
-        latent_dim=cfg.network_config.get("latent_dim", cfg.network_config.intention_size),
+        latent_dim=cfg.network_config.get(
+            "latent_dim", cfg.network_config.intention_size
+        ),
         num_codes=cfg.network_config.get("num_codes", 512),
         commitment_cost=cfg.network_config.get("commitment_cost", 0.25),
         codebook_init_scale=cfg.network_config.get("codebook_init_scale", 1.0),
@@ -412,14 +453,21 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Log VQ-VAE specific config
-    wandb.config.update({
-        "arch": "vqvae_intention",
-        "num_codes": cfg.network_config.get("num_codes", 512),
-        "commitment_cost": cfg.network_config.get("commitment_cost", 0.25),
-        "codebook_loss_weight": cfg.network_config.get("codebook_loss_weight", 1.0),
-        "smoothness_cost": cfg.network_config.get("smoothness_cost", 0.1),
-        "latent_dim": cfg.network_config.get("latent_dim", cfg.network_config.intention_size),
-    })
+    wandb.config.update(
+        {
+            "arch": "vqvae_intention",
+            "num_codes": cfg.network_config.get("num_codes", 512),
+            "commitment_cost": cfg.network_config.get("commitment_cost", 0.25),
+            "codebook_loss_weight": cfg.network_config.get("codebook_loss_weight", 1.0),
+            "ce_stickiness_cost": cfg.network_config.get("ce_stickiness_cost", 0.0),
+            "ce_stickiness_temperature": cfg.network_config.get(
+                "ce_stickiness_temperature", 1.0
+            ),
+            "latent_dim": cfg.network_config.get(
+                "latent_dim", cfg.network_config.intention_size
+            ),
+        }
+    )
 
     # Save initial run state
     if existing_run_state is None:
@@ -457,19 +505,26 @@ def main(cfg: DictConfig) -> None:
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
-        randomization_fn=domain_randomization_maker(
-            floor_friction=cfg.env_config.domain_randomization.floor_friction,
-            static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
-            armature_scale=cfg.env_config.domain_randomization.armature_scale,
-            com_jitter=cfg.env_config.domain_randomization.com_jitter,
-            link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
-            torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
-            qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
-        ) if cfg.env_config.domain_randomization.use_domain_randomization else None,
+        randomization_fn=(
+            domain_randomization_maker(
+                floor_friction=cfg.env_config.domain_randomization.floor_friction,
+                static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
+                armature_scale=cfg.env_config.domain_randomization.armature_scale,
+                com_jitter=cfg.env_config.domain_randomization.com_jitter,
+                link_mass_scale=cfg.env_config.domain_randomization.link_mass_scale,
+                torso_mass_jitter=cfg.env_config.domain_randomization.torso_mass_jitter,
+                qpos0_jitter=cfg.env_config.domain_randomization.qpos0_jitter,
+            )
+            if cfg.env_config.domain_randomization.use_domain_randomization
+            else None
+        ),
         # VQ-VAE specific parameters
         commitment_cost=cfg.network_config.get("commitment_cost", 0.25),
         codebook_loss_weight=cfg.network_config.get("codebook_loss_weight", 1.0),
-        smoothness_cost=cfg.network_config.get("smoothness_cost", 0.1),
+        ce_stickiness_cost=cfg.network_config.get("ce_stickiness_cost", 0.0),
+        ce_stickiness_temperature=cfg.network_config.get(
+            "ce_stickiness_temperature", 1.0
+        ),
     )
 
     # Set the render env start frame to always be 0

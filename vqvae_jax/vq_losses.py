@@ -20,6 +20,7 @@ from typing import Any
 import flax
 import jax
 import jax.numpy as jnp
+import optax
 from brax.training import types
 from brax.training.types import Params
 
@@ -92,9 +93,7 @@ def compute_gae(
 
     vs = jnp.add(vs_minus_v_xs, values)
 
-    vs_t_plus_1 = jnp.concatenate(
-        [vs[1:], jnp.expand_dims(bootstrap_value, 0)], axis=0
-    )
+    vs_t_plus_1 = jnp.concatenate([vs[1:], jnp.expand_dims(bootstrap_value, 0)], axis=0)
     advantages = (
         rewards + discount * (1 - termination) * vs_t_plus_1 - values
     ) * truncation_mask
@@ -180,6 +179,73 @@ def compute_codebook_metrics(
     return perplexity, utilization, codes_used
 
 
+def compute_ce_stickiness_cost(
+    z_e: jnp.ndarray,
+    indices: jnp.ndarray,
+    codebook: jnp.ndarray,
+    valid_mask: jnp.ndarray,
+    temperature: float = 1.0,
+) -> tuple[jnp.ndarray, dict]:
+    """Cross-entropy loss encouraging code persistence.
+
+    Encourages z_e[t+1] to remain closest to the same codebook entry
+    that z_e[t] was assigned to. This operates directly in code space
+    rather than continuous embedding space, respecting the Voronoi
+    tessellation of the codebook.
+
+    Args:
+        z_e: Encoder outputs with shape [T, B, D].
+        indices: Hard code assignments with shape [T, B].
+        codebook: Codebook embeddings with shape [K, D].
+        valid_mask: Binary mask for valid transitions [T-1, B].
+        temperature: Softmax temperature (lower = sharper).
+
+    Returns:
+        Tuple of (ce_stickiness_loss, metrics_dict).
+    """
+    num_codes = codebook.shape[0]
+
+    # Step 1: Get consecutive timesteps
+    z_e_curr = z_e[1:]  # [T-1, B, D] - encoder outputs at t+1
+    targets = indices[:-1]  # [T-1, B] - code indices at t (our target)
+
+    # Step 2: Compute squared distances from z_e[t+1] to all codes
+    # Stop gradient on codebook to prevent this loss from moving codes
+    codebook_sg = jax.lax.stop_gradient(codebook)
+
+    # [T-1, B, 1, D] - [1, 1, K, D] -> [T-1, B, K, D] -> sum -> [T-1, B, K]
+    sq_distances = jnp.sum(
+        jnp.square(z_e_curr[:, :, None, :] - codebook_sg[None, None, :, :]),
+        axis=-1,
+    )
+
+    # Step 3: Convert to logits (negate distances, scale by temperature)
+    logits = -sq_distances / temperature  # [T-1, B, K]
+
+    # Step 4: Cross-entropy loss
+    # Target is the code from the previous timestep
+    ce_loss = optax.softmax_cross_entropy_with_integer_labels(
+        logits, targets
+    )  # [T-1, B]
+
+    # Step 5: Mask and average
+    num_valid = jnp.sum(valid_mask) + 1e-8
+    ce_stickiness_loss = jnp.sum(ce_loss * valid_mask) / num_valid
+
+    # Metrics for monitoring
+    probs = jax.nn.softmax(logits, axis=-1)  # [T-1, B, K]
+    target_one_hot = jax.nn.one_hot(targets, num_codes)  # [T-1, B, K]
+    prob_of_target = jnp.sum(probs * target_one_hot, axis=-1)  # [T-1, B]
+    mean_prob_of_prev_code = jnp.sum(prob_of_target * valid_mask) / num_valid
+
+    metrics = {
+        "ce_stickiness_loss": ce_stickiness_loss,
+        "prob_of_prev_code": mean_prob_of_prev_code,
+    }
+
+    return ce_stickiness_loss, metrics
+
+
 def compute_vq_ppo_loss(
     params: PPONetworkParams,
     normalizer_params: Any,
@@ -190,7 +256,8 @@ def compute_vq_ppo_loss(
     entropy_cost: float = 1e-4,
     commitment_cost: float = 0.25,
     codebook_loss_weight: float = 1.0,
-    smoothness_cost: float = 0.0,
+    ce_stickiness_cost: float = 0.0,
+    ce_stickiness_temperature: float = 1.0,
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
@@ -205,7 +272,7 @@ def compute_vq_ppo_loss(
     - Entropy bonus for exploration
     - VQ-VAE commitment loss (encoder commits to codebook)
     - VQ-VAE codebook loss (codebook tracks encoder)
-    - Temporal smoothness loss on encoder outputs (encourages code persistence)
+    - Cross-entropy stickiness loss (directly encourages code persistence)
 
     Unlike the VAE version, there is no KL divergence loss. The
     commitment and codebook losses serve as regularization.
@@ -223,7 +290,8 @@ def compute_vq_ppo_loss(
         entropy_cost: Entropy bonus coefficient.
         commitment_cost: Weight for commitment loss (beta).
         codebook_loss_weight: Weight for codebook loss.
-        smoothness_cost: Weight for temporal smoothness loss on z_e.
+        ce_stickiness_cost: Weight for cross-entropy stickiness loss (code space).
+        ce_stickiness_temperature: Temperature for CE stickiness softmax.
         discounting: Discount factor (gamma) for GAE.
         reward_scaling: Multiplier applied to rewards.
         gae_lambda: GAE lambda parameter.
@@ -262,9 +330,7 @@ def compute_vq_ppo_loss(
     z_q = codebook[indices]  # [..., latent_dim]
 
     # VQ-VAE auxiliary losses
-    vq_loss, commitment_loss, codebook_loss = compute_vq_loss(
-        z_e, z_q, commitment_cost
-    )
+    vq_loss, commitment_loss, codebook_loss = compute_vq_loss(z_e, z_q, commitment_cost)
 
     # Apply schedule if provided
     vq_weight = 1.0
@@ -284,23 +350,12 @@ def compute_vq_ppo_loss(
     truncation = data.extras["state_extras"]["truncation"]
     termination = (1 - data.discount) * (1 - truncation)
 
-    # Temporal smoothness loss on encoder outputs
-    # Encourages consecutive timesteps to have similar z_e, indirectly
-    # encouraging code persistence (since similar z_e map to same code).
+    # Compute valid mask and transition rate for temporal metrics
     # Shapes after axis swap: z_e [T, B, D], indices [T, B], discount [T, B]
     if z_e.shape[0] > 1:
-        z_e_prev = z_e[:-1]  # [T-1, B, D]
-        z_e_curr = z_e[1:]  # [T-1, B, D]
-
-        # Mean squared difference over latent dim
-        l2_diff = jnp.mean(jnp.square(z_e_curr - z_e_prev), axis=-1)  # [T-1, B]
-
         # Mask: valid if episode continues (not done AND not truncated)
         valid_mask = data.discount[:-1] * (1 - truncation[:-1])  # [T-1, B]
-
-        # Masked average
         num_valid = jnp.sum(valid_mask) + 1e-8
-        smoothness_loss = jnp.sum(l2_diff * valid_mask) / num_valid
 
         # Transition rate metric (monitoring only, no gradient)
         indices_prev = indices[:-1]  # [T-1, B]
@@ -308,10 +363,25 @@ def compute_vq_ppo_loss(
         code_changed = (indices_curr != indices_prev).astype(jnp.float32)
         transition_rate = jnp.sum(code_changed * valid_mask) / num_valid
     else:
-        smoothness_loss = jnp.array(0.0)
         transition_rate = jnp.array(0.0)
+        valid_mask = jnp.array(0.0)  # Placeholder for single-step case
 
-    scaled_smoothness_loss = smoothness_cost * smoothness_loss
+    # Cross-entropy stickiness loss (operates in code space)
+    # Directly encourages code persistence by penalizing code boundary crossings
+    if z_e.shape[0] > 1 and ce_stickiness_cost > 0.0:
+        ce_stickiness_loss, ce_stickiness_metrics = compute_ce_stickiness_cost(
+            z_e=z_e,
+            indices=indices,
+            codebook=codebook,
+            valid_mask=valid_mask,
+            temperature=ce_stickiness_temperature,
+        )
+        prob_of_prev_code = ce_stickiness_metrics["prob_of_prev_code"]
+    else:
+        ce_stickiness_loss = jnp.array(0.0)
+        prob_of_prev_code = jnp.array(0.0)
+
+    scaled_ce_stickiness_loss = ce_stickiness_cost * ce_stickiness_loss
 
     target_action_log_probs = parametric_action_distribution.log_prob(
         policy_logits, data.extras["policy_extras"]["raw_action"]
@@ -351,7 +421,7 @@ def compute_vq_ppo_loss(
 
     # Total loss
     total_loss = (
-        policy_loss + v_loss + entropy_loss + scaled_vq_loss + scaled_smoothness_loss
+        policy_loss + v_loss + entropy_loss + scaled_vq_loss + scaled_ce_stickiness_loss
     )
 
     return total_loss, {
@@ -369,9 +439,10 @@ def compute_vq_ppo_loss(
         "perplexity": perplexity,
         "codebook_utilization": utilization,
         "codes_used": codes_used,
-        # Temporal stickiness metrics
-        "smoothness_loss": smoothness_loss,
-        "scaled_smoothness_loss": scaled_smoothness_loss,
+        # Cross-entropy stickiness metrics
+        "ce_stickiness_loss": ce_stickiness_loss,
+        "scaled_ce_stickiness_loss": scaled_ce_stickiness_loss,
+        "prob_of_prev_code": prob_of_prev_code,
         "transition_rate": transition_rate,
     }
 

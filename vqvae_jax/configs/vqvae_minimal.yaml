@@ -113,7 +113,8 @@ network_config:
   commitment_cost: 1.0         # Beta in paper (increased for tighter coupling)
   codebook_loss_weight: 1.0     # Weight for codebook loss
   codebook_init_scale: 0.1      # Initialization scale
-  smoothness_cost: 0.5          # Weight for temporal smoothness loss on z_e
+  ce_stickiness_cost: 0.01       # Weight for cross-entropy stickiness loss (code space)
+  ce_stickiness_temperature: 1.0  # Temperature for CE stickiness softmax
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false

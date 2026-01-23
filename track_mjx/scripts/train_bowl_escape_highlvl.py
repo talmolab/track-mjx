@@ -45,7 +45,7 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = bowl_escape.default_config()
-mimic_run_id = "YYMMDD_HHMMSS_XXXXXX"  # Replace with your checkpoint run ID
+mimic_run_id = "260115_005843_966729"  # Replace with your checkpoint run ID
 mimic_checkpoint_path = hydra.utils.to_absolute_path(
     f"./model_checkpoints/{mimic_run_id}"
 )
@@ -84,7 +84,7 @@ ppo_params = config_dict.create(
 )
 print(f"ppo_params:\n{ppo_params}")
 
-env_name = "bowl_escape"
+env_name = "RodentBowlEscape"
 
 # Generate unique experiment name.
 now = datetime.now()
@@ -188,17 +188,25 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    base_env = env_loader.load(env_name, config=env_cfg, clips=None, flatten_obs=True)
+    # Load with dict observations - HighLevelWrapper will extract task_obs for
+    # the high-level policy and proprioception for the decoder
+    base_env = env_loader.load(env_name, config=env_cfg, clips=None, flatten_obs=False)
     env = rodent_wrappers.HighLevelWrapper(
         base_env,
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
+        highlvl_obs_key="task_obs",
+        decoder_obs_key="proprioception",
     )
-    eval_base_env = env_loader.load(env_name, config=env_cfg, clips=None, flatten_obs=True)
+    eval_base_env = env_loader.load(
+        env_name, config=env_cfg, clips=None, flatten_obs=False
+    )
     eval_env = rodent_wrappers.HighLevelWrapper(
         eval_base_env,
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
+        highlvl_obs_key="task_obs",
+        decoder_obs_key="proprioception",
     )
 
     # Render a rollout in the policy_params_fn to log to wandb at each step

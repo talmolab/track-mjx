@@ -16,7 +16,7 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground import env_loader
+from vnl_playground import registry
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging

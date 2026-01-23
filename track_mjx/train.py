@@ -5,6 +5,7 @@ import os
 # Must set rendering backend before importing MuJoCo
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import functools
 import logging
@@ -15,8 +16,7 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground import env_loader
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
@@ -60,6 +60,9 @@ def main(cfg: DictConfig) -> None:
     # between discovery and saving (prepare_config modifies cfg by adding paths)
     cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
 
+    # Get environment name from config
+    env_name = cfg.env_config.env_name
+
     # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
 
@@ -70,9 +73,10 @@ def main(cfg: DictConfig) -> None:
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
-    # Create the reference clips
+    # Create the reference clips using env_loader
     logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
-    reference_clips = ReferenceClips(
+    reference_clips = env_loader.load_reference_clips(
+        env_name,
         data_path=cfg.env_config.reference_data_path,
         n_frames_per_clip=cfg.env_config.clip_length,
         keep_clips_idx=cfg.env_config.keep_clips_idx,
@@ -85,13 +89,13 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
-    # Compute naconmax for warp backend (naconmax = nconmax * num_envs)
-    if hasattr(env_cfg_ml, "nconmax"):
-        env_cfg_ml.naconmax = env_cfg_ml.nconmax * cfg.train_setup.train_config.num_envs
-
-    # Create environments (dict observations, no flattening)
-    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
+    # Create environments using env_loader
+    env = env_loader.load(
+        env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False
+    )
+    test_env = env_loader.load(
+        env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False
+    )
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -221,7 +225,9 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = imitation.Imitation(config=rollout_cfg)
+    rollout_env = env_loader.load(
+        env_name, config=rollout_cfg, clips=None, flatten_obs=False
+    )
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

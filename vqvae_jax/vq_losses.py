@@ -351,15 +351,43 @@ def compute_vq_ppo_loss(
     termination = (1 - data.discount) * (1 - truncation)
 
     # Compute valid mask and transition rate for temporal metrics
-    # Shapes after axis swap: z_e [T, B, D], indices [T, B], discount [T, B]
-    if z_e.shape[0] > 1:
-        # Mask: valid if episode continues (not done AND not truncated)
-        valid_mask = data.discount[:-1] * (1 - truncation[:-1])  # [T-1, B]
+    # Shapes after axis swap: z_e [T' or T, B, D], indices [T' or T, B], discount [T, B]
+    # Note: With temporal downsampling, z_e and indices have shape [T//stride, B, ...]
+    # while data.discount has original shape [T, B]
+    original_t = data.discount.shape[0]
+    downsampled_t = indices.shape[0]
+
+    if downsampled_t > 1:
+        if downsampled_t < original_t:
+            # Temporal downsampling case: compute valid_mask at downsampled resolution
+            # A transition between downsampled indices i and i+1 is valid if no
+            # episode boundary occurs in the corresponding original frames
+            temporal_stride = original_t // downsampled_t
+
+            # Compute original valid_mask: [T-1, B]
+            original_valid = data.discount[:-1] * (1 - truncation[:-1])
+
+            # For each downsampled transition, check if any original transition is invalid
+            # Reshape to [T'//stride, stride, B] and take min along stride dimension
+            # This marks a chunk as invalid if ANY frame in it is invalid
+            valid_chunks = original_valid[: (downsampled_t - 1) * temporal_stride]
+            # Pad if needed to make divisible
+            pad_size = (downsampled_t - 1) * temporal_stride - valid_chunks.shape[0]
+            if pad_size > 0:
+                valid_chunks = jnp.concatenate(
+                    [valid_chunks, jnp.ones((pad_size, valid_chunks.shape[1]))], axis=0
+                )
+            valid_chunks = valid_chunks.reshape(downsampled_t - 1, temporal_stride, -1)
+            valid_mask = jnp.min(valid_chunks, axis=1)  # [T'-1, B]
+        else:
+            # No downsampling: use original valid_mask
+            valid_mask = data.discount[:-1] * (1 - truncation[:-1])  # [T-1, B]
+
         num_valid = jnp.sum(valid_mask) + 1e-8
 
         # Transition rate metric (monitoring only, no gradient)
-        indices_prev = indices[:-1]  # [T-1, B]
-        indices_curr = indices[1:]  # [T-1, B]
+        indices_prev = indices[:-1]  # [T'-1, B]
+        indices_curr = indices[1:]  # [T'-1, B]
         code_changed = (indices_curr != indices_prev).astype(jnp.float32)
         transition_rate = jnp.sum(code_changed * valid_mask) / num_valid
     else:

@@ -45,6 +45,55 @@ def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
 
 
 # =============================================================================
+# TEMPORAL UTILITIES
+# =============================================================================
+
+
+def expand_temporal_indices(
+    indices: np.ndarray,
+    target_length: int,
+    temporal_stride: int | None = None,
+) -> np.ndarray:
+    """Expand downsampled indices to match original temporal resolution.
+
+    When using temporal downsampling in the VQ-VAE encoder, each code
+    represents multiple frames. This function expands the indices array
+    by repeating each code index to fill its corresponding chunk.
+
+    Args:
+        indices: Downsampled code indices, shape [T_down] or [T_down, ...].
+        target_length: Target temporal length (original T before downsampling).
+        temporal_stride: Optional explicit stride. If None, computed from
+            target_length / len(indices).
+
+    Returns:
+        Expanded indices, shape [target_length] or [target_length, ...].
+    """
+    if len(indices) == target_length:
+        return indices
+
+    if len(indices) == 0:
+        raise ValueError("Cannot expand empty indices array")
+
+    if temporal_stride is None:
+        temporal_stride = target_length // len(indices)
+
+    # Expand indices by repeating each index temporal_stride times
+    expanded = np.repeat(indices, temporal_stride, axis=0)
+
+    # Handle non-divisible lengths
+    if len(expanded) < target_length:
+        # Pad by repeating the last index
+        padding = target_length - len(expanded)
+        expanded = np.concatenate([expanded, np.repeat(indices[-1:], padding, axis=0)])
+    elif len(expanded) > target_length:
+        # Truncate
+        expanded = expanded[:target_length]
+
+    return expanded
+
+
+# =============================================================================
 # COLORMAP GENERATION
 # =============================================================================
 
@@ -348,6 +397,7 @@ def render_rollout_to_video(
     code_bar_height: int = 40,
     clip_idx: int | None = None,
     show_clip_idx: bool = True,
+    temporal_stride: int | None = None,
 ) -> str:
     """Render rollout states to video with Nature-style overlays.
 
@@ -359,13 +409,15 @@ def render_rollout_to_video(
         width: Video width.
         height: Video height.
         fps: Frames per second.
-        indices: Optional codebook indices per frame.
+        indices: Optional codebook indices per frame (may be downsampled).
         num_codes: Total number of codes.
         rewards: Optional rewards per frame.
         extra_info: Optional list of dicts with extra info per frame.
         code_bar_height: Height of the code color bar.
         clip_idx: Optional clip index to display.
         show_clip_idx: Whether to show clip index.
+        temporal_stride: If provided and indices are downsampled, expand
+            indices to match frame count.
 
     Returns:
         Path to saved video file.
@@ -375,6 +427,14 @@ def render_rollout_to_video(
 
     num_states = len(rollout_states)
     logging.info(f"  Rendering {num_states} frames from environment...")
+
+    # Expand indices if they're downsampled
+    if indices is not None and len(indices) < num_states:
+        logging.info(
+            f"  Expanding indices from {len(indices)} to {num_states} "
+            f"(temporal_stride={temporal_stride})"
+        )
+        indices = expand_temporal_indices(indices, num_states, temporal_stride)
 
     frames = env.render(rollout_states, camera=camera, height=height, width=width)
     logging.info(f"  Rendered {len(frames)} frames")
@@ -675,6 +735,7 @@ def render_per_code_videos(
     fps: int = 50,
     min_frames_per_code: int = 5,
     code_bar_height: int = 40,
+    temporal_stride: int | None = None,
 ) -> dict[int, str]:
     """Render separate videos for each code, showing only frames where that code was active.
 
@@ -684,7 +745,8 @@ def render_per_code_videos(
     Args:
         env: Environment with render method.
         rollout_states: Sequence of environment states from the rollout.
-        indices: Array of code indices for each frame, shape [num_frames].
+        indices: Array of code indices for each frame, shape [num_frames] or
+            [num_frames // temporal_stride] if downsampled.
         output_dir: Directory to save per-code videos.
         num_codes: Total number of codes in the codebook.
         camera: Camera name for rendering.
@@ -693,6 +755,8 @@ def render_per_code_videos(
         fps: Frames per second.
         min_frames_per_code: Minimum frames required to create a video for a code.
         code_bar_height: Height of the code indicator bar.
+        temporal_stride: If provided and indices are downsampled, expand
+            indices to match frame count.
 
     Returns:
         Dict mapping code index to video path for codes that had enough frames.
@@ -700,8 +764,18 @@ def render_per_code_videos(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    num_frames = len(rollout_states)
+
+    # Expand indices if they're downsampled
+    if len(indices) < num_frames:
+        logging.info(
+            f"  Expanding indices from {len(indices)} to {num_frames} "
+            f"(temporal_stride={temporal_stride})"
+        )
+        indices = expand_temporal_indices(indices, num_frames, temporal_stride)
+
     # Render all frames first
-    logging.info(f"  Rendering {len(rollout_states)} frames for per-code videos...")
+    logging.info(f"  Rendering {num_frames} frames for per-code videos...")
     all_frames = env.render(rollout_states, camera=camera, height=height, width=width)
 
     # Get colormap

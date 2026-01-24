@@ -100,7 +100,7 @@ network_config:
   arch_name: vqvae_intention    # NEW: VQ-VAE architecture
 
   # Encoder/Decoder sizes - SMALLER for fast iteration
-  encoder_layer_sizes: [512, 256, 256]    # Reference trajectory encoder
+  encoder_layer_sizes: [512, 256, 256]    # Reference trajectory encoder (MLP)
   decoder_layer_sizes: [512, 512, 256, 256]  # Policy decoder
   critic_layer_sizes: [512, 512, 256, 256]   # Value function
 
@@ -115,6 +115,13 @@ network_config:
   codebook_init_scale: 0.1      # Initialization scale
   ce_stickiness_cost: 0.01       # Weight for cross-entropy stickiness loss (code space)
   ce_stickiness_temperature: 1.0  # Temperature for CE stickiness softmax
+
+  # Temporal downsampling settings (for semantic behavioral primitives)
+  # Set encoder_type to "temporal_conv" to enable temporal downsampling
+  encoder_type: "temporal_conv" # "mlp" (original) or "temporal_conv"
+  temporal_stride: 4            # T -> T//4 (e.g., 20 frames -> 5 codes)
+  encoder_hidden_channels: [256, 256]  # Channel sizes for temporal conv encoder
+  encoder_kernel_size: 3        # Kernel size for temporal convolutions
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false

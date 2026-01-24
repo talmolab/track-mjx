@@ -258,6 +258,10 @@ def make_vq_intention_ppo_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    encoder_type: str = "mlp",
+    temporal_stride: int = 1,
+    encoder_hidden_channels: Sequence[int] | None = None,
+    encoder_kernel_size: int = 3,
 ) -> VQPPOImitationNetworks:
     """Create VQ-VAE intention-based PPO networks for imitation learning.
 
@@ -265,6 +269,11 @@ def make_vq_intention_ppo_networks(
     processes reference trajectory observations, the quantizer maps to
     discrete codebook entries, and the decoder generates actions conditioned
     on proprioceptive state and quantized intention.
+
+    Supports two encoder types:
+    - "mlp": Standard MLP encoder (original behavior, no temporal downsampling)
+    - "temporal_conv": Conv1D encoder with temporal downsampling, forcing
+      codes to represent chunks of frames (behavioral primitives)
 
     Args:
         obs_sizes: Dict mapping observation keys to their sizes, e.g.
@@ -274,9 +283,15 @@ def make_vq_intention_ppo_networks(
         num_codes: Number of codebook entries (vocabulary size).
         commitment_cost: Weight for commitment loss (beta).
         codebook_init_scale: Scale for codebook initialization.
-        encoder_hidden_layer_sizes: MLP layer sizes for encoder.
+        encoder_hidden_layer_sizes: MLP layer sizes for MLP encoder.
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
         value_hidden_layer_sizes: MLP layer sizes for value network.
+        encoder_type: Type of encoder ("mlp" or "temporal_conv").
+        temporal_stride: Temporal downsampling factor for temporal_conv encoder.
+            E.g., 4 means each code represents ~4 frames.
+        encoder_hidden_channels: Channel sizes for temporal conv encoder.
+            Defaults to (256, 256) if not provided.
+        encoder_kernel_size: Kernel size for temporal convolutions.
 
     Returns:
         VQPPOImitationNetworks containing policy, value, and action distribution.
@@ -294,6 +309,10 @@ def make_vq_intention_ppo_networks(
         num_codes=num_codes,
         commitment_cost=commitment_cost,
         codebook_init_scale=codebook_init_scale,
+        encoder_type=encoder_type,
+        temporal_stride=temporal_stride,
+        encoder_hidden_channels=encoder_hidden_channels,
+        encoder_kernel_size=encoder_kernel_size,
     )
 
     value_network = make_vq_dict_value_network(

@@ -431,6 +431,14 @@ def main(cfg: DictConfig) -> None:
     logging.info("Using VQ-VAE PPO Pipeline")
 
     # VQ-VAE network factory
+    # Get temporal encoder settings (with backward-compatible defaults)
+    encoder_type = cfg.network_config.get("encoder_type", "mlp")
+    temporal_stride = cfg.network_config.get("temporal_stride", 1)
+    encoder_hidden_channels = cfg.network_config.get(
+        "encoder_hidden_channels", [256, 256]
+    )
+    encoder_kernel_size = cfg.network_config.get("encoder_kernel_size", 3)
+
     network_factory = functools.partial(
         make_vq_intention_ppo_networks,
         latent_dim=cfg.network_config.get(
@@ -442,6 +450,10 @@ def main(cfg: DictConfig) -> None:
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        encoder_type=encoder_type,
+        temporal_stride=temporal_stride,
+        encoder_hidden_channels=tuple(encoder_hidden_channels),
+        encoder_kernel_size=encoder_kernel_size,
     )
 
     # Initialize wandb
@@ -466,6 +478,11 @@ def main(cfg: DictConfig) -> None:
             "latent_dim": cfg.network_config.get(
                 "latent_dim", cfg.network_config.intention_size
             ),
+            # Temporal encoder settings
+            "encoder_type": encoder_type,
+            "temporal_stride": temporal_stride,
+            "encoder_hidden_channels": list(encoder_hidden_channels),
+            "encoder_kernel_size": encoder_kernel_size,
         }
     )
 

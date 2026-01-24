@@ -22,6 +22,10 @@ from vq_intention_network import (
     Decoder,
     VQIntentionNetwork,
     make_vq_intention_policy,
+    TemporalConvBlock,
+    VQTemporalEncoder,
+    VQTemporalIntentionNetwork,
+    upsample_temporal,
 )
 from vq_losses import (
     compute_vq_loss,
@@ -233,6 +237,320 @@ class TestVQIntentionNetwork:
         # Check codebook gradients exist (via straight-through)
         codebook_grad = grad["params"]["quantizer"]["embeddings"]
         assert codebook_grad is not None
+
+
+class TestTemporalConvBlock:
+    """Test TemporalConvBlock shape and behavior."""
+
+    def test_output_shape(self):
+        """Verify temporal conv block downsamples correctly."""
+        block = TemporalConvBlock(out_channels=64, kernel_size=3, stride=2)
+        key = jax.random.PRNGKey(0)
+        x = jnp.ones((4, 20, 128))  # [batch, time, channels]
+
+        params = block.init(key, x)
+        y = block.apply(params, x)
+
+        # With stride=2 and padding='SAME', output time is ceil(20/2) = 10
+        assert y.shape == (4, 10, 64), f"Expected (4, 10, 64), got {y.shape}"
+
+    def test_stride_1(self):
+        """Verify stride=1 preserves temporal dimension."""
+        block = TemporalConvBlock(out_channels=64, kernel_size=3, stride=1)
+        key = jax.random.PRNGKey(0)
+        x = jnp.ones((4, 20, 128))
+
+        params = block.init(key, x)
+        y = block.apply(params, x)
+
+        assert y.shape == (4, 20, 64), f"Expected (4, 20, 64), got {y.shape}"
+
+    def test_gradient_flow(self):
+        """Verify gradients flow through the block."""
+        block = TemporalConvBlock(out_channels=64, kernel_size=3, stride=2)
+        key = jax.random.PRNGKey(0)
+        x = jnp.ones((4, 20, 128))
+
+        params = block.init(key, x)
+
+        def loss_fn(params):
+            y = block.apply(params, x)
+            return jnp.mean(y**2)
+
+        grad = jax.grad(loss_fn)(params)
+        assert grad is not None
+        assert "params" in grad
+
+
+class TestVQTemporalEncoder:
+    """Test VQTemporalEncoder shape and behavior."""
+
+    def test_output_shape(self):
+        """Verify temporal encoder downsamples correctly."""
+        encoder = VQTemporalEncoder(
+            hidden_channels=[128, 128],
+            latent_dim=16,
+            temporal_stride=4,
+            kernel_size=3,
+        )
+        key = jax.random.PRNGKey(0)
+        x = jnp.ones((20, 4, 640))  # [time, batch, input_dim]
+
+        params = encoder.init(key, x)
+        z_e = encoder.apply(params, x)
+
+        # With temporal_stride=4, output time is 20//4 = 5
+        assert z_e.shape == (5, 4, 16), f"Expected (5, 4, 16), got {z_e.shape}"
+
+    def test_different_strides(self):
+        """Verify different temporal strides work correctly."""
+        for stride in [2, 4, 8]:
+            encoder = VQTemporalEncoder(
+                hidden_channels=[64, 64],
+                latent_dim=8,
+                temporal_stride=stride,
+            )
+            key = jax.random.PRNGKey(0)
+            x = jnp.ones((16, 2, 100))
+
+            params = encoder.init(key, x)
+            z_e = encoder.apply(params, x)
+
+            expected_t = 16 // stride
+            assert z_e.shape[0] == expected_t, (
+                f"stride={stride}: expected T={expected_t}, got {z_e.shape[0]}"
+            )
+
+    def test_activation_output(self):
+        """Verify activation dict is returned correctly."""
+        encoder = VQTemporalEncoder(
+            hidden_channels=[64, 64],
+            latent_dim=8,
+            temporal_stride=4,
+        )
+        key = jax.random.PRNGKey(0)
+        x = jnp.ones((20, 4, 100))
+
+        params = encoder.init(key, x, get_activation=True)
+        z_e, activations = encoder.apply(params, x, get_activation=True)
+
+        assert "input" in activations
+        assert "conv_0" in activations
+        assert "conv_1" in activations
+        assert "z_e" in activations
+
+    def test_gradient_flow(self):
+        """Verify gradients flow through the encoder."""
+        encoder = VQTemporalEncoder(
+            hidden_channels=[64, 64],
+            latent_dim=8,
+            temporal_stride=4,
+        )
+        key = jax.random.PRNGKey(0)
+        x = jnp.ones((20, 4, 100))
+
+        params = encoder.init(key, x)
+
+        def loss_fn(params):
+            z_e = encoder.apply(params, x)
+            return jnp.mean(z_e**2)
+
+        grad = jax.grad(loss_fn)(params)
+        assert grad is not None
+
+
+class TestUpsampleTemporal:
+    """Test upsample_temporal utility function."""
+
+    def test_basic_upsample(self):
+        """Verify basic upsampling works correctly."""
+        z_q = jnp.ones((5, 4, 16))  # [T_down, B, D]
+        target_length = 20
+
+        z_q_up = upsample_temporal(z_q, target_length)
+
+        assert z_q_up.shape == (20, 4, 16), f"Expected (20, 4, 16), got {z_q_up.shape}"
+
+    def test_values_repeated(self):
+        """Verify values are correctly repeated."""
+        # Create distinct values for each timestep
+        z_q = jnp.array([[[1.0]], [[2.0]], [[3.0]], [[4.0]], [[5.0]]])  # [5, 1, 1]
+        target_length = 20
+
+        z_q_up = upsample_temporal(z_q, target_length)
+
+        # Each original value should be repeated 4 times
+        expected = jnp.array([
+            [[1.0]], [[1.0]], [[1.0]], [[1.0]],
+            [[2.0]], [[2.0]], [[2.0]], [[2.0]],
+            [[3.0]], [[3.0]], [[3.0]], [[3.0]],
+            [[4.0]], [[4.0]], [[4.0]], [[4.0]],
+            [[5.0]], [[5.0]], [[5.0]], [[5.0]],
+        ])
+        assert jnp.allclose(z_q_up, expected), f"Values not repeated correctly"
+
+    def test_no_upsample_needed(self):
+        """Verify no change when lengths match."""
+        z_q = jnp.ones((20, 4, 16))
+        z_q_up = upsample_temporal(z_q, 20)
+        assert jnp.allclose(z_q, z_q_up)
+
+    def test_non_divisible_length(self):
+        """Verify handling of non-divisible target lengths."""
+        z_q = jnp.ones((3, 2, 8))  # [3, 2, 8]
+        target_length = 10  # Not divisible by 3
+
+        z_q_up = upsample_temporal(z_q, target_length)
+
+        assert z_q_up.shape == (10, 2, 8), f"Expected (10, 2, 8), got {z_q_up.shape}"
+
+
+class TestVQTemporalIntentionNetwork:
+    """Test full VQ-VAE temporal intention network."""
+
+    def test_output_shapes(self):
+        """Verify full network output shapes with temporal downsampling."""
+        network = VQTemporalIntentionNetwork(
+            encoder_hidden_channels=[64, 64],
+            decoder_layers=[128, 64, 32],
+            latent_dim=16,
+            temporal_stride=4,
+            num_codes=8,
+        )
+        key = jax.random.PRNGKey(0)
+        obs = {
+            "imitation_target": jnp.ones((20, 4, 100)),
+            "proprioception": jnp.ones((20, 4, 50)),
+        }
+
+        params = network.init(key, obs, key)
+        action, z_e, indices = network.apply(params, obs, key)
+
+        # Action should match original temporal resolution
+        assert action.shape == (20, 4, 32), f"action shape: {action.shape}"
+        # z_e should be downsampled
+        assert z_e.shape == (5, 4, 16), f"z_e shape: {z_e.shape}"
+        # indices should be downsampled
+        assert indices.shape == (5, 4), f"indices shape: {indices.shape}"
+
+    def test_get_activation(self):
+        """Verify activations include upsampled z_q."""
+        network = VQTemporalIntentionNetwork(
+            encoder_hidden_channels=[64, 64],
+            decoder_layers=[128, 64, 32],
+            latent_dim=16,
+            temporal_stride=4,
+            num_codes=8,
+        )
+        key = jax.random.PRNGKey(0)
+        obs = {
+            "imitation_target": jnp.ones((20, 4, 100)),
+            "proprioception": jnp.ones((20, 4, 50)),
+        }
+
+        params = network.init(key, obs, key, get_activation=True)
+        action, z_e, indices, extras = network.apply(
+            params, obs, key, get_activation=True
+        )
+
+        assert "z_q_upsampled" in extras
+        assert extras["z_q_upsampled"].shape == (20, 4, 16)
+        assert extras["temporal_stride"] == 4
+
+    def test_end_to_end_gradient(self):
+        """Verify gradients flow through entire temporal network."""
+        network = VQTemporalIntentionNetwork(
+            encoder_hidden_channels=[64, 64],
+            decoder_layers=[128, 64, 32],
+            latent_dim=16,
+            temporal_stride=4,
+            num_codes=8,
+        )
+        key = jax.random.PRNGKey(0)
+        obs = {
+            "imitation_target": jnp.ones((20, 4, 100)),
+            "proprioception": jnp.ones((20, 4, 50)),
+        }
+
+        params = network.init(key, obs, key)
+
+        def loss_fn(params):
+            action, z_e, indices = network.apply(params, obs, key)
+            return jnp.mean(action**2)
+
+        grad = jax.grad(loss_fn)(params)
+
+        # Check encoder gradients exist
+        encoder_grad = grad["params"]["encoder"]
+        assert encoder_grad is not None
+        # Check decoder gradients exist
+        decoder_grad = grad["params"]["decoder"]
+        assert decoder_grad is not None
+        # Check codebook gradients exist (via straight-through)
+        codebook_grad = grad["params"]["quantizer"]["embeddings"]
+        assert codebook_grad is not None
+
+    def test_single_step_inference(self):
+        """Verify network handles single-step inference (no time dimension)."""
+        network = VQTemporalIntentionNetwork(
+            encoder_hidden_channels=[64, 64],
+            decoder_layers=[128, 64, 32],
+            latent_dim=16,
+            temporal_stride=4,
+            num_codes=8,
+        )
+        key = jax.random.PRNGKey(0)
+
+        # Initialize with batched input (has time dimension)
+        batch_obs = {
+            "imitation_target": jnp.ones((20, 4, 100)),
+            "proprioception": jnp.ones((20, 4, 50)),
+        }
+        params = network.init(key, batch_obs, key)
+
+        # Test single-step inference with batch dimension [B, D]
+        single_obs = {
+            "imitation_target": jnp.ones((4, 100)),  # [B, D] instead of [T, B, D]
+            "proprioception": jnp.ones((4, 50)),
+        }
+        action, z_e, indices = network.apply(params, single_obs, key)
+
+        # For single-step: action should be [B, action_size]
+        assert action.shape == (4, 32), f"action shape: {action.shape}"
+        # z_e should be [B, latent_dim]
+        assert z_e.shape == (4, 16), f"z_e shape: {z_e.shape}"
+        # indices should be [B]
+        assert indices.shape == (4,), f"indices shape: {indices.shape}"
+
+    def test_single_observation_inference(self):
+        """Verify network handles single observation (no batch, no time)."""
+        network = VQTemporalIntentionNetwork(
+            encoder_hidden_channels=[64, 64],
+            decoder_layers=[128, 64, 32],
+            latent_dim=16,
+            temporal_stride=4,
+            num_codes=8,
+        )
+        key = jax.random.PRNGKey(0)
+
+        # Initialize with batched input (has time dimension)
+        batch_obs = {
+            "imitation_target": jnp.ones((20, 4, 100)),
+            "proprioception": jnp.ones((20, 4, 50)),
+        }
+        params = network.init(key, batch_obs, key)
+
+        # Test single observation [D] (used in logging rollouts)
+        single_obs = {
+            "imitation_target": jnp.ones((100,)),  # [D] only
+            "proprioception": jnp.ones((50,)),
+        }
+        action, z_e, indices = network.apply(params, single_obs, key)
+
+        # For single observation: all outputs should be scalars or 1D
+        assert action.shape == (32,), f"action shape: {action.shape}"
+        assert z_e.shape == (16,), f"z_e shape: {z_e.shape}"
+        assert indices.shape == (), f"indices shape: {indices.shape}"
 
 
 class TestVQLoss:
@@ -606,6 +924,10 @@ def run_tests():
         TestVectorQuantizer,
         TestDecoder,
         TestVQIntentionNetwork,
+        TestTemporalConvBlock,
+        TestVQTemporalEncoder,
+        TestUpsampleTemporal,
+        TestVQTemporalIntentionNetwork,
         TestVQLoss,
         TestCEStickinessCost,
         TestCodebookMetrics,

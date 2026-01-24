@@ -1,17 +1,19 @@
 # Bowl Escape Task Transfer Training Config
 #
-# Two training modes:
+# Three training modes:
 #   decoder_only: Freeze decoder, train new encoder
 #   prior_decoder: Freeze prior + decoder, train residual encoder
+#   scratch: Train both policy and decoder from random initialization
 #
 # Usage:
 #   python -m track_mjx.agent.task_transfer.bowl_escape.train mode=decoder_only
 #   python -m track_mjx.agent.task_transfer.bowl_escape.train mode=prior_decoder
+#   python -m track_mjx.agent.task_transfer.bowl_escape.train mode=scratch
 
 defaults:
   - _self_
 
-# Training mode: "decoder_only" or "prior_decoder"
+# Training mode: "decoder_only", "prior_decoder", or "scratch"
 mode: "decoder_only"
 
 # Checkpoint to load (mlp_prior checkpoint)
@@ -29,6 +31,10 @@ prior_decoder:
   deterministic_prior: true
   # Fixed log-variance for noise sampling (used when deterministic_prior=false)
   noise_logvar: -2.0
+
+scratch:
+  # No extra config needed for scratch mode - uses network settings below
+  _placeholder: true
 
 # Network architecture
 network:

@@ -111,7 +111,9 @@ def main(bowl_cfg: DictConfig):
 
     env_name = "bowl_escape"
     env = registry.load(env_name, config=env_config, clips=None, flatten_obs=True)
-    evaluator_env = registry.load(env_name, config=env_config, clips=None, flatten_obs=True)
+    evaluator_env = registry.load(
+        env_name, config=env_config, clips=None, flatten_obs=True
+    )
 
     train_fn = functools.partial(
         ppo.train,

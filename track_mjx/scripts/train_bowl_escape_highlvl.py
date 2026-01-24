@@ -32,8 +32,9 @@ from ml_collections import config_dict
 
 from mujoco_playground import wrapper
 
+from vnl_playground import registry
 from vnl_playground.tasks.rodent import bowl_escape
-from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
+from vnl_playground.tasks import wrappers as rodent_wrappers
 import hydra
 from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
@@ -44,7 +45,7 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = bowl_escape.default_config()
-mimic_run_id = "YYMMDD_HHMMSS_XXXXXX"  # Replace with your checkpoint run ID
+mimic_run_id = "260115_005843_966729"  # Replace with your checkpoint run ID
 mimic_checkpoint_path = hydra.utils.to_absolute_path(
     f"./model_checkpoints/{mimic_run_id}"
 )
@@ -83,7 +84,7 @@ ppo_params = config_dict.create(
 )
 print(f"ppo_params:\n{ppo_params}")
 
-env_name = "bowl_escape"
+env_name = "RodentBowlEscape"
 
 # Generate unique experiment name.
 now = datetime.now()
@@ -96,13 +97,19 @@ ckpt_path = epath.Path("highlvl_checkpoints").resolve() / exp_name
 ckpt_path.mkdir(parents=True, exist_ok=True)
 print(f"Checkpoint path: {ckpt_path}")
 
+# Save config
+config_to_save = {
+    "env_config": env_cfg.to_dict(),
+    "ppo_params": dict(ppo_params),
+    "mimic_run_id": mimic_run_id,
+}
 with open(ckpt_path / "config.json", "w") as fp:
-    json.dump(env_cfg.to_dict(), fp, indent=4, default=lambda o: str(o))
+    json.dump(config_to_save, fp, indent=4, default=lambda o: str(o))
 
-
+# Initialize wandb with combined config
 wandb.init(
     project="vnl-playground",
-    config=env_cfg,
+    config=config_to_save,
     id=f"highlvl-{exp_name}",
     notes=f"mimic run: {mimic_run_id}",
 )
@@ -181,16 +188,25 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = bowl_escape.BowlEscape(config=env_cfg)
+    # Load with dict observations - HighLevelWrapper will extract task_obs for
+    # the high-level policy and proprioception for the decoder
+    base_env = registry.load(env_name, config=env_cfg, clips=None, flatten_obs=False)
     env = rodent_wrappers.HighLevelWrapper(
-        rodent_wrappers.FlattenObsWrapper(env),
+        base_env,
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
+        highlvl_obs_key="task_obs",
+        decoder_obs_key="proprioception",
+    )
+    eval_base_env = registry.load(
+        env_name, config=env_cfg, clips=None, flatten_obs=False
     )
     eval_env = rodent_wrappers.HighLevelWrapper(
-        rodent_wrappers.FlattenObsWrapper(bowl_escape.BowlEscape(config=env_cfg)),
+        eval_base_env,
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
+        highlvl_obs_key="task_obs",
+        decoder_obs_key="proprioception",
     )
 
     # Render a rollout in the policy_params_fn to log to wandb at each step

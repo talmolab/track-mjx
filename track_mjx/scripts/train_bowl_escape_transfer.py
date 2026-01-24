@@ -42,8 +42,8 @@ from datetime import datetime
 import logging
 import mujoco
 from mujoco_playground import wrapper
+from vnl_playground import registry
 from vnl_playground.tasks.rodent import bowl_escape
-from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
 
 
 from track_mjx.agent import checkpointing
@@ -109,9 +109,10 @@ def main(bowl_cfg: DictConfig):
     env_config = bowl_escape.default_config()
     env_config.ctrl_dt = loaded_cfg.env_config.ctrl_dt
 
-    env = rodent_wrappers.FlattenObsWrapper(bowl_escape.BowlEscape(config=env_config))
-    evaluator_env = rodent_wrappers.FlattenObsWrapper(
-        bowl_escape.BowlEscape(config=env_config)
+    env_name = "bowl_escape"
+    env = registry.load(env_name, config=env_config, clips=None, flatten_obs=True)
+    evaluator_env = registry.load(
+        env_name, config=env_config, clips=None, flatten_obs=True
     )
 
     train_fn = functools.partial(

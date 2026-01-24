@@ -16,7 +16,7 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground import env_loader
+from vnl_playground import registry
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
@@ -73,9 +73,9 @@ def main(cfg: DictConfig) -> None:
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
-    # Create the reference clips using env_loader
+    # Create the reference clips using registry
     logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
-    reference_clips = env_loader.load_reference_clips(
+    reference_clips = registry.load_reference_clips(
         env_name,
         data_path=cfg.env_config.reference_data_path,
         n_frames_per_clip=cfg.env_config.clip_length,
@@ -89,11 +89,11 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
-    # Create environments using env_loader
-    env = env_loader.load(
+    # Create environments using registry
+    env = registry.load(
         env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False
     )
-    test_env = env_loader.load(
+    test_env = registry.load(
         env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False
     )
 
@@ -225,7 +225,7 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = env_loader.load(
+    rollout_env = registry.load(
         env_name, config=rollout_cfg, clips=None, flatten_obs=False
     )
 

@@ -32,7 +32,7 @@ from ml_collections import config_dict
 
 from mujoco_playground import wrapper
 
-from vnl_playground import env_loader
+from vnl_playground import registry
 from vnl_playground.tasks.rodent import bowl_escape
 from vnl_playground.tasks import wrappers as rodent_wrappers
 import hydra
@@ -190,7 +190,7 @@ def make_logging_inference_fn(ppo_networks):
 if __name__ == "__main__":
     # Load with dict observations - HighLevelWrapper will extract task_obs for
     # the high-level policy and proprioception for the decoder
-    base_env = env_loader.load(env_name, config=env_cfg, clips=None, flatten_obs=False)
+    base_env = registry.load(env_name, config=env_cfg, clips=None, flatten_obs=False)
     env = rodent_wrappers.HighLevelWrapper(
         base_env,
         decoder_policy_fn,
@@ -198,7 +198,7 @@ if __name__ == "__main__":
         highlvl_obs_key="task_obs",
         decoder_obs_key="proprioception",
     )
-    eval_base_env = env_loader.load(
+    eval_base_env = registry.load(
         env_name, config=env_cfg, clips=None, flatten_obs=False
     )
     eval_env = rodent_wrappers.HighLevelWrapper(

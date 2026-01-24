@@ -42,7 +42,7 @@ from datetime import datetime
 import logging
 import mujoco
 from mujoco_playground import wrapper
-from vnl_playground import env_loader
+from vnl_playground import registry
 from vnl_playground.tasks.rodent import bowl_escape
 
 
@@ -110,8 +110,8 @@ def main(bowl_cfg: DictConfig):
     env_config.ctrl_dt = loaded_cfg.env_config.ctrl_dt
 
     env_name = "bowl_escape"
-    env = env_loader.load(env_name, config=env_config, clips=None, flatten_obs=True)
-    evaluator_env = env_loader.load(env_name, config=env_config, clips=None, flatten_obs=True)
+    env = registry.load(env_name, config=env_config, clips=None, flatten_obs=True)
+    evaluator_env = registry.load(env_name, config=env_config, clips=None, flatten_obs=True)
 
     train_fn = functools.partial(
         ppo.train,

@@ -73,8 +73,14 @@ def rollout_logging_fn(
     should_render = eval_count == 0 or eval_count % render_every == 0
     if should_render:
         _log_rollout_video(
-            env, model_path, current_step, rollout, render_camera, render_fps,
-            render_height, render_width
+            env,
+            model_path,
+            current_step,
+            rollout,
+            render_camera,
+            render_fps,
+            render_height,
+            render_width,
         )
 
 

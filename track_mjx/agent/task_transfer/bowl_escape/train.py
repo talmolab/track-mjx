@@ -221,7 +221,9 @@ def main(cfg: DictConfig) -> None:
         def make_scratch_logging_policy(scratch_networks):
             """Create logging policy for scratch mode."""
             policy_network = scratch_networks.policy_network
-            parametric_action_distribution = scratch_networks.parametric_action_distribution
+            parametric_action_distribution = (
+                scratch_networks.parametric_action_distribution
+            )
 
             def logging_policy(params, observations, key_sample):
                 del key_sample  # Deterministic
@@ -256,15 +258,19 @@ def main(cfg: DictConfig) -> None:
 
             def make_logging_policy(deterministic=True):
                 policy_network = ppo_networks.policy_network
-                parametric_action_distribution = ppo_networks.parametric_action_distribution
+                parametric_action_distribution = (
+                    ppo_networks.parametric_action_distribution
+                )
 
                 def logging_policy(params, observations, key_sample):
                     param_subset = (params[0], params[1])
                     logits = policy_network.apply(*param_subset, observations)
                     if deterministic:
                         return parametric_action_distribution.mode(logits), {}
-                    raw_actions = parametric_action_distribution.sample_no_postprocessing(
-                        logits, key_sample
+                    raw_actions = (
+                        parametric_action_distribution.sample_no_postprocessing(
+                            logits, key_sample
+                        )
                     )
                     postprocessed_actions = parametric_action_distribution.postprocess(
                         raw_actions

@@ -99,7 +99,7 @@ class ScratchPolicyDecoder(nn.Module):
             the latent intention.
         """
         # Extract proprioception from end of flat observation
-        proprio = flat_obs[..., -self.proprio_size:]
+        proprio = flat_obs[..., -self.proprio_size :]
 
         # Policy: full observation -> latent
         latent = self.policy(flat_obs)

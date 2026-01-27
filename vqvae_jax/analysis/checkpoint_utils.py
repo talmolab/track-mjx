@@ -120,6 +120,7 @@ def make_vq_ppo_network_from_cfg(
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        stickiness_bias=cfg.network_config.get("stickiness_bias", 0.0),
     )
 
 
@@ -318,6 +319,89 @@ def load_vq_inference_fn(
     return make_policy(
         policy_params, deterministic=deterministic, get_activation=get_activation
     )
+
+
+def load_vq_inference_fn_with_stickiness(
+    cfg: DictConfig,
+    policy_params: tuple[Any, Any],
+    deterministic: bool = True,
+    get_activation: bool = False,
+) -> tuple[Callable, float]:
+    """Create VQ-VAE inference function that supports stickiness bias.
+
+    Unlike load_vq_inference_fn, this returns a function that accepts
+    prev_indices to properly apply the stickiness bias during inference.
+
+    Args:
+        cfg: Configuration with network_config section.
+        policy_params: Tuple of (normalizer_state, policy_params).
+        deterministic: If True, use mean action (no sampling).
+        get_activation: If True, return network activations in extras.
+
+    Returns:
+        Tuple of:
+        - Inference function: (obs, rng, prev_indices) -> (action, extras)
+          where prev_indices can be None (first step) or the previous code index.
+        - stickiness_bias: The stickiness bias value from config (0.0 if not set).
+    """
+    ppo_network = make_vq_ppo_network_from_cfg(cfg)
+    stickiness_bias = getattr(
+        ppo_network, "stickiness_bias", cfg.network_config.get("stickiness_bias", 0.0)
+    )
+
+    policy_network = ppo_network.policy_network
+    parametric_action_distribution = ppo_network.parametric_action_distribution
+
+    def inference_fn(
+        observations: jnp.ndarray,
+        key: jax.Array,
+        prev_indices: jnp.ndarray | None = None,
+    ) -> tuple[jnp.ndarray, dict[str, Any]]:
+        """Run inference with stickiness bias support.
+
+        Args:
+            observations: Observation (same format as original inference_fn).
+            key: JAX random key.
+            prev_indices: Previous timestep's code indices, or None for first step.
+
+        Returns:
+            Tuple of (action, extras) where extras contains "z_e" and "indices".
+        """
+        key, key_network = jax.random.split(key)
+
+        # Apply policy with prev_indices for stickiness
+        # Pass observations in same format as original - let policy_network handle it
+        if get_activation:
+            logits, z_e, indices, activations = policy_network.apply(
+                *policy_params,
+                observations,
+                key_network,
+                deterministic=deterministic,
+                get_activation=True,
+                prev_indices=prev_indices,
+            )
+        else:
+            logits, z_e, indices = policy_network.apply(
+                *policy_params,
+                observations,
+                key_network,
+                deterministic=deterministic,
+                prev_indices=prev_indices,
+            )
+
+        if deterministic:
+            action = jnp.array(parametric_action_distribution.mode(logits))
+        else:
+            action = parametric_action_distribution.sample(logits, key)
+
+        extras = {"z_e": z_e, "indices": indices}
+        if get_activation:
+            extras["activations"] = activations
+
+        return action, extras
+
+    logging.info(f"Created stickiness-aware inference fn (bias={stickiness_bias})")
+    return inference_fn, stickiness_bias
 
 
 def get_codebook(policy_params: tuple[Any, Any]) -> jnp.ndarray:

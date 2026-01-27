@@ -258,6 +258,7 @@ def compute_vq_ppo_loss(
     codebook_loss_weight: float = 1.0,
     ce_stickiness_cost: float = 0.0,
     ce_stickiness_temperature: float = 1.0,
+    stickiness_bias: float = 0.0,
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
@@ -273,6 +274,7 @@ def compute_vq_ppo_loss(
     - VQ-VAE commitment loss (encoder commits to codebook)
     - VQ-VAE codebook loss (codebook tracks encoder)
     - Cross-entropy stickiness loss (directly encourages code persistence)
+    - Stickiness bias (directly modifies code selection to favor previous code)
 
     Unlike the VAE version, there is no KL divergence loss. The
     commitment and codebook losses serve as regularization.
@@ -292,6 +294,9 @@ def compute_vq_ppo_loss(
         codebook_loss_weight: Weight for codebook loss.
         ce_stickiness_cost: Weight for cross-entropy stickiness loss (code space).
         ce_stickiness_temperature: Temperature for CE stickiness softmax.
+        stickiness_bias: Bias subtracted from distance to previous code in
+            quantization. When > 0, uses sequential processing via scan to
+            create temporal hysteresis in code selection.
         discounting: Discount factor (gamma) for GAE.
         reward_scaling: Multiplier applied to rewards.
         gae_lambda: GAE lambda parameter.
@@ -306,17 +311,41 @@ def compute_vq_ppo_loss(
     """
     _, policy_key, entropy_key = jax.random.split(rng, 3)
     parametric_action_distribution = ppo_network.parametric_action_distribution
-    policy_apply = ppo_network.policy_network.apply
+    policy_network = ppo_network.policy_network
     value_apply = ppo_network.value_network.apply
 
     # Put the time dimension first: [B, T, ...] -> [T, B, ...]
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
     # Forward pass through VQ policy
-    # Returns: (action_params, z_e, indices)
-    policy_logits, z_e, indices = policy_apply(
-        normalizer_params, params.policy, data.observation, policy_key
-    )
+    # Use temporal processing if stickiness_bias > 0, otherwise standard apply
+    if stickiness_bias > 0 and hasattr(policy_network, "apply_temporal"):
+        # Create episode mask from discount signal
+        # discount=0 indicates episode end, so the NEXT timestep is episode start
+        # We want mask[t]=0 when t is an episode start (prev_indices invalid)
+        # Shift discount by 1: mask[t] = discount[t-1] for t > 0, mask[0] = 0
+        truncation = data.extras["state_extras"]["truncation"]
+        discount = data.discount
+        T = discount.shape[0]
+
+        # Episode continues if discount > 0 AND not truncated
+        continues = discount * (1 - truncation)  # [T, B]
+
+        # Shift: mask[t] indicates if we can use prev_indices from t-1
+        # First timestep always has mask=0 (no valid previous)
+        episode_mask = jnp.concatenate(
+            [jnp.zeros((1, continues.shape[1])), continues[:-1]], axis=0
+        )  # [T, B]
+
+        # Use temporal apply with sequential quantization
+        policy_logits, z_e, indices = policy_network.apply_temporal(
+            normalizer_params, params.policy, data.observation, episode_mask
+        )
+    else:
+        # Standard parallel processing (no bias or bias=0)
+        policy_logits, z_e, indices = policy_network.apply(
+            normalizer_params, params.policy, data.observation, policy_key
+        )
 
     # Value function
     baseline = value_apply(normalizer_params, params.value, data.observation)
@@ -439,7 +468,8 @@ def compute_vq_ppo_loss(
         "perplexity": perplexity,
         "codebook_utilization": utilization,
         "codes_used": codes_used,
-        # Cross-entropy stickiness metrics
+        # Stickiness metrics (bias + cross-entropy)
+        "stickiness_bias": jnp.array(stickiness_bias),
         "ce_stickiness_loss": ce_stickiness_loss,
         "scaled_ce_stickiness_loss": scaled_ce_stickiness_loss,
         "prob_of_prev_code": prob_of_prev_code,

@@ -15,9 +15,10 @@ from mujoco_playground import wrapper as mp_wrapper
 
 # Import the main ppo module
 from track_mjx.agent.ff_ppo import ppo, losses as original_losses
+from track_mjx.agent.ff_ppo import ppo_networks as original_ppo_networks
 
 # Import VQ-VAE specific modules
-from vq_ppo_networks import make_vq_intention_ppo_networks
+from vq_ppo_networks import make_vq_intention_ppo_networks, make_vq_logging_inference_fn
 from vq_losses import compute_vq_ppo_loss, PPONetworkParams
 
 
@@ -66,6 +67,7 @@ def train(
     codebook_loss_weight: float = 1.0,
     ce_stickiness_cost: float = 0.0,
     ce_stickiness_temperature: float = 1.0,
+    stickiness_bias: float = 0.0,
 ):
     """Train a VQ-VAE PPO agent.
 
@@ -78,6 +80,9 @@ def train(
         codebook_loss_weight: Weight for codebook loss.
         ce_stickiness_cost: Weight for cross-entropy stickiness loss (code space).
         ce_stickiness_temperature: Temperature for CE stickiness softmax.
+        stickiness_bias: Bias subtracted from distance to previous code.
+            When > 0, creates hysteresis in code selection, reducing rapid
+            code switching. Uses sequential processing via jax.lax.scan.
 
     Returns:
         Tuple of (make_policy, params, metrics).
@@ -118,6 +123,7 @@ def train(
             codebook_loss_weight=codebook_loss_weight,
             ce_stickiness_cost=ce_stickiness_cost,
             ce_stickiness_temperature=ce_stickiness_temperature,
+            stickiness_bias=stickiness_bias,
             discounting=discounting,
             reward_scaling=reward_scaling,
             gae_lambda=gae_lambda,
@@ -128,6 +134,11 @@ def train(
 
     # Monkey-patch the loss function
     original_losses.compute_ppo_loss = vq_compute_ppo_loss
+
+    # Monkey-patch the logging inference function to support prev_indices for stickiness
+    # This ensures eval rollouts apply the same stickiness bias as training
+    original_make_logging_inference_fn = original_ppo_networks.make_logging_inference_fn
+    original_ppo_networks.make_logging_inference_fn = make_vq_logging_inference_fn
 
     try:
         # Run training with VQ-VAE loss
@@ -174,7 +185,8 @@ def train(
             wrap_for_training=wrap_for_training,
         )
     finally:
-        # Restore original loss function
+        # Restore original functions
         original_losses.compute_ppo_loss = original_compute_ppo_loss
+        original_ppo_networks.make_logging_inference_fn = original_make_logging_inference_fn
 
     return result

@@ -99,17 +99,25 @@ class VectorQuantizer(nn.Module):
     The codebook is updated via standard gradient descent (not EMA),
     which simplifies integration with the existing training loop.
 
+    Optionally supports a stickiness bias that favors selecting the
+    previous code, creating hysteresis in code transitions. This is
+    controlled by passing prev_indices and setting stickiness_bias > 0.
+
     Attributes:
         num_codes: Number of codebook entries (vocabulary size).
         latent_dim: Dimension of each codebook entry.
         commitment_cost: Weight for commitment loss (beta in paper).
         codebook_init_scale: Scale for codebook initialization.
+        stickiness_bias: Bias subtracted from distance to previous code.
+            When > 0, makes the previous code appear closer, creating
+            temporal persistence. Default 0.0 (no bias).
     """
 
     num_codes: int = 512
     latent_dim: int = 60
     commitment_cost: float = 0.25
     codebook_init_scale: float = 1.0
+    stickiness_bias: float = 0.0
 
     def setup(self):
         """Initialize the codebook as a learnable parameter."""
@@ -120,12 +128,17 @@ class VectorQuantizer(nn.Module):
         )
 
     def __call__(
-        self, z_e: jnp.ndarray
+        self,
+        z_e: jnp.ndarray,
+        prev_indices: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Quantize encoder output to nearest codebook entry.
 
         Args:
             z_e: Continuous encoder output, shape [..., latent_dim].
+            prev_indices: Optional indices from previous timestep, shape [...].
+                When provided with stickiness_bias > 0, the distance to the
+                previous code is reduced by the bias, making it "sticky".
 
         Returns:
             z_q_st: Quantized output with straight-through gradient,
@@ -145,6 +158,17 @@ class VectorQuantizer(nn.Module):
         cross = jnp.matmul(flat_z_e, self.codebook.T)  # [N, K]
 
         distances = z_e_sq + codebook_sq - 2 * cross  # [N, K]
+
+        # Apply stickiness bias if previous indices provided
+        # This makes the previous code appear closer, creating hysteresis
+        if prev_indices is not None and self.stickiness_bias > 0:
+            flat_prev_indices = prev_indices.reshape(-1)  # [N]
+            prev_one_hot = jax.nn.one_hot(
+                flat_prev_indices, self.num_codes
+            )  # [N, K]
+            # Subtract bias from distance to previous code
+            # Lower distance = more likely to be selected
+            distances = distances - self.stickiness_bias * prev_one_hot
 
         # Find nearest codebook entry (non-differentiable)
         flat_indices = jnp.argmin(distances, axis=-1)  # [N]
@@ -226,6 +250,10 @@ class VQIntentionNetwork(nn.Module):
     embeddings, which are quantized via the codebook, then concatenated with
     proprioceptive state and decoded into action distribution parameters.
 
+    Supports optional stickiness bias for temporal code persistence. When
+    stickiness_bias > 0, the quantizer favors selecting the previous timestep's
+    code, creating hysteresis that reduces rapid code switching.
+
     Attributes:
         encoder_layers: Hidden layer sizes for the encoder MLP.
         decoder_layers: Layer sizes for decoder (including action output).
@@ -233,6 +261,7 @@ class VQIntentionNetwork(nn.Module):
         num_codes: Number of codebook entries.
         commitment_cost: Weight for commitment loss (beta).
         codebook_init_scale: Scale for codebook initialization.
+        stickiness_bias: Bias for temporal code persistence (default 0.0).
     """
 
     encoder_layers: Sequence[int]
@@ -241,6 +270,7 @@ class VQIntentionNetwork(nn.Module):
     num_codes: int = 512
     commitment_cost: float = 0.25
     codebook_init_scale: float = 1.0
+    stickiness_bias: float = 0.0
 
     def setup(self):
         """Initialize encoder, quantizer, and decoder submodules."""
@@ -253,6 +283,7 @@ class VQIntentionNetwork(nn.Module):
             latent_dim=self.latent_dim,
             commitment_cost=self.commitment_cost,
             codebook_init_scale=self.codebook_init_scale,
+            stickiness_bias=self.stickiness_bias,
         )
         self.decoder = Decoder(layer_sizes=self.decoder_layers)
 
@@ -262,6 +293,7 @@ class VQIntentionNetwork(nn.Module):
         key: jax.Array,
         deterministic: bool = False,
         get_activation: bool = False,
+        prev_indices: jnp.ndarray | None = None,
     ):
         """Forward pass through VQ-VAE intention network.
 
@@ -276,6 +308,8 @@ class VQIntentionNetwork(nn.Module):
             key: JAX random key (unused, for API compatibility).
             deterministic: Unused, VQ is always deterministic.
             get_activation: If True, return intermediate activations.
+            prev_indices: Optional indices from previous timestep for
+                stickiness bias. Shape should match batch dimensions.
 
         Returns:
             action_params: Action distribution parameters, shape [..., action_size*2].
@@ -293,8 +327,8 @@ class VQIntentionNetwork(nn.Module):
             # Get encoder activations
             z_e, encoder_activations = self.encoder(traj, get_activation=True)
 
-            # Quantize
-            z_q_st, indices, z_q = self.quantizer(z_e)
+            # Quantize (with optional stickiness bias via prev_indices)
+            z_q_st, indices, z_q = self.quantizer(z_e, prev_indices=prev_indices)
 
             # Decode
             concatenated = jnp.concatenate([z_q_st, egocentric_obs], axis=-1)
@@ -318,11 +352,165 @@ class VQIntentionNetwork(nn.Module):
         else:
             # Standard forward pass
             z_e = self.encoder(traj)
-            z_q_st, indices, _ = self.quantizer(z_e)
+            z_q_st, indices, _ = self.quantizer(z_e, prev_indices=prev_indices)
             concatenated = jnp.concatenate([z_q_st, egocentric_obs], axis=-1)
             action, _ = self.decoder(concatenated)
 
             return action, z_e, indices
+
+    def forward_temporal(
+        self,
+        obs: Mapping[str, jnp.ndarray],
+        episode_mask: jnp.ndarray | None = None,
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Forward pass with temporal stickiness bias using sequential processing.
+
+        Processes a sequence of observations where each timestep's code selection
+        is biased toward the previous timestep's code. Uses jax.lax.scan for
+        efficient sequential processing.
+
+        The encoder runs in parallel over all timesteps, but quantization runs
+        sequentially to enable the stickiness bias mechanism.
+
+        Args:
+            obs: Dictionary observation with keys:
+                - "imitation_target": Shape [T, B, traj_dim].
+                - "proprioception": Shape [T, B, proprio_dim].
+            episode_mask: Optional mask indicating episode boundaries.
+                Shape [T, B]. Value of 0 indicates episode start (reset prev_indices).
+                If None, assumes continuous episode (no resets).
+
+        Returns:
+            action_params: Action distribution parameters, shape [T, B, action_size*2].
+            z_e: Continuous encoder output, shape [T, B, latent_dim].
+            indices: Codebook indices, shape [T, B].
+        """
+        traj = obs["imitation_target"]  # [T, B, traj_dim]
+        egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
+
+        # Encode all timesteps in parallel (encoder has no temporal dependency)
+        z_e = self.encoder(traj)  # [T, B, latent_dim]
+
+        # If no bias, process in parallel (faster)
+        if self.stickiness_bias <= 0:
+            z_q_st, indices, _ = self.quantizer(z_e, prev_indices=None)
+            concatenated = jnp.concatenate([z_q_st, egocentric_obs], axis=-1)
+            action, _ = self.decoder(concatenated)
+            return action, z_e, indices
+
+        # Sequential quantization with stickiness bias using scan
+        T, B = z_e.shape[0], z_e.shape[1]
+
+        # Define scan step function
+        def quantize_step(prev_indices, inputs):
+            """Process one timestep with bias toward previous code."""
+            z_e_t, proprio_t, mask_t = inputs
+
+            # If mask_t is 0 (episode boundary), don't use prev_indices
+            # Use where to handle episode boundaries: reset to no-bias quantization
+            if episode_mask is not None:
+                # Expand mask for broadcasting: [B] -> [B, 1] for proper shapes
+                use_prev = mask_t > 0
+                # When mask=0 (episode start), pass None-equivalent behavior
+                # We achieve this by passing indices that won't affect selection
+                # when bias is applied (use dummy indices and zero out the bias effect)
+                effective_prev = jnp.where(
+                    use_prev[:, None],
+                    jax.nn.one_hot(prev_indices, self.num_codes),
+                    jnp.zeros((B, self.num_codes)),
+                )
+                # Manually compute distances with conditional bias
+                flat_z_e = z_e_t.reshape(-1, self.latent_dim)
+                codebook = self.quantizer.codebook
+                z_e_sq = jnp.sum(flat_z_e**2, axis=-1, keepdims=True)
+                codebook_sq = jnp.sum(codebook**2, axis=-1)
+                cross = jnp.matmul(flat_z_e, codebook.T)
+                distances = z_e_sq + codebook_sq - 2 * cross
+                # Apply bias only where mask is valid
+                distances = distances - self.stickiness_bias * effective_prev
+                curr_indices = jnp.argmin(distances, axis=-1)
+                z_q_t = codebook[curr_indices]
+                z_q_st_t = z_e_t - jax.lax.stop_gradient(z_e_t) + jax.lax.stop_gradient(z_q_t)
+            else:
+                # No episode mask - always use prev_indices
+                z_q_st_t, curr_indices, _ = self.quantizer(z_e_t, prev_indices=prev_indices)
+
+            return curr_indices, (z_q_st_t, curr_indices)
+
+        # Prepare inputs for scan: [T, B, ...] -> scan over T
+        if episode_mask is not None:
+            scan_inputs = (z_e, egocentric_obs, episode_mask)
+        else:
+            # Create dummy mask of ones (all valid)
+            dummy_mask = jnp.ones((T, B))
+            scan_inputs = (z_e, egocentric_obs, dummy_mask)
+
+        # Initial indices for first timestep (no previous code)
+        # First timestep uses unbiased quantization
+        z_q_st_0, indices_0, _ = self.quantizer(z_e[0], prev_indices=None)
+
+        # Scan over remaining timesteps
+        if T > 1:
+            _, (z_q_st_rest, indices_rest) = jax.lax.scan(
+                quantize_step,
+                indices_0,  # Initial carry: indices from first timestep
+                (z_e[1:], egocentric_obs[1:], scan_inputs[2][1:]),  # Inputs for t=1 to T-1
+            )
+            # Combine first timestep with rest
+            z_q_st = jnp.concatenate([z_q_st_0[None], z_q_st_rest], axis=0)
+            indices = jnp.concatenate([indices_0[None], indices_rest], axis=0)
+        else:
+            z_q_st = z_q_st_0[None]
+            indices = indices_0[None]
+
+        # Decode all timesteps in parallel
+        concatenated = jnp.concatenate([z_q_st, egocentric_obs], axis=-1)
+        action, _ = self.decoder(concatenated)
+
+        return action, z_e, indices
+
+
+class VQPolicyNetwork:
+    """VQ-VAE policy network with both standard and temporal apply methods.
+
+    This class wraps a VQIntentionNetwork and provides two apply methods:
+    - apply: Standard forward pass (parallel processing, optional prev_indices)
+    - apply_temporal: Sequential processing with stickiness bias via scan
+
+    Attributes:
+        init: Initialization function.
+        apply: Standard apply function.
+        apply_temporal: Temporal apply function with sequential quantization.
+        stickiness_bias: The stickiness bias value.
+        num_codes: Number of codebook entries.
+        latent_dim: Dimension of latent space.
+    """
+
+    def __init__(
+        self,
+        init,
+        apply,
+        apply_temporal,
+        stickiness_bias: float,
+        num_codes: int,
+        latent_dim: int,
+    ):
+        """Initialize VQPolicyNetwork.
+
+        Args:
+            init: Initialization function.
+            apply: Standard apply function.
+            apply_temporal: Temporal apply function.
+            stickiness_bias: Stickiness bias value.
+            num_codes: Number of codebook entries.
+            latent_dim: Dimension of latent space.
+        """
+        self.init = init
+        self.apply = apply
+        self.apply_temporal = apply_temporal
+        self.stickiness_bias = stickiness_bias
+        self.num_codes = num_codes
+        self.latent_dim = latent_dim
 
 
 def make_vq_intention_policy(
@@ -334,7 +522,8 @@ def make_vq_intention_policy(
     num_codes: int = 512,
     commitment_cost: float = 0.25,
     codebook_init_scale: float = 1.0,
-) -> networks.FeedForwardNetwork:
+    stickiness_bias: float = 0.0,
+) -> VQPolicyNetwork:
     """Create a VQ-VAE intention-based policy network.
 
     Constructs an encoder-quantizer-decoder VQ-VAE policy where the encoder
@@ -353,10 +542,13 @@ def make_vq_intention_policy(
         num_codes: Number of codebook entries.
         commitment_cost: Weight for commitment loss (beta).
         codebook_init_scale: Scale for codebook initialization.
+        stickiness_bias: Bias for temporal code persistence. When > 0,
+            the quantizer favors selecting the previous timestep's code.
 
     Returns:
-        FeedForwardNetwork with init and apply methods. The apply function
-        returns (action_params, z_e, indices) or with activations.
+        VQPolicyNetwork with init, apply, and apply_temporal methods.
+        The apply function returns (action_params, z_e, indices).
+        The apply_temporal function processes sequences with stickiness bias.
     """
     policy_module = VQIntentionNetwork(
         encoder_layers=list(encoder_hidden_layer_sizes),
@@ -365,6 +557,7 @@ def make_vq_intention_policy(
         num_codes=num_codes,
         commitment_cost=commitment_cost,
         codebook_init_scale=codebook_init_scale,
+        stickiness_bias=stickiness_bias,
     )
 
     def apply(
@@ -374,6 +567,7 @@ def make_vq_intention_policy(
         key,
         deterministic: bool = False,
         get_activation: bool = False,
+        prev_indices: jnp.ndarray | None = None,
     ):
         """Apply VQ policy with observation normalization.
 
@@ -384,6 +578,7 @@ def make_vq_intention_policy(
             key: JAX random key (unused, for API compatibility).
             deterministic: Unused, VQ is always deterministic.
             get_activation: If True, return intermediate activations.
+            prev_indices: Optional previous timestep indices for stickiness bias.
 
         Returns:
             action_params: Action distribution parameters.
@@ -398,6 +593,39 @@ def make_vq_intention_policy(
             key=key,
             deterministic=deterministic,
             get_activation=get_activation,
+            prev_indices=prev_indices,
+        )
+
+    def apply_temporal(
+        processor_params: DictRunningStatisticsState,
+        policy_params,
+        obs: Mapping[str, jnp.ndarray],
+        episode_mask: jnp.ndarray | None = None,
+    ):
+        """Apply VQ policy with temporal stickiness bias.
+
+        Processes sequences with sequential quantization where each timestep's
+        code selection is biased toward the previous code. Uses jax.lax.scan
+        for efficient processing.
+
+        Args:
+            processor_params: Dict normalizer with per-key statistics.
+            policy_params: Network weights.
+            obs: Dict observation with shape [T, B, ...] for each key.
+            episode_mask: Optional mask for episode boundaries, shape [T, B].
+                Value of 0 indicates episode start (resets prev_indices).
+
+        Returns:
+            action_params: Shape [T, B, action_size*2].
+            z_e: Shape [T, B, latent_dim].
+            indices: Shape [T, B].
+        """
+        obs = normalize_dict_obs(obs, processor_params)
+        return policy_module.apply(
+            policy_params,
+            obs=obs,
+            episode_mask=episode_mask,
+            method=policy_module.forward_temporal,
         )
 
     # Create dummy dict observation for initialization
@@ -407,7 +635,11 @@ def make_vq_intention_policy(
     }
     dummy_key = jax.random.PRNGKey(0)
 
-    return networks.FeedForwardNetwork(
+    return VQPolicyNetwork(
         init=lambda key: policy_module.init(key, dummy_obs, dummy_key),
         apply=apply,
+        apply_temporal=apply_temporal,
+        stickiness_bias=stickiness_bias,
+        num_codes=num_codes,
+        latent_dim=latent_dim,
     )

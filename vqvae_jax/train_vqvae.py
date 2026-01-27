@@ -105,20 +105,34 @@ def vq_rollout_logging_fn(
     all_z_e = []
     all_rewards = []
 
+    # Track previous indices for stickiness bias during evaluation
+    # This ensures eval behavior matches training behavior
+    prev_indices = None
+
     # Collect rollout
     for _ in range(episode_length):
         key, subkey = jax.random.split(key)
-        action, extras = jit_logging_inference_fn(params, state.obs, subkey)
+        # Pass prev_indices to apply stickiness bias during evaluation
+        action, extras = jit_logging_inference_fn(params, state.obs, subkey, prev_indices)
 
         # Collect VQ-specific data
-        # Note: ppo.py uses ppo_networks.make_logging_inference_fn which returns
-        # VAE-style keys. For VQ-VAE: z_e is stored as "latent_mean" and
-        # indices are stored as "latent_logvar" due to the API mismatch.
-        if "latent_logvar" in extras:
-            # In VQ-VAE context, "latent_logvar" is actually the codebook indices
-            all_indices.append(extras["latent_logvar"])
-        if "latent_mean" in extras:
-            # In VQ-VAE context, "latent_mean" is actually z_e (encoder output)
+        # VQ-VAE logging inference returns z_e and indices directly
+        if "indices" in extras:
+            curr_indices = extras["indices"]
+            all_indices.append(curr_indices)
+            # Update prev_indices for next timestep (enables stickiness bias)
+            prev_indices = curr_indices
+        elif "latent_logvar" in extras:
+            # Fallback: ppo.py uses ppo_networks.make_logging_inference_fn which returns
+            # VAE-style keys. For VQ-VAE: indices stored as "latent_logvar" due to API mismatch.
+            curr_indices = extras["latent_logvar"]
+            all_indices.append(curr_indices)
+            prev_indices = curr_indices
+
+        if "z_e" in extras:
+            all_z_e.append(extras["z_e"])
+        elif "latent_mean" in extras:
+            # Fallback for VAE-style API
             all_z_e.append(extras["latent_mean"])
 
         state = jit_step(state, action)
@@ -126,6 +140,8 @@ def vq_rollout_logging_fn(
         all_rewards.append(float(state.reward))
 
         if state.done:
+            # Reset prev_indices on episode boundary
+            prev_indices = None
             break
 
     # Convert indices to numpy array
@@ -442,6 +458,7 @@ def main(cfg: DictConfig) -> None:
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        stickiness_bias=cfg.network_config.get("stickiness_bias", 0.0),
     )
 
     # Initialize wandb
@@ -463,6 +480,7 @@ def main(cfg: DictConfig) -> None:
             "ce_stickiness_temperature": cfg.network_config.get(
                 "ce_stickiness_temperature", 1.0
             ),
+            "stickiness_bias": cfg.network_config.get("stickiness_bias", 0.0),
             "latent_dim": cfg.network_config.get(
                 "latent_dim", cfg.network_config.intention_size
             ),
@@ -525,6 +543,7 @@ def main(cfg: DictConfig) -> None:
         ce_stickiness_temperature=cfg.network_config.get(
             "ce_stickiness_temperature", 1.0
         ),
+        stickiness_bias=cfg.network_config.get("stickiness_bias", 0.0),
     )
 
     # Set the render env start frame to always be 0

@@ -105,16 +105,17 @@ network_config:
   critic_layer_sizes: [512, 512, 256, 256]   # Value function
 
   # Latent space settings
-  intention_size: 16            # Smaller latent for minimal test
-  latent_dim: 16                # Same as intention_size
+  intention_size: 32            # Richer embeddings for 64 codes
+  latent_dim: 32                # Same as intention_size
 
   # VQ-VAE specific settings
-  num_codes: 8                 # Smaller codebook for minimal test
-  commitment_cost: 1.0         # Beta in paper (increased for tighter coupling)
-  codebook_loss_weight: 1.0     # Weight for codebook loss
-  codebook_init_scale: 0.1      # Initialization scale
-  ce_stickiness_cost: 0.01       # Weight for cross-entropy stickiness loss (code space)
-  ce_stickiness_temperature: 1.0  # Temperature for CE stickiness softmax
+  num_codes: 16                  # Enough for compositional structure
+  commitment_cost: 0.5           # Lower initially, let codebook stabilize
+  codebook_loss_weight: 1.0      # Weight for codebook loss
+  codebook_init_scale: 0.1       # Initialization scale
+  ce_stickiness_cost: 0.0        # Weight for cross-entropy stickiness loss (disabled, use bias instead)
+  ce_stickiness_temperature: 1.0 # Temperature for CE stickiness softmax
+  stickiness_bias: 3.5           # Bias for temporal code persistence (~2-3% transition rate)
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false
@@ -168,8 +169,8 @@ train_setup:
 logging_config:
   project_name: vqvae_experiments
   group_name: minimal_tests
-  exp_name: vqvae_single_clip
-  clip_id: 0
+  exp_name: vqvae_multi_clip
+  clip_id: 0  # Only used for eval video rendering, not training
   model_path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints
 
 # =============================================================================

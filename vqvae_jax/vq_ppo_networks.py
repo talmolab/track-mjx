@@ -41,6 +41,7 @@ class VQPPOImitationNetworks:
         parametric_action_distribution: Action distribution (NormalTanh).
         num_codes: Number of codebook entries.
         latent_dim: Dimension of latent/codebook embeddings.
+        stickiness_bias: Bias for temporal code persistence.
     """
 
     policy_network: networks.FeedForwardNetwork
@@ -48,6 +49,7 @@ class VQPPOImitationNetworks:
     parametric_action_distribution: distribution.ParametricDistribution
     num_codes: int = 512
     latent_dim: int = 60
+    stickiness_bias: float = 0.0
 
 
 def make_vq_inference_fn(
@@ -154,7 +156,7 @@ def make_vq_logging_inference_fn(
             make_logging_policy(deterministic) -> logging_policy_fn
 
         Where logging_policy_fn has signature:
-            (params, obs, key) -> (action, extras)
+            (params, obs, key, prev_indices) -> (action, extras)
     """
 
     def make_logging_policy(deterministic: bool = False) -> Callable:
@@ -164,7 +166,7 @@ def make_vq_logging_inference_fn(
             deterministic: If True, return mode of action distribution.
 
         Returns:
-            Policy function: (params, obs, key) -> (action, extras_dict).
+            Policy function: (params, obs, key, prev_indices) -> (action, extras_dict).
         """
         policy_network = ppo_networks.policy_network
         parametric_action_distribution = ppo_networks.parametric_action_distribution
@@ -173,10 +175,11 @@ def make_vq_logging_inference_fn(
             params: types.PolicyParams,
             observations: types.Observation,
             key_sample: PRNGKey,
+            prev_indices: jnp.ndarray | None = None,
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
             logits, z_e, indices = policy_network.apply(
-                *params, observations, key_network
+                *params, observations, key_network, prev_indices=prev_indices
             )
 
             if deterministic:
@@ -258,6 +261,7 @@ def make_vq_intention_ppo_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    stickiness_bias: float = 0.0,
 ) -> VQPPOImitationNetworks:
     """Create VQ-VAE intention-based PPO networks for imitation learning.
 
@@ -277,6 +281,9 @@ def make_vq_intention_ppo_networks(
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
         value_hidden_layer_sizes: MLP layer sizes for value network.
+        stickiness_bias: Bias for temporal code persistence. When > 0,
+            the quantizer favors selecting the previous timestep's code,
+            creating hysteresis that reduces rapid code switching.
 
     Returns:
         VQPPOImitationNetworks containing policy, value, and action distribution.
@@ -294,6 +301,7 @@ def make_vq_intention_ppo_networks(
         num_codes=num_codes,
         commitment_cost=commitment_cost,
         codebook_init_scale=codebook_init_scale,
+        stickiness_bias=stickiness_bias,
     )
 
     value_network = make_vq_dict_value_network(
@@ -307,4 +315,5 @@ def make_vq_intention_ppo_networks(
         parametric_action_distribution=parametric_action_distribution,
         num_codes=num_codes,
         latent_dim=latent_dim,
+        stickiness_bias=stickiness_bias,
     )

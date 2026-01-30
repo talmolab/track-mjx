@@ -1,9 +1,16 @@
 """VQ-VAE Code Analysis Pipeline.
 
-Main entry point for analyzing VQ-VAE code semantics on a per-clip basis:
-- Per-clip transition matrices and community detection
-- Interactive HTML viewer with slider navigation
-- Video rendering with code and community timeline overlays
+Main entry point for analyzing VQ-VAE code semantics:
+
+1. Per-clip analysis:
+   - Transition matrices and community detection per clip
+   - Interactive HTML viewer with slider navigation
+   - Video rendering with code and community timeline overlays
+
+2. Transition context analysis:
+   - Compare predecessor/successor patterns for top K codes across clips
+   - Measure consistency of code function across different contexts
+   - Render transition videos (predecessor → code → successor)
 
 Analysis requires pre-computed H5 rollout data. Use the inference module to
 generate H5 files:
@@ -52,6 +59,7 @@ from track_mjx.config import utils as config_utils
 from .checkpoint_utils import load_vq_checkpoint, get_codebook
 from .inference_cache import InferenceResult
 from .per_clip_analysis import run_per_clip_analysis
+from .transition_context_analysis import run_transition_context_analysis
 
 
 def load_rollouts_from_h5(h5_path: str | Path) -> tuple[list[InferenceResult], dict]:
@@ -126,17 +134,26 @@ def log_analysis_to_wandb(
             return
 
         # Log per-clip HTML viewer
-        html_path = all_paths.get("html")
+        per_clip_paths = all_paths.get("per_clip", {})
+        html_path = per_clip_paths.get("html")
         if html_path and Path(html_path).exists():
             wandb.log({
                 "per_clip/interactive_viewer": wandb.Html(open(html_path).read())
             })
 
         # Log per-clip videos
-        video_paths = all_paths.get("videos", {})
+        video_paths = per_clip_paths.get("videos", {})
         for name, path in video_paths.items():
             if path and Path(path).exists():
-                wandb.log({f"clips/{name}": wandb.Video(path, format="mp4")})
+                wandb.log({f"per_clip/videos/{name}": wandb.Video(path, format="mp4")})
+
+        # Log transition context HTML viewer
+        tc_paths = all_paths.get("transition_context", {})
+        tc_html = tc_paths.get("html")
+        if tc_html and Path(tc_html).exists():
+            wandb.log({
+                "transition_context/viewer": wandb.Html(open(tc_html).read())
+            })
 
         logging.info("Logged analysis results to WandB")
 
@@ -159,8 +176,11 @@ def generate_summary_report(
     checkpoint_step = h5_metadata.get("checkpoint_step", cfg.checkpoint.step)
     num_rollouts = h5_metadata.get("num_rollouts", "unknown")
 
+    per_clip_paths = all_paths.get("per_clip", {})
+    tc_paths = all_paths.get("transition_context", {})
+
     lines = [
-        "# VQ-VAE Per-Clip Analysis Report",
+        "# VQ-VAE Code Analysis Report",
         "",
         f"Generated: {datetime.now().isoformat()}",
         "",
@@ -185,13 +205,42 @@ def generate_summary_report(
         "- Dual timeline showing code and community colors",
         "- Video with code/community overlay bars",
         "",
+    ]
+
+    if cfg.get("transition_context", {}).get("enabled", False):
+        tc_cfg = cfg.transition_context
+        lines.extend([
+            "## Transition Context Analysis",
+            "",
+            f"- Analyzed top {tc_cfg.get('top_k', 10)} most frequent codes",
+            f"- Compared predecessor/successor patterns across clips",
+            f"- Rendered transition videos: {tc_cfg.get('render_videos', True)}",
+            "",
+            "For each code, measures:",
+            "- Predecessor distribution similarity across clips",
+            "- Successor distribution similarity across clips",
+            "- Combined context similarity (indicates functional consistency)",
+            "",
+        ])
+
+    lines.extend([
         "## Output Files",
         "",
-        f"- Interactive HTML viewer: `{all_paths.get('html', 'N/A')}`",
-        f"- Per-clip stats JSON: `{all_paths.get('json', 'N/A')}`",
-        f"- Clip videos: `{output_dir}/videos/`",
+        "### Per-Clip Analysis",
+        f"- Interactive HTML viewer: `{per_clip_paths.get('html', 'N/A')}`",
+        f"- Per-clip stats JSON: `{per_clip_paths.get('json', 'N/A')}`",
+        f"- Clip videos: `{output_dir}/per_clip/videos/`",
         "",
-    ]
+    ])
+
+    if tc_paths:
+        lines.extend([
+            "### Transition Context Analysis",
+            f"- Interactive HTML viewer: `{tc_paths.get('html', 'N/A')}`",
+            f"- Context stats JSON: `{tc_paths.get('json', 'N/A')}`",
+            f"- Transition videos: `{output_dir}/transition_context/videos/`",
+            "",
+        ])
 
     with open(report_path, "w") as f:
         f.write("\n".join(lines))
@@ -208,6 +257,7 @@ def generate_summary_report(
             "num_codes": num_codes,
         },
         "per_clip": OmegaConf.to_container(cfg.per_clip, resolve=True),
+        "transition_context": OmegaConf.to_container(cfg.get("transition_context", {}), resolve=True),
         "output_paths": all_paths,
     }
 
@@ -267,7 +317,7 @@ def main(cfg: DictConfig):
     env_suffix = getattr(env, "_suffix", "-rodent")
     camera_name = f"{cfg.render.camera}{env_suffix}"
 
-    # Run per-clip analysis (the only analysis mode)
+    # Run per-clip analysis
     logging.info("\n" + "=" * 40)
     logging.info("Running per-clip analysis...")
 
@@ -275,7 +325,7 @@ def main(cfg: DictConfig):
     per_clip_results = run_per_clip_analysis(
         results=results,
         num_codes=num_codes,
-        output_dir=output_dir,
+        output_dir=output_dir / "per_clip",
         num_clips=per_clip_cfg.get("num_clips", 10),
         n_communities=per_clip_cfg.get("n_communities", None),
         render_videos=per_clip_cfg.get("render_videos", True),
@@ -287,10 +337,38 @@ def main(cfg: DictConfig):
     )
 
     all_paths = {
-        "html": per_clip_results["html_path"],
-        "json": per_clip_results["json_path"],
-        "videos": per_clip_results.get("video_paths", {}),
+        "per_clip": {
+            "html": per_clip_results["html_path"],
+            "json": per_clip_results["json_path"],
+            "videos": per_clip_results.get("video_paths", {}),
+        }
     }
+
+    # Run transition context analysis
+    if cfg.get("transition_context", {}).get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Running transition context analysis...")
+
+        tc_cfg = cfg.transition_context
+        tc_results = run_transition_context_analysis(
+            results=results,
+            num_codes=num_codes,
+            output_dir=output_dir / "transition_context",
+            top_k=tc_cfg.get("top_k", 10),
+            min_clips_for_comparison=tc_cfg.get("min_clips", 3),
+            render_videos=tc_cfg.get("render_videos", True),
+            env=env,
+            camera=camera_name,
+            width=cfg.render.get("width", 640),
+            height=cfg.render.get("height", 480),
+            fps=cfg.render.get("fps", 50),
+            max_videos_per_code=tc_cfg.get("max_videos_per_code", 4),
+        )
+
+        all_paths["transition_context"] = {
+            "html": tc_results["html_path"],
+            "json": tc_results["json_path"],
+        }
 
     # Generate summary report
     logging.info("\n" + "=" * 40)
@@ -309,7 +387,9 @@ def main(cfg: DictConfig):
     print("\n" + "=" * 60)
     print(f"Analysis complete! Results saved to {output_dir}")
     print("=" * 60)
-    print(f"\nInteractive viewer: {all_paths['html']}")
+    print(f"\nPer-clip viewer: {all_paths['per_clip']['html']}")
+    if "transition_context" in all_paths:
+        print(f"Transition context viewer: {all_paths['transition_context']['html']}")
     print(f"Summary report: {report_path}")
 
 

@@ -43,6 +43,18 @@ per_clip:
   render_videos: true           # Render videos with code/community bars
 
 # =============================================================================
+# Transition Context Analysis Configuration
+# =============================================================================
+# Analyze whether top K codes serve the same function across different clips
+# by comparing their transition contexts (predecessor/successor distributions).
+transition_context:
+  enabled: true                 # Enable transition context analysis
+  top_k: 10                     # Number of top codes to analyze
+  min_clips: 3                  # Minimum clips a code must appear in
+  render_videos: true           # Render transition videos (pred → code → succ)
+  max_videos_per_code: 4        # Maximum videos per code
+
+# =============================================================================
 # Rendering Configuration
 # =============================================================================
 render:

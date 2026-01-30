@@ -172,6 +172,48 @@ def compute_duration_statistics(
     return stats
 
 
+def compute_code_popularity(
+    results: Sequence[InferenceResult],
+    num_codes: int,
+) -> dict[int, int]:
+    """Compute total frame count for each code across all clips.
+
+    Args:
+        results: List of InferenceResult with code_indices.
+        num_codes: Total number of codes in the codebook.
+
+    Returns:
+        Dictionary mapping code_idx to total frame count.
+    """
+    frame_counts: dict[int, int] = {i: 0 for i in range(num_codes)}
+    for result in results:
+        for code_idx in result.code_indices:
+            frame_counts[int(code_idx)] += 1
+    return frame_counts
+
+
+def get_top_k_popular_codes(
+    frame_counts: dict[int, int],
+    k: int,
+    min_frames: int = 50,
+) -> list[tuple[int, int]]:
+    """Get top K codes by frame count that meet minimum threshold.
+
+    Args:
+        frame_counts: Dictionary mapping code_idx to frame count.
+        k: Number of top codes to return.
+        min_frames: Minimum frame count for a code to be included.
+
+    Returns:
+        List of (code_idx, frame_count) tuples sorted by count descending.
+    """
+    filtered = [
+        (code, count) for code, count in frame_counts.items() if count >= min_frames
+    ]
+    sorted_codes = sorted(filtered, key=lambda x: x[1], reverse=True)
+    return sorted_codes[:k]
+
+
 def plot_duration_distributions(
     stats: list[DurationStatistics],
     segments_by_code: dict[int, list[CodeSegment]],

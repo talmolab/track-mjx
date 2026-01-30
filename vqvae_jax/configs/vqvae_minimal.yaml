@@ -90,8 +90,10 @@ env_config:
 render_config:
   render_camera_name: close_profile
   render_fps: 50
-  render_interval: 5            # Render more frequently for debugging
-  render_per_code_videos: true # Render individual videos per code (slow)
+  render_interval: 5            # Render video every N evals
+  render_per_code_videos: false # Disabled - too expensive with large codebooks (128 videos!)
+  enable_community_viz: true    # Enable community visualization for large codebooks
+  community_samples_per_row: 4  # Number of sample clips per community row in grid
 
 # =============================================================================
 # Network Architecture - VQ-VAE
@@ -109,13 +111,13 @@ network_config:
   latent_dim: 32                # Same as intention_size
 
   # VQ-VAE specific settings
-  num_codes: 16                  # Enough for compositional structure
+  num_codes: 128                   # Population coding: enables community analysis (requires >32)
   commitment_cost: 0.5           # Lower initially, let codebook stabilize
   codebook_loss_weight: 1.0      # Weight for codebook loss
   codebook_init_scale: 0.1       # Initialization scale
   ce_stickiness_cost: 0.0        # Weight for cross-entropy stickiness loss (disabled, use bias instead)
   ce_stickiness_temperature: 1.0 # Temperature for CE stickiness softmax
-  stickiness_bias: 3.5           # Bias for temporal code persistence (~2-3% transition rate)
+  stickiness_bias: 4.5           # Bias for temporal code persistence (~2-3% transition rate)
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false
@@ -146,9 +148,9 @@ train_setup:
 
   # PPO Training Hyperparameters - MINIMAL
   train_config:
-    num_envs: 4096               # Fewer envs for fast iteration
+    num_envs: 2048               # Reduced for larger codebook (128 codes)
     num_timesteps: 1_000_000_000
-    batch_size: 1024             # Smaller batch
+    batch_size: 512              # Smaller batch for memory
     num_minibatches: 16          # Fewer minibatches
     num_updates_per_batch: 4    # Fewer updates
     learning_rate: 1e-4         # Slightly higher LR for faster learning

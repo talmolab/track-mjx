@@ -208,6 +208,317 @@ def classify_code_roles(
     return roles
 
 
+def classify_kinematic_type(
+    linear_vel: float,
+    angular_vel: float,
+    joint_vel: float,
+) -> str:
+    """Classify a code into kinematic type based on velocity features.
+
+    Args:
+        linear_vel: Mean linear velocity.
+        angular_vel: Mean angular velocity.
+        joint_vel: Mean joint velocity.
+
+    Returns:
+        One of: "resting", "transitional", "locomotion"
+    """
+    # Thresholds based on observed distributions
+    if linear_vel < 0.12 and angular_vel < 2.0 and joint_vel < 0.5:
+        return "resting"
+    elif linear_vel > 0.25 or (angular_vel > 3.5 and joint_vel > 0.7):
+        return "locomotion"
+    else:
+        return "transitional"
+
+
+def visualize_enhanced_transition_graph(
+    trans_probs: np.ndarray,
+    trans_counts: np.ndarray,
+    roles: list[CodeRole],
+    kinematic_profiles: list[dict] | None,
+    duration_stats: list[dict] | None,
+    output_path: str | Path,
+    min_edge_prob: float = 0.02,
+    figsize: tuple[int, int] = (16, 14),
+) -> str:
+    """Visualize enhanced transition graph with kinematic and duration info.
+
+    Creates a comprehensive visualization showing:
+    - Node colors based on kinematic type (resting/transitional/locomotion)
+    - Node size based on total frame count
+    - Node border based on role (hub/entry/exit)
+    - Edge thickness based on transition probability
+    - Labels showing code index and key stats
+
+    Args:
+        trans_probs: Transition probability matrix.
+        trans_counts: Transition count matrix.
+        roles: List of CodeRole for each code.
+        kinematic_profiles: List of kinematic profile dicts (from kinematic_analysis).
+        duration_stats: List of duration stat dicts (from segment_analysis).
+        output_path: Path to save the figure.
+        min_edge_prob: Minimum probability to draw an edge (excluding self-loops).
+        figsize: Figure size.
+
+    Returns:
+        Path to the saved figure.
+    """
+    try:
+        import networkx as nx
+    except ImportError:
+        logging.warning("NetworkX not installed, skipping enhanced graph visualization")
+        return ""
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    num_codes = trans_probs.shape[0]
+
+    # Build kinematic type mapping
+    kin_types = {}
+    if kinematic_profiles:
+        for profile in kinematic_profiles:
+            code_idx = profile["code_idx"]
+            kin_type = classify_kinematic_type(
+                profile.get("linear_velocity_mean", 0),
+                profile.get("angular_velocity_mean", 0),
+                profile.get("joint_velocities_mean", 0),
+            )
+            kin_types[code_idx] = kin_type
+    else:
+        # Default all to transitional if no kinematic data
+        kin_types = {i: "transitional" for i in range(num_codes)}
+
+    # Build frame count mapping for node sizes
+    frame_counts = {}
+    if kinematic_profiles:
+        for profile in kinematic_profiles:
+            frame_counts[profile["code_idx"]] = profile.get("n_frames", 100)
+    else:
+        frame_counts = {i: 100 for i in range(num_codes)}
+
+    # Build duration mapping for labels
+    mean_durations = {}
+    if duration_stats:
+        for stat in duration_stats:
+            mean_durations[stat["code_idx"]] = stat.get("mean", 0)
+    else:
+        mean_durations = {i: 0 for i in range(num_codes)}
+
+    # Create directed graph
+    G = nx.DiGraph()
+
+    # Color scheme by kinematic type
+    type_colors = {
+        "resting": "#4CAF50",      # Green
+        "transitional": "#FF9800",  # Orange
+        "locomotion": "#2196F3",    # Blue
+    }
+
+    # Border colors by role
+    role_borders = {
+        "hub": "#E91E63",      # Pink (thick border)
+        "entry": "#9C27B0",    # Purple
+        "exit": "#00BCD4",     # Cyan
+        "normal": "#666666",   # Gray
+    }
+
+    # Add nodes
+    node_colors = []
+    node_borders = []
+    node_sizes = []
+    node_border_widths = []
+
+    for role in roles:
+        code_idx = role.code_idx
+        G.add_node(code_idx)
+
+        # Node color by kinematic type
+        kin_type = kin_types.get(code_idx, "transitional")
+        node_colors.append(type_colors[kin_type])
+
+        # Node border by role
+        if role.is_hub:
+            node_borders.append(role_borders["hub"])
+            node_border_widths.append(4)
+        elif role.is_entry:
+            node_borders.append(role_borders["entry"])
+            node_border_widths.append(3)
+        elif role.is_exit:
+            node_borders.append(role_borders["exit"])
+            node_border_widths.append(3)
+        else:
+            node_borders.append(role_borders["normal"])
+            node_border_widths.append(1)
+
+        # Node size by frame count (log scale for better visibility)
+        frames = frame_counts.get(code_idx, 100)
+        size = 400 + 300 * np.log1p(frames / 100)
+        node_sizes.append(size)
+
+    # Add edges (excluding self-loops for clarity, but include them in analysis)
+    edges_to_draw = []
+    edge_weights = []
+    edge_colors = []
+
+    for i in range(num_codes):
+        for j in range(num_codes):
+            prob = trans_probs[i, j]
+            if i == j:
+                # Self-loops handled separately
+                continue
+            if prob >= min_edge_prob:
+                edges_to_draw.append((i, j))
+                edge_weights.append(prob)
+                # Color edges by source kinematic type
+                src_type = kin_types.get(i, "transitional")
+                edge_colors.append(type_colors[src_type])
+
+    for u, v in edges_to_draw:
+        G.add_edge(u, v, weight=trans_probs[u, v])
+
+    if len(edges_to_draw) == 0:
+        logging.warning("No edges above threshold, skipping graph visualization")
+        return ""
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Use kamada_kawai layout for better separation
+    pos = nx.kamada_kawai_layout(G)
+
+    # Draw edges first (below nodes)
+    edge_widths = [w * 8 for w in edge_weights]  # Scale for visibility
+    nx.draw_networkx_edges(
+        G,
+        pos,
+        edgelist=edges_to_draw,
+        width=edge_widths,
+        alpha=0.4,
+        edge_color=edge_colors,
+        arrows=True,
+        arrowsize=20,
+        arrowstyle="-|>",
+        connectionstyle="arc3,rad=0.1",
+        ax=ax,
+    )
+
+    # Draw self-loop indicators (arcs)
+    for role in roles:
+        code_idx = role.code_idx
+        self_prob = trans_probs[code_idx, code_idx]
+        if self_prob > 0.5:
+            x, y = pos[code_idx]
+            # Draw a small arc above the node to indicate self-loop
+            arc_size = 0.08 * (self_prob - 0.5) / 0.5  # Scale by probability
+            circle = plt.Circle(
+                (x, y + 0.12),
+                arc_size,
+                fill=False,
+                color=type_colors[kin_types.get(code_idx, "transitional")],
+                linewidth=2,
+                alpha=0.7,
+            )
+            ax.add_patch(circle)
+
+    # Draw nodes with borders
+    for i, node in enumerate(G.nodes()):
+        x, y = pos[node]
+        # Outer circle (border)
+        outer = plt.Circle(
+            (x, y),
+            0.06 + node_border_widths[i] * 0.003,
+            color=node_borders[i],
+            zorder=2,
+        )
+        ax.add_patch(outer)
+        # Inner circle (fill)
+        inner = plt.Circle(
+            (x, y),
+            0.055,
+            color=node_colors[i],
+            zorder=3,
+        )
+        ax.add_patch(inner)
+
+    # Draw labels with stats
+    for node in G.nodes():
+        x, y = pos[node]
+        role = roles[node]
+        kin_type = kin_types.get(node, "?")[0].upper()  # R/T/L
+        self_prob = trans_probs[node, node]
+        dur = mean_durations.get(node, 0)
+
+        # Main label (code index)
+        ax.text(
+            x, y, str(node),
+            fontsize=11, fontweight="bold",
+            ha="center", va="center",
+            color="white", zorder=4,
+        )
+        # Stats label below
+        stats_text = f"{self_prob*100:.0f}%"
+        if dur > 0:
+            stats_text += f"\n{dur:.0f}f"
+        ax.text(
+            x, y - 0.11, stats_text,
+            fontsize=7, ha="center", va="top",
+            color="#333333", zorder=4,
+        )
+
+    # Create legend
+    legend_elements = [
+        # Kinematic types
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor=type_colors["resting"],
+                   markersize=12, label="Resting (low velocity)"),
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor=type_colors["transitional"],
+                   markersize=12, label="Transitional (moderate)"),
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor=type_colors["locomotion"],
+                   markersize=12, label="Locomotion (high velocity)"),
+        plt.Line2D([0], [0], color="w", label=""),  # Spacer
+        # Roles (border colors)
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="white", markeredgecolor=role_borders["hub"],
+                   markeredgewidth=3, markersize=12, label="Hub (high connectivity)"),
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="white", markeredgecolor=role_borders["entry"],
+                   markeredgewidth=3, markersize=12, label="Entry (many inputs)"),
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="white", markeredgecolor=role_borders["exit"],
+                   markeredgewidth=3, markersize=12, label="Exit (many outputs)"),
+    ]
+    ax.legend(
+        handles=legend_elements,
+        loc="upper left",
+        fontsize=9,
+        framealpha=0.9,
+    )
+
+    # Add title and annotations
+    ax.set_title(
+        "VQ-VAE Code Transition Graph\n"
+        "(node color = kinematic type, border = role, "
+        "labels show self-loop % and mean duration)",
+        fontsize=12,
+        fontweight="bold",
+    )
+
+    ax.set_xlim(-1.3, 1.3)
+    ax.set_ylim(-1.3, 1.3)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close()
+
+    logging.info(f"Saved enhanced transition graph to {output_path}")
+    return str(output_path)
+
+
 def visualize_transition_graph(
     trans_probs: np.ndarray,
     roles: list[CodeRole],

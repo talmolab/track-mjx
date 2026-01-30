@@ -1,11 +1,7 @@
 # =============================================================================
-# VQ-VAE Per-Clip Analysis Configuration
+# VQ-VAE Inference Configuration
 # =============================================================================
-# Pipeline for analyzing VQ-VAE code patterns on a per-clip basis:
-# - Transition matrices and probability heatmaps per clip
-# - Community detection via spectral clustering per clip
-# - Interactive HTML viewer with slider navigation
-# - Video rendering with code/community timeline overlays
+# Standalone inference pipeline that saves rollout data to H5 format.
 # =============================================================================
 
 # =============================================================================
@@ -13,52 +9,26 @@
 # =============================================================================
 checkpoint:
   path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260128_213917_090728/
-  step: null  # null = latest step
+  step: null  # Checkpoint step (null = latest)
 
 # =============================================================================
-# WandB Configuration
+# Inference Configuration
 # =============================================================================
-wandb:
-  enabled: true          # Enable WandB logging for analysis session
-  project: "vqvae-analysis"
-  entity: null            # WandB entity (team or username)
-
-# =============================================================================
-# Data Source Configuration
-# =============================================================================
-# Analysis loads pre-computed rollout data from H5 files.
-# Use `python -m inference.run_inference` to generate H5 files.
-data:
-  h5_path: ./outputs/rollout.h5  # Path to H5 file with rollout data (required)
-  clip_length: 250               # Frames per clip (for environment setup)
-
-# =============================================================================
-# Per-Clip Analysis Configuration
-# =============================================================================
-# All analysis is done per-clip: transition matrices, community detection,
-# transition graphs, and video rendering with code/community overlays.
-per_clip:
-  num_clips: 20                 # Number of clips to analyze
-  n_communities: null           # Communities per clip (null = auto-detect)
-  render_videos: true           # Render videos with code/community bars
-
-# =============================================================================
-# Rendering Configuration
-# =============================================================================
-render:
-  camera: close_profile     # Camera name (suffix will be added)
-  fps: 50                   # Frames per second for videos
-  width: 640                # Video width (high resolution)
-  height: 480               # Video height (high resolution)
+inference:
+  num_clips: 50         # Number of clips to run inference on
+  max_steps: 250        # Maximum steps per clip
+  seed: 42              # Random seed for reproducibility
+  clip_length: 250      # Frames per reference clip
+  store_z_e: false      # Whether to store encoder outputs (increases file size)
 
 # =============================================================================
 # Output Configuration
 # =============================================================================
 output:
-  base_dir: ./outputs/code_analysis
+  path: ./outputs/rollout.h5  # Path to save H5 output file
 
 # =============================================================================
-# Environment Configuration
+# Environment Configuration (inherited from training config)
 # =============================================================================
 env_config:
   mujoco_impl: "jax"
@@ -84,7 +54,7 @@ env_config:
   qvel_init: "zeros"
   keep_clips_idx: null
 
-  # Domain Randomization (disabled for analysis)
+  # Domain Randomization (disabled for inference)
   domain_randomization:
     use_domain_randomization: false
     floor_friction: [0.7, 0.7]
@@ -95,7 +65,7 @@ env_config:
     torso_mass_jitter: [0.0, 0.0]
     qpos0_jitter: [0.0, 0.0]
 
-  # Reward Terms
+  # Reward Terms (minimal for inference)
   reward_terms:
     root_pos:
       exp_scale: 0.035

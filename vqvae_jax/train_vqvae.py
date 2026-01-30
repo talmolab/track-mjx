@@ -315,7 +315,87 @@ def vq_rollout_logging_fn(
                 commit=False,
             )
 
-    # Render video with code overlay
+    # Community analysis for large codebooks (runs every eval, like PCA)
+    # Graphs and metrics logged here; video rendering happens with regular videos below
+    enable_community_viz = cfg.render_config.get("enable_community_viz", True)
+    code_to_community = None  # Will be set if community analysis runs
+    n_communities = 0
+
+    if enable_community_viz and num_codes > 32 and indices_array is not None and len(indices_array) > 10:
+        try:
+            from analysis.transition_analysis import compute_transition_matrix
+            from analysis.community_analysis import (
+                discover_communities,
+                compute_soft_membership,
+                identify_overlapping_codes,
+                compute_modularity,
+                compute_coarsened_transitions,
+            )
+            from analysis.rendering import get_community_colormap
+            from analysis.inference_cache import InferenceResult
+
+            logging.info("Running community analysis for large codebook...")
+
+            # Create a single InferenceResult for this rollout
+            temp_result = InferenceResult(
+                clip_idx=0,
+                code_indices=indices_array,
+                qpos=np.zeros((len(indices_array), 1)),
+                qvel=np.zeros((len(indices_array), 1)),
+                rewards=np.array(all_rewards),
+                states=rollout_states,
+            )
+
+            # Compute transition matrix from this rollout
+            trans_counts, trans_probs = compute_transition_matrix([temp_result], num_codes)
+
+            # Discover communities
+            labels, embedding, centroids = discover_communities(trans_probs)
+            n_communities = len(np.unique(labels))
+
+            # Compute soft membership
+            membership_probs = compute_soft_membership(embedding, centroids)
+            overlapping_codes, overlap_stats = identify_overlapping_codes(membership_probs)
+
+            # Compute modularity
+            modularity = compute_modularity(trans_probs, labels)
+
+            # Compute coarsened transitions
+            coarsened = compute_coarsened_transitions(trans_probs, membership_probs, n_communities)
+
+            # Build code_to_community mapping (used for video rendering below)
+            code_to_community = {int(i): int(labels[i]) for i in range(num_codes)}
+
+            # Log community metrics (every eval)
+            wandb.log({
+                "community/n_communities": n_communities,
+                "community/modularity": float(modularity),
+                "community/n_overlapping_codes": len(overlapping_codes),
+                "community/overlap_fraction": len(overlapping_codes) / num_codes,
+            }, commit=False)
+
+            # Log coarsened transition matrix (every eval)
+            community_colors = get_community_colormap(n_communities)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            im = ax.imshow(coarsened, cmap="Blues")
+            ax.set_xlabel("To Community")
+            ax.set_ylabel("From Community")
+            ax.set_title(f"Community Transition Matrix ({n_communities} communities)")
+            ax.set_xticks(range(n_communities))
+            ax.set_yticks(range(n_communities))
+            ax.set_xticklabels([f"C{i}" for i in range(n_communities)])
+            ax.set_yticklabels([f"C{i}" for i in range(n_communities)])
+            plt.colorbar(im, ax=ax, label="Probability")
+            plt.tight_layout()
+            wandb.log({"community/transition_matrix": wandb.Image(fig)}, commit=False)
+            plt.close(fig)
+
+            logging.info(f"Community analysis: {n_communities} communities, modularity={modularity:.3f}")
+
+        except Exception as e:
+            logging.warning(f"Failed to run community analysis: {e}")
+
+    # Render video with code overlay (runs every render_interval evals)
     if render_video:
         import mujoco
 
@@ -361,11 +441,11 @@ def vq_rollout_logging_fn(
                     )
 
                     # Log each per-code video to wandb
-                    for code_idx, video_path in per_code_paths.items():
+                    for code_idx, vpath in per_code_paths.items():
                         wandb.log(
                             {
                                 f"videos/per_code/code_{code_idx}": wandb.Video(
-                                    video_path, format="mp4"
+                                    vpath, format="mp4"
                                 )
                             },
                             commit=False,
@@ -375,6 +455,31 @@ def vq_rollout_logging_fn(
                     )
                 except Exception as e:
                     logging.warning(f"Failed to render per-code videos: {e}")
+
+            # Render community video (same frequency as regular video)
+            if code_to_community is not None and n_communities > 0:
+                try:
+                    from analysis.rendering import render_rollout_with_community_bar
+
+                    community_video_path = f"{model_path}/{current_step}_community.mp4"
+                    render_rollout_with_community_bar(
+                        env=env,
+                        rollout_states=rollout_states,
+                        output_path=community_video_path,
+                        indices=indices_array,
+                        code_to_community=code_to_community,
+                        n_communities=n_communities,
+                        camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
+                        width=640,
+                        height=480,
+                        fps=render_fps,
+                    )
+                    wandb.log({
+                        "videos/rollout_community": wandb.Video(community_video_path, format="mp4")
+                    }, commit=False)
+
+                except Exception as e:
+                    logging.warning(f"Failed to render community video: {e}")
 
         except mujoco.FatalError as e:
             logging.warning(f"Rendering video failed with MuJoCo error: {e}")

@@ -1,10 +1,13 @@
 """VQ-VAE Code Analysis Pipeline.
 
-Main entry point for analyzing VQ-VAE code semantics through:
-- Transition matrix and chain analysis
-- Code segment extraction and duration statistics
-- Kinematic feature correlation
-- DTW-based segment alignment
+Main entry point for analyzing VQ-VAE code semantics on a per-clip basis:
+- Per-clip transition matrices and community detection
+- Interactive HTML viewer with slider navigation
+- Video rendering with code and community timeline overlays
+
+Analysis requires pre-computed H5 rollout data. Use the inference module to
+generate H5 files:
+    python -m inference.run_inference checkpoint.path=/path/to/checkpoint
 
 Usage:
     cd vqvae_jax
@@ -13,10 +16,10 @@ Usage:
     # Override config values:
     python -m analysis.code_analysis \
         checkpoint.path=/path/to/checkpoint \
-        experiments.transition.enabled=true
+        data.h5_path=./outputs/rollout.h5
 
-    # Force re-run inference (ignore cache):
-    python -m analysis.code_analysis inference.force_rerun=true
+    # Enable WandB logging:
+    python -m analysis.code_analysis wandb.enabled=true
 """
 
 import os
@@ -39,218 +42,106 @@ sys.path.insert(0, str(VQVAE_DIR))
 sys.path.insert(0, str(REPO_ROOT))
 
 import hydra
-import jax
-import jax.numpy as jnp
-import numpy as np
 from absl import logging
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
-from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.config import utils as config_utils
 
-from .checkpoint_utils import (
-    load_vq_checkpoint,
-    load_vq_inference_fn,
-    load_vq_inference_fn_with_stickiness,
-    get_codebook,
-)
-from .inference_cache import (
-    InferenceResult,
-    compute_cache_key,
-    get_cache_path,
-    save_inference_cache,
-    load_inference_cache,
-)
-from .transition_analysis import run_transition_analysis
-from .segment_analysis import run_segment_analysis
-from .kinematic_analysis import run_kinematic_analysis
-from .alignment_analysis import run_alignment_analysis
+from .checkpoint_utils import load_vq_checkpoint, get_codebook
+from .inference_cache import InferenceResult
+from .per_clip_analysis import run_per_clip_analysis
 
 
-def run_inference(
-    env: Any,
-    inference_fn: Any,
-    num_clips: int,
-    max_steps: int,
-    seed: int,
-    store_states: bool = True,
-    use_stickiness: bool = False,
-) -> list[InferenceResult]:
-    """Run VQ-VAE inference on multiple clips.
+def load_rollouts_from_h5(h5_path: str | Path) -> tuple[list[InferenceResult], dict]:
+    """Load rollout data from H5 file and convert to InferenceResult format.
 
     Args:
-        env: Environment with reset/step methods.
-        inference_fn: VQ-VAE inference function. If use_stickiness=False,
-            signature is (obs, rng) -> (action, extras). If use_stickiness=True,
-            signature is (obs, rng, prev_indices) -> (action, extras).
-        num_clips: Number of clips to process.
-        max_steps: Maximum steps per clip.
-        seed: Random seed.
-        store_states: Whether to store environment states for rendering.
-        use_stickiness: If True, track previous code indices and pass to
-            inference_fn for stickiness bias.
+        h5_path: Path to H5 file created by inference module.
 
     Returns:
-        List of InferenceResult objects.
+        Tuple of (results, metadata).
     """
-    jit_reset = jax.jit(env.reset)
-    jit_step = jax.jit(env.step)
+    sys.path.insert(0, str(VQVAE_DIR / "inference"))
+    from inference.h5_utils import load_rollout_h5
+
+    rollouts, metadata = load_rollout_h5(h5_path)
 
     results = []
-    rng = jax.random.PRNGKey(seed)
-
-    for clip_idx in range(num_clips):
-        logging.info(f"Running inference on clip {clip_idx}/{num_clips}...")
-
-        rng, reset_rng = jax.random.split(rng)
-        state = jit_reset(reset_rng)
-
-        states = [state] if store_states else None
-        code_indices = []
-        qpos_list = []
-        qvel_list = []
-        rewards = []
-        prev_indices = None  # Track previous code for stickiness
-
-        for step in range(max_steps):
-            # Get observation and flatten to dict format expected by policy
-            obs = state.obs
-            flat_obs = flatten_obs_dict(obs)
-
-            # Run inference (with or without stickiness)
-            # Pass the dict directly - policy_network.apply expects a dict
-            rng, action_rng = jax.random.split(rng)
-            if use_stickiness:
-                action, extras = inference_fn(flat_obs, action_rng, prev_indices)
-            else:
-                action, extras = inference_fn(flat_obs, action_rng)
-
-            # Extract code index and update prev_indices for next step
-            code_idx = int(extras["indices"])
-            code_indices.append(code_idx)
-            prev_indices = jnp.array(code_idx)  # For next iteration
-
-            # Extract qpos/qvel
-            if hasattr(state, "data"):
-                qpos_list.append(np.array(state.data.qpos))
-                qvel_list.append(np.array(state.data.qvel))
-            elif hasattr(state, "pipeline_state"):
-                qpos_list.append(np.array(state.pipeline_state.q))
-                qvel_list.append(np.array(state.pipeline_state.qd))
-
-            # Step environment
-            next_state = jit_step(state, action)
-
-            rewards.append(float(next_state.reward))
-            if store_states:
-                states.append(next_state)
-
-            if next_state.done:
-                break
-
-            state = next_state
-
-        # Create result
+    for rollout in rollouts:
         result = InferenceResult(
-            clip_idx=clip_idx,
-            code_indices=np.array(code_indices),
-            qpos=np.stack(qpos_list) if qpos_list else np.zeros((0, 0)),
-            qvel=np.stack(qvel_list) if qvel_list else np.zeros((0, 0)),
-            rewards=np.array(rewards),
-            states=states,
+            clip_idx=rollout.clip_idx,
+            code_indices=rollout.code_indices,
+            qpos=rollout.qpos,
+            qvel=rollout.qvel,
+            rewards=rollout.rewards,
+            states=None,
         )
         results.append(result)
 
-    return results
+    return results, metadata
 
 
-def run_or_load_inference(
-    env: Any,
-    inference_fn: Any,
-    checkpoint_path: str,
-    step: int | None,
-    num_clips: int,
-    max_steps: int,
-    seed: int,
-    cache_dir: str | Path,
-    force_rerun: bool = False,
-    store_states: bool = False,
-    use_stickiness: bool = False,
-) -> list[InferenceResult]:
-    """Run inference or load from cache.
+def initialize_wandb_analysis(
+    cfg: DictConfig, num_codes: int, h5_metadata: dict
+) -> bool:
+    """Initialize WandB for analysis session."""
+    if not cfg.wandb.get("enabled", False):
+        return False
 
-    Note: States are never cached (too large). If store_states=True and cache
-    exists, we load cached data then re-run inference to populate states.
+    try:
+        import wandb
 
-    Args:
-        env: Environment.
-        inference_fn: VQ-VAE inference function.
-        checkpoint_path: Path to checkpoint.
-        step: Checkpoint step.
-        num_clips: Number of clips.
-        max_steps: Maximum steps.
-        seed: Random seed.
-        cache_dir: Directory for cache files.
-        force_rerun: If True, ignore cache and re-run.
-        store_states: Whether to store states for rendering.
-        use_stickiness: If True, use stickiness-aware inference with prev_indices.
+        wandb.init(
+            project=cfg.wandb.get("project", "vqvae-analysis"),
+            entity=cfg.wandb.get("entity"),
+            name=f"analysis_{datetime.now().strftime('%y%m%d_%H%M%S')}",
+            config={
+                "checkpoint_path": h5_metadata.get("checkpoint_path", cfg.checkpoint.path),
+                "checkpoint_step": h5_metadata.get("checkpoint_step", cfg.checkpoint.step),
+                "num_rollouts": h5_metadata.get("num_rollouts"),
+                "num_codes": num_codes,
+                "h5_path": cfg.data.h5_path,
+                "per_clip": OmegaConf.to_container(cfg.per_clip, resolve=True),
+            },
+        )
+        logging.info("WandB initialized for analysis session")
+        return True
 
-    Returns:
-        List of InferenceResult objects.
-    """
-    cache_dir = Path(cache_dir)
-    cache_key = compute_cache_key(checkpoint_path, step, num_clips, seed, use_stickiness)
-    cache_path = get_cache_path(cache_dir, cache_key)
+    except Exception as e:
+        logging.warning(f"Failed to initialize WandB: {e}")
+        return False
 
-    if not force_rerun and cache_path.exists():
-        # Try to load from cache
-        cached = load_inference_cache(cache_path)
-        if cached is not None:
-            results, metadata = cached
-            logging.info(f"Loaded {len(results)} results from cache")
 
-            if not store_states:
-                # Don't need states, return cached results
-                return results
+def log_analysis_to_wandb(
+    output_dir: Path,
+    all_paths: dict[str, Any],
+) -> None:
+    """Log analysis results to WandB."""
+    try:
+        import wandb
 
-            # Need states for rendering - re-run inference but keep cached data
-            logging.info("Running inference to collect states for rendering...")
-            results_with_states = run_inference(
-                env=env,
-                inference_fn=inference_fn,
-                num_clips=num_clips,
-                max_steps=max_steps,
-                seed=seed,
-                store_states=True,
-                use_stickiness=use_stickiness,
-            )
-            return results_with_states
+        if wandb.run is None:
+            return
 
-    # No cache - run inference
-    logging.info(f"Running inference on {num_clips} clips...")
-    results = run_inference(
-        env=env,
-        inference_fn=inference_fn,
-        num_clips=num_clips,
-        max_steps=max_steps,
-        seed=seed,
-        store_states=store_states,
-        use_stickiness=use_stickiness,
-    )
+        # Log per-clip HTML viewer
+        html_path = all_paths.get("html")
+        if html_path and Path(html_path).exists():
+            wandb.log({
+                "per_clip/interactive_viewer": wandb.Html(open(html_path).read())
+            })
 
-    # Save to cache (without states - too large)
-    metadata = {
-        "checkpoint_path": str(checkpoint_path),
-        "step": step,
-        "num_clips": num_clips,
-        "seed": seed,
-        "max_steps": max_steps,
-    }
-    save_inference_cache(cache_path, results, metadata)
+        # Log per-clip videos
+        video_paths = all_paths.get("videos", {})
+        for name, path in video_paths.items():
+            if path and Path(path).exists():
+                wandb.log({f"clips/{name}": wandb.Video(path, format="mp4")})
 
-    return results
+        logging.info("Logged analysis results to WandB")
+
+    except Exception as e:
+        logging.warning(f"Failed to log to WandB: {e}")
 
 
 def generate_summary_report(
@@ -258,82 +149,49 @@ def generate_summary_report(
     cfg: DictConfig,
     num_codes: int,
     all_paths: dict[str, Any],
+    h5_metadata: dict,
 ) -> str:
-    """Generate a markdown summary report.
-
-    Args:
-        output_dir: Base output directory.
-        cfg: Configuration.
-        num_codes: Number of codes in codebook.
-        all_paths: Dictionary of all generated file paths.
-
-    Returns:
-        Path to summary report.
-    """
+    """Generate a markdown summary report."""
     report_path = output_dir / "summary" / "analysis_report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
+    checkpoint_path = h5_metadata.get("checkpoint_path", cfg.checkpoint.path)
+    checkpoint_step = h5_metadata.get("checkpoint_step", cfg.checkpoint.step)
+    num_rollouts = h5_metadata.get("num_rollouts", "unknown")
+
     lines = [
-        "# VQ-VAE Code Analysis Report",
+        "# VQ-VAE Per-Clip Analysis Report",
         "",
         f"Generated: {datetime.now().isoformat()}",
         "",
         "## Configuration",
         "",
-        f"- Checkpoint: `{cfg.checkpoint.path}`",
-        f"- Step: {cfg.checkpoint.step or 'latest'}",
-        f"- Num clips: {cfg.inference.num_clips}",
+        f"- H5 data: `{cfg.data.h5_path}`",
+        f"- Checkpoint: `{checkpoint_path}`",
+        f"- Step: {checkpoint_step or 'latest'}",
+        f"- Num rollouts: {num_rollouts}",
         f"- Num codes: {num_codes}",
         "",
-        "## Experiments Run",
+        "## Per-Clip Analysis",
+        "",
+        f"- Analyzed {cfg.per_clip.get('num_clips', 10)} individual clips",
+        f"- Communities per clip: {cfg.per_clip.get('n_communities', 'auto-detect')}",
+        f"- Video rendering: {cfg.per_clip.get('render_videos', True)}",
+        "",
+        "Each clip includes:",
+        "- Transition matrix and probability heatmap",
+        "- Community detection via spectral clustering",
+        "- Transition graph with community-colored nodes",
+        "- Dual timeline showing code and community colors",
+        "- Video with code/community overlay bars",
+        "",
+        "## Output Files",
+        "",
+        f"- Interactive HTML viewer: `{all_paths.get('html', 'N/A')}`",
+        f"- Per-clip stats JSON: `{all_paths.get('json', 'N/A')}`",
+        f"- Clip videos: `{output_dir}/videos/`",
         "",
     ]
-
-    experiments = cfg.experiments
-    if experiments.transition.enabled:
-        lines.append("### Transition Analysis")
-        lines.append("")
-        lines.append("- Computed transition matrix and probabilities")
-        lines.append(f"- Found top {experiments.transition.top_k_chains} chains")
-        lines.append("- Classified code roles (entry, exit, hub, steady-state)")
-        lines.append("")
-
-    if experiments.segment_grid.enabled or experiments.duration.enabled:
-        lines.append("### Segment Analysis")
-        lines.append("")
-        lines.append("- Extracted contiguous code segments")
-        lines.append("- Computed duration statistics")
-        if experiments.segment_grid.enabled:
-            lines.append("- Rendered per-code segment videos")
-        lines.append("")
-
-    if experiments.kinematic.enabled:
-        lines.append("### Kinematic Analysis")
-        lines.append("")
-        lines.append("- Extracted kinematic features per code")
-        lines.append(f"- Features: {', '.join(experiments.kinematic.features)}")
-        lines.append(f"- Clustering method: {experiments.kinematic.clustering_method}")
-        lines.append("")
-
-    if experiments.alignment.enabled:
-        lines.append("### Alignment Analysis")
-        lines.append("")
-        lines.append("- Aligned segments using DTW")
-        lines.append(f"- DTW feature: {experiments.alignment.dtw_feature}")
-        lines.append("- Rendered aligned comparison videos")
-        lines.append("")
-
-    lines.append("## Output Files")
-    lines.append("")
-    lines.append("See the following directories for outputs:")
-    lines.append("")
-    lines.append(f"- Cache: `{output_dir}/cache/`")
-    lines.append(f"- Transitions: `{output_dir}/transitions/`")
-    lines.append(f"- Segments: `{output_dir}/segments/`")
-    lines.append(f"- Durations: `{output_dir}/durations/`")
-    lines.append(f"- Kinematics: `{output_dir}/kinematics/`")
-    lines.append(f"- Alignment: `{output_dir}/alignment/`")
-    lines.append("")
 
     with open(report_path, "w") as f:
         f.write("\n".join(lines))
@@ -343,20 +201,16 @@ def generate_summary_report(
     summary = {
         "generated": datetime.now().isoformat(),
         "config": {
-            "checkpoint_path": cfg.checkpoint.path,
-            "checkpoint_step": cfg.checkpoint.step,
-            "num_clips": cfg.inference.num_clips,
+            "h5_path": cfg.data.h5_path,
+            "checkpoint_path": checkpoint_path,
+            "checkpoint_step": checkpoint_step,
+            "num_rollouts": num_rollouts,
             "num_codes": num_codes,
         },
-        "experiments": {
-            "transition": experiments.transition.enabled,
-            "segment_grid": experiments.segment_grid.enabled,
-            "duration": experiments.duration.enabled,
-            "kinematic": experiments.kinematic.enabled,
-            "alignment": experiments.alignment.enabled,
-        },
+        "per_clip": OmegaConf.to_container(cfg.per_clip, resolve=True),
         "output_paths": all_paths,
     }
+
     with open(json_path, "w") as f:
         json.dump(summary, f, indent=2, default=str)
 
@@ -365,11 +219,11 @@ def generate_summary_report(
 
 @hydra.main(version_base=None, config_path="../configs", config_name="code_analysis")
 def main(cfg: DictConfig):
-    """Run VQ-VAE code analysis pipeline."""
+    """Run VQ-VAE per-clip analysis pipeline."""
     logging.set_verbosity(logging.INFO)
 
     print("=" * 60)
-    print("VQ-VAE Code Analysis Pipeline")
+    print("VQ-VAE Per-Clip Analysis Pipeline")
     print("=" * 60)
 
     # Create output directory
@@ -377,150 +231,86 @@ def main(cfg: DictConfig):
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.info(f"Output directory: {output_dir}")
 
-    # Load checkpoint
-    logging.info("\nLoading checkpoint...")
-    ckpt = load_vq_checkpoint(
-        cfg.checkpoint.path,
-        step=cfg.checkpoint.step,
-    )
+    # Load rollouts from H5 file
+    h5_path = cfg.data.h5_path
+    if not Path(h5_path).exists():
+        raise FileNotFoundError(
+            f"H5 file not found: {h5_path}\n"
+            "Please generate rollout data first using:\n"
+            "  python -m inference.run_inference checkpoint.path=/path/to/checkpoint"
+        )
+
+    logging.info(f"\nLoading rollouts from H5: {h5_path}")
+    results, h5_metadata = load_rollouts_from_h5(h5_path)
+    num_codes = h5_metadata.get("num_codes", 64)
+    logging.info(f"  Loaded {len(results)} rollouts, {num_codes} codes")
+
+    # Load checkpoint for codebook
+    ckpt = load_vq_checkpoint(cfg.checkpoint.path, step=cfg.checkpoint.step)
     vq_cfg = ckpt["cfg"]
-    policy_params = ckpt["policy"]
-    step = ckpt["step"]
-
-    codebook = get_codebook(policy_params)
+    codebook = get_codebook(ckpt["policy"])
     num_codes = codebook.shape[0]
-    latent_dim = codebook.shape[1]
-    logging.info(f"  Codebook: {num_codes} codes, {latent_dim} dims")
-    logging.info(f"  Checkpoint step: {step}")
 
-    # Create stickiness-aware inference function
-    # This properly applies the stickiness bias during inference
-    stickiness_bias = vq_cfg.network_config.get("stickiness_bias", 0.0)
-    use_stickiness = stickiness_bias > 0
-
-    if use_stickiness:
-        logging.info(f"  Stickiness bias: {stickiness_bias} (ENABLED)")
-        inference_fn, _ = load_vq_inference_fn_with_stickiness(
-            vq_cfg, policy_params, deterministic=True, get_activation=True
-        )
-    else:
-        logging.info(f"  Stickiness bias: {stickiness_bias} (disabled)")
-        inference_fn = load_vq_inference_fn(
-            vq_cfg, policy_params, deterministic=True, get_activation=True
-        )
-
-    # Create environment
-    logging.info("\nCreating environment...")
+    # Create environment for rendering
     (_, cfg_dict, env_cfg_ml) = config_utils.prepare_config(cfg)
-
     reference_clips = ReferenceClips(
         data_path=vq_cfg.env_config.reference_data_path,
-        n_frames_per_clip=cfg.inference.get("clip_length", 250),
-        keep_clips_idx=None,  # Load all clips, select during inference
+        n_frames_per_clip=cfg.data.get("clip_length", 250),
+        keep_clips_idx=None,
     )
     env = imitation.Imitation(config=env_cfg_ml, clips=reference_clips)
+
+    # Initialize WandB if enabled
+    wandb_enabled = initialize_wandb_analysis(cfg, num_codes, h5_metadata)
 
     # Get camera name
     env_suffix = getattr(env, "_suffix", "-rodent")
     camera_name = f"{cfg.render.camera}{env_suffix}"
 
-    # Run or load inference
-    logging.info("\nRunning/loading inference...")
-    need_states = (
-        cfg.experiments.segment_grid.enabled or cfg.experiments.alignment.enabled
-    )
-    results = run_or_load_inference(
+    # Run per-clip analysis (the only analysis mode)
+    logging.info("\n" + "=" * 40)
+    logging.info("Running per-clip analysis...")
+
+    per_clip_cfg = cfg.per_clip
+    per_clip_results = run_per_clip_analysis(
+        results=results,
+        num_codes=num_codes,
+        output_dir=output_dir,
+        num_clips=per_clip_cfg.get("num_clips", 10),
+        n_communities=per_clip_cfg.get("n_communities", None),
+        render_videos=per_clip_cfg.get("render_videos", True),
         env=env,
-        inference_fn=inference_fn,
-        checkpoint_path=cfg.checkpoint.path,
-        step=cfg.checkpoint.step,
-        num_clips=cfg.inference.num_clips,
-        max_steps=cfg.inference.max_steps,
-        seed=cfg.inference.seed,
-        cache_dir=output_dir / "cache",
-        force_rerun=cfg.inference.force_rerun,
-        store_states=need_states,
-        use_stickiness=use_stickiness,
+        camera=camera_name,
+        width=cfg.render.get("width", 640),
+        height=cfg.render.get("height", 480),
+        fps=cfg.render.get("fps", 50),
     )
 
-    all_paths = {}
-
-    # Run transition analysis
-    if cfg.experiments.transition.enabled:
-        logging.info("\n" + "=" * 40)
-        logging.info("Running transition analysis...")
-        trans_paths = run_transition_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=output_dir / "transitions",
-            min_chain_prob=cfg.experiments.transition.min_chain_prob,
-            top_k_chains=cfg.experiments.transition.top_k_chains,
-        )
-        all_paths["transitions"] = trans_paths
-
-    # Run segment analysis
-    if cfg.experiments.segment_grid.enabled or cfg.experiments.duration.enabled:
-        logging.info("\n" + "=" * 40)
-        logging.info("Running segment analysis...")
-        seg_results = run_segment_analysis(
-            env=env,
-            results=results,
-            num_codes=num_codes,
-            output_dir=output_dir / "segments",
-            min_segment_frames=cfg.experiments.segment_grid.min_segment_frames,
-            max_segments_per_code=cfg.experiments.segment_grid.max_segments_per_code,
-            render_videos=cfg.experiments.segment_grid.enabled,
-            camera=camera_name,
-            fps=cfg.render.fps,
-        )
-        all_paths["segments"] = seg_results["paths"]
-
-        # Copy duration plot to durations directory if enabled
-        if cfg.experiments.duration.enabled:
-            duration_dir = output_dir / "durations"
-            duration_dir.mkdir(parents=True, exist_ok=True)
-            all_paths["durations"] = seg_results["paths"]
-
-    # Run kinematic analysis
-    if cfg.experiments.kinematic.enabled:
-        logging.info("\n" + "=" * 40)
-        logging.info("Running kinematic analysis...")
-        kin_paths = run_kinematic_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=output_dir / "kinematics",
-            clustering_method=cfg.experiments.kinematic.clustering_method,
-        )
-        all_paths["kinematics"] = kin_paths
-
-    # Run alignment analysis
-    if cfg.experiments.alignment.enabled:
-        logging.info("\n" + "=" * 40)
-        logging.info("Running alignment analysis...")
-        align_results = run_alignment_analysis(
-            env=env,
-            results=results,
-            num_codes=num_codes,
-            output_dir=output_dir / "alignment",
-            min_segment_length=cfg.experiments.alignment.min_segment_length,
-            max_pairs_per_code=cfg.experiments.alignment.max_pairs_per_code,
-            dtw_feature=cfg.experiments.alignment.dtw_feature,
-            render_videos=True,
-            camera=camera_name,
-            fps=cfg.render.fps,
-        )
-        all_paths["alignment"] = align_results["paths"]
+    all_paths = {
+        "html": per_clip_results["html_path"],
+        "json": per_clip_results["json_path"],
+        "videos": per_clip_results.get("video_paths", {}),
+    }
 
     # Generate summary report
     logging.info("\n" + "=" * 40)
     logging.info("Generating summary report...")
-    report_path = generate_summary_report(output_dir, cfg, num_codes, all_paths)
+    report_path = generate_summary_report(
+        output_dir, cfg, num_codes, all_paths, h5_metadata
+    )
     all_paths["report"] = report_path
+
+    # Log to WandB
+    if wandb_enabled:
+        log_analysis_to_wandb(output_dir, all_paths)
+        import wandb
+        wandb.finish()
 
     print("\n" + "=" * 60)
     print(f"Analysis complete! Results saved to {output_dir}")
     print("=" * 60)
-    print(f"\nSummary report: {report_path}")
+    print(f"\nInteractive viewer: {all_paths['html']}")
+    print(f"Summary report: {report_path}")
 
 
 if __name__ == "__main__":

@@ -701,10 +701,14 @@ def train(
         loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
         return training_state, state, policy_hidden, loss_metrics
 
+    # Note: We only donate training_state and env_state, not policy_hidden.
+    # The hidden state is small compared to the other arguments, and donating
+    # list-structured pytrees like policy_hidden can cause issues with buffer
+    # donation when combined with _strip_weak_type() creating new arrays.
     training_epoch = jax.pmap(
         training_epoch,
         axis_name=_PMAP_AXIS_NAME,
-        donate_argnums=(0, 1, 2),
+        donate_argnums=(0, 1),
     )
 
     training_walltime = 0

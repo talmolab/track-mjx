@@ -28,7 +28,6 @@ from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
     normalize_dict_obs,
-    flatten_obs_dict,
 )
 
 
@@ -149,103 +148,53 @@ def load_frozen_encoder_decoder(
 
     cfg = OmegaConf.create(cfg)
 
-    # Check if checkpoint uses dict observations (new format) or flat observations (legacy)
+    # Require new dict-based config format (legacy flat format no longer supported)
     obs_sizes = cfg.network_config.get("obs_sizes", None)
-    if obs_sizes is not None:
-        # New dict-based format
-        obs_sizes = dict(obs_sizes)
-        ppo_network = ff_ppo_networks.make_intention_ppo_networks(
-            obs_sizes=obs_sizes,
-            action_size=cfg.network_config.action_size,
-            intention_latent_size=cfg.network_config.intention_size,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+    if obs_sizes is None:
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "and 'proprioception' keys."
         )
 
-        key_policy, key_value = jax.random.split(jax.random.key(1))
-        init_params = ff_ppo_losses.PPONetworkParams(
-            policy=ppo_network.policy_network.init(key_policy),
-            value=ppo_network.value_network.init(key_value),
-        )
+    obs_sizes = dict(obs_sizes)
+    ppo_network = ff_ppo_networks.make_intention_ppo_networks(
+        obs_sizes=obs_sizes,
+        action_size=cfg.network_config.action_size,
+        intention_latent_size=cfg.network_config.intention_size,
+        encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+    )
 
-        # Create abstract dict normalizer
-        normalizer_state = DictRunningStatisticsState(
-            imitation_target=running_statistics.init_state(
-                specs.Array(obs_sizes["imitation_target"], jnp.dtype("float32"))
+    key_policy, key_value = jax.random.split(jax.random.key(1))
+    init_params = ff_ppo_losses.PPONetworkParams(
+        policy=ppo_network.policy_network.init(key_policy),
+        value=ppo_network.value_network.init(key_value),
+    )
+
+    # Create abstract dict normalizer
+    normalizer_state = DictRunningStatisticsState(
+        imitation_target=running_statistics.init_state(
+            specs.Array(obs_sizes["imitation_target"], jnp.dtype("float32"))
+        ),
+        proprioception=running_statistics.init_state(
+            specs.Array(obs_sizes["proprioception"], jnp.dtype("float32"))
+        ),
+    )
+
+    abstract_policy = (normalizer_state, init_params.policy)
+
+    # Load actual policy
+    with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
+        policy_params = ckpt_mgr.restore(
+            step,
+            args=ocp.args.Composite(
+                policy=ocp.args.StandardRestore(abstract_policy)
             ),
-            proprioception=running_statistics.init_state(
-                specs.Array(obs_sizes["proprioception"], jnp.dtype("float32"))
-            ),
-        )
+        )["policy"]
 
-        abstract_policy = (normalizer_state, init_params.policy)
-
-        # Load actual policy
-        with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
-            policy_params = ckpt_mgr.restore(
-                step,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardRestore(abstract_policy)
-                ),
-            )["policy"]
-
-        normalizer_params, network_params = policy_params
-    else:
-        # Legacy flat format - need to convert
-        from track_mjx.agent.observation_utils import convert_flat_to_dict_normalizer
-
-        observation_size = cfg.network_config.observation_size
-        reference_obs_size = cfg.network_config.reference_obs_size
-
-        # Create abstract flat normalizer for loading
-        normalizer_state = running_statistics.init_state(
-            specs.Array(observation_size, jnp.dtype("float32"))
-        )
-
-        # Create legacy network for structure matching
-        # Note: This uses an older signature that we need for legacy checkpoints
-        ppo_network = ff_ppo_networks.make_intention_ppo_networks(
-            obs_sizes={
-                "imitation_target": reference_obs_size,
-                "proprioception": observation_size - reference_obs_size,
-            },
-            action_size=cfg.network_config.action_size,
-            intention_latent_size=cfg.network_config.intention_size,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        )
-
-        key_policy, key_value = jax.random.split(jax.random.key(1))
-        init_params = ff_ppo_losses.PPONetworkParams(
-            policy=ppo_network.policy_network.init(key_policy),
-            value=ppo_network.value_network.init(key_value),
-        )
-
-        abstract_policy = (normalizer_state, init_params.policy)
-
-        # Load actual policy with flat normalizer
-        with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
-            policy_params = ckpt_mgr.restore(
-                step,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardRestore(abstract_policy)
-                ),
-            )["policy"]
-
-        flat_normalizer_params, network_params = policy_params
-
-        # Convert flat normalizer to dict format
-        normalizer_params = convert_flat_to_dict_normalizer(
-            flat_normalizer_params, reference_obs_size
-        )
-
-        # Add obs_sizes to config for downstream use
-        cfg.network_config.obs_sizes = {
-            "imitation_target": reference_obs_size,
-            "proprioception": observation_size - reference_obs_size,
-        }
+    normalizer_params, network_params = policy_params
 
     # Extract encoder and decoder params
     encoder_params = network_params["params"]["encoder"]
@@ -370,12 +319,14 @@ def make_encoder_decoder_inference_fn(
     )
 
     def policy_fn(
-        obs: Mapping[str, jnp.ndarray], key: jax.Array
+        obs: Mapping[str, Mapping[str, jnp.ndarray]], key: jax.Array
     ) -> Tuple[jnp.ndarray, Dict]:
         """Generate actions using frozen encoder+decoder.
 
         Args:
-            obs: Dict observations with "imitation_target" and "proprioception" keys.
+            obs: Nested dict observations with structure:
+                {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
+                or flat dict {'imitation_target': ..., 'proprioception': ...}
             key: Random key for sampling.
 
         Returns:
@@ -383,13 +334,19 @@ def make_encoder_decoder_inference_fn(
         """
         key_encoder, key_action = jax.random.split(key)
 
-        # Flatten and normalize dict observations
-        flat_obs = flatten_obs_dict(obs)
-        normalized_obs = normalize_dict_obs(flat_obs, normalizer_params)
-
-        # Access observations by key
-        traj_obs = normalized_obs["imitation_target"]
-        proprio_obs = normalized_obs["proprioception"]
+        # Handle both nested and flat observation formats
+        if "state" in obs:
+            # Nested format: {'state': {'imitation_target': ..., 'proprioception': ...}}
+            normalized_obs = normalize_dict_obs(obs, normalizer_params)
+            traj_obs = normalized_obs["state"]["imitation_target"]
+            proprio_obs = normalized_obs["state"]["proprioception"]
+        else:
+            # Flat format: {'imitation_target': ..., 'proprioception': ...}
+            # Wrap in 'state' for normalization
+            nested_obs = {"state": obs}
+            normalized_obs = normalize_dict_obs(nested_obs, normalizer_params)
+            traj_obs = normalized_obs["state"]["imitation_target"]
+            proprio_obs = normalized_obs["state"]["proprioception"]
 
         # Encode trajectory -> latent distribution
         latent_mean, latent_logvar = encoder_module.apply(

@@ -8,9 +8,14 @@ The key components are:
 - Inference functions that route observations through encoder/decoder
 - Factory functions for creating intention-based PPO networks
 
-Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
-- "proprioception": Proprioceptive state observations (flat array)
+Observations are expected as nested dictionaries:
+    {
+        'state': {'imitation_target': ..., 'proprioception': ...},
+        'privileged_state': {'imitation_target': ..., 'proprioception': ...}
+    }
+
+The policy uses 'state' for both encoder and decoder.
+The value network uses 'privileged_state'.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -27,7 +32,7 @@ from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import intention_network
 from track_mjx.agent.observation_utils import (
     DictRunningStatisticsState,
-    concat_flat_dict_obs,
+    concat_inner_obs,
     normalize_dict_obs,
 )
 
@@ -86,10 +91,11 @@ def make_inference_fn(
             key_sample: PRNGKey,
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
-            activations = None
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
-            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            # Get first leaf array from nested observation structure
+            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys for deterministic replay
                 batch_size = obs_leaf.shape[0]
@@ -110,6 +116,7 @@ def make_inference_fn(
                 logits, latent_mean, latent_logvar = policy_network.apply(
                     *params, observations, per_sample_keys, deterministic=deterministic
                 )
+                activations = None
 
             if deterministic:
                 action = jnp.array(parametric_action_distribution.mode(logits))
@@ -181,7 +188,9 @@ def make_logging_inference_fn(
             key_sample, key_network = jax.random.split(key_sample)
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
-            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            # Get first leaf array from nested observation structure
+            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys
                 batch_size = obs_leaf.shape[0]
@@ -225,19 +234,19 @@ def make_dict_value_network(
     obs_sizes: Mapping[str, int],
     hidden_layer_sizes: Sequence[int] = (1024,) * 2,
 ) -> networks.FeedForwardNetwork:
-    """Create a value network that accepts dictionary observations.
+    """Create a value network that accepts nested dictionary observations.
 
-    The value network flattens the dict observation internally and normalizes
-    each component before concatenating.
+    The value network uses 'privileged_state' observations (which contain
+    both imitation_target and proprioception).
 
     Args:
-        obs_sizes: Dict mapping observation keys to their sizes.
+        obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
         hidden_layer_sizes: MLP layer sizes for value network.
 
     Returns:
-        FeedForwardNetwork that accepts dict observations.
+        FeedForwardNetwork that accepts nested dict observations.
     """
-    total_obs_size = sum(obs_sizes.values())
+    total_obs_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
 
     # Create underlying value network with flat observations
     base_value_network = networks.make_value_network(
@@ -249,12 +258,13 @@ def make_dict_value_network(
     def apply(
         processor_params: DictRunningStatisticsState,
         value_params,
-        obs: Mapping[str, jnp.ndarray],
+        obs: Mapping[str, Mapping[str, jnp.ndarray]],
     ):
-        """Apply value network with dict observation normalization."""
-        # Normalize each component and flatten
+        """Apply value network with nested observation normalization."""
+        # Normalize the nested observation dict
         normalized_obs = normalize_dict_obs(obs, processor_params)
-        flat_obs = concat_flat_dict_obs(normalized_obs)
+        # Use privileged_state and concatenate inner observations
+        flat_obs = concat_inner_obs(normalized_obs["privileged_state"])
         return base_value_network.apply((), value_params, flat_obs)
 
     return networks.FeedForwardNetwork(
@@ -274,12 +284,13 @@ def make_intention_ppo_networks(
     """Create intention-based PPO networks for imitation learning.
 
     Creates an encoder-decoder policy network where the encoder processes
-    reference trajectory observations and the decoder generates actions
-    conditioned on proprioceptive state and latent intention.
+    obs['state']['imitation_target'] and the decoder generates actions
+    conditioned on obs['state']['proprioception'] and latent intention.
+
+    The value network uses obs['privileged_state'].
 
     Args:
-        obs_sizes: Dict mapping observation keys to their sizes, e.g.
-            {"imitation_target": 3716, "proprioception": 226}.
+        obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
         action_size: Action dimension.
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.

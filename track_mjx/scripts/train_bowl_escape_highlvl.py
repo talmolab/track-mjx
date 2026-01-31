@@ -1,5 +1,19 @@
+"""High-level training for RodentBowlEscape task.
+
+DEPRECATED: Use train_highlvl.py instead:
+    python train_highlvl.py --task=RodentBowlEscape --mimic_checkpoint=260115_005843_966729
+"""
+
 import os
+import warnings
 from typing import Callable, Mapping
+
+warnings.warn(
+    "This script is deprecated. Use train_highlvl.py instead:\n"
+    "  python train_highlvl.py --task=RodentBowlEscape --mimic_checkpoint=...",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from omegaconf import OmegaConf
 
@@ -224,6 +238,10 @@ if __name__ == "__main__":
 
     def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
         del make_policy  # Unused.
+
+        # Log approximate total steps in thousands
+        steps_k = current_step * ppo_params.eval_every / 1000
+        wandb.log({"train/steps_k": steps_k}, commit=False)
 
         # Generate a rollout
         rollout = [start_state]

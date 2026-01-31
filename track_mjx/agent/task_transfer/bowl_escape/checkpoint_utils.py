@@ -18,10 +18,7 @@ from omegaconf import OmegaConf
 
 from track_mjx.agent.ff_ppo import intention_network
 from track_mjx.agent.mlp_prior.prior_networks import Prior
-from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
-    convert_flat_to_dict_normalizer,
-)
+from track_mjx.agent.observation_utils import DictRunningStatisticsState
 
 
 def load_prior_checkpoint(
@@ -61,46 +58,25 @@ def load_prior_checkpoint(
     # Check if using dict format or legacy flat format
     obs_sizes = cfg.network_config.get("obs_sizes", None)
 
-    if obs_sizes is not None:
-        # New dict format
-        abstract_policy = _create_abstract_prior_policy_dict(cfg)
-
-        with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
-            policy_params = ckpt_mgr.restore(
-                step,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardRestore(abstract_policy)
-                ),
-            )["policy"]
-
-        normalizer_params, network_params = policy_params
-    else:
-        # Legacy flat format - need to convert
-        reference_obs_size = cfg.network_config.reference_obs_size
-        observation_size = cfg.network_config.observation_size
-
-        abstract_policy = _create_abstract_prior_policy_flat(cfg)
-
-        with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
-            policy_params = ckpt_mgr.restore(
-                step,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardRestore(abstract_policy)
-                ),
-            )["policy"]
-
-        flat_normalizer_params, network_params = policy_params
-
-        # Convert flat normalizer to dict format
-        normalizer_params = convert_flat_to_dict_normalizer(
-            flat_normalizer_params, reference_obs_size
+    if obs_sizes is None:
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "and 'proprioception' keys."
         )
 
-        # Add obs_sizes to config for downstream use
-        cfg.network_config.obs_sizes = {
-            "imitation_target": reference_obs_size,
-            "proprioception": observation_size - reference_obs_size,
-        }
+    # New dict format
+    abstract_policy = _create_abstract_prior_policy_dict(cfg)
+
+    with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
+        policy_params = ckpt_mgr.restore(
+            step,
+            args=ocp.args.Composite(
+                policy=ocp.args.StandardRestore(abstract_policy)
+            ),
+        )["policy"]
+
+    normalizer_params, network_params = policy_params
 
     # Extract prior and decoder params
     prior_params = network_params["params"]["prior"]

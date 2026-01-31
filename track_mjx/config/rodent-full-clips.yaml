@@ -23,7 +23,8 @@ env_config:
   solver: "newton"
   iterations: 5           # Max solver iterations per step
   ls_iterations: 5        # Line search iterations for Newton solver
-  nconmax: 256            # Max contacts (increase if contact clipping occurs)
+  nconmax: 32             # Max contacts (increase if contact clipping occurs)
+  naconmax: 131072        # Max arena contacts
   njmax: 128              # Max constraint rows
   noslip_iterations: 0    # No-slip solver iterations (0 = disabled)
 
@@ -207,8 +208,8 @@ train_setup:
 # Weights & Biases logging settings
 logging_config:
   project_name: mimic-mjx
-  group_name: v1
-  exp_name: latent-reg
+  group_name: 
+  exp_name: baseline
   clip_id: -1                         # Clip ID for single-clip runs (-1 = all)
   model_path: model_checkpoints/
 

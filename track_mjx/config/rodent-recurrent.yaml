@@ -9,6 +9,7 @@
 # VNL Environment Configuration
 # =============================================================================
 env_config:
+  env_name: "RodentImitation"
   mujoco_impl: "jax"
 
   # Physics Solver Settings
@@ -16,6 +17,7 @@ env_config:
   iterations: 5
   ls_iterations: 5
   nconmax: 256
+  naconmax: 131072
   njmax: 128
   noslip_iterations: 0
 
@@ -104,7 +106,7 @@ network_config:
   intention_size: 16
 
   # Decoder (RNN - processes latent + proprioception)
-  rnn_type: gru                           # "simple", "gru", or "lstm"
+  rnn_type: lstm                           # "simple", "gru", or "lstm"
   rnn_hidden_sizes: [512, 256]            # Hidden sizes per RNN layer
 
   # Value network (MLP)

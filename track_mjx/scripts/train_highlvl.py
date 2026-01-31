@@ -19,8 +19,17 @@ Usage:
         --mimic_checkpoint 260115_005843_966729 \\
         --env "target_speed=1.5 ctrl_dt=0.02"
 
+    # With custom observation keys for policy/value networks
+    python train_highlvl.py --task RodentBowlEscape \\
+        --mimic_checkpoint 260115_005843_966729 \\
+        --policy_obs_key state --value_obs_key privileged_state
+
 Tasks with preconfigured defaults: RodentBowlEscape, RodentRearing
 Other tasks use base defaults (can be overridden via CLI).
+
+Observation keys:
+    --policy_obs_key: Key for policy network input (default: state)
+    --value_obs_key: Key for value network input (default: privileged_state)
 
 Example configurations for common tasks:
 
@@ -90,7 +99,7 @@ DEFAULT_PPO_PARAMS = {
     "num_updates_per_batch": 4,
     "discounting": 0.99,
     "learning_rate": 1e-4,
-    "entropy_cost": 1e-2,
+    "entropy_cost": 0.01,
     "num_envs": 4096,
     "batch_size": 1024,
     "max_grad_norm": 1.0,
@@ -190,11 +199,17 @@ def create_env_config(task_name: str, mimic_cfg: Any, cli_env_overrides: dict):
 
 
 def create_environments(
-    task_name: str, env_cfg: Any, decoder_policy_fn, intention_size: int, highlvl_obs_key: str
+    task_name: str,
+    env_cfg: Any,
+    decoder_policy_fn,
+    intention_size: int,
+    highlvl_obs_key: str,
 ):
     """Create training and eval environments with HighLevelWrapper."""
     base_env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
-    eval_base_env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
+    eval_base_env = registry.load(
+        task_name, config=env_cfg, clips=None, flatten_obs=False
+    )
 
     env = rodent_wrappers.HighLevelWrapper(
         base_env,
@@ -321,11 +336,24 @@ Examples:
     )
 
     # PPO overrides
-    parser.add_argument("--num_timesteps", type=str, default=None, help="Override num_timesteps (e.g., 3e8)")
-    parser.add_argument("--entropy_cost", type=float, default=None, help="Override entropy_cost")
-    parser.add_argument("--episode_length", type=int, default=None, help="Override episode_length")
-    parser.add_argument("--eval_every", type=int, default=None, help="Override eval frequency")
-    parser.add_argument("--learning_rate", type=float, default=None, help="Override learning rate")
+    parser.add_argument(
+        "--num_timesteps",
+        type=str,
+        default=None,
+        help="Override num_timesteps (e.g., 3e8)",
+    )
+    parser.add_argument(
+        "--entropy_cost", type=float, default=None, help="Override entropy_cost"
+    )
+    parser.add_argument(
+        "--episode_length", type=int, default=None, help="Override episode_length"
+    )
+    parser.add_argument(
+        "--eval_every", type=int, default=None, help="Override eval frequency"
+    )
+    parser.add_argument(
+        "--learning_rate", type=float, default=None, help="Override learning rate"
+    )
     parser.add_argument("--num_envs", type=int, default=None, help="Override num_envs")
 
     # Env config overrides
@@ -339,12 +367,31 @@ Examples:
         "--highlvl_obs_key",
         type=str,
         default="task_obs",
-        help="Observation key for high-level policy (default: task_obs)",
+        help="Observation key for high-level policy passed to HighLevelWrapper (default: task_obs)",
+    )
+    parser.add_argument(
+        "--policy_obs_key",
+        type=str,
+        default="state",
+        help="Observation key for policy network (default: state)",
+    )
+    parser.add_argument(
+        "--value_obs_key",
+        type=str,
+        default="privileged_state",
+        help="Observation key for value network (default: privileged_state)",
     )
 
     # Output options
-    parser.add_argument("--checkpoint_dir", type=str, default="highlvl_checkpoints", help="Base checkpoint directory")
-    parser.add_argument("--wandb_project", type=str, default="vnl-playground", help="Wandb project name")
+    parser.add_argument(
+        "--checkpoint_dir",
+        type=str,
+        default="highlvl_checkpoints",
+        help="Base checkpoint directory",
+    )
+    parser.add_argument(
+        "--wandb_project", type=str, default="vnl-playground", help="Wandb project name"
+    )
 
     return parser.parse_args()
 
@@ -365,8 +412,8 @@ def main():
     print(f"env_cfg:\n{env_cfg}")
     print(f"ppo_params:\n{ppo_params}")
 
-    # Setup experiment
-    exp_name = f"{args.task}-highlvl-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    # Setup experiment (include microseconds to avoid run ID collisions)
+    exp_name = f"{args.task}-highlvl-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
     ckpt_path = epath.Path(args.checkpoint_dir).resolve() / exp_name
     ckpt_path.mkdir(parents=True, exist_ok=True)
     print(f"Experiment name: {exp_name}")
@@ -379,6 +426,9 @@ def main():
         "ppo_params": dict(ppo_params),
         "mimic_checkpoint": args.mimic_checkpoint,
         "cli_env_overrides": cli_env_overrides,
+        "highlvl_obs_key": args.highlvl_obs_key,
+        "policy_obs_key": args.policy_obs_key,
+        "value_obs_key": args.value_obs_key,
     }
     with open(ckpt_path / "config.json", "w") as fp:
         json.dump(config_to_save, fp, indent=4, default=lambda o: str(o))
@@ -398,7 +448,11 @@ def main():
 
     # Create environments
     env, eval_env = create_environments(
-        args.task, env_cfg, decoder_policy_fn, mimic_cfg.network_config.intention_size, args.highlvl_obs_key
+        args.task,
+        env_cfg,
+        decoder_policy_fn,
+        mimic_cfg.network_config.intention_size,
+        args.highlvl_obs_key,
     )
 
     # Setup training
@@ -407,7 +461,10 @@ def main():
     del training_params["eval_every"]
 
     network_factory = functools.partial(
-        ppo_networks.make_ppo_networks, **ppo_params.network_factory
+        ppo_networks.make_ppo_networks,
+        policy_obs_key=args.policy_obs_key,
+        value_obs_key=args.value_obs_key,
+        **ppo_params.network_factory,
     )
     normalize = lambda x, _y: x
     if training_params["normalize_observations"]:

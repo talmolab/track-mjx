@@ -48,10 +48,7 @@ from track_mjx.agent.mlp_prior.prior_rollout_eval import (
     extract_prior_decoder_params,
 )
 from track_mjx.agent.ff_ppo import intention_network
-from track_mjx.agent.observation_utils import (
-    convert_flat_to_dict_normalizer,
-    DictRunningStatisticsState,
-)
+from track_mjx.agent.observation_utils import DictRunningStatisticsState
 
 
 def get_observation_sizes(cfg: Any) -> Tuple[int, int, int]:
@@ -276,11 +273,11 @@ def create_encoder_decoder_policy(
     encoder_params = network_params["params"]["encoder"]
     decoder_params = network_params["params"]["decoder"]
 
-    # Convert legacy flat normalizer to dict normalizer if needed
+    # Require new dict normalizer format (legacy flat format no longer supported)
     if not isinstance(normalizer_params, DictRunningStatisticsState):
-        reference_obs_size, _, _ = get_observation_sizes(cfg)
-        normalizer_params = convert_flat_to_dict_normalizer(
-            normalizer_params, reference_obs_size
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Normalizer must be a DictRunningStatisticsState."
         )
 
     return prior_networks.make_encoder_decoder_inference_fn(

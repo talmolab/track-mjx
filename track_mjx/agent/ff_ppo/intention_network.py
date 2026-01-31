@@ -10,9 +10,13 @@ The key components are:
 The architecture enables learning from motion capture data by encoding trajectory
 information into a compact latent space that conditions the policy.
 
-Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
-- "proprioception": Proprioceptive state observations (flat array)
+Observations are expected as nested dictionaries:
+    {
+        'state': {'imitation_target': ..., 'proprioception': ...},
+        'privileged_state': {'imitation_target': ..., 'proprioception': ...}
+    }
+
+The encoder uses 'state'['imitation_target'] and decoder uses 'state'['proprioception'].
 """
 
 from collections.abc import Mapping, Sequence
@@ -176,12 +180,9 @@ def reparameterize(
 class IntentionNetwork(nn.Module):
     """Full VAE model combining encoder and decoder for intention-based policy.
 
-    The network receives observations as a dictionary with keys:
-    - "imitation_target": Reference trajectory observations (encoder input)
-    - "proprioception": Proprioceptive state observations (decoder input with latent)
-
-    The encoder processes trajectory observations to produce latent intentions,
-    which are then concatenated with proprioceptive state and decoded into
+    The network receives nested observations. The encoder processes
+    obs['state']['imitation_target'] to produce latent intentions, which are
+    then concatenated with obs['state']['proprioception'] and decoded into
     action distribution parameters.
 
     Attributes:
@@ -201,14 +202,14 @@ class IntentionNetwork(nn.Module):
 
     def __call__(
         self,
-        obs: Mapping[str, jnp.ndarray],
+        obs: Mapping[str, Mapping[str, jnp.ndarray]],
         key: jax.Array,
         deterministic: bool = False,
         get_activation: bool = False,
     ):
-        # Access observations by name
-        traj = obs["imitation_target"]
-        egocentric_obs = obs["proprioception"]
+        # Access nested observations: obs['state']['imitation_target'] and obs['state']['proprioception']
+        traj = obs["state"]["imitation_target"]
+        egocentric_obs = obs["state"]["proprioception"]
 
         # Check if observations are actually batched (based on normalized obs shape)
         obs_is_batched = traj.ndim >= 2
@@ -272,15 +273,14 @@ def make_intention_policy(
     """Create an intention-based policy network.
 
     Constructs an encoder-decoder VAE policy where the encoder processes
-    reference trajectory observations and the decoder generates action
-    parameters conditioned on latent intentions and proprioceptive state.
+    obs['state']['imitation_target'] and the decoder generates action
+    parameters conditioned on latent intentions and obs['state']['proprioception'].
 
     Args:
         action_param_size: Output dimension (typically 2x action_size for
             Gaussian mean and variance).
         latent_size: Dimension of the latent intention space.
-        obs_sizes: Dict mapping observation keys to their sizes, e.g.
-            {"imitation_target": 3716, "proprioception": 226}.
+        obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
 
@@ -299,7 +299,7 @@ def make_intention_policy(
     def apply(
         processor_params: DictRunningStatisticsState,
         policy_params,
-        obs: Mapping[str, jnp.ndarray],
+        obs: Mapping[str, Mapping[str, jnp.ndarray]],
         key,
         deterministic: bool = False,
         get_activation: bool = False,
@@ -314,10 +314,12 @@ def make_intention_policy(
             get_activation=get_activation,
         )
 
-    # Create dummy dict observation for initialization
+    # Create dummy nested observation for initialization
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
-        "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+        "state": {
+            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+            "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+        },
     }
     dummy_key = jax.random.PRNGKey(0)
 

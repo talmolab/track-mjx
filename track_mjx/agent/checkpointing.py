@@ -21,7 +21,6 @@ from typing import Any, Callable
 
 import jax
 import orbax.checkpoint as ocp
-from brax.training.acme import running_statistics, specs
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
@@ -29,10 +28,7 @@ from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from track_mjx.agent.recurrent_ppo import losses as recurrent_ppo_losses
 from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
-from track_mjx.agent.observation_utils import (
-    convert_flat_to_dict_normalizer,
-    init_dict_normalizer,
-)
+from track_mjx.agent.observation_utils import init_dict_normalizer
 
 
 def load_config_from_checkpoint(
@@ -214,21 +210,25 @@ def make_abstract_policy(
             value=ppo_network.value_network.init(key_value),
         )
 
-    # Handle both new (dict-based) and legacy (flat) config formats
+    # Require new dict-based config format (legacy flat format no longer supported)
     network_config = cfg["network_config"]
-    if "obs_sizes" in network_config:
-        # New dict-based format
-        obs_sizes = network_config["obs_sizes"]
-        dummy_obs = {
+    if "obs_sizes" not in network_config:
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "and 'proprioception' keys."
+        )
+
+    obs_sizes = network_config["obs_sizes"]
+    # Create nested dummy observation structure matching expected format
+    # init_dict_normalizer expects: {'state': {'imitation_target': ..., 'proprioception': ...}}
+    dummy_obs = {
+        "state": {
             "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
             "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
         }
-        normalizer_state = init_dict_normalizer(dummy_obs)
-    else:
-        # Legacy flat format
-        normalizer_state = running_statistics.init_state(
-            specs.Array(network_config["observation_size"], jnp.dtype("float32"))
-        )
+    }
+    normalizer_state = init_dict_normalizer(dummy_obs)
 
     return (normalizer_state, init_params.policy)
 
@@ -266,22 +266,14 @@ def load_inference_fn(
     else:
         make_policy = ff_ppo_networks.make_inference_fn(ppo_network)
 
-    # Convert legacy flat normalizer to dict normalizer if needed
-    normalizer_state, network_params = policy_params
+    # Require new dict-based config format (legacy flat format no longer supported)
     network_config = cfg.network_config
-
-    # Check if this is a legacy flat normalizer by looking at config format
-    is_legacy = not (
-        hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
-    )
-
-    if is_legacy:
-        # Convert flat normalizer to dict normalizer
-        reference_obs_size = network_config.reference_obs_size
-        normalizer_state = convert_flat_to_dict_normalizer(
-            normalizer_state, reference_obs_size
+    if not (hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config):
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "and 'proprioception' keys."
         )
-        policy_params = (normalizer_state, network_params)
 
     if arch_name == "recurrent_intention":
         return make_policy(policy_params, deterministic=deterministic)
@@ -312,17 +304,14 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
         arch_name = "intention"
     network_config = cfg.network_config
 
-    # Handle both new (dict-based) and legacy (flat) config formats
-    if hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config:
-        # New dict-based format
-        obs_sizes = dict(network_config.obs_sizes)
-    else:
-        # Legacy flat format - convert to obs_sizes dict
-        obs_sizes = {
-            "imitation_target": network_config.reference_obs_size,
-            "proprioception": network_config.observation_size
-            - network_config.reference_obs_size,
-        }
+    # Require new dict-based config format (legacy flat format no longer supported)
+    if not (hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config):
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "and 'proprioception' keys."
+        )
+    obs_sizes = dict(network_config.obs_sizes)
 
     if arch_name == "intention":
         return ff_ppo_networks.make_intention_ppo_networks(

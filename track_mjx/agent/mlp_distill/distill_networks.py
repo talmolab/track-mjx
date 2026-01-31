@@ -23,7 +23,6 @@ from jax import numpy as jnp
 
 from track_mjx.agent.mlp_distill import student_network
 from track_mjx.agent import checkpointing
-from track_mjx.agent.observation_utils import convert_flat_to_dict_normalizer
 
 
 @flax.struct.dataclass
@@ -193,22 +192,14 @@ def create_teacher_inference_fn(
     cfg = checkpoint_data["cfg"]
     policy_params = checkpoint_data["policy"]
 
-    # Convert legacy flat normalizer to dict normalizer if needed
-    normalizer_state, network_params = policy_params
+    # Require new dict-based config format (legacy flat format no longer supported)
     network_config = cfg.network_config
-
-    # Check if this is a legacy flat normalizer by looking at config format
-    is_legacy = not (
-        hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
-    )
-
-    if is_legacy:
-        # Convert flat normalizer to dict normalizer
-        reference_obs_size = network_config.reference_obs_size
-        normalizer_state = convert_flat_to_dict_normalizer(
-            normalizer_state, reference_obs_size
+    if not (hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config):
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "and 'proprioception' keys."
         )
-        policy_params = (normalizer_state, network_params)
 
     # Create the ppo network from config
     ppo_network = checkpointing.make_ppo_network_from_cfg(cfg)

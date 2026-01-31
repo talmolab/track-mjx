@@ -82,8 +82,11 @@ class MatchedFramePair:
         frame_i: Frame index in clip i.
         frame_j: Frame index in clip j.
         qpos_distance: Mean absolute qpos difference.
-        succ_i: Successor code in clip i.
-        succ_j: Successor code in clip j.
+        succ_i: Immediate successor code in clip i.
+        succ_j: Immediate successor code in clip j.
+        window_i: Tuple of codes for next F frames in clip i.
+        window_j: Tuple of codes for next F frames in clip j.
+        windows_match: Whether the code windows are identical.
     """
 
     frame_i: int
@@ -91,6 +94,9 @@ class MatchedFramePair:
     qpos_distance: float
     succ_i: int
     succ_j: int
+    window_i: tuple[int, ...] = ()
+    window_j: tuple[int, ...] = ()
+    windows_match: bool = True
 
 
 @dataclass
@@ -293,46 +299,28 @@ def compute_stationary_distribution(
     transition_counts: np.ndarray,
     frame_counts: dict[int, int] | None = None,
 ) -> dict[str, Any]:
-    """Compute stationary distribution and related analyses.
-
-    The stationary distribution π satisfies π = π @ P where P is the
-    row-normalized transition matrix. This represents the long-run
-    proportion of time spent in each code.
+    """Compute stationary distribution and create comparison figure.
 
     Args:
         transition_counts: Raw transition count matrix [num_codes, num_codes].
-        frame_counts: Optional dict mapping code_idx to total frame count
-            for comparison with empirical distribution.
+        frame_counts: Optional dict mapping code_idx to total frame count.
 
     Returns:
-        Dictionary containing:
-        - stationary_dist: The stationary distribution vector
-        - empirical_dist: Empirical distribution from frame counts (if provided)
-        - transition_matrix: Row-normalized transition matrix
-        - mixing_time: Estimated mixing time (frames to reach stationarity)
-        - code_persistence: Expected frames spent in each code before transitioning
-        - entropy_per_code: Transition entropy for each code
-        - figure: Matplotlib figure with comprehensive visualization
+        Dictionary with stationary_dist, empirical_dist, and figure.
     """
     num_codes = transition_counts.shape[0]
 
     # Row-normalize to get transition probability matrix
     row_sums = transition_counts.sum(axis=1, keepdims=True)
-    # Avoid division by zero for codes that never appear
     row_sums = np.maximum(row_sums, 1)
     P = transition_counts / row_sums
 
     # Compute stationary distribution via eigenvalue decomposition
-    # For a row-stochastic matrix, left eigenvector for eigenvalue 1
-    # is the stationary distribution: π @ P = π
-    # Equivalent to right eigenvector of P.T
     eigenvalues, eigenvectors = np.linalg.eig(P.T)
-
-    # Find eigenvector for eigenvalue closest to 1
     idx = np.argmin(np.abs(eigenvalues - 1.0))
     stationary = np.real(eigenvectors[:, idx])
-    stationary = np.abs(stationary)  # Ensure non-negative
-    stationary = stationary / stationary.sum()  # Normalize
+    stationary = np.abs(stationary)
+    stationary = stationary / stationary.sum()
 
     # Compute empirical distribution from frame counts
     empirical_dist = None
@@ -342,177 +330,27 @@ def compute_stationary_distribution(
             frame_counts.get(i, 0) / total_frames for i in range(num_codes)
         ])
 
-    # Compute code persistence (expected frames in code before leaving)
-    # E[time in code i] = 1 / (1 - P[i,i])
-    diagonal = np.diag(P)
-    persistence = np.where(diagonal < 1.0, 1.0 / (1.0 - diagonal + 1e-10), np.inf)
-
-    # Compute transition entropy per code
-    # H(i) = -sum_j P[i,j] * log(P[i,j])
-    entropy_per_code = np.zeros(num_codes)
-    for i in range(num_codes):
-        row = P[i]
-        nonzero = row > 0
-        if nonzero.any():
-            entropy_per_code[i] = -np.sum(row[nonzero] * np.log2(row[nonzero]))
-
-    # Estimate mixing time via second eigenvalue
-    sorted_eigenvalues = np.sort(np.abs(eigenvalues))[::-1]
-    if len(sorted_eigenvalues) > 1 and sorted_eigenvalues[1] < 1.0:
-        # Mixing time ~ 1 / (1 - λ_2)
-        lambda_2 = sorted_eigenvalues[1]
-        mixing_time = 1.0 / (1.0 - lambda_2 + 1e-10)
-    else:
-        mixing_time = np.inf
-
-    # Create comprehensive visualization
-    fig = plt.figure(figsize=(16, 12))
-    gs = fig.add_gridspec(3, 3, hspace=0.35, wspace=0.3)
-
-    # === Plot 1: Stationary vs Empirical Distribution ===
-    ax1 = fig.add_subplot(gs[0, :2])
+    # Create figure: Stationary vs Empirical Distribution
+    fig, ax = plt.subplots(figsize=(12, 5))
     x = np.arange(num_codes)
     width = 0.35
 
-    bars1 = ax1.bar(x - width/2, stationary, width, label='Stationary (theoretical)',
-                    color='steelblue', alpha=0.8)
+    ax.bar(x - width/2, stationary, width, label='Stationary (theoretical)',
+           color='steelblue', alpha=0.8)
     if empirical_dist is not None:
-        bars2 = ax1.bar(x + width/2, empirical_dist, width, label='Empirical (observed)',
-                        color='coral', alpha=0.8)
+        ax.bar(x + width/2, empirical_dist, width, label='Empirical (observed)',
+               color='coral', alpha=0.8)
 
-    ax1.set_xlabel('Code Index', fontsize=10)
-    ax1.set_ylabel('Probability', fontsize=10)
-    ax1.set_title('Stationary vs Empirical Distribution', fontsize=12, fontweight='bold')
-    ax1.legend(loc='upper right')
-    ax1.set_xlim(-1, num_codes)
-
-    # Highlight top codes
-    top_stationary = np.argsort(stationary)[-5:][::-1]
-    for idx in top_stationary:
-        ax1.annotate(f'{idx}', (idx - width/2, stationary[idx]),
-                    ha='center', va='bottom', fontsize=7, color='steelblue')
-
-    # === Plot 2: Correlation between stationary and empirical ===
-    ax2 = fig.add_subplot(gs[0, 2])
-    if empirical_dist is not None:
-        ax2.scatter(empirical_dist, stationary, alpha=0.6, c='purple', s=30)
-        # Add diagonal line
-        max_val = max(empirical_dist.max(), stationary.max())
-        ax2.plot([0, max_val], [0, max_val], 'k--', alpha=0.5, label='y=x')
-
-        # Compute correlation
-        corr = np.corrcoef(empirical_dist, stationary)[0, 1]
-        ax2.set_xlabel('Empirical Distribution', fontsize=10)
-        ax2.set_ylabel('Stationary Distribution', fontsize=10)
-        ax2.set_title(f'Correlation: {corr:.3f}', fontsize=12, fontweight='bold')
-        ax2.legend()
-    else:
-        ax2.text(0.5, 0.5, 'No empirical\ndata provided',
-                ha='center', va='center', transform=ax2.transAxes)
-        ax2.set_title('Stationary vs Empirical', fontsize=12)
-
-    # === Plot 3: Code Persistence (stickiness) ===
-    ax3 = fig.add_subplot(gs[1, 0])
-    # Cap persistence at reasonable value for visualization
-    persistence_capped = np.minimum(persistence, 100)
-    colors = plt.cm.YlOrRd(persistence_capped / persistence_capped.max())
-    ax3.bar(x, persistence_capped, color=colors, edgecolor='none')
-    ax3.set_xlabel('Code Index', fontsize=10)
-    ax3.set_ylabel('Expected Frames', fontsize=10)
-    ax3.set_title('Code Persistence (frames before transition)', fontsize=11, fontweight='bold')
-    ax3.set_xlim(-1, num_codes)
-
-    # Annotate top persistent codes
-    top_persistent = np.argsort(persistence_capped)[-3:][::-1]
-    for idx in top_persistent:
-        ax3.annotate(f'{idx}\n({persistence_capped[idx]:.1f})',
-                    (idx, persistence_capped[idx]), ha='center', va='bottom', fontsize=7)
-
-    # === Plot 4: Transition Entropy ===
-    ax4 = fig.add_subplot(gs[1, 1])
-    colors = plt.cm.viridis(entropy_per_code / (entropy_per_code.max() + 1e-10))
-    ax4.bar(x, entropy_per_code, color=colors, edgecolor='none')
-    ax4.set_xlabel('Code Index', fontsize=10)
-    ax4.set_ylabel('Entropy (bits)', fontsize=10)
-    ax4.set_title('Transition Entropy per Code', fontsize=11, fontweight='bold')
-    ax4.set_xlim(-1, num_codes)
-    ax4.axhline(y=np.mean(entropy_per_code), color='red', linestyle='--',
-                alpha=0.7, label=f'Mean: {np.mean(entropy_per_code):.2f}')
-    ax4.legend(fontsize=8)
-
-    # Annotate high entropy (hub) codes
-    top_entropy = np.argsort(entropy_per_code)[-3:][::-1]
-    for idx in top_entropy:
-        ax4.annotate(f'{idx}', (idx, entropy_per_code[idx]),
-                    ha='center', va='bottom', fontsize=7, color='darkgreen')
-
-    # === Plot 5: Eigenvalue spectrum ===
-    ax5 = fig.add_subplot(gs[1, 2])
-    sorted_eig = np.sort(np.abs(eigenvalues))[::-1][:20]  # Top 20
-    ax5.bar(range(len(sorted_eig)), sorted_eig, color='teal', alpha=0.8)
-    ax5.axhline(y=1.0, color='red', linestyle='--', alpha=0.7)
-    ax5.set_xlabel('Eigenvalue Rank', fontsize=10)
-    ax5.set_ylabel('|Eigenvalue|', fontsize=10)
-    ax5.set_title(f'Eigenvalue Spectrum (λ₂={sorted_eig[1]:.3f})', fontsize=11, fontweight='bold')
-    ax5.set_ylim(0, 1.1)
-
-    # === Plot 6: Summary statistics ===
-    ax6 = fig.add_subplot(gs[2, :])
-    ax6.axis('off')
-
-    # Compute additional statistics
-    top5_stationary = [(i, stationary[i]) for i in np.argsort(stationary)[-5:][::-1]]
-    top5_persistent = [(i, persistence[i]) for i in np.argsort(persistence)[-5:][::-1]
-                       if persistence[i] < np.inf]
-    top5_entropy = [(i, entropy_per_code[i]) for i in np.argsort(entropy_per_code)[-5:][::-1]]
-    low5_entropy = [(i, entropy_per_code[i]) for i in np.argsort(entropy_per_code)[:5]]
-
-    stats_text = f"""
-STATIONARY DISTRIBUTION ANALYSIS SUMMARY
-{'='*60}
-
-Mixing Time: {mixing_time:.1f} frames (time to reach equilibrium)
-Second Eigenvalue (λ₂): {sorted_eig[1]:.4f} (closer to 0 = faster mixing)
-
-Top 5 Codes by Stationary Probability:
-  {', '.join([f'Code {i}: {p:.3f}' for i, p in top5_stationary])}
-
-Top 5 Most Persistent Codes (frames before transition):
-  {', '.join([f'Code {i}: {p:.1f}' for i, p in top5_persistent[:5]])}
-
-Top 5 Hub Codes (highest transition entropy):
-  {', '.join([f'Code {i}: {e:.2f} bits' for i, e in top5_entropy])}
-
-Top 5 Deterministic Codes (lowest transition entropy):
-  {', '.join([f'Code {i}: {e:.2f} bits' for i, e in low5_entropy])}
-
-Mean Persistence: {np.mean(persistence[persistence < np.inf]):.1f} frames
-Mean Transition Entropy: {np.mean(entropy_per_code):.2f} bits
-"""
-
-    if empirical_dist is not None:
-        kl_div = np.sum(np.where(empirical_dist > 0,
-                                 empirical_dist * np.log(empirical_dist / (stationary + 1e-10)),
-                                 0))
-        stats_text += f"\nKL Divergence (empirical || stationary): {kl_div:.4f}"
-
-    ax6.text(0.02, 0.95, stats_text, transform=ax6.transAxes, fontsize=10,
-             verticalalignment='top', fontfamily='monospace',
-             bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow', alpha=0.9))
-
-    fig.suptitle('Stationary Distribution Analysis', fontsize=14, fontweight='bold', y=1.01)
+    ax.set_xlabel('Code Index', fontsize=11)
+    ax.set_ylabel('Probability', fontsize=11)
+    ax.set_title('Stationary vs Empirical Distribution', fontsize=12, fontweight='bold')
+    ax.legend(loc='upper right')
+    ax.set_xlim(-1, num_codes)
+    plt.tight_layout()
 
     return {
         'stationary_dist': stationary,
         'empirical_dist': empirical_dist,
-        'transition_matrix': P,
-        'mixing_time': mixing_time,
-        'code_persistence': persistence,
-        'entropy_per_code': entropy_per_code,
-        'eigenvalues': sorted_eig,
-        'top_stationary_codes': top5_stationary,
-        'top_persistent_codes': top5_persistent,
-        'top_hub_codes': top5_entropy,
         'figure': fig,
     }
 
@@ -543,21 +381,14 @@ def detect_transition_communities(
         - community_codes: Dict mapping community ID to list of codes
         - inter_community_matrix: Transition probabilities between communities
         - intra_community_prob: Probability of staying within same community
-        - figure: Matplotlib figure with comprehensive visualization
+        - figures: Dict of individual matplotlib figures for WandB logging
     """
-    from scipy.sparse.csgraph import laplacian
     from sklearn.cluster import KMeans, SpectralClustering
 
     num_codes = transition_counts.shape[0]
 
     # Symmetrize for community detection (treat as undirected)
-    # Use geometric mean to preserve directionality information somewhat
     symmetric = (transition_counts + transition_counts.T) / 2
-
-    # Also keep the directed version for analysis
-    row_sums = transition_counts.sum(axis=1, keepdims=True)
-    row_sums = np.maximum(row_sums, 1)
-    P_directed = transition_counts / row_sums
 
     # Compute normalized Laplacian eigenvalues for community detection
     degree = symmetric.sum(axis=1)
@@ -569,9 +400,7 @@ def detect_transition_communities(
 
     # Auto-detect number of communities via eigengap heuristic
     if n_communities is None:
-        # Look for largest gap in eigenvalues
         eigengaps = np.diff(eigenvalues[:max_communities + 1])
-        # Start from min_communities
         best_k = min_communities + np.argmax(eigengaps[min_communities - 1:max_communities - 1])
         n_communities = best_k
         logging.info(f"  Auto-detected {n_communities} communities via eigengap")
@@ -584,12 +413,10 @@ def detect_transition_communities(
             assign_labels='kmeans',
             random_state=42,
         )
-        # Use symmetric transition counts as affinity
-        affinity = symmetric + 1  # Add 1 to handle zeros
+        affinity = symmetric + 1
         labels = sc.fit_predict(affinity)
     except Exception as e:
         logging.warning(f"  SpectralClustering failed: {e}, using KMeans on eigenvectors")
-        # Fallback: cluster the eigenvectors directly
         embedding = eigenvectors[:, :n_communities]
         kmeans = KMeans(n_clusters=n_communities, random_state=42, n_init=10)
         labels = kmeans.fit_predict(embedding)
@@ -627,193 +454,96 @@ def detect_transition_communities(
         Q_c = (symmetric[np.ix_(mask, mask)].sum() - expected[np.ix_(mask, mask)].sum()) / total_weight
         modularity += Q_c
 
-    # Create comprehensive visualization
-    fig = plt.figure(figsize=(18, 14))
-    gs = fig.add_gridspec(3, 3, hspace=0.35, wspace=0.3)
-
     # Get colors for communities
     cmap = plt.cm.Set3 if n_communities <= 12 else plt.cm.tab20
     community_colors = [cmap(i / n_communities) for i in range(n_communities)]
 
-    # === Plot 1: Reordered transition matrix by community ===
-    ax1 = fig.add_subplot(gs[0, :2])
+    # Create individual figures
+    figures = {}
 
-    # Reorder codes by community
+    # === Figure 1: Reordered transition matrix (square) ===
+    fig1, ax1 = plt.subplots(figsize=(8, 8))
     order = np.argsort(labels)
     reordered = transition_counts[np.ix_(order, order)]
-
     log_reordered = np.log1p(reordered)
-    im = ax1.imshow(log_reordered, cmap='viridis', aspect='auto')
+    im = ax1.imshow(log_reordered, cmap='viridis', aspect='equal')
     ax1.set_title('Transition Matrix (reordered by community)', fontsize=12, fontweight='bold')
-    ax1.set_xlabel('To Code (reordered)', fontsize=10)
-    ax1.set_ylabel('From Code (reordered)', fontsize=10)
-    plt.colorbar(im, ax=ax1, shrink=0.6, label='log(count + 1)')
+    ax1.set_xlabel('To Code (reordered)')
+    ax1.set_ylabel('From Code (reordered)')
+    plt.colorbar(im, ax=ax1, label='log(count + 1)')
 
     # Draw community boundaries
-    cumsum = np.cumsum([community_sizes.get(labels[order[0]], 0)] +
-                       [community_sizes.get(c, 0) for c in range(n_communities)])
     boundaries = []
     current_comm = labels[order[0]]
     for i, idx in enumerate(order):
         if labels[idx] != current_comm:
             boundaries.append(i)
             current_comm = labels[idx]
-
     for b in boundaries:
         ax1.axhline(y=b - 0.5, color='white', linewidth=1, alpha=0.8)
         ax1.axvline(x=b - 0.5, color='white', linewidth=1, alpha=0.8)
+    fig1.tight_layout()
+    figures['reordered_matrix'] = fig1
 
-    # === Plot 2: Community sizes ===
-    ax2 = fig.add_subplot(gs[0, 2])
+    # === Figure 2: Community sizes ===
+    fig2, ax2 = plt.subplots(figsize=(8, 5))
     sizes = [community_sizes[c] for c in range(n_communities)]
     colors = [community_colors[c] for c in range(n_communities)]
     bars = ax2.bar(range(n_communities), sizes, color=colors, edgecolor='black', linewidth=0.5)
-    ax2.set_xlabel('Community', fontsize=10)
-    ax2.set_ylabel('Number of Codes', fontsize=10)
+    ax2.set_xlabel('Community')
+    ax2.set_ylabel('Number of Codes')
     ax2.set_title('Community Sizes', fontsize=12, fontweight='bold')
     ax2.set_xticks(range(n_communities))
-
-    for i, (bar, size) in enumerate(zip(bars, sizes)):
+    for bar, size in zip(bars, sizes):
         ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
                 str(size), ha='center', va='bottom', fontsize=9)
+    fig2.tight_layout()
+    figures['community_sizes'] = fig2
 
-    # === Plot 3: Inter-community transition matrix ===
-    ax3 = fig.add_subplot(gs[1, 0])
+    # === Figure 3: Inter-community transition probabilities ===
+    fig3, ax3 = plt.subplots(figsize=(7, 6))
     im = ax3.imshow(inter_community_prob, cmap='Blues', vmin=0, vmax=1)
-    ax3.set_title('Inter-Community Transition Probabilities', fontsize=11, fontweight='bold')
-    ax3.set_xlabel('To Community', fontsize=10)
-    ax3.set_ylabel('From Community', fontsize=10)
+    ax3.set_title('Inter-Community Transition Probabilities', fontsize=12, fontweight='bold')
+    ax3.set_xlabel('To Community')
+    ax3.set_ylabel('From Community')
     ax3.set_xticks(range(n_communities))
     ax3.set_yticks(range(n_communities))
-    plt.colorbar(im, ax=ax3, shrink=0.8)
-
-    # Annotate values
+    plt.colorbar(im, ax=ax3)
     for i in range(n_communities):
         for j in range(n_communities):
             val = inter_community_prob[i, j]
             color = 'white' if val > 0.5 else 'black'
             ax3.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=8, color=color)
+    fig3.tight_layout()
+    figures['inter_community'] = fig3
 
-    # === Plot 4: Intra-community probability (self-containment) ===
-    ax4 = fig.add_subplot(gs[1, 1])
+    # === Figure 4: Community self-containment ===
+    fig4, ax4 = plt.subplots(figsize=(8, 5))
     bars = ax4.bar(range(n_communities), intra_prob, color=colors, edgecolor='black', linewidth=0.5)
     ax4.axhline(y=overall_intra_prob, color='red', linestyle='--',
                 label=f'Overall: {overall_intra_prob:.2f}')
-    ax4.set_xlabel('Community', fontsize=10)
-    ax4.set_ylabel('P(stay in community)', fontsize=10)
-    ax4.set_title('Community Self-Containment', fontsize=11, fontweight='bold')
+    ax4.set_xlabel('Community')
+    ax4.set_ylabel('P(stay in community)')
+    ax4.set_title('Community Self-Containment', fontsize=12, fontweight='bold')
     ax4.set_xticks(range(n_communities))
     ax4.set_ylim(0, 1)
-    ax4.legend(fontsize=9)
+    ax4.legend()
+    fig4.tight_layout()
+    figures['self_containment'] = fig4
 
-    # === Plot 5: Eigengap visualization ===
-    ax5 = fig.add_subplot(gs[1, 2])
+    # === Figure 5: Eigenvalues (eigengap) ===
+    fig5, ax5 = plt.subplots(figsize=(8, 5))
     n_show = min(20, num_codes)
     ax5.plot(range(n_show), eigenvalues[:n_show], 'o-', markersize=5, color='teal')
     ax5.axvline(x=n_communities - 1, color='red', linestyle='--', alpha=0.7,
                 label=f'k={n_communities}')
-    ax5.set_xlabel('Eigenvalue Index', fontsize=10)
-    ax5.set_ylabel('Eigenvalue', fontsize=10)
-    ax5.set_title('Laplacian Eigenvalues (eigengap)', fontsize=11, fontweight='bold')
-    ax5.legend(fontsize=9)
+    ax5.set_xlabel('Eigenvalue Index')
+    ax5.set_ylabel('Eigenvalue')
+    ax5.set_title('Laplacian Eigenvalues (eigengap)', fontsize=12, fontweight='bold')
+    ax5.legend()
     ax5.grid(True, alpha=0.3)
-
-    # === Plot 6: Community code distribution (scatter) ===
-    ax6 = fig.add_subplot(gs[2, 0])
-    for c in range(n_communities):
-        codes_in_c = community_codes[c]
-        y_vals = [c] * len(codes_in_c)
-        ax6.scatter(codes_in_c, y_vals, c=[community_colors[c]], s=50, alpha=0.7,
-                   edgecolors='black', linewidth=0.3)
-
-    ax6.set_xlabel('Code Index', fontsize=10)
-    ax6.set_ylabel('Community', fontsize=10)
-    ax6.set_title('Codes in Each Community', fontsize=11, fontweight='bold')
-    ax6.set_yticks(range(n_communities))
-    ax6.set_xlim(-1, num_codes)
-    ax6.grid(True, alpha=0.3, axis='x')
-
-    # === Plot 7: Transition flow diagram (simplified) ===
-    ax7 = fig.add_subplot(gs[2, 1])
-    # Draw communities as circles, arrows for significant transitions
-    angles = np.linspace(0, 2 * np.pi, n_communities, endpoint=False)
-    radius = 0.35
-    centers = [(0.5 + radius * np.cos(a), 0.5 + radius * np.sin(a)) for a in angles]
-
-    # Draw community circles
-    for c, (cx, cy) in enumerate(centers):
-        circle = plt.Circle((cx, cy), 0.08, color=community_colors[c],
-                           ec='black', linewidth=1.5, alpha=0.8)
-        ax7.add_patch(circle)
-        ax7.text(cx, cy, str(c), ha='center', va='center', fontsize=10, fontweight='bold')
-
-    # Draw arrows for significant transitions (>10%)
-    for i in range(n_communities):
-        for j in range(n_communities):
-            if i != j and inter_community_prob[i, j] > 0.1:
-                x1, y1 = centers[i]
-                x2, y2 = centers[j]
-                # Shorten arrows to not overlap circles
-                dx, dy = x2 - x1, y2 - y1
-                dist = np.sqrt(dx**2 + dy**2)
-                dx, dy = dx / dist, dy / dist
-                x1, y1 = x1 + 0.09 * dx, y1 + 0.09 * dy
-                x2, y2 = x2 - 0.09 * dx, y2 - 0.09 * dy
-
-                alpha = min(inter_community_prob[i, j], 1.0)
-                width = inter_community_prob[i, j] * 3
-                ax7.annotate('', xy=(x2, y2), xytext=(x1, y1),
-                           arrowprops=dict(arrowstyle='->', color='gray',
-                                         alpha=alpha, lw=width))
-
-    ax7.set_xlim(0, 1)
-    ax7.set_ylim(0, 1)
-    ax7.set_aspect('equal')
-    ax7.axis('off')
-    ax7.set_title('Community Transition Flow (>10%)', fontsize=11, fontweight='bold')
-
-    # === Plot 8: Summary statistics ===
-    ax8 = fig.add_subplot(gs[2, 2])
-    ax8.axis('off')
-
-    # Find dominant transition for each community
-    dominant_transitions = []
-    for c in range(n_communities):
-        row = inter_community_prob[c].copy()
-        row[c] = 0  # Exclude self
-        if row.max() > 0:
-            target = np.argmax(row)
-            dominant_transitions.append(f"  C{c} → C{target}: {row[target]:.2f}")
-        else:
-            dominant_transitions.append(f"  C{c}: isolated")
-
-    stats_text = f"""
-COMMUNITY DETECTION SUMMARY
-{'='*50}
-
-Number of Communities: {n_communities}
-Modularity Score: {modularity:.4f}
-  (higher = better separation, typical good: 0.3-0.7)
-
-Overall Intra-Community Probability: {overall_intra_prob:.3f}
-  (probability of staying within same community)
-
-Community Sizes:
-  {', '.join([f'C{c}: {community_sizes[c]} codes' for c in range(n_communities)])}
-
-Community Self-Containment:
-  {', '.join([f'C{c}: {intra_prob[c]:.2f}' for c in range(n_communities)])}
-
-Dominant Inter-Community Transitions:
-{chr(10).join(dominant_transitions)}
-"""
-
-    ax8.text(0.02, 0.95, stats_text, transform=ax8.transAxes, fontsize=9,
-             verticalalignment='top', fontfamily='monospace',
-             bbox=dict(boxstyle='round,pad=0.5', facecolor='lightcyan', alpha=0.9))
-
-    fig.suptitle(f'Transition Graph Community Detection ({n_communities} Communities)',
-                fontsize=14, fontweight='bold', y=1.01)
+    fig5.tight_layout()
+    figures['eigenvalues'] = fig5
 
     return {
         'community_labels': labels,
@@ -825,7 +555,7 @@ Dominant Inter-Community Transitions:
         'intra_community_prob': intra_prob,
         'overall_intra_prob': overall_intra_prob,
         'eigenvalues': eigenvalues,
-        'figure': fig,
+        'figures': figures,
     }
 
 
@@ -835,6 +565,7 @@ def compute_conditional_transition_context(
     code_idx: int,
     num_codes: int,
     qpos_threshold: float,
+    match_window_size: int = 5,
 ) -> ConditionalTransitionContext | None:
     """Compare transitions between two clips, conditioned on similar qpos.
 
@@ -842,12 +573,17 @@ def compute_conditional_transition_context(
     match in clip_j (where the same code is active). Only keep matches where
     the mean absolute difference in joint angles is below threshold.
 
+    Matched vs unmatched is determined by comparing the code sequences in the
+    next `match_window_size` frames. If the windows are identical, the pair
+    is "matched" (same behavioral trajectory); otherwise "unmatched".
+
     Args:
         result_i: InferenceResult for first clip.
         result_j: InferenceResult for second clip.
         code_idx: The code to analyze.
         num_codes: Total number of codes.
         qpos_threshold: Mean absolute difference threshold for qpos matching.
+        match_window_size: Number of future frames to compare for matched/unmatched.
 
     Returns:
         ConditionalTransitionContext or None if insufficient matches.
@@ -872,6 +608,8 @@ def compute_conditional_transition_context(
     times_j = [t for t, _ in frames_j]
 
     matched_pairs = []
+    n_frames_i = len(result_i.code_indices)
+    n_frames_j = len(result_j.code_indices)
 
     for t_i, qpos_i in frames_i:
         # Compute L2 distance to all frames in clip_j
@@ -890,30 +628,45 @@ def compute_conditional_transition_context(
             # Get successor codes (if exist)
             succ_i = (
                 int(result_i.code_indices[t_i + 1])
-                if t_i + 1 < len(result_i.code_indices)
+                if t_i + 1 < n_frames_i
                 else -1
             )
             succ_j = (
                 int(result_j.code_indices[t_j + 1])
-                if t_j + 1 < len(result_j.code_indices)
+                if t_j + 1 < n_frames_j
                 else -1
             )
 
             if succ_i >= 0 and succ_j >= 0:
+                # Get window of future codes for both clips
+                end_i = min(t_i + 1 + match_window_size, n_frames_i)
+                end_j = min(t_j + 1 + match_window_size, n_frames_j)
+
+                window_i = tuple(int(c) for c in result_i.code_indices[t_i + 1:end_i])
+                window_j = tuple(int(c) for c in result_j.code_indices[t_j + 1:end_j])
+
+                # Windows match if they are identical (same codes in same order)
+                windows_match = window_i == window_j
+
                 matched_pairs.append(MatchedFramePair(
                     frame_i=t_i,
                     frame_j=t_j,
                     qpos_distance=mean_abs_diff,
                     succ_i=succ_i,
                     succ_j=succ_j,
+                    window_i=window_i,
+                    window_j=window_j,
+                    windows_match=windows_match,
                 ))
 
     if len(matched_pairs) < 2:  # Need minimum matches
         return None
 
-    # Split into matched (same successor) and unmatched (different successor)
-    matched_transition_pairs = [mp for mp in matched_pairs if mp.succ_i == mp.succ_j]
-    unmatched_transition_pairs = [mp for mp in matched_pairs if mp.succ_i != mp.succ_j]
+    # Split into matched (same future code window) and unmatched (different windows)
+    # "Matched" means similar qpos leads to same behavioral trajectory
+    # "Unmatched" means similar qpos leads to different trajectories (population-based code)
+    matched_transition_pairs = [mp for mp in matched_pairs if mp.windows_match]
+    unmatched_transition_pairs = [mp for mp in matched_pairs if not mp.windows_match]
 
     # Compute successor distributions
     dist_i = np.zeros(num_codes)
@@ -944,6 +697,7 @@ def compute_conditional_similarity_for_code(
     code_idx: int,
     num_codes: int,
     qpos_threshold: float,
+    match_window_size: int = 5,
 ) -> dict | None:
     """Compute pairwise conditional similarities for a code across all clips.
 
@@ -952,6 +706,7 @@ def compute_conditional_similarity_for_code(
         code_idx: The code to analyze.
         num_codes: Total number of codes.
         qpos_threshold: Mean absolute difference threshold for qpos matching.
+        match_window_size: Number of future frames to compare for matched/unmatched.
 
     Returns:
         Dictionary with similarity statistics or None if no valid pairs.
@@ -962,7 +717,8 @@ def compute_conditional_similarity_for_code(
             if i >= j:  # Only upper triangle
                 continue
             ctx = compute_conditional_transition_context(
-                result_i, result_j, code_idx, num_codes, qpos_threshold
+                result_i, result_j, code_idx, num_codes, qpos_threshold,
+                match_window_size=match_window_size,
             )
             if ctx is not None:
                 contexts.append(ctx)
@@ -990,13 +746,12 @@ def compute_conditional_similarity_for_code(
 def plot_conditional_context_comparison(
     code_idx: int,
     conditional_data: dict,
-    figsize: tuple[int, int] = (14, 5),
+    figsize: tuple[int, int] = (12, 5),
 ) -> plt.Figure:
     """Create visualization for conditional transition analysis.
 
     Shows:
     - Left: Heatmap of conditional similarity matrix (clip pairs)
-    - Center: Bar chart of matched frame counts per clip pair
     - Right: Summary statistics box
 
     Args:
@@ -1008,9 +763,8 @@ def plot_conditional_context_comparison(
         Matplotlib figure.
     """
     contexts = conditional_data["contexts"]
-    n_contexts = len(contexts)
 
-    fig, axes = plt.subplots(1, 3, figsize=figsize)
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
 
     # === Left: Similarity matrix (pairwise) ===
     ax = axes[0]
@@ -1043,25 +797,8 @@ def plot_conditional_context_comparison(
     plt.colorbar(im, ax=ax, shrink=0.6, label="Cosine Sim")
     ax.set_title("Conditional Similarity\n(qpos-matched)", fontsize=10, fontweight="bold")
 
-    # === Center: Bar chart of matched frames ===
-    ax = axes[1]
-
-    pair_labels = [f"C{ctx.clip_i}-C{ctx.clip_j}" for ctx in contexts]
-    matched_counts = [ctx.n_matched_frames for ctx in contexts]
-    pair_sims = [cosine_similarity(ctx.successor_dist_i, ctx.successor_dist_j) for ctx in contexts]
-
-    # Color bars by similarity
-    colors = plt.cm.RdYlGn([s for s in pair_sims])
-
-    bars = ax.bar(range(n_contexts), matched_counts, color=colors, edgecolor="white")
-    ax.set_xticks(range(n_contexts))
-    ax.set_xticklabels(pair_labels, fontsize=7, rotation=45, ha="right")
-    ax.set_ylabel("Matched Frames", fontsize=9)
-    ax.set_title("Matched Frame Counts\n(per clip pair)", fontsize=10, fontweight="bold")
-    ax.grid(True, alpha=0.3, axis="y")
-
     # === Right: Summary statistics ===
-    ax = axes[2]
+    ax = axes[1]
     ax.axis("off")
 
     avg_sim = conditional_data["avg_conditional_similarity"]
@@ -1610,6 +1347,179 @@ def render_code_pose_gallery(
 
             # Clip label
             # (Optional: could add text overlay here)
+
+        frames_out.append(grid_frame)
+
+    renderer.close()
+
+    if len(frames_out) == 0:
+        return ""
+
+    with imageio.get_writer(str(output_path), fps=fps) as writer:
+        for frame in frames_out:
+            writer.append_data(frame)
+
+    return str(output_path)
+
+
+def render_community_gallery(
+    results: Sequence[InferenceResult],
+    community_labels: np.ndarray,
+    community_idx: int,
+    num_codes: int,
+    env: Any,
+    output_path: Path,
+    n_samples: int = 6,
+    segment_length: int = 30,
+    min_segment_gap: int = 10,
+    camera: str | None = None,
+    width: int = 640,
+    height: int = 480,
+    fps: int = 50,
+) -> str:
+    """Render a grid video showing sample segments from a community.
+
+    Creates a grid video (2x3 for 6 samples) showing segments where codes
+    from the specified community are active.
+
+    Args:
+        results: List of InferenceResult from rollouts.
+        community_labels: Array mapping code index to community index.
+        community_idx: The community to render samples for.
+        num_codes: Total number of codes.
+        env: Environment with mj_model attribute.
+        output_path: Path to save video.
+        n_samples: Number of sample segments to show in grid.
+        segment_length: Number of frames per segment.
+        min_segment_gap: Minimum frames between sampled segments.
+        camera: Camera name.
+        width: Total video width.
+        height: Total video height.
+        fps: Frames per second.
+
+    Returns:
+        Path to rendered video, or empty string on failure.
+    """
+    import imageio
+    import mujoco
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Find codes that belong to this community
+    community_codes = set(np.where(community_labels == community_idx)[0])
+    if len(community_codes) == 0:
+        logging.warning(f"Community {community_idx} has no codes")
+        return ""
+
+    # Find segments where community codes are active
+    # A segment is valid if it starts with a community code
+    candidate_segments = []
+    for result_idx, result in enumerate(results):
+        if result.qpos is None or len(result.qpos) == 0:
+            continue
+
+        n_frames = len(result.code_indices)
+        i = 0
+        while i < n_frames - segment_length:
+            code_at_i = int(result.code_indices[i])
+            if code_at_i in community_codes:
+                # Found a segment starting with a community code
+                candidate_segments.append((result, i))
+                i += segment_length + min_segment_gap  # Skip ahead
+            else:
+                i += 1
+
+    if len(candidate_segments) < 2:
+        logging.warning(f"Community {community_idx} has fewer than 2 valid segments")
+        return ""
+
+    # Sample n_samples segments evenly
+    if len(candidate_segments) > n_samples:
+        indices = np.linspace(0, len(candidate_segments) - 1, n_samples, dtype=int)
+        selected_segments = [candidate_segments[i] for i in indices]
+    else:
+        selected_segments = candidate_segments
+
+    actual_samples = len(selected_segments)
+
+    # Determine grid layout (2 rows preferred)
+    if actual_samples <= 4:
+        n_rows, n_cols = 2, 2
+    else:
+        n_rows, n_cols = 2, 3
+
+    # Calculate cell dimensions
+    cell_width = width // n_cols
+    cell_height = height // n_rows
+    bar_height = 30
+    render_height = cell_height - bar_height
+
+    code_colors = get_nature_colormap(num_codes)
+
+    # Setup MuJoCo renderer
+    mj_model = env.mj_model
+    mj_data = mujoco.MjData(mj_model)
+    renderer = mujoco.Renderer(mj_model, height=render_height, width=cell_width)
+
+    # Get camera ID
+    cam_id = -1
+    if camera:
+        try:
+            cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+        except Exception:
+            pass
+
+    frames_out = []
+    for t in range(segment_length):
+        # Create grid frame
+        grid_frame = np.ones((height, width, 3), dtype=np.uint8) * 30  # Dark background
+
+        for cell_idx, (result, start_frame) in enumerate(selected_segments):
+            if cell_idx >= n_rows * n_cols:
+                break
+
+            row = cell_idx // n_cols
+            col = cell_idx % n_cols
+            y_offset = row * cell_height
+            x_offset = col * cell_width
+
+            frame_idx = start_frame + t
+            if frame_idx >= len(result.qpos):
+                frame_idx = len(result.qpos) - 1
+
+            # Render
+            mj_data.qpos[:] = result.qpos[frame_idx]
+            mujoco.mj_forward(mj_model, mj_data)
+            if cam_id >= 0:
+                renderer.update_scene(mj_data, camera=cam_id)
+            else:
+                renderer.update_scene(mj_data)
+            cell_render = renderer.render()
+
+            # Place render in grid
+            grid_frame[y_offset:y_offset + render_height, x_offset:x_offset + cell_width] = cell_render
+
+            # Draw code timeline bar
+            bar_y = y_offset + render_height
+            for j in range(segment_length):
+                bx_start = x_offset + int(j * cell_width / segment_length)
+                bx_end = x_offset + int((j + 1) * cell_width / segment_length)
+                idx = start_frame + j
+                if idx < len(result.code_indices):
+                    c_idx = int(result.code_indices[idx])
+                    color = code_colors[c_idx]
+                    # Highlight codes from this community with white border
+                    if c_idx in community_codes:
+                        grid_frame[bar_y:bar_y + 2, bx_start:bx_end] = [255, 255, 255]
+                        grid_frame[bar_y + bar_height - 2:bar_y + bar_height, bx_start:bx_end] = [255, 255, 255]
+                        grid_frame[bar_y + 2:bar_y + bar_height - 2, bx_start:bx_end] = color
+                    else:
+                        grid_frame[bar_y:bar_y + bar_height, bx_start:bx_end] = color
+
+            # Playhead
+            playhead_x = x_offset + int(t * cell_width / segment_length)
+            grid_frame[bar_y:bar_y + bar_height, playhead_x:playhead_x + 2] = [255, 255, 255]
 
         frames_out.append(grid_frame)
 
@@ -2627,8 +2537,10 @@ def run_transition_context_analysis(
         conditional_result = None
         if conditional_cfg and conditional_cfg.get("enabled", False):
             qpos_threshold = conditional_cfg.get("qpos_threshold", 0.1)
+            match_window_size = conditional_cfg.get("match_window_size", 5)
             conditional_data = compute_conditional_similarity_for_code(
-                results, code_idx, num_codes, qpos_threshold
+                results, code_idx, num_codes, qpos_threshold,
+                match_window_size=match_window_size,
             )
             if conditional_data:
                 # Generate conditional visualization
@@ -2773,15 +2685,7 @@ def run_transition_context_analysis(
             "conditional": conditional_result,
         })
 
-    # Generate HTML (pass output_dir to resolve video paths for base64 embedding)
-    html_path = generate_context_html(
-        code_analyses,
-        output_dir / "transition_context_analysis.html",
-        output_dir=output_dir,
-        title="Transition Context Analysis - Top Codes",
-    )
-
-    # Generate standalone conditional HTML if enabled
+    # Generate conditional HTML if enabled
     conditional_html_path = None
     if conditional_cfg and conditional_cfg.get("enabled", False):
         conditional_html_path = generate_conditional_html(
@@ -2816,11 +2720,11 @@ def run_transition_context_analysis(
         json.dump(json_summary, f, indent=2)
 
     logging.info(f"\nTransition context analysis complete:")
-    logging.info(f"  HTML viewer: {html_path}")
     logging.info(f"  JSON stats: {json_path}")
+    if conditional_html_path:
+        logging.info(f"  Conditional HTML viewer: {conditional_html_path}")
 
     return {
-        "html_path": html_path,
         "conditional_html_path": conditional_html_path,
         "json_path": str(json_path),
         "code_analyses": code_analyses,

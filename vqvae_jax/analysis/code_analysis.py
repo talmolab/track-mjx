@@ -69,6 +69,7 @@ from .transition_context_analysis import (
     compute_code_popularity,
     get_top_k_codes,
     render_code_pose_gallery,
+    render_community_gallery,
 )
 
 
@@ -346,45 +347,27 @@ def main(cfg: DictConfig):
         frame_counts=frame_counts,
     )
 
-    # Save figure
+    # Save figure locally (not to WandB)
     stationary_fig = stationary_results["figure"]
     stationary_fig.savefig(
         global_matrix_dir / "stationary_distribution.png",
         dpi=150, bbox_inches="tight"
     )
-
-    # Log to WandB immediately
-    if wandb_enabled:
-        import wandb
-        log_to_wandb_immediately(
-            "global/stationary_distribution",
-            wandb.Image(stationary_fig),
-            wandb_enabled,
-        )
-        logging.info("  Logged stationary distribution to WandB")
-
     plt.close(stationary_fig)
 
     # Save stationary analysis JSON
+    stationary_dist = stationary_results["stationary_dist"]
+    empirical_dist = stationary_results["empirical_dist"]
+
+    # Find top codes by stationary probability
+    top_stationary_idx = np.argsort(stationary_dist)[::-1][:10]
+    top_stationary_codes = [
+        {"code": int(i), "probability": float(stationary_dist[i])}
+        for i in top_stationary_idx
+    ]
+
     stationary_json = {
-        "mixing_time": float(stationary_results["mixing_time"]),
-        "top_stationary_codes": [
-            {"code": int(c), "probability": float(p)}
-            for c, p in stationary_results["top_stationary_codes"]
-        ],
-        "top_persistent_codes": [
-            {"code": int(c), "persistence": float(p)}
-            for c, p in stationary_results["top_persistent_codes"]
-        ],
-        "top_hub_codes": [
-            {"code": int(c), "entropy": float(e)}
-            for c, e in stationary_results["top_hub_codes"]
-        ],
-        "mean_persistence": float(np.mean([
-            p for p in stationary_results["code_persistence"]
-            if p < np.inf
-        ])),
-        "mean_entropy": float(np.mean(stationary_results["entropy_per_code"])),
+        "top_stationary_codes": top_stationary_codes,
     }
     with open(global_matrix_dir / "stationary_analysis.json", "w") as f:
         json.dump(stationary_json, f, indent=2)
@@ -396,8 +379,7 @@ def main(cfg: DictConfig):
         global_matrix_dir / "stationary_analysis.json"
     )
 
-    logging.info(f"  Mixing time: {stationary_results['mixing_time']:.1f} frames")
-    logging.info(f"  Top stationary codes: {[c for c, _ in stationary_results['top_stationary_codes'][:3]]}")
+    logging.info(f"  Top stationary codes: {[c['code'] for c in top_stationary_codes[:3]]}")
 
     # === Section 1c: Community Detection ===
     logging.info("\n" + "=" * 40)
@@ -408,24 +390,36 @@ def main(cfg: DictConfig):
         n_communities=None,  # Auto-detect
     )
 
-    # Save figure
-    community_fig = community_results["figure"]
-    community_fig.savefig(
-        global_matrix_dir / "community_detection.png",
-        dpi=150, bbox_inches="tight"
-    )
+    # Save and log each figure separately
+    community_figures = community_results["figures"]
+    figure_names = {
+        "reordered_matrix": "Transition Matrix (reordered)",
+        "community_sizes": "Community Sizes",
+        "inter_community": "Inter-Community Transitions",
+        "self_containment": "Community Self-Containment",
+        "eigenvalues": "Laplacian Eigenvalues",
+    }
 
-    # Log to WandB immediately
-    if wandb_enabled:
-        import wandb
-        log_to_wandb_immediately(
-            "global/community_detection",
-            wandb.Image(community_fig),
-            wandb_enabled,
+    for fig_key, fig in community_figures.items():
+        # Save locally
+        fig.savefig(
+            global_matrix_dir / f"community_{fig_key}.png",
+            dpi=150, bbox_inches="tight"
         )
-        logging.info("  Logged community detection to WandB")
 
-    plt.close(community_fig)
+        # Log to WandB immediately
+        if wandb_enabled:
+            import wandb
+            log_to_wandb_immediately(
+                f"global/community_{fig_key}",
+                wandb.Image(fig),
+                wandb_enabled,
+            )
+
+        plt.close(fig)
+
+    if wandb_enabled:
+        logging.info("  Logged community detection figures to WandB")
 
     # Save community analysis JSON
     community_json = {
@@ -447,9 +441,10 @@ def main(cfg: DictConfig):
     with open(global_matrix_dir / "community_analysis.json", "w") as f:
         json.dump(community_json, f, indent=2)
 
-    all_paths["global"]["community_detection"] = str(
-        global_matrix_dir / "community_detection.png"
-    )
+    for fig_key in community_figures.keys():
+        all_paths["global"][f"community_{fig_key}"] = str(
+            global_matrix_dir / f"community_{fig_key}.png"
+        )
     all_paths["global"]["community_json"] = str(
         global_matrix_dir / "community_analysis.json"
     )
@@ -457,6 +452,54 @@ def main(cfg: DictConfig):
     logging.info(f"  Detected {community_results['n_communities']} communities")
     logging.info(f"  Modularity: {community_results['modularity']:.4f}")
     logging.info(f"  Intra-community prob: {community_results['overall_intra_prob']:.3f}")
+
+    # === Section 1d: Community Gallery Videos ===
+    community_gallery_cfg = cfg.get("community_gallery", {})
+    if community_gallery_cfg.get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Rendering community gallery videos...")
+
+        community_video_dir = global_matrix_dir / "community_videos"
+        community_video_dir.mkdir(parents=True, exist_ok=True)
+
+        n_communities = community_results["n_communities"]
+        community_labels = community_results["community_labels"]
+
+        all_paths["global"]["community_videos"] = {}
+
+        for comm_idx in range(n_communities):
+            video_path = community_video_dir / f"community_{comm_idx}.mp4"
+            result_path = render_community_gallery(
+                results=results,
+                community_labels=community_labels,
+                community_idx=comm_idx,
+                num_codes=num_codes,
+                env=env,
+                output_path=video_path,
+                n_samples=community_gallery_cfg.get("samples_per_community", 6),
+                segment_length=community_gallery_cfg.get("segment_length", 30),
+                min_segment_gap=community_gallery_cfg.get("min_segment_gap", 10),
+                camera=camera_name,
+                width=cfg.render.get("width", 640),
+                height=cfg.render.get("height", 480),
+                fps=cfg.render.get("fps", 50),
+            )
+
+            if result_path:
+                all_paths["global"]["community_videos"][f"community_{comm_idx}"] = result_path
+                logging.info(f"  Rendered community {comm_idx} gallery")
+
+                # Log to WandB immediately
+                if wandb_enabled:
+                    import wandb
+                    log_to_wandb_immediately(
+                        f"community_gallery/community_{comm_idx}",
+                        wandb.Video(result_path, format="mp4"),
+                        wandb_enabled,
+                    )
+
+        if wandb_enabled:
+            logging.info("  Logged community gallery videos to WandB")
 
     # === Section 2: Per-Clip Analysis ===
     logging.info("\n" + "=" * 40)
@@ -527,32 +570,22 @@ def main(cfg: DictConfig):
         )
 
         all_paths["transition_context"] = {
-            "html": tc_results["html_path"],
             "json": tc_results["json_path"],
         }
 
-        # Log transition context HTML to WandB immediately
-        if wandb_enabled:
-            import wandb
-            tc_html = tc_results["html_path"]
-            if tc_html and Path(tc_html).exists():
-                log_to_wandb_immediately(
-                    "transition_context/viewer",
-                    wandb.Html(open(tc_html).read()),
-                    wandb_enabled,
-                )
-
-            # Log conditional transition HTML (separate panel)
-            if tc_results.get("conditional_html_path"):
-                cond_html = tc_results["conditional_html_path"]
-                all_paths["conditional_transition"] = {"html": cond_html}
+        # Log conditional transition HTML (separate panel) to WandB immediately
+        if tc_results.get("conditional_html_path"):
+            cond_html = tc_results["conditional_html_path"]
+            all_paths["conditional_transition"] = {"html": cond_html}
+            if wandb_enabled:
+                import wandb
                 if Path(cond_html).exists():
                     log_to_wandb_immediately(
                         "conditional_transition/viewer",
                         wandb.Html(open(cond_html).read()),
                         wandb_enabled,
                     )
-            logging.info("  Logged transition context analysis to WandB")
+                logging.info("  Logged conditional transition analysis to WandB")
 
     # === Section 4: Pose Gallery (Popular Code Start Positions) ===
     pose_gallery_cfg = cfg.get("transition_context", {}).get("pose_gallery", {})
@@ -631,8 +664,6 @@ def main(cfg: DictConfig):
         if "community_detection" in all_paths["global"]:
             print(f"Community detection: {all_paths['global']['community_detection']}")
     print(f"Per-clip viewer: {all_paths['per_clip']['html']}")
-    if "transition_context" in all_paths:
-        print(f"Transition context viewer: {all_paths['transition_context']['html']}")
     if "conditional_transition" in all_paths:
         print(f"Conditional transition viewer: {all_paths['conditional_transition']['html']}")
     if "pose_gallery" in all_paths:

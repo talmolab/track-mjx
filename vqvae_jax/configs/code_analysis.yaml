@@ -38,7 +38,7 @@ data:
 # All analysis is done per-clip: transition matrices, community detection,
 # transition graphs, and video rendering with code/community overlays.
 per_clip:
-  num_clips: 20                 # Number of clips to analyze
+  num_clips: 10                 # Number of clips to analyze
   n_communities: null           # Communities per clip (null = auto-detect)
   render_videos: true           # Render videos with code/community bars
 
@@ -57,15 +57,27 @@ transition_context:
     enabled: true               # Enable qpos-conditioned transition analysis
     qpos_threshold: 0.05        # Mean absolute difference threshold (radians)
     max_videos: 4               # Maximum comparison videos per code (deprecated)
-    max_matched_videos: 4       # Videos with matching transitions (succ_i == succ_j)
-    max_unmatched_videos: 2     # Videos with different transitions (succ_i != succ_j)
+    max_matched_videos: 4       # Videos with matching transitions
+    max_unmatched_videos: 4     # Videos with different transitions
+    match_window_size: 10        # Number of future frames to compare for matched/unmatched
 
   # Popular code pose gallery - render where each popular code starts across clips
   pose_gallery:
     enabled: true               # Enable pose gallery rendering
-    top_k_codes: 8              # Number of popular codes to visualize
+    top_k_codes: 5              # Number of popular codes to visualize
     videos_per_code: 6          # Clips to sample per code
     context_frames: 15          # Frames before/after code start
+
+# =============================================================================
+# Community Gallery Configuration
+# =============================================================================
+# Render grid videos showing sample segments from each detected community.
+# Each community gets a video with N sample segments showing codes from that community.
+community_gallery:
+  enabled: true                 # Enable community gallery rendering
+  samples_per_community: 6      # Number of sample segments per community
+  segment_length: 30            # Frames per segment
+  min_segment_gap: 10           # Minimum frames between sampled segments
 
 # =============================================================================
 # Rendering Configuration

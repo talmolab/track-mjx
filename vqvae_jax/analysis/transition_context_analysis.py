@@ -106,6 +106,8 @@ class ConditionalTransitionContext:
         successor_dist_j: Successor distribution from clip j's matched frames.
         avg_qpos_distance: Mean L2 distance of matched qpos pairs.
         matched_pairs: List of matched frame pairs for video rendering.
+        matched_transition_pairs: Pairs where succ_i == succ_j (same successor).
+        unmatched_transition_pairs: Pairs where succ_i != succ_j (different successors).
     """
 
     code_idx: int
@@ -116,6 +118,8 @@ class ConditionalTransitionContext:
     successor_dist_j: np.ndarray
     avg_qpos_distance: float
     matched_pairs: list[MatchedFramePair]
+    matched_transition_pairs: list[MatchedFramePair]
+    unmatched_transition_pairs: list[MatchedFramePair]
 
 
 def compute_code_popularity(
@@ -241,6 +245,50 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
+def compute_global_transition_matrix(
+    results: Sequence[InferenceResult],
+    num_codes: int,
+) -> tuple[np.ndarray, plt.Figure]:
+    """Compute transition matrix aggregated across ALL clips.
+
+    Args:
+        results: List of InferenceResult from rollouts.
+        num_codes: Total number of codes.
+
+    Returns:
+        Tuple of (transition_counts [num_codes, num_codes], matplotlib figure).
+    """
+    # Aggregate transition counts from all clips
+    global_counts = np.zeros((num_codes, num_codes), dtype=np.int64)
+    for result in results:
+        indices = result.code_indices
+        for i in range(len(indices) - 1):
+            from_code = int(indices[i])
+            to_code = int(indices[i + 1])
+            global_counts[from_code, to_code] += 1
+
+    # Create heatmap figure
+    fig, ax = plt.subplots(figsize=(12, 10))
+    # Log scale for better visualization
+    log_counts = np.log1p(global_counts)
+    im = ax.imshow(log_counts, cmap="viridis", aspect="auto")
+    ax.set_title(f"Global Transition Matrix (All {len(results)} Clips)", fontsize=14, fontweight="bold")
+    ax.set_xlabel("To Code", fontsize=11)
+    ax.set_ylabel("From Code", fontsize=11)
+    plt.colorbar(im, ax=ax, label="log(count + 1)", shrink=0.8)
+
+    # Add total transitions text
+    total_transitions = global_counts.sum()
+    ax.text(
+        0.02, 0.98, f"Total transitions: {total_transitions:,}",
+        transform=ax.transAxes, fontsize=10, verticalalignment="top",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+    )
+
+    plt.tight_layout()
+    return global_counts, fig
+
+
 def compute_conditional_transition_context(
     result_i: InferenceResult,
     result_j: InferenceResult,
@@ -323,6 +371,10 @@ def compute_conditional_transition_context(
     if len(matched_pairs) < 2:  # Need minimum matches
         return None
 
+    # Split into matched (same successor) and unmatched (different successor)
+    matched_transition_pairs = [mp for mp in matched_pairs if mp.succ_i == mp.succ_j]
+    unmatched_transition_pairs = [mp for mp in matched_pairs if mp.succ_i != mp.succ_j]
+
     # Compute successor distributions
     dist_i = np.zeros(num_codes)
     dist_j = np.zeros(num_codes)
@@ -342,6 +394,8 @@ def compute_conditional_transition_context(
         successor_dist_j=dist_j,
         avg_qpos_distance=float(np.mean([mp.qpos_distance for mp in matched_pairs])),
         matched_pairs=matched_pairs,
+        matched_transition_pairs=matched_transition_pairs,
+        unmatched_transition_pairs=unmatched_transition_pairs,
     )
 
 
@@ -860,6 +914,177 @@ def render_conditional_comparison_video(
     return str(output_path)
 
 
+def render_code_pose_gallery(
+    results: Sequence[InferenceResult],
+    code_idx: int,
+    num_codes: int,
+    env: Any,
+    output_path: Path,
+    n_clips: int = 6,
+    context_frames: int = 15,
+    camera: str | None = None,
+    width: int = 640,
+    height: int = 480,
+    fps: int = 50,
+) -> str:
+    """Render a grid video showing where a code starts across different clips.
+
+    Creates a grid video (2x3 for 6 clips) showing synchronized playback of
+    where the specified code first appears in different clips.
+
+    Args:
+        results: List of InferenceResult from rollouts.
+        code_idx: The code to find first occurrences of.
+        num_codes: Total number of codes.
+        env: Environment with mj_model attribute.
+        output_path: Path to save video.
+        n_clips: Number of clips to sample and show in grid.
+        context_frames: Frames before/after code start to include.
+        camera: Camera name.
+        width: Total video width.
+        height: Total video height.
+        fps: Frames per second.
+
+    Returns:
+        Path to rendered video, or empty string on failure.
+    """
+    import imageio
+    import mujoco
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Find clips where this code appears and get first occurrence
+    clips_with_code = []
+    for result in results:
+        if result.qpos is None or len(result.qpos) == 0:
+            continue
+        frames = np.where(result.code_indices == code_idx)[0]
+        if len(frames) > 0:
+            first_frame = int(frames[0])
+            clips_with_code.append((result, first_frame))
+
+    if len(clips_with_code) < 2:
+        logging.warning(f"Code {code_idx} appears in fewer than 2 clips")
+        return ""
+
+    # Sample n_clips clips evenly
+    if len(clips_with_code) > n_clips:
+        indices = np.linspace(0, len(clips_with_code) - 1, n_clips, dtype=int)
+        clips_with_code = [clips_with_code[i] for i in indices]
+
+    actual_clips = len(clips_with_code)
+
+    # Determine grid layout (2 rows preferred)
+    if actual_clips <= 4:
+        n_rows, n_cols = 2, 2
+    else:
+        n_rows, n_cols = 2, 3
+
+    # Calculate cell dimensions
+    cell_width = width // n_cols
+    cell_height = height // n_rows
+    bar_height = 30
+    render_height = cell_height - bar_height
+
+    code_colors = get_nature_colormap(num_codes)
+
+    # Setup MuJoCo renderer
+    mj_model = env.mj_model
+    mj_data = mujoco.MjData(mj_model)
+    renderer = mujoco.Renderer(mj_model, height=render_height, width=cell_width)
+
+    # Get camera ID
+    cam_id = -1
+    if camera:
+        try:
+            cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+        except Exception:
+            pass
+
+    # Compute frame ranges for each clip
+    clip_ranges = []
+    for result, first_frame in clips_with_code:
+        start = max(0, first_frame - context_frames)
+        end = min(len(result.qpos), first_frame + context_frames + 1)
+        clip_ranges.append((result, first_frame, start, end))
+
+    # Max frames across all clips
+    max_frames = max(end - start for _, _, start, end in clip_ranges)
+
+    if max_frames == 0:
+        renderer.close()
+        return ""
+
+    frames_out = []
+    for t in range(max_frames):
+        # Create grid frame
+        grid_frame = np.ones((height, width, 3), dtype=np.uint8) * 30  # Dark background
+
+        for cell_idx, (result, first_frame, start, end) in enumerate(clip_ranges):
+            if cell_idx >= n_rows * n_cols:
+                break
+
+            row = cell_idx // n_cols
+            col = cell_idx % n_cols
+            y_offset = row * cell_height
+            x_offset = col * cell_width
+
+            # Get frame index for this clip (clamp to available range)
+            n_clip_frames = end - start
+            frame_idx = start + min(t, n_clip_frames - 1)
+
+            # Render
+            mj_data.qpos[:] = result.qpos[frame_idx]
+            mujoco.mj_forward(mj_model, mj_data)
+            if cam_id >= 0:
+                renderer.update_scene(mj_data, camera=cam_id)
+            else:
+                renderer.update_scene(mj_data)
+            cell_render = renderer.render()
+
+            # Place render in grid
+            grid_frame[y_offset:y_offset + render_height, x_offset:x_offset + cell_width] = cell_render
+
+            # Draw code timeline bar
+            bar_y = y_offset + render_height
+            for j in range(n_clip_frames):
+                bx_start = x_offset + int(j * cell_width / n_clip_frames)
+                bx_end = x_offset + int((j + 1) * cell_width / n_clip_frames)
+                idx = start + j
+                if idx < len(result.code_indices):
+                    c_idx = int(result.code_indices[idx])
+                    color = code_colors[c_idx]
+                    if c_idx == code_idx:
+                        # Highlight target code with border
+                        grid_frame[bar_y:bar_y + 2, bx_start:bx_end] = [255, 255, 255]
+                        grid_frame[bar_y + bar_height - 2:bar_y + bar_height, bx_start:bx_end] = [255, 255, 255]
+                        grid_frame[bar_y + 2:bar_y + bar_height - 2, bx_start:bx_end] = color
+                    else:
+                        grid_frame[bar_y:bar_y + bar_height, bx_start:bx_end] = color
+
+            # Playhead
+            if n_clip_frames > 0:
+                playhead_x = x_offset + int(min(t, n_clip_frames - 1) * cell_width / n_clip_frames)
+                grid_frame[bar_y:bar_y + bar_height, playhead_x:playhead_x + 2] = [255, 255, 255]
+
+            # Clip label
+            # (Optional: could add text overlay here)
+
+        frames_out.append(grid_frame)
+
+    renderer.close()
+
+    if len(frames_out) == 0:
+        return ""
+
+    with imageio.get_writer(str(output_path), fps=fps) as writer:
+        for frame in frames_out:
+            writer.append_data(frame)
+
+    return str(output_path)
+
+
 def plot_code_context_comparison(
     code_idx: int,
     contexts: list[CodeTransitionContext],
@@ -1336,7 +1561,20 @@ def generate_conditional_html(
     # Convert video paths to base64 for embedding
     for ca in conditional_codes:
         cond = ca.get("conditional", {})
+        # Convert legacy videos list
         for video in cond.get("videos", []):
+            rel_path = video.get("path", "")
+            if rel_path:
+                full_path = output_dir / rel_path
+                video["data_url"] = video_to_base64(full_path)
+        # Convert matched_videos
+        for video in cond.get("matched_videos", []):
+            rel_path = video.get("path", "")
+            if rel_path:
+                full_path = output_dir / rel_path
+                video["data_url"] = video_to_base64(full_path)
+        # Convert unmatched_videos
+        for video in cond.get("unmatched_videos", []):
             rel_path = video.get("path", "")
             if rel_path:
                 full_path = output_dir / rel_path
@@ -1520,7 +1758,7 @@ def generate_conditional_html(
         }}
         .videos-panel {{
             flex: 1;
-            min-width: 300px;
+            min-width: 500px;
             background: rgba(255,255,255,0.05);
             border-radius: 10px;
             padding: 15px;
@@ -1529,6 +1767,31 @@ def generate_conditional_html(
             color: #4fc3f7;
             margin-bottom: 15px;
             font-size: 14px;
+        }}
+        .videos-row {{
+            display: flex;
+            gap: 20px;
+        }}
+        .matched-column, .unmatched-column {{
+            flex: 1;
+            min-width: 200px;
+        }}
+        .column-header {{
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            padding: 6px 10px;
+            border-radius: 4px;
+        }}
+        .matched-column .column-header {{
+            color: #4caf50;
+            background: rgba(76, 175, 80, 0.15);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+        }}
+        .unmatched-column .column-header {{
+            color: #f44336;
+            background: rgba(244, 67, 54, 0.15);
+            border: 1px solid rgba(244, 67, 54, 0.3);
         }}
         .video-item {{
             margin-bottom: 15px;
@@ -1609,32 +1872,57 @@ def generate_conditional_html(
                 <div class="stat-badge"><strong>Avg Qpos Dist:</strong> ${{cond.avg_qpos_distance.toFixed(4)}}</div>
             `;
 
-            // Update videos
-            let videosHtml = '';
-            if (cond.videos && cond.videos.length > 0) {{
-                cond.videos.forEach((v, vi) => {{
+            // Update videos - two columns: matched (left) and unmatched (right)
+            const matchedVideos = (cond.matched_videos || []).filter(v => v.data_url || v.path);
+            const unmatchedVideos = (cond.unmatched_videos || []).filter(v => v.data_url || v.path);
+
+            let videosHtml = '<div class="videos-row">';
+
+            // Matched column (left)
+            videosHtml += '<div class="matched-column">';
+            videosHtml += '<div class="column-header">&#10003; Same Transition</div>';
+            if (matchedVideos.length > 0) {{
+                matchedVideos.forEach((v, vi) => {{
                     const videoSrc = v.data_url || v.path;
-                    if (videoSrc) {{
-                        const succMatch = v.succ_i === v.succ_j ? '&#10003;' : '&#10007;';
-                        const succClass = v.succ_i === v.succ_j ? 'high' : 'low';
-                        videosHtml += `
-                            <div class="video-item">
-                                <video controls loop muted autoplay>
-                                    <source src="${{videoSrc}}" type="video/mp4">
-                                </video>
-                                <div class="video-label">
-                                    Clips ${{v.clip_i}} vs ${{v.clip_j}} |
-                                    Succ: ${{v.succ_i}} vs ${{v.succ_j}}
-                                    <span class="stat-badge ${{succClass}}" style="padding:2px 6px;font-size:10px;">${{succMatch}}</span>
-                                </div>
+                    videosHtml += `
+                        <div class="video-item">
+                            <video controls loop muted autoplay>
+                                <source src="${{videoSrc}}" type="video/mp4">
+                            </video>
+                            <div class="video-label">
+                                Clips ${{v.clip_i}} vs ${{v.clip_j}} | Succ: ${{v.succ_i}}
                             </div>
-                        `;
-                    }}
+                        </div>
+                    `;
                 }});
+            }} else {{
+                videosHtml += '<div class="video-label">No matched transitions</div>';
             }}
-            if (!videosHtml) {{
-                videosHtml = '<div class="video-label">No comparison videos available</div>';
+            videosHtml += '</div>';
+
+            // Unmatched column (right)
+            videosHtml += '<div class="unmatched-column">';
+            videosHtml += '<div class="column-header">&#10007; Different Transition</div>';
+            if (unmatchedVideos.length > 0) {{
+                unmatchedVideos.forEach((v, vi) => {{
+                    const videoSrc = v.data_url || v.path;
+                    videosHtml += `
+                        <div class="video-item">
+                            <video controls loop muted autoplay>
+                                <source src="${{videoSrc}}" type="video/mp4">
+                            </video>
+                            <div class="video-label">
+                                Clips ${{v.clip_i}} vs ${{v.clip_j}} | Succ: ${{v.succ_i}} vs ${{v.succ_j}}
+                            </div>
+                        </div>
+                    `;
+                }});
+            }} else {{
+                videosHtml += '<div class="video-label">No unmatched transitions</div>';
             }}
+            videosHtml += '</div>';
+
+            videosHtml += '</div>';
             document.getElementById('videosArea').innerHTML = videosHtml;
 
             document.getElementById('prevBtn').disabled = idx === 0;
@@ -1808,8 +2096,9 @@ def run_transition_context_analysis(
                 cond_img_b64 = figure_to_base64(cond_fig, dpi=100)
                 plt.close(cond_fig)
 
-                # Render conditional comparison videos
-                cond_video_info = []
+                # Render conditional comparison videos - separate matched and unmatched
+                matched_video_info = []
+                unmatched_video_info = []
                 if render_videos and env is not None:
                     cond_video_dir = output_dir / "videos" / f"code_{code_idx:03d}_conditional"
                     cond_video_dir.mkdir(parents=True, exist_ok=True)
@@ -1817,32 +2106,42 @@ def run_transition_context_analysis(
                     # Build lookup for results by clip_idx
                     results_by_clip = {r.clip_idx: r for r in results}
 
-                    cond_videos_rendered = 0
-                    max_cond_videos = conditional_cfg.get("max_videos", 4)
+                    # Get config limits (with backwards compatibility for max_videos)
+                    max_matched_videos = conditional_cfg.get("max_matched_videos", conditional_cfg.get("max_videos", 4))
+                    max_unmatched_videos = conditional_cfg.get("max_unmatched_videos", 2)
 
+                    matched_rendered = 0
+                    unmatched_rendered = 0
+
+                    # Collect all matched and unmatched pairs across contexts
+                    all_matched_pairs = []
+                    all_unmatched_pairs = []
                     for ctx in conditional_data["contexts"]:
-                        if cond_videos_rendered >= max_cond_videos:
-                            break
-
-                        # Get results for this clip pair
                         r_i = results_by_clip.get(ctx.clip_i)
                         r_j = results_by_clip.get(ctx.clip_j)
                         if r_i is None or r_j is None:
                             continue
+                        for pair in ctx.matched_transition_pairs:
+                            all_matched_pairs.append((ctx, r_i, r_j, pair))
+                        for pair in ctx.unmatched_transition_pairs:
+                            all_unmatched_pairs.append((ctx, r_i, r_j, pair))
 
-                        # Pick the best matched pair (lowest qpos distance)
-                        if not ctx.matched_pairs:
-                            continue
-                        best_pair = min(ctx.matched_pairs, key=lambda p: p.qpos_distance)
+                    # Sort by qpos distance (best matches first)
+                    all_matched_pairs.sort(key=lambda x: x[3].qpos_distance)
+                    all_unmatched_pairs.sort(key=lambda x: x[3].qpos_distance)
 
-                        video_path = cond_video_dir / f"clips_{ctx.clip_i:03d}_{ctx.clip_j:03d}.mp4"
+                    # Render matched videos (same successor)
+                    for ctx, r_i, r_j, pair in all_matched_pairs:
+                        if matched_rendered >= max_matched_videos:
+                            break
 
+                        video_path = cond_video_dir / f"matched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{matched_rendered}.mp4"
                         try:
                             path = render_conditional_comparison_video(
                                 env=env,
                                 result_i=r_i,
                                 result_j=r_j,
-                                matched_pair=best_pair,
+                                matched_pair=pair,
                                 code_idx=code_idx,
                                 output_path=video_path,
                                 num_codes=num_codes,
@@ -1852,20 +2151,54 @@ def run_transition_context_analysis(
                                 fps=fps,
                             )
                             if path:
-                                rel_path = f"videos/code_{code_idx:03d}_conditional/clips_{ctx.clip_i:03d}_{ctx.clip_j:03d}.mp4"
-                                cond_video_info.append({
+                                rel_path = f"videos/code_{code_idx:03d}_conditional/matched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{matched_rendered}.mp4"
+                                matched_video_info.append({
                                     "path": rel_path,
                                     "clip_i": int(ctx.clip_i),
                                     "clip_j": int(ctx.clip_j),
-                                    "succ_i": int(best_pair.succ_i),
-                                    "succ_j": int(best_pair.succ_j),
-                                    "qpos_dist": float(best_pair.qpos_distance),
+                                    "succ_i": int(pair.succ_i),
+                                    "succ_j": int(pair.succ_j),
+                                    "qpos_dist": float(pair.qpos_distance),
                                 })
-                                cond_videos_rendered += 1
+                                matched_rendered += 1
                         except Exception as e:
-                            logging.warning(f"    Failed to render conditional video: {e}")
+                            logging.warning(f"    Failed to render matched conditional video: {e}")
 
-                    logging.info(f"    Rendered {len(cond_video_info)} conditional comparison videos")
+                    # Render unmatched videos (different successor)
+                    for ctx, r_i, r_j, pair in all_unmatched_pairs:
+                        if unmatched_rendered >= max_unmatched_videos:
+                            break
+
+                        video_path = cond_video_dir / f"unmatched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{unmatched_rendered}.mp4"
+                        try:
+                            path = render_conditional_comparison_video(
+                                env=env,
+                                result_i=r_i,
+                                result_j=r_j,
+                                matched_pair=pair,
+                                code_idx=code_idx,
+                                output_path=video_path,
+                                num_codes=num_codes,
+                                camera=camera,
+                                width=width,
+                                height=height,
+                                fps=fps,
+                            )
+                            if path:
+                                rel_path = f"videos/code_{code_idx:03d}_conditional/unmatched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{unmatched_rendered}.mp4"
+                                unmatched_video_info.append({
+                                    "path": rel_path,
+                                    "clip_i": int(ctx.clip_i),
+                                    "clip_j": int(ctx.clip_j),
+                                    "succ_i": int(pair.succ_i),
+                                    "succ_j": int(pair.succ_j),
+                                    "qpos_dist": float(pair.qpos_distance),
+                                })
+                                unmatched_rendered += 1
+                        except Exception as e:
+                            logging.warning(f"    Failed to render unmatched conditional video: {e}")
+
+                    logging.info(f"    Rendered {len(matched_video_info)} matched + {len(unmatched_video_info)} unmatched conditional videos")
 
                 conditional_result = {
                     "image": cond_img_b64,
@@ -1874,7 +2207,9 @@ def run_transition_context_analysis(
                     "total_matched": int(conditional_data["total_matched_frames"]),
                     "n_pairs": int(conditional_data["n_pairs"]),
                     "avg_qpos_distance": float(conditional_data["avg_qpos_distance"]),
-                    "videos": cond_video_info,
+                    "videos": matched_video_info + unmatched_video_info,  # Legacy field
+                    "matched_videos": matched_video_info,
+                    "unmatched_videos": unmatched_video_info,
                 }
                 logging.info(
                     f"    Conditional analysis: {conditional_data['n_pairs']} pairs, "

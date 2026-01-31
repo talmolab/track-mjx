@@ -59,7 +59,13 @@ from track_mjx.config import utils as config_utils
 from .checkpoint_utils import load_vq_checkpoint, get_codebook
 from .inference_cache import InferenceResult
 from .per_clip_analysis import run_per_clip_analysis
-from .transition_context_analysis import run_transition_context_analysis
+from .transition_context_analysis import (
+    run_transition_context_analysis,
+    compute_global_transition_matrix,
+    compute_code_popularity,
+    get_top_k_codes,
+    render_code_pose_gallery,
+)
 
 
 def load_rollouts_from_h5(h5_path: str | Path) -> tuple[list[InferenceResult], dict]:
@@ -122,51 +128,23 @@ def initialize_wandb_analysis(
         return False
 
 
-def log_analysis_to_wandb(
-    output_dir: Path,
-    all_paths: dict[str, Any],
-) -> None:
-    """Log analysis results to WandB."""
+def log_to_wandb_immediately(key: str, value: Any, wandb_enabled: bool) -> None:
+    """Log a single item to WandB immediately if enabled.
+
+    Args:
+        key: WandB metric key.
+        value: Value to log (wandb.Html, wandb.Video, wandb.Image, etc.)
+        wandb_enabled: Whether WandB is enabled.
+    """
+    if not wandb_enabled:
+        return
+
     try:
         import wandb
-
-        if wandb.run is None:
-            return
-
-        # Log per-clip HTML viewer
-        per_clip_paths = all_paths.get("per_clip", {})
-        html_path = per_clip_paths.get("html")
-        if html_path and Path(html_path).exists():
-            wandb.log({
-                "per_clip/interactive_viewer": wandb.Html(open(html_path).read())
-            })
-
-        # Log per-clip videos
-        video_paths = per_clip_paths.get("videos", {})
-        for name, path in video_paths.items():
-            if path and Path(path).exists():
-                wandb.log({f"per_clip/videos/{name}": wandb.Video(path, format="mp4")})
-
-        # Log transition context HTML viewer
-        tc_paths = all_paths.get("transition_context", {})
-        tc_html = tc_paths.get("html")
-        if tc_html and Path(tc_html).exists():
-            wandb.log({
-                "transition_context/viewer": wandb.Html(open(tc_html).read())
-            })
-
-        # Log conditional transition HTML viewer (separate panel)
-        cond_paths = all_paths.get("conditional_transition", {})
-        cond_html = cond_paths.get("html")
-        if cond_html and Path(cond_html).exists():
-            wandb.log({
-                "conditional_transition/viewer": wandb.Html(open(cond_html).read())
-            })
-
-        logging.info("Logged analysis results to WandB")
-
+        if wandb.run is not None:
+            wandb.log({key: value})
     except Exception as e:
-        logging.warning(f"Failed to log to WandB: {e}")
+        logging.warning(f"Failed to log {key} to WandB: {e}")
 
 
 def generate_summary_report(
@@ -325,7 +303,34 @@ def main(cfg: DictConfig):
     env_suffix = getattr(env, "_suffix", "-rodent")
     camera_name = f"{cfg.render.camera}{env_suffix}"
 
-    # Run per-clip analysis
+    all_paths: dict[str, Any] = {}
+
+    # === Section 1: Global Transition Matrix ===
+    # Compute and log immediately (before other analyses for context)
+    logging.info("\n" + "=" * 40)
+    logging.info("Computing global transition matrix...")
+
+    global_counts, global_fig = compute_global_transition_matrix(results, num_codes)
+
+    # Save figure locally
+    global_matrix_dir = output_dir / "global"
+    global_matrix_dir.mkdir(parents=True, exist_ok=True)
+    global_fig.savefig(global_matrix_dir / "transition_matrix.png", dpi=150, bbox_inches="tight")
+
+    # Log to WandB immediately
+    if wandb_enabled:
+        import wandb
+        log_to_wandb_immediately("global/transition_matrix", wandb.Image(global_fig), wandb_enabled)
+        logging.info("  Logged global transition matrix to WandB")
+
+    import matplotlib.pyplot as plt
+    plt.close(global_fig)
+
+    all_paths["global"] = {
+        "transition_matrix": str(global_matrix_dir / "transition_matrix.png"),
+    }
+
+    # === Section 2: Per-Clip Analysis ===
     logging.info("\n" + "=" * 40)
     logging.info("Running per-clip analysis...")
 
@@ -344,15 +349,34 @@ def main(cfg: DictConfig):
         fps=cfg.render.get("fps", 50),
     )
 
-    all_paths = {
-        "per_clip": {
-            "html": per_clip_results["html_path"],
-            "json": per_clip_results["json_path"],
-            "videos": per_clip_results.get("video_paths", {}),
-        }
+    all_paths["per_clip"] = {
+        "html": per_clip_results["html_path"],
+        "json": per_clip_results["json_path"],
+        "videos": per_clip_results.get("video_paths", {}),
     }
 
-    # Run transition context analysis
+    # Log per-clip results to WandB immediately
+    if wandb_enabled:
+        import wandb
+        html_path = per_clip_results["html_path"]
+        if html_path and Path(html_path).exists():
+            log_to_wandb_immediately(
+                "per_clip/interactive_viewer",
+                wandb.Html(open(html_path).read()),
+                wandb_enabled,
+            )
+        # Log per-clip videos
+        video_paths = per_clip_results.get("video_paths", {})
+        for name, path in video_paths.items():
+            if path and Path(path).exists():
+                log_to_wandb_immediately(
+                    f"per_clip/videos/{name}",
+                    wandb.Video(path, format="mp4"),
+                    wandb_enabled,
+                )
+        logging.info("  Logged per-clip analysis to WandB")
+
+    # === Section 3: Transition Context Analysis ===
     if cfg.get("transition_context", {}).get("enabled", False):
         logging.info("\n" + "=" * 40)
         logging.info("Running transition context analysis...")
@@ -378,12 +402,85 @@ def main(cfg: DictConfig):
             "html": tc_results["html_path"],
             "json": tc_results["json_path"],
         }
-        if tc_results.get("conditional_html_path"):
-            all_paths["conditional_transition"] = {
-                "html": tc_results["conditional_html_path"],
-            }
 
-    # Generate summary report
+        # Log transition context HTML to WandB immediately
+        if wandb_enabled:
+            import wandb
+            tc_html = tc_results["html_path"]
+            if tc_html and Path(tc_html).exists():
+                log_to_wandb_immediately(
+                    "transition_context/viewer",
+                    wandb.Html(open(tc_html).read()),
+                    wandb_enabled,
+                )
+
+            # Log conditional transition HTML (separate panel)
+            if tc_results.get("conditional_html_path"):
+                cond_html = tc_results["conditional_html_path"]
+                all_paths["conditional_transition"] = {"html": cond_html}
+                if Path(cond_html).exists():
+                    log_to_wandb_immediately(
+                        "conditional_transition/viewer",
+                        wandb.Html(open(cond_html).read()),
+                        wandb_enabled,
+                    )
+            logging.info("  Logged transition context analysis to WandB")
+
+    # === Section 4: Pose Gallery (Popular Code Start Positions) ===
+    pose_gallery_cfg = cfg.get("transition_context", {}).get("pose_gallery", {})
+    if pose_gallery_cfg.get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Rendering pose gallery for popular codes...")
+
+        gallery_dir = output_dir / "pose_gallery"
+        gallery_dir.mkdir(parents=True, exist_ok=True)
+
+        top_k_gallery = pose_gallery_cfg.get("top_k_codes", 8)
+        videos_per_code = pose_gallery_cfg.get("videos_per_code", 6)
+        context_frames = pose_gallery_cfg.get("context_frames", 15)
+
+        # Get top K codes
+        frame_counts = compute_code_popularity(results, num_codes)
+        top_codes = get_top_k_codes(frame_counts, top_k_gallery)
+
+        pose_gallery_paths = {}
+        for code_idx, count in top_codes:
+            logging.info(f"  Rendering pose gallery for code {code_idx} ({count} frames)...")
+            video_path = gallery_dir / f"code_{code_idx:03d}_gallery.mp4"
+
+            try:
+                path = render_code_pose_gallery(
+                    results=results,
+                    code_idx=code_idx,
+                    num_codes=num_codes,
+                    env=env,
+                    output_path=video_path,
+                    n_clips=videos_per_code,
+                    context_frames=context_frames,
+                    camera=camera_name,
+                    width=cfg.render.get("width", 640),
+                    height=cfg.render.get("height", 480),
+                    fps=cfg.render.get("fps", 50),
+                )
+                if path:
+                    pose_gallery_paths[code_idx] = path
+                    # Log each gallery video to WandB immediately
+                    if wandb_enabled:
+                        import wandb
+                        log_to_wandb_immediately(
+                            f"pose_gallery/code_{code_idx}",
+                            wandb.Video(path, format="mp4"),
+                            wandb_enabled,
+                        )
+            except Exception as e:
+                logging.warning(f"    Failed to render pose gallery for code {code_idx}: {e}")
+
+        all_paths["pose_gallery"] = pose_gallery_paths
+        logging.info(f"  Rendered {len(pose_gallery_paths)} pose gallery videos")
+        if wandb_enabled:
+            logging.info("  Logged pose gallery videos to WandB")
+
+    # === Section 5: Generate Summary Report ===
     logging.info("\n" + "=" * 40)
     logging.info("Generating summary report...")
     report_path = generate_summary_report(
@@ -391,20 +488,23 @@ def main(cfg: DictConfig):
     )
     all_paths["report"] = report_path
 
-    # Log to WandB
+    # Finish WandB session
     if wandb_enabled:
-        log_analysis_to_wandb(output_dir, all_paths)
         import wandb
         wandb.finish()
 
     print("\n" + "=" * 60)
     print(f"Analysis complete! Results saved to {output_dir}")
     print("=" * 60)
-    print(f"\nPer-clip viewer: {all_paths['per_clip']['html']}")
+    if "global" in all_paths:
+        print(f"\nGlobal transition matrix: {all_paths['global']['transition_matrix']}")
+    print(f"Per-clip viewer: {all_paths['per_clip']['html']}")
     if "transition_context" in all_paths:
         print(f"Transition context viewer: {all_paths['transition_context']['html']}")
     if "conditional_transition" in all_paths:
         print(f"Conditional transition viewer: {all_paths['conditional_transition']['html']}")
+    if "pose_gallery" in all_paths:
+        print(f"Pose gallery videos: {len(all_paths['pose_gallery'])} codes")
     print(f"Summary report: {report_path}")
 
 

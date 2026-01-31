@@ -55,8 +55,17 @@ transition_context:
   max_videos_per_code: 4        # Maximum videos per code
   conditional:
     enabled: true               # Enable qpos-conditioned transition analysis
-    qpos_threshold: 0.05         # Mean absolute difference threshold (radians)
-    max_videos: 4               # Maximum comparison videos per code
+    qpos_threshold: 0.05        # Mean absolute difference threshold (radians)
+    max_videos: 4               # Maximum comparison videos per code (deprecated)
+    max_matched_videos: 4       # Videos with matching transitions (succ_i == succ_j)
+    max_unmatched_videos: 2     # Videos with different transitions (succ_i != succ_j)
+
+  # Popular code pose gallery - render where each popular code starts across clips
+  pose_gallery:
+    enabled: true               # Enable pose gallery rendering
+    top_k_codes: 8              # Number of popular codes to visualize
+    videos_per_code: 6          # Clips to sample per code
+    context_frames: 15          # Frames before/after code start
 
 # =============================================================================
 # Rendering Configuration

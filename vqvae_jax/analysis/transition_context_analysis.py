@@ -289,6 +289,546 @@ def compute_global_transition_matrix(
     return global_counts, fig
 
 
+def compute_stationary_distribution(
+    transition_counts: np.ndarray,
+    frame_counts: dict[int, int] | None = None,
+) -> dict[str, Any]:
+    """Compute stationary distribution and related analyses.
+
+    The stationary distribution π satisfies π = π @ P where P is the
+    row-normalized transition matrix. This represents the long-run
+    proportion of time spent in each code.
+
+    Args:
+        transition_counts: Raw transition count matrix [num_codes, num_codes].
+        frame_counts: Optional dict mapping code_idx to total frame count
+            for comparison with empirical distribution.
+
+    Returns:
+        Dictionary containing:
+        - stationary_dist: The stationary distribution vector
+        - empirical_dist: Empirical distribution from frame counts (if provided)
+        - transition_matrix: Row-normalized transition matrix
+        - mixing_time: Estimated mixing time (frames to reach stationarity)
+        - code_persistence: Expected frames spent in each code before transitioning
+        - entropy_per_code: Transition entropy for each code
+        - figure: Matplotlib figure with comprehensive visualization
+    """
+    num_codes = transition_counts.shape[0]
+
+    # Row-normalize to get transition probability matrix
+    row_sums = transition_counts.sum(axis=1, keepdims=True)
+    # Avoid division by zero for codes that never appear
+    row_sums = np.maximum(row_sums, 1)
+    P = transition_counts / row_sums
+
+    # Compute stationary distribution via eigenvalue decomposition
+    # For a row-stochastic matrix, left eigenvector for eigenvalue 1
+    # is the stationary distribution: π @ P = π
+    # Equivalent to right eigenvector of P.T
+    eigenvalues, eigenvectors = np.linalg.eig(P.T)
+
+    # Find eigenvector for eigenvalue closest to 1
+    idx = np.argmin(np.abs(eigenvalues - 1.0))
+    stationary = np.real(eigenvectors[:, idx])
+    stationary = np.abs(stationary)  # Ensure non-negative
+    stationary = stationary / stationary.sum()  # Normalize
+
+    # Compute empirical distribution from frame counts
+    empirical_dist = None
+    if frame_counts is not None:
+        total_frames = sum(frame_counts.values())
+        empirical_dist = np.array([
+            frame_counts.get(i, 0) / total_frames for i in range(num_codes)
+        ])
+
+    # Compute code persistence (expected frames in code before leaving)
+    # E[time in code i] = 1 / (1 - P[i,i])
+    diagonal = np.diag(P)
+    persistence = np.where(diagonal < 1.0, 1.0 / (1.0 - diagonal + 1e-10), np.inf)
+
+    # Compute transition entropy per code
+    # H(i) = -sum_j P[i,j] * log(P[i,j])
+    entropy_per_code = np.zeros(num_codes)
+    for i in range(num_codes):
+        row = P[i]
+        nonzero = row > 0
+        if nonzero.any():
+            entropy_per_code[i] = -np.sum(row[nonzero] * np.log2(row[nonzero]))
+
+    # Estimate mixing time via second eigenvalue
+    sorted_eigenvalues = np.sort(np.abs(eigenvalues))[::-1]
+    if len(sorted_eigenvalues) > 1 and sorted_eigenvalues[1] < 1.0:
+        # Mixing time ~ 1 / (1 - λ_2)
+        lambda_2 = sorted_eigenvalues[1]
+        mixing_time = 1.0 / (1.0 - lambda_2 + 1e-10)
+    else:
+        mixing_time = np.inf
+
+    # Create comprehensive visualization
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(3, 3, hspace=0.35, wspace=0.3)
+
+    # === Plot 1: Stationary vs Empirical Distribution ===
+    ax1 = fig.add_subplot(gs[0, :2])
+    x = np.arange(num_codes)
+    width = 0.35
+
+    bars1 = ax1.bar(x - width/2, stationary, width, label='Stationary (theoretical)',
+                    color='steelblue', alpha=0.8)
+    if empirical_dist is not None:
+        bars2 = ax1.bar(x + width/2, empirical_dist, width, label='Empirical (observed)',
+                        color='coral', alpha=0.8)
+
+    ax1.set_xlabel('Code Index', fontsize=10)
+    ax1.set_ylabel('Probability', fontsize=10)
+    ax1.set_title('Stationary vs Empirical Distribution', fontsize=12, fontweight='bold')
+    ax1.legend(loc='upper right')
+    ax1.set_xlim(-1, num_codes)
+
+    # Highlight top codes
+    top_stationary = np.argsort(stationary)[-5:][::-1]
+    for idx in top_stationary:
+        ax1.annotate(f'{idx}', (idx - width/2, stationary[idx]),
+                    ha='center', va='bottom', fontsize=7, color='steelblue')
+
+    # === Plot 2: Correlation between stationary and empirical ===
+    ax2 = fig.add_subplot(gs[0, 2])
+    if empirical_dist is not None:
+        ax2.scatter(empirical_dist, stationary, alpha=0.6, c='purple', s=30)
+        # Add diagonal line
+        max_val = max(empirical_dist.max(), stationary.max())
+        ax2.plot([0, max_val], [0, max_val], 'k--', alpha=0.5, label='y=x')
+
+        # Compute correlation
+        corr = np.corrcoef(empirical_dist, stationary)[0, 1]
+        ax2.set_xlabel('Empirical Distribution', fontsize=10)
+        ax2.set_ylabel('Stationary Distribution', fontsize=10)
+        ax2.set_title(f'Correlation: {corr:.3f}', fontsize=12, fontweight='bold')
+        ax2.legend()
+    else:
+        ax2.text(0.5, 0.5, 'No empirical\ndata provided',
+                ha='center', va='center', transform=ax2.transAxes)
+        ax2.set_title('Stationary vs Empirical', fontsize=12)
+
+    # === Plot 3: Code Persistence (stickiness) ===
+    ax3 = fig.add_subplot(gs[1, 0])
+    # Cap persistence at reasonable value for visualization
+    persistence_capped = np.minimum(persistence, 100)
+    colors = plt.cm.YlOrRd(persistence_capped / persistence_capped.max())
+    ax3.bar(x, persistence_capped, color=colors, edgecolor='none')
+    ax3.set_xlabel('Code Index', fontsize=10)
+    ax3.set_ylabel('Expected Frames', fontsize=10)
+    ax3.set_title('Code Persistence (frames before transition)', fontsize=11, fontweight='bold')
+    ax3.set_xlim(-1, num_codes)
+
+    # Annotate top persistent codes
+    top_persistent = np.argsort(persistence_capped)[-3:][::-1]
+    for idx in top_persistent:
+        ax3.annotate(f'{idx}\n({persistence_capped[idx]:.1f})',
+                    (idx, persistence_capped[idx]), ha='center', va='bottom', fontsize=7)
+
+    # === Plot 4: Transition Entropy ===
+    ax4 = fig.add_subplot(gs[1, 1])
+    colors = plt.cm.viridis(entropy_per_code / (entropy_per_code.max() + 1e-10))
+    ax4.bar(x, entropy_per_code, color=colors, edgecolor='none')
+    ax4.set_xlabel('Code Index', fontsize=10)
+    ax4.set_ylabel('Entropy (bits)', fontsize=10)
+    ax4.set_title('Transition Entropy per Code', fontsize=11, fontweight='bold')
+    ax4.set_xlim(-1, num_codes)
+    ax4.axhline(y=np.mean(entropy_per_code), color='red', linestyle='--',
+                alpha=0.7, label=f'Mean: {np.mean(entropy_per_code):.2f}')
+    ax4.legend(fontsize=8)
+
+    # Annotate high entropy (hub) codes
+    top_entropy = np.argsort(entropy_per_code)[-3:][::-1]
+    for idx in top_entropy:
+        ax4.annotate(f'{idx}', (idx, entropy_per_code[idx]),
+                    ha='center', va='bottom', fontsize=7, color='darkgreen')
+
+    # === Plot 5: Eigenvalue spectrum ===
+    ax5 = fig.add_subplot(gs[1, 2])
+    sorted_eig = np.sort(np.abs(eigenvalues))[::-1][:20]  # Top 20
+    ax5.bar(range(len(sorted_eig)), sorted_eig, color='teal', alpha=0.8)
+    ax5.axhline(y=1.0, color='red', linestyle='--', alpha=0.7)
+    ax5.set_xlabel('Eigenvalue Rank', fontsize=10)
+    ax5.set_ylabel('|Eigenvalue|', fontsize=10)
+    ax5.set_title(f'Eigenvalue Spectrum (λ₂={sorted_eig[1]:.3f})', fontsize=11, fontweight='bold')
+    ax5.set_ylim(0, 1.1)
+
+    # === Plot 6: Summary statistics ===
+    ax6 = fig.add_subplot(gs[2, :])
+    ax6.axis('off')
+
+    # Compute additional statistics
+    top5_stationary = [(i, stationary[i]) for i in np.argsort(stationary)[-5:][::-1]]
+    top5_persistent = [(i, persistence[i]) for i in np.argsort(persistence)[-5:][::-1]
+                       if persistence[i] < np.inf]
+    top5_entropy = [(i, entropy_per_code[i]) for i in np.argsort(entropy_per_code)[-5:][::-1]]
+    low5_entropy = [(i, entropy_per_code[i]) for i in np.argsort(entropy_per_code)[:5]]
+
+    stats_text = f"""
+STATIONARY DISTRIBUTION ANALYSIS SUMMARY
+{'='*60}
+
+Mixing Time: {mixing_time:.1f} frames (time to reach equilibrium)
+Second Eigenvalue (λ₂): {sorted_eig[1]:.4f} (closer to 0 = faster mixing)
+
+Top 5 Codes by Stationary Probability:
+  {', '.join([f'Code {i}: {p:.3f}' for i, p in top5_stationary])}
+
+Top 5 Most Persistent Codes (frames before transition):
+  {', '.join([f'Code {i}: {p:.1f}' for i, p in top5_persistent[:5]])}
+
+Top 5 Hub Codes (highest transition entropy):
+  {', '.join([f'Code {i}: {e:.2f} bits' for i, e in top5_entropy])}
+
+Top 5 Deterministic Codes (lowest transition entropy):
+  {', '.join([f'Code {i}: {e:.2f} bits' for i, e in low5_entropy])}
+
+Mean Persistence: {np.mean(persistence[persistence < np.inf]):.1f} frames
+Mean Transition Entropy: {np.mean(entropy_per_code):.2f} bits
+"""
+
+    if empirical_dist is not None:
+        kl_div = np.sum(np.where(empirical_dist > 0,
+                                 empirical_dist * np.log(empirical_dist / (stationary + 1e-10)),
+                                 0))
+        stats_text += f"\nKL Divergence (empirical || stationary): {kl_div:.4f}"
+
+    ax6.text(0.02, 0.95, stats_text, transform=ax6.transAxes, fontsize=10,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow', alpha=0.9))
+
+    fig.suptitle('Stationary Distribution Analysis', fontsize=14, fontweight='bold', y=1.01)
+
+    return {
+        'stationary_dist': stationary,
+        'empirical_dist': empirical_dist,
+        'transition_matrix': P,
+        'mixing_time': mixing_time,
+        'code_persistence': persistence,
+        'entropy_per_code': entropy_per_code,
+        'eigenvalues': sorted_eig,
+        'top_stationary_codes': top5_stationary,
+        'top_persistent_codes': top5_persistent,
+        'top_hub_codes': top5_entropy,
+        'figure': fig,
+    }
+
+
+def detect_transition_communities(
+    transition_counts: np.ndarray,
+    n_communities: int | None = None,
+    min_communities: int = 3,
+    max_communities: int = 12,
+) -> dict[str, Any]:
+    """Detect communities in the transition graph using spectral clustering.
+
+    Communities are groups of codes that preferentially transition among
+    themselves, potentially representing distinct behavioral modes.
+
+    Args:
+        transition_counts: Raw transition count matrix [num_codes, num_codes].
+        n_communities: Number of communities (None = auto-detect via eigengap).
+        min_communities: Minimum communities for auto-detection.
+        max_communities: Maximum communities for auto-detection.
+
+    Returns:
+        Dictionary containing:
+        - community_labels: Array mapping each code to its community
+        - n_communities: Number of communities detected
+        - modularity: Modularity score of the partition
+        - community_sizes: Dict mapping community ID to size
+        - community_codes: Dict mapping community ID to list of codes
+        - inter_community_matrix: Transition probabilities between communities
+        - intra_community_prob: Probability of staying within same community
+        - figure: Matplotlib figure with comprehensive visualization
+    """
+    from scipy.sparse.csgraph import laplacian
+    from sklearn.cluster import KMeans, SpectralClustering
+
+    num_codes = transition_counts.shape[0]
+
+    # Symmetrize for community detection (treat as undirected)
+    # Use geometric mean to preserve directionality information somewhat
+    symmetric = (transition_counts + transition_counts.T) / 2
+
+    # Also keep the directed version for analysis
+    row_sums = transition_counts.sum(axis=1, keepdims=True)
+    row_sums = np.maximum(row_sums, 1)
+    P_directed = transition_counts / row_sums
+
+    # Compute normalized Laplacian eigenvalues for community detection
+    degree = symmetric.sum(axis=1)
+    degree_inv_sqrt = np.where(degree > 0, 1.0 / np.sqrt(degree), 0)
+    D_inv_sqrt = np.diag(degree_inv_sqrt)
+    L_norm = np.eye(num_codes) - D_inv_sqrt @ symmetric @ D_inv_sqrt
+
+    eigenvalues, eigenvectors = np.linalg.eigh(L_norm)
+
+    # Auto-detect number of communities via eigengap heuristic
+    if n_communities is None:
+        # Look for largest gap in eigenvalues
+        eigengaps = np.diff(eigenvalues[:max_communities + 1])
+        # Start from min_communities
+        best_k = min_communities + np.argmax(eigengaps[min_communities - 1:max_communities - 1])
+        n_communities = best_k
+        logging.info(f"  Auto-detected {n_communities} communities via eigengap")
+
+    # Spectral clustering
+    try:
+        sc = SpectralClustering(
+            n_clusters=n_communities,
+            affinity='precomputed',
+            assign_labels='kmeans',
+            random_state=42,
+        )
+        # Use symmetric transition counts as affinity
+        affinity = symmetric + 1  # Add 1 to handle zeros
+        labels = sc.fit_predict(affinity)
+    except Exception as e:
+        logging.warning(f"  SpectralClustering failed: {e}, using KMeans on eigenvectors")
+        # Fallback: cluster the eigenvectors directly
+        embedding = eigenvectors[:, :n_communities]
+        kmeans = KMeans(n_clusters=n_communities, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(embedding)
+
+    # Compute community statistics
+    community_sizes = {}
+    community_codes = {}
+    for c in range(n_communities):
+        mask = labels == c
+        community_sizes[c] = int(mask.sum())
+        community_codes[c] = list(np.where(mask)[0])
+
+    # Compute inter-community transition matrix
+    inter_community = np.zeros((n_communities, n_communities))
+    for i in range(num_codes):
+        for j in range(num_codes):
+            ci, cj = labels[i], labels[j]
+            inter_community[ci, cj] += transition_counts[i, j]
+
+    # Normalize to probabilities
+    row_sums = inter_community.sum(axis=1, keepdims=True)
+    row_sums = np.maximum(row_sums, 1)
+    inter_community_prob = inter_community / row_sums
+
+    # Intra-community probability (diagonal of inter-community matrix)
+    intra_prob = np.diag(inter_community_prob)
+    overall_intra_prob = np.trace(inter_community) / inter_community.sum()
+
+    # Compute modularity
+    total_weight = symmetric.sum()
+    expected = np.outer(degree, degree) / total_weight
+    modularity = 0.0
+    for c in range(n_communities):
+        mask = labels == c
+        Q_c = (symmetric[np.ix_(mask, mask)].sum() - expected[np.ix_(mask, mask)].sum()) / total_weight
+        modularity += Q_c
+
+    # Create comprehensive visualization
+    fig = plt.figure(figsize=(18, 14))
+    gs = fig.add_gridspec(3, 3, hspace=0.35, wspace=0.3)
+
+    # Get colors for communities
+    cmap = plt.cm.Set3 if n_communities <= 12 else plt.cm.tab20
+    community_colors = [cmap(i / n_communities) for i in range(n_communities)]
+
+    # === Plot 1: Reordered transition matrix by community ===
+    ax1 = fig.add_subplot(gs[0, :2])
+
+    # Reorder codes by community
+    order = np.argsort(labels)
+    reordered = transition_counts[np.ix_(order, order)]
+
+    log_reordered = np.log1p(reordered)
+    im = ax1.imshow(log_reordered, cmap='viridis', aspect='auto')
+    ax1.set_title('Transition Matrix (reordered by community)', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('To Code (reordered)', fontsize=10)
+    ax1.set_ylabel('From Code (reordered)', fontsize=10)
+    plt.colorbar(im, ax=ax1, shrink=0.6, label='log(count + 1)')
+
+    # Draw community boundaries
+    cumsum = np.cumsum([community_sizes.get(labels[order[0]], 0)] +
+                       [community_sizes.get(c, 0) for c in range(n_communities)])
+    boundaries = []
+    current_comm = labels[order[0]]
+    for i, idx in enumerate(order):
+        if labels[idx] != current_comm:
+            boundaries.append(i)
+            current_comm = labels[idx]
+
+    for b in boundaries:
+        ax1.axhline(y=b - 0.5, color='white', linewidth=1, alpha=0.8)
+        ax1.axvline(x=b - 0.5, color='white', linewidth=1, alpha=0.8)
+
+    # === Plot 2: Community sizes ===
+    ax2 = fig.add_subplot(gs[0, 2])
+    sizes = [community_sizes[c] for c in range(n_communities)]
+    colors = [community_colors[c] for c in range(n_communities)]
+    bars = ax2.bar(range(n_communities), sizes, color=colors, edgecolor='black', linewidth=0.5)
+    ax2.set_xlabel('Community', fontsize=10)
+    ax2.set_ylabel('Number of Codes', fontsize=10)
+    ax2.set_title('Community Sizes', fontsize=12, fontweight='bold')
+    ax2.set_xticks(range(n_communities))
+
+    for i, (bar, size) in enumerate(zip(bars, sizes)):
+        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                str(size), ha='center', va='bottom', fontsize=9)
+
+    # === Plot 3: Inter-community transition matrix ===
+    ax3 = fig.add_subplot(gs[1, 0])
+    im = ax3.imshow(inter_community_prob, cmap='Blues', vmin=0, vmax=1)
+    ax3.set_title('Inter-Community Transition Probabilities', fontsize=11, fontweight='bold')
+    ax3.set_xlabel('To Community', fontsize=10)
+    ax3.set_ylabel('From Community', fontsize=10)
+    ax3.set_xticks(range(n_communities))
+    ax3.set_yticks(range(n_communities))
+    plt.colorbar(im, ax=ax3, shrink=0.8)
+
+    # Annotate values
+    for i in range(n_communities):
+        for j in range(n_communities):
+            val = inter_community_prob[i, j]
+            color = 'white' if val > 0.5 else 'black'
+            ax3.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=8, color=color)
+
+    # === Plot 4: Intra-community probability (self-containment) ===
+    ax4 = fig.add_subplot(gs[1, 1])
+    bars = ax4.bar(range(n_communities), intra_prob, color=colors, edgecolor='black', linewidth=0.5)
+    ax4.axhline(y=overall_intra_prob, color='red', linestyle='--',
+                label=f'Overall: {overall_intra_prob:.2f}')
+    ax4.set_xlabel('Community', fontsize=10)
+    ax4.set_ylabel('P(stay in community)', fontsize=10)
+    ax4.set_title('Community Self-Containment', fontsize=11, fontweight='bold')
+    ax4.set_xticks(range(n_communities))
+    ax4.set_ylim(0, 1)
+    ax4.legend(fontsize=9)
+
+    # === Plot 5: Eigengap visualization ===
+    ax5 = fig.add_subplot(gs[1, 2])
+    n_show = min(20, num_codes)
+    ax5.plot(range(n_show), eigenvalues[:n_show], 'o-', markersize=5, color='teal')
+    ax5.axvline(x=n_communities - 1, color='red', linestyle='--', alpha=0.7,
+                label=f'k={n_communities}')
+    ax5.set_xlabel('Eigenvalue Index', fontsize=10)
+    ax5.set_ylabel('Eigenvalue', fontsize=10)
+    ax5.set_title('Laplacian Eigenvalues (eigengap)', fontsize=11, fontweight='bold')
+    ax5.legend(fontsize=9)
+    ax5.grid(True, alpha=0.3)
+
+    # === Plot 6: Community code distribution (scatter) ===
+    ax6 = fig.add_subplot(gs[2, 0])
+    for c in range(n_communities):
+        codes_in_c = community_codes[c]
+        y_vals = [c] * len(codes_in_c)
+        ax6.scatter(codes_in_c, y_vals, c=[community_colors[c]], s=50, alpha=0.7,
+                   edgecolors='black', linewidth=0.3)
+
+    ax6.set_xlabel('Code Index', fontsize=10)
+    ax6.set_ylabel('Community', fontsize=10)
+    ax6.set_title('Codes in Each Community', fontsize=11, fontweight='bold')
+    ax6.set_yticks(range(n_communities))
+    ax6.set_xlim(-1, num_codes)
+    ax6.grid(True, alpha=0.3, axis='x')
+
+    # === Plot 7: Transition flow diagram (simplified) ===
+    ax7 = fig.add_subplot(gs[2, 1])
+    # Draw communities as circles, arrows for significant transitions
+    angles = np.linspace(0, 2 * np.pi, n_communities, endpoint=False)
+    radius = 0.35
+    centers = [(0.5 + radius * np.cos(a), 0.5 + radius * np.sin(a)) for a in angles]
+
+    # Draw community circles
+    for c, (cx, cy) in enumerate(centers):
+        circle = plt.Circle((cx, cy), 0.08, color=community_colors[c],
+                           ec='black', linewidth=1.5, alpha=0.8)
+        ax7.add_patch(circle)
+        ax7.text(cx, cy, str(c), ha='center', va='center', fontsize=10, fontweight='bold')
+
+    # Draw arrows for significant transitions (>10%)
+    for i in range(n_communities):
+        for j in range(n_communities):
+            if i != j and inter_community_prob[i, j] > 0.1:
+                x1, y1 = centers[i]
+                x2, y2 = centers[j]
+                # Shorten arrows to not overlap circles
+                dx, dy = x2 - x1, y2 - y1
+                dist = np.sqrt(dx**2 + dy**2)
+                dx, dy = dx / dist, dy / dist
+                x1, y1 = x1 + 0.09 * dx, y1 + 0.09 * dy
+                x2, y2 = x2 - 0.09 * dx, y2 - 0.09 * dy
+
+                alpha = min(inter_community_prob[i, j], 1.0)
+                width = inter_community_prob[i, j] * 3
+                ax7.annotate('', xy=(x2, y2), xytext=(x1, y1),
+                           arrowprops=dict(arrowstyle='->', color='gray',
+                                         alpha=alpha, lw=width))
+
+    ax7.set_xlim(0, 1)
+    ax7.set_ylim(0, 1)
+    ax7.set_aspect('equal')
+    ax7.axis('off')
+    ax7.set_title('Community Transition Flow (>10%)', fontsize=11, fontweight='bold')
+
+    # === Plot 8: Summary statistics ===
+    ax8 = fig.add_subplot(gs[2, 2])
+    ax8.axis('off')
+
+    # Find dominant transition for each community
+    dominant_transitions = []
+    for c in range(n_communities):
+        row = inter_community_prob[c].copy()
+        row[c] = 0  # Exclude self
+        if row.max() > 0:
+            target = np.argmax(row)
+            dominant_transitions.append(f"  C{c} → C{target}: {row[target]:.2f}")
+        else:
+            dominant_transitions.append(f"  C{c}: isolated")
+
+    stats_text = f"""
+COMMUNITY DETECTION SUMMARY
+{'='*50}
+
+Number of Communities: {n_communities}
+Modularity Score: {modularity:.4f}
+  (higher = better separation, typical good: 0.3-0.7)
+
+Overall Intra-Community Probability: {overall_intra_prob:.3f}
+  (probability of staying within same community)
+
+Community Sizes:
+  {', '.join([f'C{c}: {community_sizes[c]} codes' for c in range(n_communities)])}
+
+Community Self-Containment:
+  {', '.join([f'C{c}: {intra_prob[c]:.2f}' for c in range(n_communities)])}
+
+Dominant Inter-Community Transitions:
+{chr(10).join(dominant_transitions)}
+"""
+
+    ax8.text(0.02, 0.95, stats_text, transform=ax8.transAxes, fontsize=9,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='lightcyan', alpha=0.9))
+
+    fig.suptitle(f'Transition Graph Community Detection ({n_communities} Communities)',
+                fontsize=14, fontweight='bold', y=1.01)
+
+    return {
+        'community_labels': labels,
+        'n_communities': n_communities,
+        'modularity': modularity,
+        'community_sizes': community_sizes,
+        'community_codes': community_codes,
+        'inter_community_matrix': inter_community_prob,
+        'intra_community_prob': intra_prob,
+        'overall_intra_prob': overall_intra_prob,
+        'eigenvalues': eigenvalues,
+        'figure': fig,
+    }
+
+
 def compute_conditional_transition_context(
     result_i: InferenceResult,
     result_j: InferenceResult,

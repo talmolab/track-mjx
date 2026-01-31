@@ -41,6 +41,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 # Add paths for package imports
 ANALYSIS_DIR = Path(__file__).parent
 VQVAE_DIR = ANALYSIS_DIR.parent
@@ -62,6 +64,8 @@ from .per_clip_analysis import run_per_clip_analysis
 from .transition_context_analysis import (
     run_transition_context_analysis,
     compute_global_transition_matrix,
+    compute_stationary_distribution,
+    detect_transition_communities,
     compute_code_popularity,
     get_top_k_codes,
     render_code_pose_gallery,
@@ -330,6 +334,130 @@ def main(cfg: DictConfig):
         "transition_matrix": str(global_matrix_dir / "transition_matrix.png"),
     }
 
+    # === Section 1b: Stationary Distribution Analysis ===
+    logging.info("\n" + "=" * 40)
+    logging.info("Computing stationary distribution analysis...")
+
+    # Get frame counts for comparison with stationary distribution
+    frame_counts = compute_code_popularity(results, num_codes)
+
+    stationary_results = compute_stationary_distribution(
+        transition_counts=global_counts,
+        frame_counts=frame_counts,
+    )
+
+    # Save figure
+    stationary_fig = stationary_results["figure"]
+    stationary_fig.savefig(
+        global_matrix_dir / "stationary_distribution.png",
+        dpi=150, bbox_inches="tight"
+    )
+
+    # Log to WandB immediately
+    if wandb_enabled:
+        import wandb
+        log_to_wandb_immediately(
+            "global/stationary_distribution",
+            wandb.Image(stationary_fig),
+            wandb_enabled,
+        )
+        logging.info("  Logged stationary distribution to WandB")
+
+    plt.close(stationary_fig)
+
+    # Save stationary analysis JSON
+    stationary_json = {
+        "mixing_time": float(stationary_results["mixing_time"]),
+        "top_stationary_codes": [
+            {"code": int(c), "probability": float(p)}
+            for c, p in stationary_results["top_stationary_codes"]
+        ],
+        "top_persistent_codes": [
+            {"code": int(c), "persistence": float(p)}
+            for c, p in stationary_results["top_persistent_codes"]
+        ],
+        "top_hub_codes": [
+            {"code": int(c), "entropy": float(e)}
+            for c, e in stationary_results["top_hub_codes"]
+        ],
+        "mean_persistence": float(np.mean([
+            p for p in stationary_results["code_persistence"]
+            if p < np.inf
+        ])),
+        "mean_entropy": float(np.mean(stationary_results["entropy_per_code"])),
+    }
+    with open(global_matrix_dir / "stationary_analysis.json", "w") as f:
+        json.dump(stationary_json, f, indent=2)
+
+    all_paths["global"]["stationary_distribution"] = str(
+        global_matrix_dir / "stationary_distribution.png"
+    )
+    all_paths["global"]["stationary_json"] = str(
+        global_matrix_dir / "stationary_analysis.json"
+    )
+
+    logging.info(f"  Mixing time: {stationary_results['mixing_time']:.1f} frames")
+    logging.info(f"  Top stationary codes: {[c for c, _ in stationary_results['top_stationary_codes'][:3]]}")
+
+    # === Section 1c: Community Detection ===
+    logging.info("\n" + "=" * 40)
+    logging.info("Detecting transition graph communities...")
+
+    community_results = detect_transition_communities(
+        transition_counts=global_counts,
+        n_communities=None,  # Auto-detect
+    )
+
+    # Save figure
+    community_fig = community_results["figure"]
+    community_fig.savefig(
+        global_matrix_dir / "community_detection.png",
+        dpi=150, bbox_inches="tight"
+    )
+
+    # Log to WandB immediately
+    if wandb_enabled:
+        import wandb
+        log_to_wandb_immediately(
+            "global/community_detection",
+            wandb.Image(community_fig),
+            wandb_enabled,
+        )
+        logging.info("  Logged community detection to WandB")
+
+    plt.close(community_fig)
+
+    # Save community analysis JSON
+    community_json = {
+        "n_communities": int(community_results["n_communities"]),
+        "modularity": float(community_results["modularity"]),
+        "overall_intra_prob": float(community_results["overall_intra_prob"]),
+        "community_sizes": {
+            str(k): v for k, v in community_results["community_sizes"].items()
+        },
+        "community_codes": {
+            str(k): [int(c) for c in v]
+            for k, v in community_results["community_codes"].items()
+        },
+        "intra_community_prob": {
+            str(i): float(p)
+            for i, p in enumerate(community_results["intra_community_prob"])
+        },
+    }
+    with open(global_matrix_dir / "community_analysis.json", "w") as f:
+        json.dump(community_json, f, indent=2)
+
+    all_paths["global"]["community_detection"] = str(
+        global_matrix_dir / "community_detection.png"
+    )
+    all_paths["global"]["community_json"] = str(
+        global_matrix_dir / "community_analysis.json"
+    )
+
+    logging.info(f"  Detected {community_results['n_communities']} communities")
+    logging.info(f"  Modularity: {community_results['modularity']:.4f}")
+    logging.info(f"  Intra-community prob: {community_results['overall_intra_prob']:.3f}")
+
     # === Section 2: Per-Clip Analysis ===
     logging.info("\n" + "=" * 40)
     logging.info("Running per-clip analysis...")
@@ -498,6 +626,10 @@ def main(cfg: DictConfig):
     print("=" * 60)
     if "global" in all_paths:
         print(f"\nGlobal transition matrix: {all_paths['global']['transition_matrix']}")
+        if "stationary_distribution" in all_paths["global"]:
+            print(f"Stationary distribution: {all_paths['global']['stationary_distribution']}")
+        if "community_detection" in all_paths["global"]:
+            print(f"Community detection: {all_paths['global']['community_detection']}")
     print(f"Per-clip viewer: {all_paths['per_clip']['html']}")
     if "transition_context" in all_paths:
         print(f"Transition context viewer: {all_paths['transition_context']['html']}")

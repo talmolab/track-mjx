@@ -30,7 +30,7 @@ wandb:
 # Use `python -m inference.run_inference` to generate H5 files.
 data:
   h5_path: ./outputs/rollout.h5  # Path to H5 file with rollout data (required)
-  clip_length: 250               # Frames per clip (for environment setup)
+  clip_length: 500               # Frames per clip (for environment setup)
 
 # =============================================================================
 # Per-Clip Analysis Configuration

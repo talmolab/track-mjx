@@ -74,6 +74,50 @@ class TransitionSegment:
     code_indices: np.ndarray
 
 
+@dataclass
+class MatchedFramePair:
+    """A pair of frames from two clips matched by qpos similarity.
+
+    Attributes:
+        frame_i: Frame index in clip i.
+        frame_j: Frame index in clip j.
+        qpos_distance: Mean absolute qpos difference.
+        succ_i: Successor code in clip i.
+        succ_j: Successor code in clip j.
+    """
+
+    frame_i: int
+    frame_j: int
+    qpos_distance: float
+    succ_i: int
+    succ_j: int
+
+
+@dataclass
+class ConditionalTransitionContext:
+    """Transition context conditioned on qpos similarity.
+
+    Attributes:
+        code_idx: The code being analyzed.
+        clip_i: Index of the first clip.
+        clip_j: Index of the second clip.
+        n_matched_frames: Number of qpos-matched frame pairs.
+        successor_dist_i: Successor distribution from clip i's matched frames.
+        successor_dist_j: Successor distribution from clip j's matched frames.
+        avg_qpos_distance: Mean L2 distance of matched qpos pairs.
+        matched_pairs: List of matched frame pairs for video rendering.
+    """
+
+    code_idx: int
+    clip_i: int
+    clip_j: int
+    n_matched_frames: int
+    successor_dist_i: np.ndarray
+    successor_dist_j: np.ndarray
+    avg_qpos_distance: float
+    matched_pairs: list[MatchedFramePair]
+
+
 def compute_code_popularity(
     results: Sequence[InferenceResult],
     num_codes: int,
@@ -186,6 +230,291 @@ def compute_context_similarity(
     succ_sim = cosine_sim(ctx1.successor_dist, ctx2.successor_dist)
 
     return pred_sim, succ_sim
+
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Compute cosine similarity between two vectors."""
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+def compute_conditional_transition_context(
+    result_i: InferenceResult,
+    result_j: InferenceResult,
+    code_idx: int,
+    num_codes: int,
+    qpos_threshold: float,
+) -> ConditionalTransitionContext | None:
+    """Compare transitions between two clips, conditioned on similar qpos.
+
+    For each frame in clip_i where code_idx is active, find the closest qpos
+    match in clip_j (where the same code is active). Only keep matches where
+    the mean absolute difference in joint angles is below threshold.
+
+    Args:
+        result_i: InferenceResult for first clip.
+        result_j: InferenceResult for second clip.
+        code_idx: The code to analyze.
+        num_codes: Total number of codes.
+        qpos_threshold: Mean absolute difference threshold for qpos matching.
+
+    Returns:
+        ConditionalTransitionContext or None if insufficient matches.
+    """
+    # Get frames where code is active in each clip (with joint qpos, excluding root 7 dims)
+    frames_i = [
+        (t, result_i.qpos[t, 7:])
+        for t, c in enumerate(result_i.code_indices)
+        if int(c) == code_idx and t < len(result_i.qpos)
+    ]
+    frames_j = [
+        (t, result_j.qpos[t, 7:])
+        for t, c in enumerate(result_j.code_indices)
+        if int(c) == code_idx and t < len(result_j.qpos)
+    ]
+
+    if not frames_i or not frames_j:
+        return None
+
+    # Build qpos matrix for clip_j for efficient distance computation
+    qpos_j_matrix = np.array([qpos for _, qpos in frames_j])  # [N_j, n_joints]
+    times_j = [t for t, _ in frames_j]
+
+    matched_pairs = []
+
+    for t_i, qpos_i in frames_i:
+        # Compute L2 distance to all frames in clip_j
+        diffs = qpos_j_matrix - qpos_i  # [N_j, n_joints]
+        l2_distances = np.linalg.norm(diffs, axis=1)  # [N_j]
+
+        # Find closest match
+        best_idx = np.argmin(l2_distances)
+
+        # Check threshold (convert to mean absolute difference)
+        mean_abs_diff = np.mean(np.abs(diffs[best_idx]))
+
+        if mean_abs_diff < qpos_threshold:
+            t_j = times_j[best_idx]
+
+            # Get successor codes (if exist)
+            succ_i = (
+                int(result_i.code_indices[t_i + 1])
+                if t_i + 1 < len(result_i.code_indices)
+                else -1
+            )
+            succ_j = (
+                int(result_j.code_indices[t_j + 1])
+                if t_j + 1 < len(result_j.code_indices)
+                else -1
+            )
+
+            if succ_i >= 0 and succ_j >= 0:
+                matched_pairs.append(MatchedFramePair(
+                    frame_i=t_i,
+                    frame_j=t_j,
+                    qpos_distance=mean_abs_diff,
+                    succ_i=succ_i,
+                    succ_j=succ_j,
+                ))
+
+    if len(matched_pairs) < 2:  # Need minimum matches
+        return None
+
+    # Compute successor distributions
+    dist_i = np.zeros(num_codes)
+    dist_j = np.zeros(num_codes)
+    for mp in matched_pairs:
+        dist_i[mp.succ_i] += 1
+        dist_j[mp.succ_j] += 1
+
+    dist_i = dist_i / dist_i.sum() if dist_i.sum() > 0 else dist_i
+    dist_j = dist_j / dist_j.sum() if dist_j.sum() > 0 else dist_j
+
+    return ConditionalTransitionContext(
+        code_idx=code_idx,
+        clip_i=result_i.clip_idx,
+        clip_j=result_j.clip_idx,
+        n_matched_frames=len(matched_pairs),
+        successor_dist_i=dist_i,
+        successor_dist_j=dist_j,
+        avg_qpos_distance=float(np.mean([mp.qpos_distance for mp in matched_pairs])),
+        matched_pairs=matched_pairs,
+    )
+
+
+def compute_conditional_similarity_for_code(
+    results: Sequence[InferenceResult],
+    code_idx: int,
+    num_codes: int,
+    qpos_threshold: float,
+) -> dict | None:
+    """Compute pairwise conditional similarities for a code across all clips.
+
+    Args:
+        results: List of InferenceResult from rollouts.
+        code_idx: The code to analyze.
+        num_codes: Total number of codes.
+        qpos_threshold: Mean absolute difference threshold for qpos matching.
+
+    Returns:
+        Dictionary with similarity statistics or None if no valid pairs.
+    """
+    contexts = []
+    for i, result_i in enumerate(results):
+        for j, result_j in enumerate(results):
+            if i >= j:  # Only upper triangle
+                continue
+            ctx = compute_conditional_transition_context(
+                result_i, result_j, code_idx, num_codes, qpos_threshold
+            )
+            if ctx is not None:
+                contexts.append(ctx)
+
+    if not contexts:
+        return None
+
+    # Compute average similarity
+    similarities = []
+    for ctx in contexts:
+        sim = cosine_similarity(ctx.successor_dist_i, ctx.successor_dist_j)
+        similarities.append(sim)
+
+    return {
+        "code_idx": code_idx,
+        "n_pairs": len(contexts),
+        "total_matched_frames": sum(ctx.n_matched_frames for ctx in contexts),
+        "avg_conditional_similarity": float(np.mean(similarities)),
+        "std_conditional_similarity": float(np.std(similarities)),
+        "avg_qpos_distance": float(np.mean([ctx.avg_qpos_distance for ctx in contexts])),
+        "contexts": contexts,
+    }
+
+
+def plot_conditional_context_comparison(
+    code_idx: int,
+    conditional_data: dict,
+    figsize: tuple[int, int] = (14, 5),
+) -> plt.Figure:
+    """Create visualization for conditional transition analysis.
+
+    Shows:
+    - Left: Heatmap of conditional similarity matrix (clip pairs)
+    - Center: Bar chart of matched frame counts per clip pair
+    - Right: Summary statistics box
+
+    Args:
+        code_idx: The code being analyzed.
+        conditional_data: Dictionary from compute_conditional_similarity_for_code.
+        figsize: Figure size.
+
+    Returns:
+        Matplotlib figure.
+    """
+    contexts = conditional_data["contexts"]
+    n_contexts = len(contexts)
+
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
+
+    # === Left: Similarity matrix (pairwise) ===
+    ax = axes[0]
+
+    # Build similarity matrix from contexts
+    clip_indices = set()
+    for ctx in contexts:
+        clip_indices.add(ctx.clip_i)
+        clip_indices.add(ctx.clip_j)
+    clip_indices = sorted(clip_indices)
+    n_clips = len(clip_indices)
+    clip_to_idx = {c: i for i, c in enumerate(clip_indices)}
+
+    sim_matrix = np.full((n_clips, n_clips), np.nan)
+    for ctx in contexts:
+        i = clip_to_idx[ctx.clip_i]
+        j = clip_to_idx[ctx.clip_j]
+        sim = cosine_similarity(ctx.successor_dist_i, ctx.successor_dist_j)
+        sim_matrix[i, j] = sim
+        sim_matrix[j, i] = sim  # Symmetric
+
+    # Fill diagonal with 1.0
+    np.fill_diagonal(sim_matrix, 1.0)
+
+    im = ax.imshow(sim_matrix, cmap="RdYlGn", vmin=0, vmax=1)
+    ax.set_xticks(range(n_clips))
+    ax.set_yticks(range(n_clips))
+    ax.set_xticklabels([f"C{c}" for c in clip_indices], fontsize=7)
+    ax.set_yticklabels([f"C{c}" for c in clip_indices], fontsize=7)
+    plt.colorbar(im, ax=ax, shrink=0.6, label="Cosine Sim")
+    ax.set_title("Conditional Similarity\n(qpos-matched)", fontsize=10, fontweight="bold")
+
+    # === Center: Bar chart of matched frames ===
+    ax = axes[1]
+
+    pair_labels = [f"C{ctx.clip_i}-C{ctx.clip_j}" for ctx in contexts]
+    matched_counts = [ctx.n_matched_frames for ctx in contexts]
+    pair_sims = [cosine_similarity(ctx.successor_dist_i, ctx.successor_dist_j) for ctx in contexts]
+
+    # Color bars by similarity
+    colors = plt.cm.RdYlGn([s for s in pair_sims])
+
+    bars = ax.bar(range(n_contexts), matched_counts, color=colors, edgecolor="white")
+    ax.set_xticks(range(n_contexts))
+    ax.set_xticklabels(pair_labels, fontsize=7, rotation=45, ha="right")
+    ax.set_ylabel("Matched Frames", fontsize=9)
+    ax.set_title("Matched Frame Counts\n(per clip pair)", fontsize=10, fontweight="bold")
+    ax.grid(True, alpha=0.3, axis="y")
+
+    # === Right: Summary statistics ===
+    ax = axes[2]
+    ax.axis("off")
+
+    avg_sim = conditional_data["avg_conditional_similarity"]
+    std_sim = conditional_data["std_conditional_similarity"]
+    total_matched = conditional_data["total_matched_frames"]
+    avg_qpos_dist = conditional_data["avg_qpos_distance"]
+    n_pairs = conditional_data["n_pairs"]
+
+    # Determine interpretation
+    if avg_sim > 0.8:
+        interpretation = "STRUCTURED\nSame pose → consistent transitions"
+    elif avg_sim > 0.5:
+        interpretation = "PARTIAL\nSome pose-dependent consistency"
+    else:
+        interpretation = "UNSTRUCTURED\nSimilar poses → different transitions"
+
+    stats_text = f"""Code Index: {code_idx}
+
+Clip Pairs Analyzed: {n_pairs}
+Total Matched Frames: {total_matched}
+
+Avg Qpos Distance: {avg_qpos_dist:.4f}
+
+Conditional Similarity:
+  Mean: {avg_sim:.3f}
+  Std:  {std_sim:.3f}
+
+Interpretation:
+{interpretation}
+"""
+
+    ax.text(
+        0.1, 0.9, stats_text,
+        transform=ax.transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        fontfamily="monospace",
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8),
+    )
+
+    fig.suptitle(
+        f"Conditional Transition Analysis: Code {code_idx}",
+        fontsize=12, fontweight="bold", y=1.02,
+    )
+    plt.tight_layout()
+
+    return fig
 
 
 def extract_transition_segments(
@@ -354,6 +683,168 @@ def render_transition_video(
         # Playhead
         playhead_x = int(i * width / n_frames)
         full_frame[bar_y:bar_y + bar_height, playhead_x:playhead_x + 2] = [255, 255, 255]
+
+        frames.append(full_frame)
+
+    renderer.close()
+
+    if len(frames) == 0:
+        return ""
+
+    with imageio.get_writer(str(output_path), fps=fps) as writer:
+        for frame in frames:
+            writer.append_data(frame)
+
+    return str(output_path)
+
+
+def render_conditional_comparison_video(
+    env: Any,
+    result_i: InferenceResult,
+    result_j: InferenceResult,
+    matched_pair: MatchedFramePair,
+    code_idx: int,
+    output_path: Path,
+    num_codes: int,
+    camera: str | None = None,
+    width: int = 640,
+    height: int = 480,
+    fps: int = 50,
+    context_frames: int = 15,
+    bar_height: int = 40,
+) -> str:
+    """Render side-by-side comparison video of matched frames from two clips.
+
+    Shows the transition around matched frames where qpos is similar.
+
+    Args:
+        env: Environment with mj_model attribute.
+        result_i: InferenceResult for first clip.
+        result_j: InferenceResult for second clip.
+        matched_pair: MatchedFramePair with frame indices.
+        code_idx: The code being analyzed.
+        output_path: Path to save video.
+        num_codes: Total number of codes.
+        camera: Camera name.
+        width: Video width (for each side, total will be 2x).
+        height: Video height.
+        fps: Frames per second.
+        context_frames: Number of frames before/after to include.
+        bar_height: Height of the code timeline bar.
+
+    Returns:
+        Path to rendered video.
+    """
+    import imageio
+    import mujoco
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Validate data
+    if result_i.qpos is None or result_j.qpos is None:
+        return ""
+
+    code_colors = get_nature_colormap(num_codes)
+
+    # Setup MuJoCo renderer
+    mj_model = env.mj_model
+    mj_data = mujoco.MjData(mj_model)
+
+    half_width = width // 2
+    render_height = height - bar_height
+    renderer = mujoco.Renderer(mj_model, height=render_height, width=half_width)
+
+    # Get camera ID
+    cam_id = -1
+    if camera:
+        try:
+            cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+        except Exception:
+            pass
+
+    # Compute frame ranges for both clips
+    start_i = max(0, matched_pair.frame_i - context_frames)
+    end_i = min(len(result_i.qpos), matched_pair.frame_i + context_frames + 1)
+    start_j = max(0, matched_pair.frame_j - context_frames)
+    end_j = min(len(result_j.qpos), matched_pair.frame_j + context_frames + 1)
+
+    n_frames = max(end_i - start_i, end_j - start_j)
+
+    if n_frames == 0:
+        renderer.close()
+        return ""
+
+    frames = []
+    for i in range(n_frames):
+        # Create combined frame (side by side)
+        full_frame = np.ones((height, width, 3), dtype=np.uint8) * 40  # Dark gray background
+
+        # Render clip i (left side)
+        frame_idx_i = start_i + min(i, end_i - start_i - 1)
+        mj_data.qpos[:] = result_i.qpos[frame_idx_i]
+        mujoco.mj_forward(mj_model, mj_data)
+        if cam_id >= 0:
+            renderer.update_scene(mj_data, camera=cam_id)
+        else:
+            renderer.update_scene(mj_data)
+        render_i = renderer.render()
+        full_frame[:render_height, :half_width] = render_i
+
+        # Render clip j (right side)
+        frame_idx_j = start_j + min(i, end_j - start_j - 1)
+        mj_data.qpos[:] = result_j.qpos[frame_idx_j]
+        mujoco.mj_forward(mj_model, mj_data)
+        if cam_id >= 0:
+            renderer.update_scene(mj_data, camera=cam_id)
+        else:
+            renderer.update_scene(mj_data)
+        render_j = renderer.render()
+        full_frame[:render_height, half_width:] = render_j
+
+        # Draw divider line
+        full_frame[:render_height, half_width - 1:half_width + 1] = [100, 100, 100]
+
+        # Draw code timeline bars
+        bar_y = render_height
+
+        # Left bar (clip i)
+        for j in range(end_i - start_i):
+            x_start = int(j * half_width / (end_i - start_i))
+            x_end = int((j + 1) * half_width / (end_i - start_i))
+            idx = start_i + j
+            if idx < len(result_i.code_indices):
+                c_idx = int(result_i.code_indices[idx])
+                color = code_colors[c_idx]
+                if c_idx == code_idx:
+                    full_frame[bar_y:bar_y + 2, x_start:x_end] = [255, 255, 255]
+                    full_frame[bar_y + bar_height - 2:bar_y + bar_height, x_start:x_end] = [255, 255, 255]
+                    full_frame[bar_y + 2:bar_y + bar_height - 2, x_start:x_end] = color
+                else:
+                    full_frame[bar_y:bar_y + bar_height, x_start:x_end] = color
+
+        # Right bar (clip j)
+        for j in range(end_j - start_j):
+            x_start = half_width + int(j * half_width / (end_j - start_j))
+            x_end = half_width + int((j + 1) * half_width / (end_j - start_j))
+            idx = start_j + j
+            if idx < len(result_j.code_indices):
+                c_idx = int(result_j.code_indices[idx])
+                color = code_colors[c_idx]
+                if c_idx == code_idx:
+                    full_frame[bar_y:bar_y + 2, x_start:x_end] = [255, 255, 255]
+                    full_frame[bar_y + bar_height - 2:bar_y + bar_height, x_start:x_end] = [255, 255, 255]
+                    full_frame[bar_y + 2:bar_y + bar_height - 2, x_start:x_end] = color
+                else:
+                    full_frame[bar_y:bar_y + bar_height, x_start:x_end] = color
+
+        # Playheads
+        if end_i > start_i:
+            playhead_i = int(min(i, end_i - start_i - 1) * half_width / (end_i - start_i))
+            full_frame[bar_y:bar_y + bar_height, playhead_i:playhead_i + 2] = [255, 255, 255]
+        if end_j > start_j:
+            playhead_j = half_width + int(min(i, end_j - start_j - 1) * half_width / (end_j - start_j))
+            full_frame[bar_y:bar_y + bar_height, playhead_j:playhead_j + 2] = [255, 255, 255]
 
         frames.append(full_frame)
 
@@ -819,6 +1310,356 @@ def generate_context_html(
     return str(output_path)
 
 
+def generate_conditional_html(
+    code_analyses: list[dict],
+    output_path: Path,
+    output_dir: Path,
+    title: str = "Conditional Transition Analysis",
+) -> str:
+    """Generate standalone HTML for conditional (qpos-matched) transition analysis.
+
+    Args:
+        code_analyses: List of analysis data per code (must have 'conditional' key).
+        output_path: Path to save HTML file.
+        output_dir: Base output directory (to resolve video paths).
+        title: HTML page title.
+
+    Returns:
+        Path to generated HTML file.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Filter to only codes with conditional analysis
+    conditional_codes = [ca for ca in code_analyses if ca.get("conditional")]
+
+    # Convert video paths to base64 for embedding
+    for ca in conditional_codes:
+        cond = ca.get("conditional", {})
+        for video in cond.get("videos", []):
+            rel_path = video.get("path", "")
+            if rel_path:
+                full_path = output_dir / rel_path
+                video["data_url"] = video_to_base64(full_path)
+
+    if not conditional_codes:
+        # Create a simple "no data" HTML
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .message {{
+            background: rgba(255,255,255,0.08);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="message">
+        <h2>No Conditional Analysis Data</h2>
+        <p>Insufficient qpos-matched frames for conditional transition analysis.</p>
+    </div>
+</body>
+</html>"""
+        with open(output_path, "w") as f:
+            f.write(html)
+        return str(output_path)
+
+    js_data = json.dumps(conditional_codes)
+
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+            padding: 20px;
+        }}
+        .container {{ max-width: 1400px; margin: 0 auto; }}
+        h1 {{
+            text-align: center;
+            margin-bottom: 10px;
+            color: #fff;
+            font-size: 26px;
+        }}
+        .subtitle {{
+            text-align: center;
+            color: #4fc3f7;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }}
+        .controls {{
+            background: rgba(255,255,255,0.08);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }}
+        .slider-row {{
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }}
+        .nav-btn {{
+            background: rgba(79, 195, 247, 0.3);
+            border: 1px solid rgba(79, 195, 247, 0.5);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }}
+        .nav-btn:hover {{ background: rgba(79, 195, 247, 0.5); }}
+        .nav-btn:disabled {{ opacity: 0.4; cursor: not-allowed; }}
+        .code-counter {{
+            font-size: 18px;
+            font-weight: 600;
+            color: #4fc3f7;
+            min-width: 120px;
+            text-align: center;
+        }}
+        .slider-wrapper {{ flex: 1; min-width: 200px; }}
+        input[type="range"] {{
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: #3a3a5a;
+            outline: none;
+            -webkit-appearance: none;
+        }}
+        input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #4fc3f7;
+            cursor: pointer;
+        }}
+        .stats-row {{
+            display: flex;
+            gap: 12px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }}
+        .stat-badge {{
+            background: rgba(79, 195, 247, 0.15);
+            border: 1px solid rgba(79, 195, 247, 0.3);
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 13px;
+        }}
+        .stat-badge strong {{ color: #4fc3f7; }}
+        .stat-badge.high {{ background: rgba(76, 175, 80, 0.2); border-color: rgba(76, 175, 80, 0.4); }}
+        .stat-badge.medium {{ background: rgba(255, 193, 7, 0.2); border-color: rgba(255, 193, 7, 0.4); }}
+        .stat-badge.low {{ background: rgba(244, 67, 54, 0.2); border-color: rgba(244, 67, 54, 0.4); }}
+        .image-container {{
+            background: #fff;
+            border-radius: 10px;
+            padding: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }}
+        .image-container img {{
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 6px;
+        }}
+        .hint {{
+            font-size: 11px;
+            color: #666;
+            margin-top: 10px;
+            text-align: center;
+        }}
+        .interpretation {{
+            margin-top: 15px;
+            padding: 15px;
+            background: rgba(79, 195, 247, 0.1);
+            border-radius: 8px;
+            border-left: 4px solid #4fc3f7;
+        }}
+        .interpretation h4 {{
+            color: #4fc3f7;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }}
+        .interpretation p {{
+            font-size: 12px;
+            line-height: 1.5;
+            color: #aaa;
+        }}
+        .content-area {{
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }}
+        .image-panel {{
+            flex: 2;
+            min-width: 600px;
+        }}
+        .videos-panel {{
+            flex: 1;
+            min-width: 300px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 15px;
+        }}
+        .videos-panel h3 {{
+            color: #4fc3f7;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }}
+        .video-item {{
+            margin-bottom: 15px;
+        }}
+        .video-item video {{
+            width: 100%;
+            border-radius: 6px;
+        }}
+        .video-label {{
+            font-size: 11px;
+            color: #aaa;
+            margin-top: 5px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{title}</h1>
+        <p class="subtitle">Comparing code transitions when clips have similar joint positions (qpos[7:])</p>
+        <div class="controls">
+            <div class="slider-row">
+                <button class="nav-btn" id="prevBtn" onclick="prevCode()">&#9664; Prev</button>
+                <span class="code-counter" id="codeCounter">Code 0</span>
+                <button class="nav-btn" id="nextBtn" onclick="nextCode()">Next &#9654;</button>
+                <div class="slider-wrapper">
+                    <input type="range" id="codeSlider" min="0" max="{len(conditional_codes) - 1}" value="0" oninput="updateCode(this.value)">
+                </div>
+            </div>
+            <div class="stats-row" id="statsRow"></div>
+            <div class="hint">Use &#8592; &#8594; arrow keys or slider to navigate between codes</div>
+        </div>
+        <div class="content-area">
+            <div class="image-panel">
+                <div class="image-container">
+                    <img id="analysisImage" src="" alt="Conditional Analysis">
+                </div>
+            </div>
+            <div class="videos-panel">
+                <h3>Matched Pose Comparisons</h3>
+                <div id="videosArea"></div>
+            </div>
+        </div>
+        <div class="interpretation">
+            <h4>How to Interpret</h4>
+            <p>
+                <strong>High conditional similarity (&gt;0.8):</strong> Structured superposition - same pose context leads to consistent transitions.<br>
+                <strong>Medium similarity (0.5-0.8):</strong> Partial structure - some pose-dependent consistency.<br>
+                <strong>Low similarity (&lt;0.5):</strong> Unstructured - even similar poses produce different transitions (different behaviors).
+            </p>
+        </div>
+    </div>
+    <script>
+        const codesData = {js_data};
+        let idx = 0;
+
+        function getConsistencyClass(sim) {{
+            if (sim > 0.8) return 'high';
+            if (sim > 0.5) return 'medium';
+            return 'low';
+        }}
+
+        function updateCode(i) {{
+            idx = parseInt(i);
+            const c = codesData[idx];
+            const cond = c.conditional;
+
+            document.getElementById('analysisImage').src = 'data:image/png;base64,' + cond.image;
+            document.getElementById('codeCounter').textContent = 'Code ' + c.code_idx + ' (' + (idx + 1) + '/' + codesData.length + ')';
+            document.getElementById('codeSlider').value = idx;
+
+            const condClass = getConsistencyClass(cond.avg_sim);
+            document.getElementById('statsRow').innerHTML = `
+                <div class="stat-badge"><strong>Code:</strong> ${{c.code_idx}}</div>
+                <div class="stat-badge ${{condClass}}"><strong>Conditional Sim:</strong> ${{cond.avg_sim.toFixed(3)}}</div>
+                <div class="stat-badge"><strong>Std:</strong> ${{cond.std_sim.toFixed(3)}}</div>
+                <div class="stat-badge"><strong>Matched Frames:</strong> ${{cond.total_matched}}</div>
+                <div class="stat-badge"><strong>Clip Pairs:</strong> ${{cond.n_pairs}}</div>
+                <div class="stat-badge"><strong>Avg Qpos Dist:</strong> ${{cond.avg_qpos_distance.toFixed(4)}}</div>
+            `;
+
+            // Update videos
+            let videosHtml = '';
+            if (cond.videos && cond.videos.length > 0) {{
+                cond.videos.forEach((v, vi) => {{
+                    const videoSrc = v.data_url || v.path;
+                    if (videoSrc) {{
+                        const succMatch = v.succ_i === v.succ_j ? '&#10003;' : '&#10007;';
+                        const succClass = v.succ_i === v.succ_j ? 'high' : 'low';
+                        videosHtml += `
+                            <div class="video-item">
+                                <video controls loop muted autoplay>
+                                    <source src="${{videoSrc}}" type="video/mp4">
+                                </video>
+                                <div class="video-label">
+                                    Clips ${{v.clip_i}} vs ${{v.clip_j}} |
+                                    Succ: ${{v.succ_i}} vs ${{v.succ_j}}
+                                    <span class="stat-badge ${{succClass}}" style="padding:2px 6px;font-size:10px;">${{succMatch}}</span>
+                                </div>
+                            </div>
+                        `;
+                    }}
+                }});
+            }}
+            if (!videosHtml) {{
+                videosHtml = '<div class="video-label">No comparison videos available</div>';
+            }}
+            document.getElementById('videosArea').innerHTML = videosHtml;
+
+            document.getElementById('prevBtn').disabled = idx === 0;
+            document.getElementById('nextBtn').disabled = idx === codesData.length - 1;
+        }}
+
+        function nextCode() {{ if (idx < codesData.length - 1) updateCode(idx + 1); }}
+        function prevCode() {{ if (idx > 0) updateCode(idx - 1); }}
+
+        document.addEventListener('keydown', e => {{
+            if (e.key === 'ArrowRight') nextCode();
+            else if (e.key === 'ArrowLeft') prevCode();
+        }});
+
+        updateCode(0);
+    </script>
+</body>
+</html>'''
+
+    with open(output_path, "w") as f:
+        f.write(html)
+
+    return str(output_path)
+
+
 def run_transition_context_analysis(
     results: Sequence[InferenceResult],
     num_codes: int,
@@ -832,6 +1673,7 @@ def run_transition_context_analysis(
     height: int = 480,
     fps: int = 50,
     max_videos_per_code: int = 4,
+    conditional_cfg: dict | None = None,
 ) -> dict[str, Any]:
     """Run transition context analysis on top K most used codes.
 
@@ -848,6 +1690,8 @@ def run_transition_context_analysis(
         height: Video height.
         fps: Video FPS.
         max_videos_per_code: Maximum transition videos per code.
+        conditional_cfg: Configuration for qpos-conditioned transition analysis.
+            Keys: enabled (bool), qpos_threshold (float).
 
     Returns:
         Dictionary with html_path and analysis results.
@@ -941,9 +1785,9 @@ def run_transition_context_analysis(
                             rel_path = f"videos/code_{code_idx:03d}/clip_{seg.clip_idx:03d}_transition.mp4"
                             video_info.append({
                                 "path": rel_path,
-                                "clip_idx": seg.clip_idx,
-                                "pred": seg.predecessor_code,
-                                "succ": seg.successor_code,
+                                "clip_idx": int(seg.clip_idx),
+                                "pred": int(seg.predecessor_code),
+                                "succ": int(seg.successor_code),
                             })
                             videos_rendered += 1
                     except Exception as e:
@@ -951,17 +1795,107 @@ def run_transition_context_analysis(
 
             logging.info(f"    Rendered {len(video_info)} transition videos")
 
+        # Conditional analysis (qpos-matched transitions)
+        conditional_result = None
+        if conditional_cfg and conditional_cfg.get("enabled", False):
+            qpos_threshold = conditional_cfg.get("qpos_threshold", 0.1)
+            conditional_data = compute_conditional_similarity_for_code(
+                results, code_idx, num_codes, qpos_threshold
+            )
+            if conditional_data:
+                # Generate conditional visualization
+                cond_fig = plot_conditional_context_comparison(code_idx, conditional_data)
+                cond_img_b64 = figure_to_base64(cond_fig, dpi=100)
+                plt.close(cond_fig)
+
+                # Render conditional comparison videos
+                cond_video_info = []
+                if render_videos and env is not None:
+                    cond_video_dir = output_dir / "videos" / f"code_{code_idx:03d}_conditional"
+                    cond_video_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Build lookup for results by clip_idx
+                    results_by_clip = {r.clip_idx: r for r in results}
+
+                    cond_videos_rendered = 0
+                    max_cond_videos = conditional_cfg.get("max_videos", 4)
+
+                    for ctx in conditional_data["contexts"]:
+                        if cond_videos_rendered >= max_cond_videos:
+                            break
+
+                        # Get results for this clip pair
+                        r_i = results_by_clip.get(ctx.clip_i)
+                        r_j = results_by_clip.get(ctx.clip_j)
+                        if r_i is None or r_j is None:
+                            continue
+
+                        # Pick the best matched pair (lowest qpos distance)
+                        if not ctx.matched_pairs:
+                            continue
+                        best_pair = min(ctx.matched_pairs, key=lambda p: p.qpos_distance)
+
+                        video_path = cond_video_dir / f"clips_{ctx.clip_i:03d}_{ctx.clip_j:03d}.mp4"
+
+                        try:
+                            path = render_conditional_comparison_video(
+                                env=env,
+                                result_i=r_i,
+                                result_j=r_j,
+                                matched_pair=best_pair,
+                                code_idx=code_idx,
+                                output_path=video_path,
+                                num_codes=num_codes,
+                                camera=camera,
+                                width=width,
+                                height=height,
+                                fps=fps,
+                            )
+                            if path:
+                                rel_path = f"videos/code_{code_idx:03d}_conditional/clips_{ctx.clip_i:03d}_{ctx.clip_j:03d}.mp4"
+                                cond_video_info.append({
+                                    "path": rel_path,
+                                    "clip_i": int(ctx.clip_i),
+                                    "clip_j": int(ctx.clip_j),
+                                    "succ_i": int(best_pair.succ_i),
+                                    "succ_j": int(best_pair.succ_j),
+                                    "qpos_dist": float(best_pair.qpos_distance),
+                                })
+                                cond_videos_rendered += 1
+                        except Exception as e:
+                            logging.warning(f"    Failed to render conditional video: {e}")
+
+                    logging.info(f"    Rendered {len(cond_video_info)} conditional comparison videos")
+
+                conditional_result = {
+                    "image": cond_img_b64,
+                    "avg_sim": float(conditional_data["avg_conditional_similarity"]),
+                    "std_sim": float(conditional_data["std_conditional_similarity"]),
+                    "total_matched": int(conditional_data["total_matched_frames"]),
+                    "n_pairs": int(conditional_data["n_pairs"]),
+                    "avg_qpos_distance": float(conditional_data["avg_qpos_distance"]),
+                    "videos": cond_video_info,
+                }
+                logging.info(
+                    f"    Conditional analysis: {conditional_data['n_pairs']} pairs, "
+                    f"{conditional_data['total_matched_frames']} matched frames, "
+                    f"sim={conditional_data['avg_conditional_similarity']:.3f}"
+                )
+            else:
+                logging.info("    Conditional analysis: insufficient qpos-matched frames")
+
         code_analyses.append({
-            "code_idx": code_idx,
+            "code_idx": int(code_idx),
             "image": img_b64,
             "stats": {
-                "total_frames": total_count,
-                "n_clips": n_clips,
-                "avg_pred_sim": avg_pred_sim,
-                "avg_succ_sim": avg_succ_sim,
-                "avg_combined_sim": avg_combined_sim,
+                "total_frames": int(total_count),
+                "n_clips": int(n_clips),
+                "avg_pred_sim": float(avg_pred_sim),
+                "avg_succ_sim": float(avg_succ_sim),
+                "avg_combined_sim": float(avg_combined_sim),
             },
             "videos": video_info,
+            "conditional": conditional_result,
         })
 
     # Generate HTML (pass output_dir to resolve video paths for base64 embedding)
@@ -972,14 +1906,35 @@ def run_transition_context_analysis(
         title="Transition Context Analysis - Top Codes",
     )
 
+    # Generate standalone conditional HTML if enabled
+    conditional_html_path = None
+    if conditional_cfg and conditional_cfg.get("enabled", False):
+        conditional_html_path = generate_conditional_html(
+            code_analyses,
+            output_dir / "conditional_transition_analysis.html",
+            output_dir=output_dir,
+            title="Conditional Transition Analysis (qpos-matched)",
+        )
+        logging.info(f"  Conditional HTML viewer: {conditional_html_path}")
+
     # Save JSON summary
     json_summary = []
     for ca in code_analyses:
-        json_summary.append({
+        entry = {
             "code_idx": ca["code_idx"],
             "stats": ca["stats"],
             "videos": ca["videos"],
-        })
+        }
+        # Include conditional stats if present
+        if ca.get("conditional"):
+            entry["conditional"] = {
+                "avg_sim": ca["conditional"]["avg_sim"],
+                "std_sim": ca["conditional"]["std_sim"],
+                "total_matched": ca["conditional"]["total_matched"],
+                "n_pairs": ca["conditional"]["n_pairs"],
+                "avg_qpos_distance": ca["conditional"]["avg_qpos_distance"],
+            }
+        json_summary.append(entry)
 
     json_path = output_dir / "transition_context_stats.json"
     with open(json_path, "w") as f:
@@ -991,6 +1946,7 @@ def run_transition_context_analysis(
 
     return {
         "html_path": html_path,
+        "conditional_html_path": conditional_html_path,
         "json_path": str(json_path),
         "code_analyses": code_analyses,
     }

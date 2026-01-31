@@ -15,10 +15,10 @@ checkpoint:
 # Inference Configuration
 # =============================================================================
 inference:
-  num_clips: 50         # Number of clips to run inference on
-  max_steps: 250        # Maximum steps per clip
+  num_clips: 842        # Number of clips to run inference on
+  max_steps: 500        # Maximum steps per clip
   seed: 42              # Random seed for reproducibility
-  clip_length: 250      # Frames per reference clip
+  clip_length: 500      # Frames per reference clip
   store_z_e: false      # Whether to store encoder outputs (increases file size)
 
 # =============================================================================

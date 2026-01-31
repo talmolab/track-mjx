@@ -155,6 +155,14 @@ def log_analysis_to_wandb(
                 "transition_context/viewer": wandb.Html(open(tc_html).read())
             })
 
+        # Log conditional transition HTML viewer (separate panel)
+        cond_paths = all_paths.get("conditional_transition", {})
+        cond_html = cond_paths.get("html")
+        if cond_html and Path(cond_html).exists():
+            wandb.log({
+                "conditional_transition/viewer": wandb.Html(open(cond_html).read())
+            })
+
         logging.info("Logged analysis results to WandB")
 
     except Exception as e:
@@ -363,12 +371,17 @@ def main(cfg: DictConfig):
             height=cfg.render.get("height", 480),
             fps=cfg.render.get("fps", 50),
             max_videos_per_code=tc_cfg.get("max_videos_per_code", 4),
+            conditional_cfg=tc_cfg.get("conditional"),
         )
 
         all_paths["transition_context"] = {
             "html": tc_results["html_path"],
             "json": tc_results["json_path"],
         }
+        if tc_results.get("conditional_html_path"):
+            all_paths["conditional_transition"] = {
+                "html": tc_results["conditional_html_path"],
+            }
 
     # Generate summary report
     logging.info("\n" + "=" * 40)
@@ -390,6 +403,8 @@ def main(cfg: DictConfig):
     print(f"\nPer-clip viewer: {all_paths['per_clip']['html']}")
     if "transition_context" in all_paths:
         print(f"Transition context viewer: {all_paths['transition_context']['html']}")
+    if "conditional_transition" in all_paths:
+        print(f"Conditional transition viewer: {all_paths['conditional_transition']['html']}")
     print(f"Summary report: {report_path}")
 
 

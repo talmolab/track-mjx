@@ -53,6 +53,10 @@ transition_context:
   min_clips: 3                  # Minimum clips a code must appear in
   render_videos: true           # Render transition videos (pred → code → succ)
   max_videos_per_code: 4        # Maximum videos per code
+  conditional:
+    enabled: true               # Enable qpos-conditioned transition analysis
+    qpos_threshold: 0.05         # Mean absolute difference threshold (radians)
+    max_videos: 4               # Maximum comparison videos per code
 
 # =============================================================================
 # Rendering Configuration

@@ -641,10 +641,6 @@ def make_recurrent_intention_ppo_networks(
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
         obs_seq_normalized = running_statistics.normalize(obs_seq_flat, policy_normalizer)
 
-        # Helper to get observation at time t (already flattened and normalized)
-        def get_obs_t(obs_dict, t):
-            return {inner_key: arr[t] for inner_key, arr in obs_dict.items()}
-
         # Validate stored_keys shape if provided
         if stored_keys is not None:
             # Get expected shape from observations [T, B, ...]
@@ -658,14 +654,10 @@ def make_recurrent_intention_ppo_networks(
 
         if stored_keys is not None:
             # Deterministic replay: use stored per-timestep, per-sample keys
-            T = done_seq.shape[0]
-
-            # Use scan with explicit indexing
-            def scan_step_stored(carry, t):
+            # Pass observations directly to scan (not via closure) for memory efficiency
+            def scan_step_stored(carry, inputs):
                 hidden = carry
-                obs_t = get_obs_t(obs_seq_normalized, t)
-                keys_t = stored_keys[t]
-                done_t = done_seq[t]
+                obs_t, done_t, keys_t = inputs
 
                 logits, mean, logvar, new_hidden = policy_module.apply(
                     policy_params,
@@ -678,17 +670,15 @@ def make_recurrent_intention_ppo_networks(
                 return new_hidden, (logits, mean, logvar)
 
             final_hidden, (logits, means, logvars) = jax.lax.scan(
-                scan_step_stored, initial_hidden, jnp.arange(T)
+                scan_step_stored, initial_hidden, (obs_seq_normalized, done_seq, stored_keys)
             )
         else:
             # Standard path: generate fresh keys at each timestep
-            T = done_seq.shape[0]
-
-            def scan_step_fresh(carry, t):
+            # Pass observations directly to scan (not via closure) for memory efficiency
+            def scan_step_fresh(carry, inputs):
                 hidden, step_key = carry
                 step_key, next_key = jax.random.split(step_key)
-                obs_t = get_obs_t(obs_seq_normalized, t)
-                done_t = done_seq[t]
+                obs_t, done_t = inputs
 
                 logits, mean, logvar, new_hidden = policy_module.apply(
                     policy_params,
@@ -701,7 +691,7 @@ def make_recurrent_intention_ppo_networks(
                 return (new_hidden, next_key), (logits, mean, logvar)
 
             (final_hidden, _), (logits, means, logvars) = jax.lax.scan(
-                scan_step_fresh, (initial_hidden, key), jnp.arange(T)
+                scan_step_fresh, (initial_hidden, key), (obs_seq_normalized, done_seq)
             )
 
         return logits, means, logvars, final_hidden

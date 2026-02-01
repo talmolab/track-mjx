@@ -46,14 +46,13 @@ from optax.transforms import freeze
 from track_mjx.agent import checkpointing, gradients, network_masks
 from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
     get_obs_sizes,
-    init_dict_normalizer,
-    update_dict_normalizer,
+    get_obs_shape,
+    normalizer_select,
 )
 
 # Type aliases
-InferenceParams = tuple[DictRunningStatisticsState, Params]
+InferenceParams = tuple[running_statistics.RunningStatisticsState, Params]
 Metrics = types.Metrics
 
 # Constants
@@ -68,14 +67,14 @@ class TrainingState:
     Attributes:
         optimizer_state: Optax optimizer state.
         params: PPO network parameters (policy and value).
-        normalizer_params: Running statistics for observation normalization
-            (per observation key).
+        normalizer_params: Running statistics for observation normalization.
+            Has pytree structure matching observation dict.
         env_steps: Total environment steps taken (in thousands).
     """
 
     optimizer_state: optax.OptState
     params: losses.PPONetworkParams
-    normalizer_params: DictRunningStatisticsState
+    normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
 
 
@@ -417,7 +416,7 @@ def train(
         # Update normalization params (only if normalization is enabled).
         # When disabled, normalizer stays at identity (mean=0, std=1).
         if normalize_observations:
-            normalizer_params = update_dict_normalizer(
+            normalizer_params = running_statistics.update(
                 training_state.normalizer_params,
                 data.observation,
                 pmap_axis_name=_PMAP_AXIS_NAME,
@@ -426,9 +425,25 @@ def train(
             normalizer_params = training_state.normalizer_params
 
         # If decoder is frozen, preserve the proprioceptive normalizer params
+        # The normalizer has pytree structure: mean['state']['proprioception'], etc.
         if frozen_proprioceptive_normalizer_params is not None:
-            normalizer_params = normalizer_params.replace(
-                proprioception=frozen_proprioceptive_normalizer_params
+            # Update the 'state' proprioception stats with frozen values
+            new_mean = normalizer_params.mean.copy()
+            new_mean["state"] = normalizer_params.mean["state"].copy()
+            new_mean["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.mean
+            new_std = normalizer_params.std.copy()
+            new_std["state"] = normalizer_params.std["state"].copy()
+            new_std["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.std
+            new_summed_var = normalizer_params.summed_variance.copy()
+            new_summed_var["state"] = normalizer_params.summed_variance["state"].copy()
+            new_summed_var["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.summed_variance
+            normalizer_params = running_statistics.RunningStatisticsState(
+                count=normalizer_params.count,
+                mean=new_mean,
+                summed_variance=new_summed_var,
+                std=new_std,
+                std_eps=normalizer_params.std_eps,
+                mode=normalizer_params.mode,
             )
 
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
@@ -612,10 +627,13 @@ def train(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
     )
+
+    # Initialize normalizer with pytree structure matching observations
+    obs_shape = get_obs_shape(env_state.obs)
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=init_dict_normalizer(env_state.obs),
+        normalizer_params=running_statistics.init_state(obs_shape),
         env_steps=0,
     )
 
@@ -648,37 +666,36 @@ def train(
             logging.info("Freezing decoder parameters")
 
             # Extract proprioceptive normalizer params from loaded checkpoint
-            # Handle both dict-based (new) and flat-array (legacy) normalizer formats
-            if isinstance(loaded_normalizer_params, DictRunningStatisticsState):
-                # New dict-based format
-                frozen_proprioceptive_normalizer_params = (
-                    loaded_normalizer_params.proprioception
-                )
-            else:
-                # Legacy flat-array format - extract proprioceptive portion
-                if proprioceptive_obs_size == 0:
-                    raise ValueError(
-                        "Proprioceptive observation size is 0, "
-                        "but decoder parameters are being frozen."
-                    )
-                mean = loaded_normalizer_params.mean[-proprioceptive_obs_size:]
-                std = loaded_normalizer_params.std[-proprioceptive_obs_size:]
-                summed_variance = loaded_normalizer_params.summed_variance[
-                    -proprioceptive_obs_size:
-                ]
-                frozen_proprioceptive_normalizer_params = (
-                    running_statistics.RunningStatisticsState(
-                        count=jnp.zeros(()),
-                        mean=mean,
-                        summed_variance=summed_variance,
-                        std=std,
-                    )
-                )
+            # New pytree-based format: normalizer has nested structure
+            # mean['state']['proprioception'], etc.
+            state_normalizer = normalizer_select(loaded_normalizer_params, "state")
+            frozen_proprioceptive_normalizer_params = running_statistics.RunningStatisticsState(
+                count=state_normalizer.count,
+                mean=state_normalizer.mean["proprioception"],
+                summed_variance=state_normalizer.summed_variance["proprioception"],
+                std=state_normalizer.std["proprioception"],
+                std_eps=state_normalizer.std_eps,
+                mode=state_normalizer.mode,
+            )
 
-            # Set the proprioceptive normalizer in training state
+            # Update training state with frozen proprioception normalizer
+            new_mean = training_state.normalizer_params.mean.copy()
+            new_mean["state"] = training_state.normalizer_params.mean["state"].copy()
+            new_mean["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.mean
+            new_std = training_state.normalizer_params.std.copy()
+            new_std["state"] = training_state.normalizer_params.std["state"].copy()
+            new_std["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.std
+            new_summed_var = training_state.normalizer_params.summed_variance.copy()
+            new_summed_var["state"] = training_state.normalizer_params.summed_variance["state"].copy()
+            new_summed_var["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.summed_variance
             training_state = training_state.replace(
-                normalizer_params=training_state.normalizer_params.replace(
-                    proprioception=frozen_proprioceptive_normalizer_params
+                normalizer_params=running_statistics.RunningStatisticsState(
+                    count=training_state.normalizer_params.count,
+                    mean=new_mean,
+                    summed_variance=new_summed_var,
+                    std=new_std,
+                    std_eps=training_state.normalizer_params.std_eps,
+                    mode=training_state.normalizer_params.mode,
                 )
             )
 

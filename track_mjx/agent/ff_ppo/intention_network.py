@@ -25,11 +25,12 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from brax.training import networks, types
+from brax.training.acme import running_statistics
 from flax import linen as nn
 
 from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
-    normalize_dict_obs,
+    normalizer_select,
+    flatten_obs_dict,
 )
 
 
@@ -202,14 +203,15 @@ class IntentionNetwork(nn.Module):
 
     def __call__(
         self,
-        obs: Mapping[str, Mapping[str, jnp.ndarray]],
+        obs: Mapping[str, jnp.ndarray],
         key: jax.Array,
         deterministic: bool = False,
         get_activation: bool = False,
     ):
-        # Access nested observations: obs['state']['imitation_target'] and obs['state']['proprioception']
-        traj = obs["state"]["imitation_target"]
-        egocentric_obs = obs["state"]["proprioception"]
+        # Access inner observations: already normalized and selected for 'state'
+        # obs is the inner dict: {'imitation_target': ..., 'proprioception': ...}
+        traj = obs["imitation_target"]
+        egocentric_obs = obs["proprioception"]
 
         # Check if observations are actually batched (based on normalized obs shape)
         obs_is_batched = traj.ndim >= 2
@@ -269,12 +271,13 @@ def make_intention_policy(
     obs_sizes: Mapping[str, int],
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    policy_obs_key: str = "state",
 ) -> networks.FeedForwardNetwork:
     """Create an intention-based policy network.
 
     Constructs an encoder-decoder VAE policy where the encoder processes
-    obs['state']['imitation_target'] and the decoder generates action
-    parameters conditioned on latent intentions and obs['state']['proprioception'].
+    obs[policy_obs_key]['imitation_target'] and the decoder generates action
+    parameters conditioned on latent intentions and obs[policy_obs_key]['proprioception'].
 
     Args:
         action_param_size: Output dimension (typically 2x action_size for
@@ -283,6 +286,7 @@ def make_intention_policy(
         obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
+        policy_obs_key: Top-level observation key for policy (default: 'state').
 
     Returns:
         FeedForwardNetwork with init and apply methods. The apply function
@@ -297,29 +301,40 @@ def make_intention_policy(
     )
 
     def apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs: Mapping[str, Mapping[str, jnp.ndarray]],
         key,
         deterministic: bool = False,
         get_activation: bool = False,
     ):
-        """Apply policy with observation normalization."""
-        obs = normalize_dict_obs(obs, processor_params)
+        """Apply policy with observation normalization.
+
+        Args:
+            processor_params: RunningStatisticsState with pytree structure matching obs.
+            policy_params: Policy network parameters.
+            obs: Nested observation dict.
+            key: Random key for sampling.
+            deterministic: If True, use mean instead of sampling.
+            get_activation: If True, return activations.
+        """
+        # Select normalizer for policy observations and normalize
+        policy_normalizer = normalizer_select(processor_params, policy_obs_key)
+        normalized_obs = running_statistics.normalize(
+            obs[policy_obs_key], policy_normalizer
+        )
         return policy_module.apply(
             policy_params,
-            obs=obs,
+            obs=normalized_obs,
             key=key,
             deterministic=deterministic,
             get_activation=get_activation,
         )
 
-    # Create dummy nested observation for initialization
+    # Create dummy inner observation for initialization (already selected/normalized)
     dummy_obs = {
-        "state": {
-            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
-            "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
-        },
+        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     dummy_key = jax.random.PRNGKey(0)
 

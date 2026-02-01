@@ -28,7 +28,9 @@ from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from track_mjx.agent.recurrent_ppo import losses as recurrent_ppo_losses
 from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
-from track_mjx.agent.observation_utils import init_dict_normalizer
+from brax.training.acme import running_statistics
+
+from track_mjx.agent.observation_utils import get_obs_shape
 
 
 def load_config_from_checkpoint(
@@ -221,14 +223,18 @@ def make_abstract_policy(
 
     obs_sizes = network_config["obs_sizes"]
     # Create nested dummy observation structure matching expected format
-    # init_dict_normalizer expects: {'state': {'imitation_target': ..., 'proprioception': ...}}
+    # get_obs_shape expects: {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
     dummy_obs = {
         "state": {
             "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
             "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
-        }
+        },
+        "privileged_state": {
+            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+            "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+        },
     }
-    normalizer_state = init_dict_normalizer(dummy_obs)
+    normalizer_state = running_statistics.init_state(get_obs_shape(dummy_obs))
 
     return (normalizer_state, init_params.policy)
 

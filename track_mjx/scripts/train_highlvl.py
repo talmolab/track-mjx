@@ -31,15 +31,9 @@ Observation keys:
     --policy_obs_key: Key for policy network input (default: state)
     --value_obs_key: Key for value network input (default: privileged_state)
 
-Example configurations for common tasks:
+Example configuration:
 
-    # RodentBowlEscape (longer episodes, target speed)
-    python train_highlvl.py --task RodentBowlEscape \\
-        --mimic_checkpoint 260115_005843_966729 \\
-        --episode_length 1500 \\
-        --env "target_speed=1.0"
-
-    # RodentRearing (more exploration, sparse rewards only)
+    # RodentRearing
     python train_highlvl.py --task RodentRearing \\
         --mimic_checkpoint 260115_005843_966729 \\
         --num_timesteps 2e8 --entropy_cost 0.05 --eval_every 2000000 \\

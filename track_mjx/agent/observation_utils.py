@@ -8,14 +8,12 @@ where the structure is:
     }
 
 Key components:
-- DictRunningStatisticsState: Holds running stats for imitation_target and proprioception
-- Normalizer functions: init, update, and normalize for nested dict observations
+- normalizer_select: Extracts per-key running statistics from a pytree-structured normalizer
 - Flattening utilities for nested observation structures
 """
 
 from typing import Mapping, Any
 
-import flax
 import jax
 import jax.numpy as jnp
 from brax.training.acme import running_statistics, specs
@@ -72,131 +70,48 @@ def _flatten_nested_obs(nested: Any) -> jnp.ndarray:
     return jnp.concatenate([leaf.reshape(*batch_shape, -1) for leaf in leaves], axis=-1)
 
 
-@flax.struct.dataclass
-class DictRunningStatisticsState:
-    """Running statistics state for nested dictionary observations.
+def normalizer_select(
+    processor_params: running_statistics.RunningStatisticsState,
+    obs_key: str,
+) -> running_statistics.RunningStatisticsState:
+    """Extract per-key running statistics from a pytree-structured normalizer.
 
-    Holds separate RunningStatisticsState for imitation_target and proprioception.
-    These stats are shared across 'state' and 'privileged_state' top-level keys.
-    """
-
-    imitation_target: running_statistics.RunningStatisticsState
-    proprioception: running_statistics.RunningStatisticsState
-
-
-def init_dict_normalizer(
-    obs: Mapping[str, Mapping[str, Any]],
-) -> DictRunningStatisticsState:
-    """Initialize running statistics state from an example nested observation dict.
+    When running_statistics.init_state is called with a pytree observation shape,
+    the resulting RunningStatisticsState has pytree-structured mean, std, etc.
+    This function extracts the statistics for a specific top-level key.
 
     Args:
-        obs: Example nested observation dict with structure:
-            {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
+        processor_params: RunningStatisticsState with pytree-structured fields
+            (mean, std, summed_variance are dicts keyed by observation keys).
+        obs_key: Top-level key to extract (e.g., 'state' or 'privileged_state').
 
     Returns:
-        Initialized DictRunningStatisticsState with proper shapes.
+        RunningStatisticsState with statistics for just the specified key.
     """
-    # Use 'state' (or first available key) to determine observation shapes
-    state_obs = obs.get("state", next(iter(obs.values())))
-
-    imitation_target_flat = _flatten_nested_obs(state_obs["imitation_target"])
-    proprioception_flat = _flatten_nested_obs(state_obs["proprioception"])
-
-    return DictRunningStatisticsState(
-        imitation_target=running_statistics.init_state(
-            specs.Array(imitation_target_flat.shape[-1:], jnp.dtype("float32"))
-        ),
-        proprioception=running_statistics.init_state(
-            specs.Array(proprioception_flat.shape[-1:], jnp.dtype("float32"))
-        ),
+    return running_statistics.RunningStatisticsState(
+        count=processor_params.count,
+        mean=processor_params.mean[obs_key],
+        summed_variance=processor_params.summed_variance[obs_key],
+        std=processor_params.std[obs_key],
+        std_eps=processor_params.std_eps,
+        mode=processor_params.mode,
     )
 
 
-def update_dict_normalizer(
-    state: DictRunningStatisticsState,
-    obs: Mapping[str, Mapping[str, Any]],
-    pmap_axis_name: str | None = None,
-) -> DictRunningStatisticsState:
-    """Update running statistics from a nested observation dict.
+def flatten_obs_dict(obs: Mapping[str, Any]) -> jnp.ndarray:
+    """Flatten an observation dict to a single array.
 
-    Uses 'state' observations to update statistics (shared with 'privileged_state').
+    Concatenates imitation_target and proprioception in that order.
 
     Args:
-        state: Current running statistics state.
-        obs: Nested observation dict with structure:
-            {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
-        pmap_axis_name: Axis name for pmap aggregation (optional).
-
-    Returns:
-        Updated DictRunningStatisticsState.
-    """
-    # Use 'state' to update (could also use 'privileged_state', they should be same)
-    state_obs = obs.get("state", next(iter(obs.values())))
-
-    imitation_target_flat = _flatten_nested_obs(state_obs["imitation_target"])
-    proprioception_flat = _flatten_nested_obs(state_obs["proprioception"])
-
-    return DictRunningStatisticsState(
-        imitation_target=running_statistics.update(
-            state.imitation_target,
-            imitation_target_flat,
-            pmap_axis_name=pmap_axis_name,
-        ),
-        proprioception=running_statistics.update(
-            state.proprioception,
-            proprioception_flat,
-            pmap_axis_name=pmap_axis_name,
-        ),
-    )
-
-
-def normalize_dict_obs(
-    obs: Mapping[str, Mapping[str, Any]],
-    state: DictRunningStatisticsState,
-) -> dict[str, dict[str, jnp.ndarray]]:
-    """Normalize nested observation dict using running statistics.
-
-    Normalizes imitation_target and proprioception within each top-level key
-    (state, privileged_state).
-
-    Args:
-        obs: Nested observation dict with structure:
-            {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
-        state: Running statistics state for normalization.
-
-    Returns:
-        Normalized nested dict with same structure but flat normalized arrays.
-    """
-    result = {}
-    for top_key, inner_obs in obs.items():
-        imitation_target_flat = _flatten_nested_obs(inner_obs["imitation_target"])
-        proprioception_flat = _flatten_nested_obs(inner_obs["proprioception"])
-
-        result[top_key] = {
-            "imitation_target": running_statistics.normalize(
-                imitation_target_flat, state.imitation_target
-            ),
-            "proprioception": running_statistics.normalize(
-                proprioception_flat, state.proprioception
-            ),
-        }
-    return result
-
-
-def concat_inner_obs(inner_obs: Mapping[str, jnp.ndarray]) -> jnp.ndarray:
-    """Concatenate inner observation dict (imitation_target + proprioception) to single array.
-
-    Concatenates in consistent order: imitation_target first, then proprioception.
-
-    Args:
-        inner_obs: Inner observation dict with 'imitation_target' and 'proprioception' keys.
+        obs: Observation dict with 'imitation_target' and 'proprioception' keys.
 
     Returns:
         Single flat array with all observations concatenated.
     """
-    return jnp.concatenate(
-        [inner_obs["imitation_target"], inner_obs["proprioception"]], axis=-1
-    )
+    imitation_target = _flatten_nested_obs(obs["imitation_target"])
+    proprioception = _flatten_nested_obs(obs["proprioception"])
+    return jnp.concatenate([imitation_target, proprioception], axis=-1)
 
 
 def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
@@ -209,6 +124,7 @@ def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
     Returns:
         Dict with 'imitation_target' and 'proprioception' sizes.
     """
+    # Use 'state' (or first available key) to determine observation shapes
     state_obs = obs.get("state", next(iter(obs.values())))
 
     imitation_target_flat = _flatten_nested_obs(state_obs["imitation_target"])
@@ -218,3 +134,20 @@ def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
         "imitation_target": imitation_target_flat.shape[-1],
         "proprioception": proprioception_flat.shape[-1],
     }
+
+
+def get_obs_shape(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, specs.Array]]:
+    """Extract observation shapes as a pytree for running_statistics.init_state.
+
+    Args:
+        obs: Example nested observation dict.
+
+    Returns:
+        Nested dict with same structure, containing specs.Array objects.
+    """
+    def extract_spec(x):
+        flat = _flatten_nested_obs(x)
+        # Return spec without batch dimension
+        return specs.Array(flat.shape[-1:], jnp.dtype("float32"))
+
+    return jax.tree_util.tree_map(extract_spec, obs)

@@ -38,7 +38,7 @@ data:
 # All analysis is done per-clip: transition matrices, community detection,
 # transition graphs, and video rendering with code/community overlays.
 per_clip:
-  num_clips: 10                 # Number of clips to analyze
+  num_clips: 5                 # Number of clips to analyze
   n_communities: null           # Communities per clip (null = auto-detect)
   render_videos: true           # Render videos with code/community bars
 
@@ -49,7 +49,7 @@ per_clip:
 # by comparing their transition contexts (predecessor/successor distributions).
 transition_context:
   enabled: true                 # Enable transition context analysis
-  top_k: 10                     # Number of top codes to analyze
+  top_k: 5                     # Number of top codes to analyze
   min_clips: 3                  # Minimum clips a code must appear in
   render_videos: true           # Render transition videos (pred → code → succ)
   max_videos_per_code: 4        # Maximum videos per code
@@ -65,8 +65,33 @@ transition_context:
   pose_gallery:
     enabled: true               # Enable pose gallery rendering
     top_k_codes: 5              # Number of popular codes to visualize
-    videos_per_code: 6          # Clips to sample per code
+    videos_per_code: 4          # Clips to sample per code
     context_frames: 15          # Frames before/after code start
+
+# =============================================================================
+# Community Detection Configuration
+# =============================================================================
+# Settings for spectral clustering of codes into behavioral communities.
+# Uses cosine similarity of transition probability rows as affinity.
+community_detection:
+  min_frequency: 0.005          # Minimum code frequency (0.1%). Codes below are filtered.
+
+# =============================================================================
+# Conditioned Community Analysis Configuration
+# =============================================================================
+# Analyze pose-conditioned transition patterns by:
+# 1. Sample random seed clips
+# 2. Match clips with similar starting pose (qpos[0])
+# 3. Pool code sequences and build transition matrix
+# 4. Run community detection on pooled transitions
+# 5. Render community gallery videos per detected community
+conditioned_community:
+  enabled: true                  # Enable conditioned community analysis
+  n_seed_clips: 10              # Number of random seed clips to sample
+  qpos_threshold: 0.05          # Mean absolute difference threshold for qpos matching
+  render_videos: true           # Render community gallery videos
+  samples_per_community: 4      # Video segments per community
+  segment_length: 30            # Frames per segment
 
 # =============================================================================
 # Community Gallery Configuration
@@ -76,7 +101,7 @@ transition_context:
 community_gallery:
   enabled: true                 # Enable community gallery rendering
   samples_per_community: 6      # Number of sample segments per community
-  segment_length: 30            # Frames per segment
+  segment_length: 50            # Frames per segment
   min_segment_gap: 10           # Minimum frames between sampled segments
 
 # =============================================================================

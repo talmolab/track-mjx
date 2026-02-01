@@ -357,55 +357,119 @@ def compute_stationary_distribution(
 
 def detect_transition_communities(
     transition_counts: np.ndarray,
+    code_frequencies: np.ndarray | None = None,
     n_communities: int | None = None,
     min_communities: int = 3,
     max_communities: int = 12,
+    min_frequency: float = 0.001,
 ) -> dict[str, Any]:
     """Detect communities in the transition graph using spectral clustering.
 
     Communities are groups of codes that preferentially transition among
     themselves, potentially representing distinct behavioral modes.
 
+    Uses cosine similarity of transition probability rows as affinity,
+    which groups codes by their transition patterns rather than frequency.
+
     Args:
         transition_counts: Raw transition count matrix [num_codes, num_codes].
+        code_frequencies: Optional array of code usage frequencies (0-1).
+            If None, computed from transition_counts row sums.
         n_communities: Number of communities (None = auto-detect via eigengap).
         min_communities: Minimum communities for auto-detection.
         max_communities: Maximum communities for auto-detection.
+        min_frequency: Minimum frequency threshold. Codes below this are
+            filtered out and labeled as community -1.
 
     Returns:
         Dictionary containing:
-        - community_labels: Array mapping each code to its community
-        - n_communities: Number of communities detected
+        - community_labels: Array mapping each code to its community (-1 = filtered)
+        - n_communities: Number of communities detected (excluding filtered)
         - modularity: Modularity score of the partition
         - community_sizes: Dict mapping community ID to size
         - community_codes: Dict mapping community ID to list of codes
+        - filtered_codes: List of code indices that were filtered out
         - inter_community_matrix: Transition probabilities between communities
         - intra_community_prob: Probability of staying within same community
+        - code_frequencies: Array of code usage frequencies
         - figures: Dict of individual matplotlib figures for WandB logging
     """
     from sklearn.cluster import KMeans, SpectralClustering
+    from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine_sim
 
     num_codes = transition_counts.shape[0]
 
-    # Symmetrize for community detection (treat as undirected)
-    symmetric = (transition_counts + transition_counts.T) / 2
+    # Compute code frequencies if not provided
+    if code_frequencies is None:
+        row_sums = transition_counts.sum(axis=1)
+        total = row_sums.sum()
+        code_frequencies = row_sums / total if total > 0 else np.zeros(num_codes)
+
+    # Filter out low-frequency codes
+    freq_mask = code_frequencies >= min_frequency
+    active_codes = np.where(freq_mask)[0]
+    filtered_codes = np.where(~freq_mask)[0]
+
+    logging.info(f"  Filtering: {len(active_codes)} active codes, {len(filtered_codes)} filtered (freq < {min_frequency})")
+
+    if len(active_codes) < min_communities:
+        logging.warning(f"  Too few active codes ({len(active_codes)}) for community detection")
+        # Return all codes in community 0
+        labels = np.zeros(num_codes, dtype=int)
+        labels[filtered_codes] = -1
+        return {
+            'community_labels': labels,
+            'n_communities': 1,
+            'modularity': 0.0,
+            'community_sizes': {0: len(active_codes)},
+            'community_codes': {0: list(active_codes)},
+            'filtered_codes': list(filtered_codes),
+            'inter_community_matrix': np.array([[1.0]]),
+            'intra_community_prob': np.array([1.0]),
+            'overall_intra_prob': 1.0,
+            'eigenvalues': np.array([0.0]),
+            'code_frequencies': code_frequencies,
+            'figures': {},
+        }
+
+    # Extract submatrix for active codes only
+    active_counts = transition_counts[np.ix_(active_codes, active_codes)]
+    n_active = len(active_codes)
+
+    # Compute transition probabilities (row-normalize)
+    row_sums = active_counts.sum(axis=1, keepdims=True)
+    row_sums = np.maximum(row_sums, 1)
+    P = active_counts / row_sums
+
+    # Compute cosine similarity of transition probability rows
+    # This groups codes by WHERE they transition to, not how often
+    affinity = sklearn_cosine_sim(P)
+    # Ensure non-negative (cosine can be slightly negative due to numerical issues)
+    affinity = np.maximum(affinity, 0)
+
+    # Symmetrize for Laplacian computation
+    symmetric = (active_counts + active_counts.T) / 2
 
     # Compute normalized Laplacian eigenvalues for community detection
     degree = symmetric.sum(axis=1)
     degree_inv_sqrt = np.where(degree > 0, 1.0 / np.sqrt(degree), 0)
     D_inv_sqrt = np.diag(degree_inv_sqrt)
-    L_norm = np.eye(num_codes) - D_inv_sqrt @ symmetric @ D_inv_sqrt
+    L_norm = np.eye(n_active) - D_inv_sqrt @ symmetric @ D_inv_sqrt
 
     eigenvalues, eigenvectors = np.linalg.eigh(L_norm)
 
     # Auto-detect number of communities via eigengap heuristic
     if n_communities is None:
-        eigengaps = np.diff(eigenvalues[:max_communities + 1])
-        best_k = min_communities + np.argmax(eigengaps[min_communities - 1:max_communities - 1])
-        n_communities = best_k
+        max_k = min(max_communities, n_active - 1)
+        if max_k < min_communities:
+            n_communities = max(1, n_active // 2)
+        else:
+            eigengaps = np.diff(eigenvalues[:max_k + 1])
+            best_k = min_communities + np.argmax(eigengaps[min_communities - 1:max_k])
+            n_communities = best_k
         logging.info(f"  Auto-detected {n_communities} communities via eigengap")
 
-    # Spectral clustering
+    # Spectral clustering with cosine similarity affinity
     try:
         sc = SpectralClustering(
             n_clusters=n_communities,
@@ -413,15 +477,18 @@ def detect_transition_communities(
             assign_labels='kmeans',
             random_state=42,
         )
-        affinity = symmetric + 1
-        labels = sc.fit_predict(affinity)
+        active_labels = sc.fit_predict(affinity)
     except Exception as e:
         logging.warning(f"  SpectralClustering failed: {e}, using KMeans on eigenvectors")
         embedding = eigenvectors[:, :n_communities]
         kmeans = KMeans(n_clusters=n_communities, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(embedding)
+        active_labels = kmeans.fit_predict(embedding)
 
-    # Compute community statistics
+    # Map back to full label array (-1 for filtered codes)
+    labels = np.full(num_codes, -1, dtype=int)
+    labels[active_codes] = active_labels
+
+    # Compute community statistics (excluding filtered codes with label -1)
     community_sizes = {}
     community_codes = {}
     for c in range(n_communities):
@@ -429,12 +496,14 @@ def detect_transition_communities(
         community_sizes[c] = int(mask.sum())
         community_codes[c] = list(np.where(mask)[0])
 
-    # Compute inter-community transition matrix
+    # Compute inter-community transition matrix (only for active codes)
     inter_community = np.zeros((n_communities, n_communities))
     for i in range(num_codes):
         for j in range(num_codes):
             ci, cj = labels[i], labels[j]
-            inter_community[ci, cj] += transition_counts[i, j]
+            # Skip filtered codes (label -1)
+            if ci >= 0 and cj >= 0:
+                inter_community[ci, cj] += transition_counts[i, j]
 
     # Normalize to probabilities
     row_sums = inter_community.sum(axis=1, keepdims=True)
@@ -443,16 +512,22 @@ def detect_transition_communities(
 
     # Intra-community probability (diagonal of inter-community matrix)
     intra_prob = np.diag(inter_community_prob)
-    overall_intra_prob = np.trace(inter_community) / inter_community.sum()
+    total_inter = inter_community.sum()
+    overall_intra_prob = np.trace(inter_community) / total_inter if total_inter > 0 else 0.0
 
-    # Compute modularity
-    total_weight = symmetric.sum()
-    expected = np.outer(degree, degree) / total_weight
+    # Compute modularity (only for active codes)
+    active_symmetric = symmetric  # Already computed for active codes only
+    total_weight = active_symmetric.sum()
+    active_degree = degree  # Already computed for active codes
+    expected = np.outer(active_degree, active_degree) / total_weight if total_weight > 0 else np.zeros_like(active_symmetric)
     modularity = 0.0
     for c in range(n_communities):
-        mask = labels == c
-        Q_c = (symmetric[np.ix_(mask, mask)].sum() - expected[np.ix_(mask, mask)].sum()) / total_weight
-        modularity += Q_c
+        # Get indices of active codes in this community
+        active_mask = active_labels == c
+        if active_mask.sum() > 0:
+            Q_c = (active_symmetric[np.ix_(active_mask, active_mask)].sum() -
+                   expected[np.ix_(active_mask, active_mask)].sum()) / total_weight if total_weight > 0 else 0
+            modularity += Q_c
 
     # Get colors for communities
     cmap = plt.cm.Set3 if n_communities <= 12 else plt.cm.tab20
@@ -461,13 +536,38 @@ def detect_transition_communities(
     # Create individual figures
     figures = {}
 
+    # === Figure 0: Code frequency distribution ===
+    fig0, ax0 = plt.subplots(figsize=(12, 5))
+    sorted_idx = np.argsort(code_frequencies)[::-1]
+    sorted_freqs = code_frequencies[sorted_idx]
+    bar_colors = []
+    for idx in sorted_idx:
+        if labels[idx] == -1:
+            bar_colors.append('lightgray')
+        else:
+            bar_colors.append(community_colors[labels[idx]])
+    ax0.bar(range(num_codes), sorted_freqs, color=bar_colors, edgecolor='none')
+    ax0.axhline(y=min_frequency, color='red', linestyle='--', linewidth=1.5,
+                label=f'Threshold: {min_frequency}')
+    ax0.set_xlabel('Code (sorted by frequency)')
+    ax0.set_ylabel('Frequency')
+    ax0.set_title(f'Code Usage Frequency (gray = filtered, {len(filtered_codes)} codes below threshold)',
+                  fontsize=12, fontweight='bold')
+    ax0.legend()
+    ax0.set_xlim(-1, num_codes)
+    fig0.tight_layout()
+    figures['code_frequency'] = fig0
+
     # === Figure 1: Reordered transition matrix (square) ===
+    # Sort: filtered codes first (gray), then by community
     fig1, ax1 = plt.subplots(figsize=(8, 8))
-    order = np.argsort(labels)
+    # Order: community 0, 1, 2, ..., then -1 (filtered) at the end
+    order = np.argsort(labels + 1000 * (labels == -1))  # Push -1 to end
     reordered = transition_counts[np.ix_(order, order)]
     log_reordered = np.log1p(reordered)
     im = ax1.imshow(log_reordered, cmap='viridis', aspect='equal')
-    ax1.set_title('Transition Matrix (reordered by community)', fontsize=12, fontweight='bold')
+    ax1.set_title(f'Transition Matrix (reordered, {len(filtered_codes)} filtered)',
+                  fontsize=12, fontweight='bold')
     ax1.set_xlabel('To Code (reordered)')
     ax1.set_ylabel('From Code (reordered)')
     plt.colorbar(im, ax=ax1, label='log(count + 1)')
@@ -489,11 +589,17 @@ def detect_transition_communities(
     fig2, ax2 = plt.subplots(figsize=(8, 5))
     sizes = [community_sizes[c] for c in range(n_communities)]
     colors = [community_colors[c] for c in range(n_communities)]
-    bars = ax2.bar(range(n_communities), sizes, color=colors, edgecolor='black', linewidth=0.5)
+    x_labels = list(range(n_communities))
+    # Add filtered as a separate bar
+    sizes.append(len(filtered_codes))
+    colors.append('lightgray')
+    x_labels.append('filtered')
+    bars = ax2.bar(range(len(sizes)), sizes, color=colors, edgecolor='black', linewidth=0.5)
     ax2.set_xlabel('Community')
     ax2.set_ylabel('Number of Codes')
     ax2.set_title('Community Sizes', fontsize=12, fontweight='bold')
-    ax2.set_xticks(range(n_communities))
+    ax2.set_xticks(range(len(sizes)))
+    ax2.set_xticklabels(x_labels)
     for bar, size in zip(bars, sizes):
         ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
                 str(size), ha='center', va='bottom', fontsize=9)
@@ -519,7 +625,7 @@ def detect_transition_communities(
 
     # === Figure 4: Community self-containment ===
     fig4, ax4 = plt.subplots(figsize=(8, 5))
-    bars = ax4.bar(range(n_communities), intra_prob, color=colors, edgecolor='black', linewidth=0.5)
+    bars = ax4.bar(range(n_communities), intra_prob, color=community_colors, edgecolor='black', linewidth=0.5)
     ax4.axhline(y=overall_intra_prob, color='red', linestyle='--',
                 label=f'Overall: {overall_intra_prob:.2f}')
     ax4.set_xlabel('Community')
@@ -533,13 +639,13 @@ def detect_transition_communities(
 
     # === Figure 5: Eigenvalues (eigengap) ===
     fig5, ax5 = plt.subplots(figsize=(8, 5))
-    n_show = min(20, num_codes)
+    n_show = min(20, n_active)
     ax5.plot(range(n_show), eigenvalues[:n_show], 'o-', markersize=5, color='teal')
     ax5.axvline(x=n_communities - 1, color='red', linestyle='--', alpha=0.7,
                 label=f'k={n_communities}')
     ax5.set_xlabel('Eigenvalue Index')
     ax5.set_ylabel('Eigenvalue')
-    ax5.set_title('Laplacian Eigenvalues (eigengap)', fontsize=12, fontweight='bold')
+    ax5.set_title(f'Laplacian Eigenvalues ({n_active} active codes)', fontsize=12, fontweight='bold')
     ax5.legend()
     ax5.grid(True, alpha=0.3)
     fig5.tight_layout()
@@ -551,10 +657,12 @@ def detect_transition_communities(
         'modularity': modularity,
         'community_sizes': community_sizes,
         'community_codes': community_codes,
+        'filtered_codes': list(filtered_codes),
         'inter_community_matrix': inter_community_prob,
         'intra_community_prob': intra_prob,
         'overall_intra_prob': overall_intra_prob,
         'eigenvalues': eigenvalues,
+        'code_frequencies': code_frequencies,
         'figures': figures,
     }
 
@@ -573,9 +681,11 @@ def compute_conditional_transition_context(
     match in clip_j (where the same code is active). Only keep matches where
     the mean absolute difference in joint angles is below threshold.
 
-    Matched vs unmatched is determined by comparing the code sequences in the
-    next `match_window_size` frames. If the windows are identical, the pair
-    is "matched" (same behavioral trajectory); otherwise "unmatched".
+    Matched vs unmatched is determined by cross-checking successors:
+    - "Matched": succ_i appears in window_j OR succ_j appears in window_i
+      (same transition destination, possibly different timing)
+    - "Unmatched": neither successor appears in the other's window
+      (genuinely different trajectories from similar starting pose)
 
     Args:
         result_i: InferenceResult for first clip.
@@ -583,7 +693,7 @@ def compute_conditional_transition_context(
         code_idx: The code to analyze.
         num_codes: Total number of codes.
         qpos_threshold: Mean absolute difference threshold for qpos matching.
-        match_window_size: Number of future frames to compare for matched/unmatched.
+        match_window_size: Number of future frames to check for successor.
 
     Returns:
         ConditionalTransitionContext or None if insufficient matches.
@@ -645,8 +755,11 @@ def compute_conditional_transition_context(
                 window_i = tuple(int(c) for c in result_i.code_indices[t_i + 1:end_i])
                 window_j = tuple(int(c) for c in result_j.code_indices[t_j + 1:end_j])
 
-                # Windows match if they are identical (same codes in same order)
-                windows_match = window_i == window_j
+                # Match if succ_i appears in window_j OR succ_j appears in window_i
+                # This checks if either clip's successor appears in the other's future
+                succ_i_in_window_j = succ_i in window_j
+                succ_j_in_window_i = succ_j in window_i
+                windows_match = succ_i_in_window_j or succ_j_in_window_i
 
                 matched_pairs.append(MatchedFramePair(
                     frame_i=t_i,
@@ -659,14 +772,31 @@ def compute_conditional_transition_context(
                     windows_match=windows_match,
                 ))
 
-    if len(matched_pairs) < 2:  # Need minimum matches
+    if len(matched_pairs) < 1:  # Need at least one match
         return None
 
-    # Split into matched (same future code window) and unmatched (different windows)
-    # "Matched" means similar qpos leads to same behavioral trajectory
-    # "Unmatched" means similar qpos leads to different trajectories (population-based code)
-    matched_transition_pairs = [mp for mp in matched_pairs if mp.windows_match]
-    unmatched_transition_pairs = [mp for mp in matched_pairs if not mp.windows_match]
+    # Split into matched and unmatched based on successor cross-checking:
+    # "Matched" = succ_i appears in window_j OR succ_j appears in window_i
+    #   (same transition destination, possibly different timing)
+    # "Unmatched" = neither successor appears in the other's window
+    #   (genuinely different trajectories from similar starting pose)
+    all_matched = [mp for mp in matched_pairs if mp.windows_match]
+    all_unmatched = [mp for mp in matched_pairs if not mp.windows_match]
+
+    # Keep only the BEST (lowest qpos distance) match and unmatch for this clip pair
+    # This ensures one match OR one unmatch per clip pair at most
+    matched_transition_pairs = []
+    unmatched_transition_pairs = []
+
+    if all_matched:
+        # Pick the one with lowest qpos distance
+        best_matched = min(all_matched, key=lambda mp: mp.qpos_distance)
+        matched_transition_pairs = [best_matched]
+
+    if all_unmatched:
+        # Pick the one with lowest qpos distance
+        best_unmatched = min(all_unmatched, key=lambda mp: mp.qpos_distance)
+        unmatched_transition_pairs = [best_unmatched]
 
     # Compute successor distributions
     dist_i = np.zeros(num_codes)
@@ -2328,19 +2458,27 @@ def generate_conditional_html(
 
             let videosHtml = '<div class="videos-row">';
 
+            // Helper to format window as short string (first 4 codes)
+            function formatWindow(win) {{
+                if (!win || win.length === 0) return '[]';
+                const display = win.slice(0, 4).join(',');
+                return win.length > 4 ? `[${{display}}...]` : `[${{display}}]`;
+            }}
+
             // Matched column (left)
             videosHtml += '<div class="matched-column">';
-            videosHtml += '<div class="column-header">&#10003; Same Transition</div>';
+            videosHtml += '<div class="column-header">&#10003; Same Trajectory</div>';
             if (matchedVideos.length > 0) {{
                 matchedVideos.forEach((v, vi) => {{
                     const videoSrc = v.data_url || v.path;
+                    const winStr = formatWindow(v.window_i || []);
                     videosHtml += `
                         <div class="video-item">
                             <video controls loop muted autoplay>
                                 <source src="${{videoSrc}}" type="video/mp4">
                             </video>
                             <div class="video-label">
-                                Clips ${{v.clip_i}} vs ${{v.clip_j}} | Succ: ${{v.succ_i}}
+                                Clips ${{v.clip_i}} vs ${{v.clip_j}} | Window: ${{winStr}}
                             </div>
                         </div>
                     `;
@@ -2352,17 +2490,20 @@ def generate_conditional_html(
 
             // Unmatched column (right)
             videosHtml += '<div class="unmatched-column">';
-            videosHtml += '<div class="column-header">&#10007; Different Transition</div>';
+            videosHtml += '<div class="column-header">&#10007; Different Trajectory</div>';
             if (unmatchedVideos.length > 0) {{
                 unmatchedVideos.forEach((v, vi) => {{
                     const videoSrc = v.data_url || v.path;
+                    const winI = formatWindow(v.window_i || []);
+                    const winJ = formatWindow(v.window_j || []);
                     videosHtml += `
                         <div class="video-item">
                             <video controls loop muted autoplay>
                                 <source src="${{videoSrc}}" type="video/mp4">
                             </video>
                             <div class="video-label">
-                                Clips ${{v.clip_i}} vs ${{v.clip_j}} | Succ: ${{v.succ_i}} vs ${{v.succ_j}}
+                                Clips ${{v.clip_i}} vs ${{v.clip_j}}<br>
+                                ${{winI}} vs ${{winJ}}
                             </div>
                         </div>
                     `;
@@ -2610,6 +2751,8 @@ def run_transition_context_analysis(
                                     "clip_j": int(ctx.clip_j),
                                     "succ_i": int(pair.succ_i),
                                     "succ_j": int(pair.succ_j),
+                                    "window_i": list(pair.window_i),
+                                    "window_j": list(pair.window_j),
                                     "qpos_dist": float(pair.qpos_distance),
                                 })
                                 matched_rendered += 1
@@ -2644,6 +2787,8 @@ def run_transition_context_analysis(
                                     "clip_j": int(ctx.clip_j),
                                     "succ_i": int(pair.succ_i),
                                     "succ_j": int(pair.succ_j),
+                                    "window_i": list(pair.window_i),
+                                    "window_j": list(pair.window_j),
                                     "qpos_dist": float(pair.qpos_distance),
                                 })
                                 unmatched_rendered += 1
@@ -2728,4 +2873,721 @@ def run_transition_context_analysis(
         "conditional_html_path": conditional_html_path,
         "json_path": str(json_path),
         "code_analyses": code_analyses,
+    }
+
+
+def find_clips_by_starting_pose(
+    results: Sequence[InferenceResult],
+    seed_result: InferenceResult,
+    qpos_threshold: float = 0.05,
+) -> list[InferenceResult]:
+    """Find clips whose starting pose (qpos[0]) matches the seed clip.
+
+    Args:
+        results: List of InferenceResult from rollouts.
+        seed_result: The seed clip to match against.
+        qpos_threshold: Mean absolute difference threshold for qpos matching.
+            Comparison excludes root 7 DOF (position and quaternion).
+
+    Returns:
+        List of InferenceResult with similar starting pose (includes seed clip).
+    """
+    if seed_result.qpos is None or len(seed_result.qpos) == 0:
+        return []
+
+    # Get seed's starting joint pose (exclude root 7 DOF)
+    seed_qpos = seed_result.qpos[0, 7:]
+
+    matched = []
+    for result in results:
+        if result.qpos is None or len(result.qpos) == 0:
+            continue
+
+        # Get candidate's starting joint pose
+        candidate_qpos = result.qpos[0, 7:]
+
+        # Compute mean absolute difference
+        mean_abs_diff = np.mean(np.abs(candidate_qpos - seed_qpos))
+
+        if mean_abs_diff < qpos_threshold:
+            matched.append(result)
+
+    return matched
+
+
+def build_conditioned_transition_matrix(
+    matched_clips: Sequence[InferenceResult],
+    num_codes: int,
+) -> np.ndarray:
+    """Build transition matrix from pooled code sequences of matched clips.
+
+    Args:
+        matched_clips: List of InferenceResult with similar starting pose.
+        num_codes: Total number of codes.
+
+    Returns:
+        Transition count matrix [num_codes, num_codes].
+    """
+    counts = np.zeros((num_codes, num_codes), dtype=np.int64)
+
+    for result in matched_clips:
+        indices = result.code_indices
+        for i in range(len(indices) - 1):
+            from_code = int(indices[i])
+            to_code = int(indices[i + 1])
+            counts[from_code, to_code] += 1
+
+    return counts
+
+
+@dataclass
+class ConditionedCommunityResult:
+    """Result of conditioned community analysis for one seed clip.
+
+    Attributes:
+        seed_clip_idx: Index of the seed clip.
+        n_matched_clips: Number of clips matched by starting pose.
+        transition_counts: Transition count matrix from pooled codes.
+        n_communities: Number of communities detected.
+        community_labels: Array mapping code index to community.
+        modularity: Modularity score of the partition.
+        community_sizes: Dict mapping community ID to size.
+        community_codes: Dict mapping community ID to list of codes.
+        eigenvalues: Laplacian eigenvalues for eigengap analysis.
+        figures: Dict of matplotlib figures (transition_matrix, reordered_matrix, eigenvalues).
+    """
+
+    seed_clip_idx: int
+    n_matched_clips: int
+    transition_counts: np.ndarray
+    n_communities: int
+    community_labels: np.ndarray
+    modularity: float
+    community_sizes: dict[int, int]
+    community_codes: dict[int, list[int]]
+    eigenvalues: np.ndarray
+    figures: dict[str, plt.Figure]
+
+
+def run_conditioned_community_analysis_for_seed(
+    results: Sequence[InferenceResult],
+    seed_result: InferenceResult,
+    num_codes: int,
+    qpos_threshold: float = 0.05,
+    min_frequency: float = 0.005,
+) -> ConditionedCommunityResult | None:
+    """Run community analysis conditioned on starting pose similarity.
+
+    Args:
+        results: List of all InferenceResult from rollouts.
+        seed_result: The seed clip to match against.
+        num_codes: Total number of codes.
+        qpos_threshold: Mean absolute difference threshold for qpos matching.
+        min_frequency: Minimum code frequency threshold for community detection.
+
+    Returns:
+        ConditionedCommunityResult or None if insufficient matches.
+    """
+    # Find clips with similar starting pose
+    matched_clips = find_clips_by_starting_pose(results, seed_result, qpos_threshold)
+
+    if len(matched_clips) < 2:
+        return None
+
+    # Build transition matrix from pooled codes
+    transition_counts = build_conditioned_transition_matrix(matched_clips, num_codes)
+
+    # Compute code frequencies for filtering
+    row_sums = transition_counts.sum(axis=1)
+    total = row_sums.sum()
+    if total == 0:
+        return None
+    code_frequencies = row_sums / total
+
+    # Run community detection
+    community_results = detect_transition_communities(
+        transition_counts=transition_counts,
+        code_frequencies=code_frequencies,
+        n_communities=None,  # Auto-detect
+        min_frequency=min_frequency,
+    )
+
+    return ConditionedCommunityResult(
+        seed_clip_idx=seed_result.clip_idx,
+        n_matched_clips=len(matched_clips),
+        transition_counts=transition_counts,
+        n_communities=community_results["n_communities"],
+        community_labels=community_results["community_labels"],
+        modularity=community_results["modularity"],
+        community_sizes=community_results["community_sizes"],
+        community_codes=community_results["community_codes"],
+        eigenvalues=community_results["eigenvalues"],
+        figures=community_results["figures"],
+    )
+
+
+def render_conditioned_community_gallery(
+    matched_clips: Sequence[InferenceResult],
+    community_labels: np.ndarray,
+    community_idx: int,
+    num_codes: int,
+    env: Any,
+    output_path: Path,
+    n_samples: int = 4,
+    segment_length: int = 30,
+    min_segment_gap: int = 10,
+    camera: str | None = None,
+    width: int = 640,
+    height: int = 480,
+    fps: int = 50,
+) -> str:
+    """Render community gallery video from matched clips only.
+
+    Wrapper around render_community_gallery that uses only the matched clips
+    for segment sampling.
+
+    Args:
+        matched_clips: List of InferenceResult matched by starting pose.
+        community_labels: Array mapping code index to community index.
+        community_idx: The community to render samples for.
+        num_codes: Total number of codes.
+        env: Environment with mj_model attribute.
+        output_path: Path to save video.
+        n_samples: Number of sample segments per community.
+        segment_length: Frames per segment.
+        min_segment_gap: Minimum frames between sampled segments.
+        camera: Camera name.
+        width: Total video width.
+        height: Total video height.
+        fps: Frames per second.
+
+    Returns:
+        Path to rendered video, or empty string on failure.
+    """
+    return render_community_gallery(
+        results=matched_clips,
+        community_labels=community_labels,
+        community_idx=community_idx,
+        num_codes=num_codes,
+        env=env,
+        output_path=output_path,
+        n_samples=n_samples,
+        segment_length=segment_length,
+        min_segment_gap=min_segment_gap,
+        camera=camera,
+        width=width,
+        height=height,
+        fps=fps,
+    )
+
+
+def generate_conditioned_community_html(
+    seed_analyses: list[dict],
+    output_path: Path,
+    title: str = "Conditioned Community Analysis",
+) -> str:
+    """Generate interactive HTML for browsing conditioned community analyses.
+
+    Args:
+        seed_analyses: List of analysis data per seed clip. Each dict has:
+            - seed_clip_idx: int
+            - n_matched_clips: int
+            - n_communities: int
+            - modularity: float
+            - figures: dict with base64-encoded images (transition_matrix, reordered_matrix, eigenvalues)
+            - community_videos: list of dicts with community_idx and data_url
+        output_path: Path to save HTML file.
+        title: HTML page title.
+
+    Returns:
+        Path to generated HTML file.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not seed_analyses:
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .message {{
+            background: rgba(255,255,255,0.08);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="message">
+        <h2>No Conditioned Community Data</h2>
+        <p>Insufficient pose-matched clips for conditioned community analysis.</p>
+    </div>
+</body>
+</html>"""
+        with open(output_path, "w") as f:
+            f.write(html)
+        return str(output_path)
+
+    js_data = json.dumps(seed_analyses)
+
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+            padding: 20px;
+        }}
+        .container {{ max-width: 1600px; margin: 0 auto; }}
+        h1 {{
+            text-align: center;
+            margin-bottom: 10px;
+            color: #fff;
+            font-size: 26px;
+        }}
+        .subtitle {{
+            text-align: center;
+            color: #ab47bc;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }}
+        .controls {{
+            background: rgba(255,255,255,0.08);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }}
+        .slider-row {{
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }}
+        .nav-btn {{
+            background: rgba(171, 71, 188, 0.3);
+            border: 1px solid rgba(171, 71, 188, 0.5);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }}
+        .nav-btn:hover {{ background: rgba(171, 71, 188, 0.5); }}
+        .nav-btn:disabled {{ opacity: 0.4; cursor: not-allowed; }}
+        .seed-counter {{
+            font-size: 18px;
+            font-weight: 600;
+            color: #ab47bc;
+            min-width: 150px;
+            text-align: center;
+        }}
+        .slider-wrapper {{ flex: 1; min-width: 200px; }}
+        input[type="range"] {{
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: #3a3a5a;
+            outline: none;
+            -webkit-appearance: none;
+        }}
+        input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #ab47bc;
+            cursor: pointer;
+        }}
+        .stats-row {{
+            display: flex;
+            gap: 12px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }}
+        .stat-badge {{
+            background: rgba(171, 71, 188, 0.15);
+            border: 1px solid rgba(171, 71, 188, 0.3);
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 13px;
+        }}
+        .stat-badge strong {{ color: #ab47bc; }}
+        .content-area {{
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }}
+        .viz-panel {{
+            flex: 2;
+            min-width: 700px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }}
+        .viz-row {{
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }}
+        .viz-item {{
+            flex: 1;
+            min-width: 300px;
+            background: #fff;
+            border-radius: 10px;
+            padding: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }}
+        .viz-item img {{
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 6px;
+        }}
+        .viz-item h4 {{
+            color: #333;
+            font-size: 12px;
+            margin-bottom: 6px;
+            text-align: center;
+        }}
+        .videos-panel {{
+            flex: 1;
+            min-width: 350px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 15px;
+            max-height: 800px;
+            overflow-y: auto;
+        }}
+        .videos-panel h3 {{
+            color: #ab47bc;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }}
+        .community-section {{
+            margin-bottom: 20px;
+        }}
+        .community-header {{
+            color: #ce93d8;
+            font-size: 12px;
+            margin-bottom: 8px;
+            padding: 4px 8px;
+            background: rgba(171, 71, 188, 0.1);
+            border-radius: 4px;
+        }}
+        .video-item {{
+            margin-bottom: 10px;
+        }}
+        .video-item video {{
+            width: 100%;
+            border-radius: 6px;
+        }}
+        .hint {{
+            font-size: 11px;
+            color: #666;
+            margin-top: 10px;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{title}</h1>
+        <p class="subtitle">Community detection on clips with similar starting poses</p>
+        <div class="controls">
+            <div class="slider-row">
+                <button class="nav-btn" id="prevBtn" onclick="prevSeed()">&#9664; Prev</button>
+                <span class="seed-counter" id="seedCounter">Seed Clip 0</span>
+                <button class="nav-btn" id="nextBtn" onclick="nextSeed()">Next &#9654;</button>
+                <div class="slider-wrapper">
+                    <input type="range" id="seedSlider" min="0" max="{len(seed_analyses) - 1}" value="0" oninput="updateSeed(this.value)">
+                </div>
+            </div>
+            <div class="stats-row" id="statsRow"></div>
+            <div class="hint">Use &#8592; &#8594; arrow keys or slider to navigate between seed clips</div>
+        </div>
+        <div class="content-area">
+            <div class="viz-panel">
+                <div class="viz-row">
+                    <div class="viz-item">
+                        <h4>Transition Matrix</h4>
+                        <img id="transitionMatrix" src="" alt="Transition Matrix">
+                    </div>
+                    <div class="viz-item">
+                        <h4>Reordered by Community</h4>
+                        <img id="reorderedMatrix" src="" alt="Reordered Matrix">
+                    </div>
+                </div>
+                <div class="viz-row">
+                    <div class="viz-item">
+                        <h4>Eigenvalues (Eigengap)</h4>
+                        <img id="eigenvalues" src="" alt="Eigenvalues">
+                    </div>
+                    <div class="viz-item">
+                        <h4>Community Sizes</h4>
+                        <img id="communitySizes" src="" alt="Community Sizes">
+                    </div>
+                </div>
+            </div>
+            <div class="videos-panel">
+                <h3>Community Gallery Videos</h3>
+                <div id="videosArea"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        const seedData = {js_data};
+        let idx = 0;
+
+        function updateSeed(i) {{
+            idx = parseInt(i);
+            const s = seedData[idx];
+
+            document.getElementById('seedCounter').textContent = 'Seed Clip ' + s.seed_clip_idx + ' (' + (idx + 1) + '/' + seedData.length + ')';
+            document.getElementById('seedSlider').value = idx;
+
+            document.getElementById('statsRow').innerHTML = `
+                <div class="stat-badge"><strong>Seed Clip:</strong> ${{s.seed_clip_idx}}</div>
+                <div class="stat-badge"><strong>Matched Clips:</strong> ${{s.n_matched_clips}}</div>
+                <div class="stat-badge"><strong>Communities:</strong> ${{s.n_communities}}</div>
+                <div class="stat-badge"><strong>Modularity:</strong> ${{s.modularity.toFixed(4)}}</div>
+            `;
+
+            // Update figures
+            const figs = s.figures || {{}};
+            if (figs.reordered_matrix) {{
+                document.getElementById('transitionMatrix').src = 'data:image/png;base64,' + figs.reordered_matrix;
+            }}
+            if (figs.reordered_matrix) {{
+                document.getElementById('reorderedMatrix').src = 'data:image/png;base64,' + figs.reordered_matrix;
+            }}
+            if (figs.eigenvalues) {{
+                document.getElementById('eigenvalues').src = 'data:image/png;base64,' + figs.eigenvalues;
+            }}
+            if (figs.community_sizes) {{
+                document.getElementById('communitySizes').src = 'data:image/png;base64,' + figs.community_sizes;
+            }}
+
+            // Update videos
+            let videosHtml = '';
+            const videos = s.community_videos || [];
+            if (videos.length > 0) {{
+                videos.forEach((v) => {{
+                    videosHtml += `
+                        <div class="community-section">
+                            <div class="community-header">Community ${{v.community_idx}}</div>
+                            <div class="video-item">
+                                <video controls loop muted autoplay>
+                                    <source src="${{v.data_url}}" type="video/mp4">
+                                </video>
+                            </div>
+                        </div>
+                    `;
+                }});
+            }} else {{
+                videosHtml = '<div style="color: #888; font-size: 12px;">No community videos available</div>';
+            }}
+            document.getElementById('videosArea').innerHTML = videosHtml;
+
+            document.getElementById('prevBtn').disabled = idx === 0;
+            document.getElementById('nextBtn').disabled = idx === seedData.length - 1;
+        }}
+
+        function nextSeed() {{ if (idx < seedData.length - 1) updateSeed(idx + 1); }}
+        function prevSeed() {{ if (idx > 0) updateSeed(idx - 1); }}
+
+        document.addEventListener('keydown', e => {{
+            if (e.key === 'ArrowRight') nextSeed();
+            else if (e.key === 'ArrowLeft') prevSeed();
+        }});
+
+        updateSeed(0);
+    </script>
+</body>
+</html>'''
+
+    with open(output_path, "w") as f:
+        f.write(html)
+
+    return str(output_path)
+
+
+def run_conditioned_community_analysis(
+    results: Sequence[InferenceResult],
+    num_codes: int,
+    output_dir: str | Path,
+    n_seed_clips: int = 10,
+    qpos_threshold: float = 0.05,
+    min_frequency: float = 0.005,
+    render_videos: bool = True,
+    samples_per_community: int = 4,
+    segment_length: int = 30,
+    env: Any = None,
+    camera: str | None = None,
+    width: int = 640,
+    height: int = 480,
+    fps: int = 50,
+) -> dict[str, Any]:
+    """Run conditioned community analysis on randomly sampled seed clips.
+
+    For each seed clip:
+    1. Find clips with similar starting pose (qpos[0])
+    2. Pool code sequences from matched clips
+    3. Build transition matrix and run community detection
+    4. Generate visualizations and render community gallery videos
+
+    Args:
+        results: List of InferenceResult from rollouts.
+        num_codes: Total number of codes.
+        output_dir: Directory to save outputs.
+        n_seed_clips: Number of random seed clips to sample.
+        qpos_threshold: Mean absolute difference threshold for qpos matching.
+        min_frequency: Minimum code frequency for community detection.
+        render_videos: Whether to render community gallery videos.
+        samples_per_community: Video segments per community.
+        segment_length: Frames per segment.
+        env: Environment for video rendering.
+        camera: Camera name.
+        width: Video width.
+        height: Video height.
+        fps: Video FPS.
+
+    Returns:
+        Dictionary with html_path and analysis results.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logging.info("Running conditioned community analysis...")
+
+    # Filter results with valid qpos data
+    valid_results = [r for r in results if r.qpos is not None and len(r.qpos) > 0]
+
+    if len(valid_results) < 3:
+        logging.warning("  Insufficient clips with qpos data for conditioned analysis")
+        return {"html_path": None, "seed_analyses": []}
+
+    # Sample random seed clips
+    rng = np.random.default_rng(42)
+    n_seeds = min(n_seed_clips, len(valid_results))
+    seed_indices = rng.choice(len(valid_results), size=n_seeds, replace=False)
+
+    seed_analyses = []
+
+    for seed_i, seed_idx in enumerate(seed_indices):
+        seed_result = valid_results[seed_idx]
+        logging.info(f"\n  Seed {seed_i + 1}/{n_seeds}: Clip {seed_result.clip_idx}")
+
+        # Run analysis for this seed
+        analysis = run_conditioned_community_analysis_for_seed(
+            results=valid_results,
+            seed_result=seed_result,
+            num_codes=num_codes,
+            qpos_threshold=qpos_threshold,
+            min_frequency=min_frequency,
+        )
+
+        if analysis is None:
+            logging.info(f"    Skipping: insufficient matched clips")
+            continue
+
+        logging.info(f"    Matched {analysis.n_matched_clips} clips, detected {analysis.n_communities} communities")
+        logging.info(f"    Modularity: {analysis.modularity:.4f}")
+
+        # Create seed-specific output directory
+        seed_dir = output_dir / f"seed_{seed_i:03d}"
+        seed_dir.mkdir(parents=True, exist_ok=True)
+
+        # Convert figures to base64 and save locally
+        figures_b64 = {}
+        for fig_key, fig in analysis.figures.items():
+            # Save locally
+            fig.savefig(seed_dir / f"{fig_key}.png", dpi=100, bbox_inches="tight")
+            # Convert to base64
+            figures_b64[fig_key] = figure_to_base64(fig, dpi=100)
+            plt.close(fig)
+
+        # Get matched clips for video rendering
+        matched_clips = find_clips_by_starting_pose(valid_results, seed_result, qpos_threshold)
+
+        # Render community gallery videos
+        community_videos = []
+        if render_videos and env is not None:
+            video_dir = seed_dir / "community_videos"
+            video_dir.mkdir(parents=True, exist_ok=True)
+
+            for comm_idx in range(analysis.n_communities):
+                video_path = video_dir / f"community_{comm_idx}.mp4"
+
+                try:
+                    path = render_conditioned_community_gallery(
+                        matched_clips=matched_clips,
+                        community_labels=analysis.community_labels,
+                        community_idx=comm_idx,
+                        num_codes=num_codes,
+                        env=env,
+                        output_path=video_path,
+                        n_samples=samples_per_community,
+                        segment_length=segment_length,
+                        camera=camera,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                    )
+                    if path:
+                        # Convert video to base64 for HTML embedding
+                        data_url = video_to_base64(path)
+                        community_videos.append({
+                            "community_idx": comm_idx,
+                            "path": str(path),
+                            "data_url": data_url,
+                        })
+                        logging.info(f"    Rendered community {comm_idx} gallery")
+                except Exception as e:
+                    logging.warning(f"    Failed to render community {comm_idx}: {e}")
+
+        # Store analysis data for HTML
+        seed_analyses.append({
+            "seed_clip_idx": int(seed_result.clip_idx),
+            "n_matched_clips": int(analysis.n_matched_clips),
+            "n_communities": int(analysis.n_communities),
+            "modularity": float(analysis.modularity),
+            "community_sizes": {str(k): int(v) for k, v in analysis.community_sizes.items()},
+            "figures": figures_b64,
+            "community_videos": community_videos,
+        })
+
+    # Generate HTML viewer
+    html_path = generate_conditioned_community_html(
+        seed_analyses,
+        output_dir / "conditioned_community.html",
+        title="Conditioned Community Analysis",
+    )
+
+    logging.info(f"\nConditioned community analysis complete:")
+    logging.info(f"  Analyzed {len(seed_analyses)} seed clips")
+    logging.info(f"  HTML viewer: {html_path}")
+
+    return {
+        "html_path": html_path,
+        "seed_analyses": seed_analyses,
     }

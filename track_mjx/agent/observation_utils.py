@@ -114,6 +114,36 @@ def flatten_obs_dict(obs: Mapping[str, Any]) -> jnp.ndarray:
     return jnp.concatenate([imitation_target, proprioception], axis=-1)
 
 
+def flatten_to_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
+    """Flatten each leaf of an observation dict while preserving dict structure.
+
+    Used after normalization to prepare observations for networks that expect
+    flat arrays for each observation key.
+
+    Args:
+        obs: Observation dict with potentially nested arrays.
+
+    Returns:
+        Dict with same keys but flattened array values.
+    """
+    return {k: _flatten_nested_obs(v) for k, v in obs.items()}
+
+
+def flatten_full_obs(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, jnp.ndarray]]:
+    """Flatten the full nested observation dict for normalizer update.
+
+    Flattens observations at both the 'state' and 'privileged_state' levels.
+
+    Args:
+        obs: Full observation dict with structure:
+            {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
+
+    Returns:
+        Flattened dict with same structure but flat array values.
+    """
+    return {key: flatten_to_dict(inner) for key, inner in obs.items()}
+
+
 def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
     """Extract observation sizes from an example nested observation dict.
 
@@ -137,17 +167,22 @@ def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
 
 
 def get_obs_shape(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, specs.Array]]:
-    """Extract observation shapes as a pytree for running_statistics.init_state.
+    """Extract flattened observation shapes as a pytree for running_statistics.init_state.
+
+    Returns specs for FLATTENED observations. The normalizer stores flat stats,
+    and observations should be flattened before update/normalize calls.
 
     Args:
         obs: Example nested observation dict.
 
     Returns:
-        Nested dict with same structure, containing specs.Array objects.
+        Nested dict with same structure as top two levels, containing specs.Array
+        objects with flattened shapes (e.g., {'state': {'imitation_target': Array(640,), ...}}).
     """
-    def extract_spec(x):
-        flat = _flatten_nested_obs(x)
-        # Return spec without batch dimension
-        return specs.Array(flat.shape[-1:], jnp.dtype("float32"))
+    def flatten_and_get_spec(inner_obs: Mapping[str, Any]) -> dict[str, specs.Array]:
+        return {
+            key: specs.Array((_flatten_nested_obs(val).shape[-1],), jnp.dtype("float32"))
+            for key, val in inner_obs.items()
+        }
 
-    return jax.tree_util.tree_map(extract_spec, obs)
+    return {key: flatten_and_get_spec(inner) for key, inner in obs.items()}

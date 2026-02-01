@@ -33,6 +33,7 @@ from track_mjx.agent.ff_ppo import intention_network
 from track_mjx.agent.observation_utils import (
     normalizer_select,
     flatten_obs_dict,
+    flatten_to_dict,
 )
 
 
@@ -262,13 +263,15 @@ def make_dict_value_network(
         obs: Mapping[str, Mapping[str, jnp.ndarray]],
     ):
         """Apply value network with nested observation normalization."""
-        # Select normalizer for value observations and normalize
+        # Flatten observations first, then normalize, then concatenate
+        flattened_inner = flatten_to_dict(obs[value_obs_key])
         value_normalizer = normalizer_select(processor_params, value_obs_key)
-        normalized_inner = running_statistics.normalize(
-            obs[value_obs_key], value_normalizer
+        normalized_inner = running_statistics.normalize(flattened_inner, value_normalizer)
+        # Concatenate imitation_target and proprioception
+        flat_obs = jnp.concatenate(
+            [normalized_inner["imitation_target"], normalized_inner["proprioception"]],
+            axis=-1,
         )
-        # Flatten the inner observation dict
-        flat_obs = flatten_obs_dict(normalized_inner)
         return base_value_network.apply((), value_params, flat_obs)
 
     return networks.FeedForwardNetwork(

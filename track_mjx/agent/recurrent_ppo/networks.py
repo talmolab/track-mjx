@@ -39,6 +39,7 @@ from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
 from track_mjx.agent.observation_utils import (
     normalizer_select,
     flatten_obs_dict,
+    flatten_to_dict,
 )
 
 # Type aliases
@@ -522,13 +523,15 @@ def make_dict_value_network(
         obs: Mapping[str, Mapping[str, jnp.ndarray]],
     ):
         """Apply value network with nested observation normalization."""
-        # Select normalizer for value observations and normalize
+        # Flatten observations first, then normalize, then concatenate
+        flattened_inner = flatten_to_dict(obs[value_obs_key])
         value_normalizer = normalizer_select(processor_params, value_obs_key)
-        normalized_inner = running_statistics.normalize(
-            obs[value_obs_key], value_normalizer
+        normalized_inner = running_statistics.normalize(flattened_inner, value_normalizer)
+        # Concatenate imitation_target and proprioception
+        flat_obs = jnp.concatenate(
+            [normalized_inner["imitation_target"], normalized_inner["proprioception"]],
+            axis=-1,
         )
-        # Flatten the inner observation dict
-        flat_obs = flatten_obs_dict(normalized_inner)
         return base_value_network.apply((), value_params, flat_obs)
 
     return networks.FeedForwardNetwork(
@@ -593,11 +596,10 @@ def make_recurrent_intention_ppo_networks(
         deterministic: bool = False,
     ):
         """Apply policy with observation normalization."""
-        # Select normalizer for policy observations and normalize
+        # Flatten observations first, then normalize
+        flattened_obs = flatten_to_dict(obs[policy_obs_key])
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
-        normalized_obs = running_statistics.normalize(
-            obs[policy_obs_key], policy_normalizer
-        )
+        normalized_obs = running_statistics.normalize(flattened_obs, policy_normalizer)
         return policy_module.apply(
             policy_params,
             obs=normalized_obs,
@@ -634,11 +636,14 @@ def make_recurrent_intention_ppo_networks(
             Tuple of (logits, latent_mean, latent_logvar, final_hidden).
             Each output has shape [T, B, ...].
         """
-        # Select normalizer for policy observations and normalize the full sequence
+        # Flatten observations first (preserving T, B dims), then normalize
+        obs_seq_flat = flatten_to_dict(obs_seq[policy_obs_key])
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
-        obs_seq_normalized = running_statistics.normalize(
-            obs_seq[policy_obs_key], policy_normalizer
-        )
+        obs_seq_normalized = running_statistics.normalize(obs_seq_flat, policy_normalizer)
+
+        # Helper to get observation at time t (already flattened and normalized)
+        def get_obs_t(obs_dict, t):
+            return {inner_key: arr[t] for inner_key, arr in obs_dict.items()}
 
         # Validate stored_keys shape if provided
         if stored_keys is not None:
@@ -654,9 +659,6 @@ def make_recurrent_intention_ppo_networks(
         if stored_keys is not None:
             # Deterministic replay: use stored per-timestep, per-sample keys
             T = done_seq.shape[0]
-
-            def get_obs_t(obs_dict, t):
-                return {inner_key: arr[t] for inner_key, arr in obs_dict.items()}
 
             # Use scan with explicit indexing
             def scan_step_stored(carry, t):
@@ -681,9 +683,6 @@ def make_recurrent_intention_ppo_networks(
         else:
             # Standard path: generate fresh keys at each timestep
             T = done_seq.shape[0]
-
-            def get_obs_t(obs_dict, t):
-                return {inner_key: arr[t] for inner_key, arr in obs_dict.items()}
 
             def scan_step_fresh(carry, t):
                 hidden, step_key = carry

@@ -31,6 +31,7 @@ from flax import linen as nn
 from track_mjx.agent.observation_utils import (
     normalizer_select,
     flatten_obs_dict,
+    flatten_to_dict,
 )
 
 
@@ -318,11 +319,10 @@ def make_intention_policy(
             deterministic: If True, use mean instead of sampling.
             get_activation: If True, return activations.
         """
-        # Select normalizer for policy observations and normalize
+        # Flatten observations first, then normalize
+        flattened_obs = flatten_to_dict(obs[policy_obs_key])
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
-        normalized_obs = running_statistics.normalize(
-            obs[policy_obs_key], policy_normalizer
-        )
+        normalized_obs = running_statistics.normalize(flattened_obs, policy_normalizer)
         return policy_module.apply(
             policy_params,
             obs=normalized_obs,

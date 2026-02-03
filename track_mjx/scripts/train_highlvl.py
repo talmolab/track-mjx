@@ -224,13 +224,18 @@ def create_environments(
 
 
 def make_logging_inference_fn(ppo_networks):
-    """Creates inference function for the PPO agent."""
+    """Creates inference function for the PPO agent.
+
+    The policy_network already handles dict observation routing via policy_obs_key
+    configured in the network factory.
+    """
 
     def make_logging_policy(deterministic: bool = False):
         policy_network = ppo_networks.policy_network
         parametric_action_distribution = ppo_networks.parametric_action_distribution
 
         def logging_policy(params, observations, key_sample):
+            # Pass full dict observations - network handles extraction via policy_obs_key
             param_subset = (params[0], params[1])
             logits = policy_network.apply(*param_subset, observations)
             if deterministic:
@@ -480,8 +485,11 @@ def main():
     rng = jax.random.PRNGKey(0)
     start_state = jit_reset(rng)
 
+    # Get observation size from dict structure (policy obs key)
+    obs_size = start_state.obs[args.policy_obs_key].shape[-1]
+
     ppo_network = network_factory(
-        start_state.obs.shape[-1],
+        obs_size,
         env.action_size,
         preprocess_observations_fn=normalize,
     )

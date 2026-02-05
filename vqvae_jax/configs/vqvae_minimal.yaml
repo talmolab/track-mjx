@@ -91,9 +91,8 @@ render_config:
   render_camera_name: close_profile
   render_fps: 50
   render_interval: 5            # Render video every N evals
-  render_per_code_videos: false # Disabled - too expensive with large codebooks (128 videos!)
-  enable_community_viz: true    # Enable community visualization for large codebooks
-  community_samples_per_row: 4  # Number of sample clips per community row in grid
+  render_per_code_videos: false # Disabled - too expensive with large codebooks
+  eval_rollouts_for_transition: 16  # Number of rollouts to aggregate for transition matrix
 
 # =============================================================================
 # Network Architecture - VQ-VAE
@@ -111,7 +110,7 @@ network_config:
   latent_dim: 32                # Same as intention_size
 
   # VQ-VAE specific settings
-  num_codes: 128                   # Population coding: enables community analysis (requires >32)
+  num_codes: 64                    # Population coding for discrete motor intentions
   commitment_cost: 0.5           # Lower initially, let codebook stabilize
   codebook_loss_weight: 1.0      # Weight for codebook loss
   codebook_init_scale: 0.1       # Initialization scale

@@ -62,18 +62,27 @@ class CommunityStructure:
     n_communities: int
 
 
-def compute_eigengap_heuristic(eigenvalues: np.ndarray, max_k: int = 20) -> int:
+def compute_eigengap_heuristic(
+    eigenvalues: np.ndarray,
+    max_k: int = 8,
+    min_gap_ratio: float = 1.5,
+) -> int:
     """Determine optimal number of clusters using eigengap heuristic.
+
+    Uses relative gap ratios rather than absolute gaps to be more robust
+    to nearly-uniform eigenvalue distributions (e.g., from sparse transition
+    matrices with high self-loop probabilities).
 
     Args:
         eigenvalues: Sorted eigenvalues from spectral decomposition.
-        max_k: Maximum number of clusters to consider.
+        max_k: Maximum number of clusters to consider (default 8).
+        min_gap_ratio: Minimum ratio of gap to median gap to be significant.
 
     Returns:
         Optimal number of clusters.
     """
     # Use eigenvalues in ascending order
-    eigenvalues = np.sort(eigenvalues)[:max_k]
+    eigenvalues = np.sort(eigenvalues)[:max_k + 5]  # Get a few extra for context
 
     if len(eigenvalues) < 3:
         return 2
@@ -81,13 +90,36 @@ def compute_eigengap_heuristic(eigenvalues: np.ndarray, max_k: int = 20) -> int:
     # Compute gaps between consecutive eigenvalues
     gaps = np.diff(eigenvalues)
 
-    # Find the largest gap (skip first few small eigenvalues)
-    # Start from index 1 to ensure at least 2 clusters
-    start_idx = 1
-    if len(gaps) <= start_idx:
+    if len(gaps) < 2:
         return 2
 
-    best_k = np.argmax(gaps[start_idx:]) + start_idx + 1
+    # Start from index 1 to ensure at least 2 clusters
+    # Look for gaps that are significantly larger than the median gap
+    start_idx = 1
+    end_idx = min(len(gaps), max_k)
+
+    if end_idx <= start_idx:
+        return 2
+
+    relevant_gaps = gaps[start_idx:end_idx]
+    median_gap = np.median(relevant_gaps)
+
+    # Find gaps that are significantly larger than median
+    if median_gap > 0:
+        gap_ratios = relevant_gaps / median_gap
+        # Find first gap that exceeds the threshold (indicates cluster boundary)
+        significant_gaps = np.where(gap_ratios >= min_gap_ratio)[0]
+
+        if len(significant_gaps) > 0:
+            # Take the first significant gap (prefer fewer clusters)
+            best_k = significant_gaps[0] + start_idx + 1
+        else:
+            # No significant gap found - default to small number of clusters
+            # This happens when transition matrix is very sparse/diagonal
+            best_k = min(3, max_k)
+    else:
+        # All gaps are zero (degenerate case)
+        best_k = 2
 
     # Ensure reasonable bounds
     return max(2, min(best_k, max_k))

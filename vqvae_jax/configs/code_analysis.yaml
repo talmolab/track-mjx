@@ -12,7 +12,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260128_213917_090728/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260202_201705_679577/
   step: null  # null = latest step
 
 # =============================================================================
@@ -29,7 +29,7 @@ wandb:
 # Analysis loads pre-computed rollout data from H5 files.
 # Use `python -m inference.run_inference` to generate H5 files.
 data:
-  h5_path: ./outputs/rollout.h5  # Path to H5 file with rollout data (required)
+  h5_path: ./outputs/rollout_64.h5  # Path to H5 file with rollout data (required)
   clip_length: 500               # Frames per clip (for environment setup)
 
 # =============================================================================

@@ -868,698 +868,249 @@ def get_community_colormap(n_communities: int) -> np.ndarray:
     return np.array(colors, dtype=np.uint8)
 
 
-def add_community_transition_bar(
-    frame: np.ndarray,
-    current_frame_idx: int,
-    all_indices: np.ndarray,
-    code_to_community: dict[int, int],
-    community_colors: np.ndarray,
-    bar_height: int = 40,
-    playhead_width: int = 3,
-    show_playhead: bool = True,
-    show_label: bool = True,
-    font_size: int = 16,
-) -> np.ndarray:
-    """Add a community-colored transition timeline bar.
-
-    Similar to add_code_transition_bar but colors by community assignment
-    rather than individual code.
-
-    Args:
-        frame: Input frame as numpy array, shape [H, W, 3].
-        current_frame_idx: Current frame index in the sequence.
-        all_indices: Array of all code indices for the full sequence.
-        code_to_community: Dict mapping code index to community ID.
-        community_colors: Color for each community, shape [n_communities, 3].
-        bar_height: Height of the timeline bar in pixels.
-        playhead_width: Width of the playhead marker.
-        show_playhead: Whether to show the playhead marker.
-        show_label: Whether to show community label.
-        font_size: Font size for label.
-
-    Returns:
-        Frame with community timeline overlay.
-    """
-    h, w = frame.shape[:2]
-    result = frame.copy()
-    num_frames = len(all_indices)
-    y_start = h - bar_height
-
-    # Create timeline bar
-    timeline = np.ones((bar_height, w, 3), dtype=np.uint8) * 255
-
-    # Draw border at top
-    timeline[:1, :] = [200, 200, 200]
-
-    # Draw community segments
-    for i, code_idx in enumerate(all_indices):
-        x_start = int(i * w / num_frames)
-        x_end = int((i + 1) * w / num_frames)
-        comm_id = code_to_community.get(int(code_idx), 0)
-        color = community_colors[comm_id % len(community_colors)]
-        timeline[1:, x_start:x_end] = color
-
-    # Overlay timeline on frame
-    result[y_start:y_start + bar_height, :] = timeline
-
-    # Draw playhead
-    if show_playhead:
-        playhead_x = int(current_frame_idx * w / num_frames)
-        playhead_x = min(playhead_x, w - playhead_width)
-
-        if playhead_x > 0:
-            result[y_start:, playhead_x - 1:playhead_x] = [50, 50, 50]
-        result[y_start:, playhead_x:playhead_x + playhead_width] = [255, 255, 255]
-        if playhead_x + playhead_width < w:
-            result[y_start:, playhead_x + playhead_width:playhead_x + playhead_width + 1] = [50, 50, 50]
-
-    # Add community label
-    if show_label and current_frame_idx < len(all_indices):
-        current_code = int(all_indices[current_frame_idx])
-        comm_id = code_to_community.get(current_code, 0)
-        color = community_colors[comm_id % len(community_colors)]
-
-        label_img = Image.fromarray(result)
-        draw = ImageDraw.Draw(label_img)
-        font = _get_font(font_size, bold=True)
-
-        label_text = f"C{comm_id} (code {current_code})"
-        bbox = draw.textbbox((0, 0), label_text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-
-        padding = 6
-        box_x, box_y = 10, 10
-
-        draw.rounded_rectangle(
-            [box_x - padding, box_y - padding,
-             box_x + text_width + padding, box_y + text_height + padding],
-            radius=4,
-            fill=tuple(color)
-        )
-
-        brightness = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
-        text_color = (0, 0, 0) if brightness > 128 else (255, 255, 255)
-        draw.text((box_x, box_y), label_text, font=font, fill=text_color)
-
-        result = np.array(label_img)
-
-    return result
-
-
-def render_rollout_with_community_bar(
-    env: Any,
-    rollout_states: Sequence[Any],
-    output_path: str | Path,
+def find_code_segments(
     indices: np.ndarray,
-    code_to_community: dict[int, int],
-    n_communities: int,
-    camera: str | None = None,
-    width: int = 640,
-    height: int = 480,
-    fps: int = 50,
-    bar_height: int = 40,
-    clip_idx: int | None = None,
-) -> str:
-    """Render rollout with community-colored timeline bar.
+    min_segment_length: int = 20,
+) -> dict[int, list[tuple[int, int]]]:
+    """Find contiguous segments for each code that meet minimum length.
 
     Args:
-        env: Environment with render method.
-        rollout_states: Sequence of environment states to render.
-        output_path: Path to save output video.
-        indices: Code indices per frame.
-        code_to_community: Dict mapping code to community ID.
-        n_communities: Number of communities.
-        camera: Camera name for rendering.
-        width: Video width.
-        height: Video height.
-        fps: Frames per second.
-        bar_height: Height of the community bar.
-        clip_idx: Optional clip index to display.
+        indices: Array of code indices, shape [T].
+        min_segment_length: Minimum length for a segment to be included.
 
     Returns:
-        Path to saved video file.
+        Dict mapping code_idx -> list of (start, end) tuples for valid segments.
     """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    code_segments: dict[int, list[tuple[int, int]]] = {}
 
-    logging.info(f"  Rendering {len(rollout_states)} frames with community bar...")
-    frames = env.render(rollout_states, camera=camera, height=height, width=width)
+    if len(indices) == 0:
+        return code_segments
 
-    community_colors = get_community_colormap(n_communities)
+    # Find all contiguous segments
+    current_code = int(indices[0])
+    segment_start = 0
 
-    processed_frames = []
-    for i, frame in enumerate(frames):
-        if i < len(indices):
-            frame = add_community_transition_bar(
-                frame,
-                current_frame_idx=i,
-                all_indices=indices,
-                code_to_community=code_to_community,
-                community_colors=community_colors,
-                bar_height=bar_height,
-            )
+    for i in range(1, len(indices)):
+        if int(indices[i]) != current_code:
+            # End of segment
+            segment_length = i - segment_start
+            if segment_length >= min_segment_length:
+                if current_code not in code_segments:
+                    code_segments[current_code] = []
+                code_segments[current_code].append((segment_start, i))
 
-        # Add clip index if provided
-        if clip_idx is not None:
-            frame = add_text_overlay(
-                frame,
-                f"Clip {clip_idx}",
-                position=(10, 50),
-                font_size=14,
-            )
+            # Start new segment
+            current_code = int(indices[i])
+            segment_start = i
 
-        processed_frames.append(frame)
+    # Handle last segment
+    segment_length = len(indices) - segment_start
+    if segment_length >= min_segment_length:
+        if current_code not in code_segments:
+            code_segments[current_code] = []
+        code_segments[current_code].append((segment_start, len(indices)))
 
-    with imageio.get_writer(str(output_path), fps=fps) as writer:
-        for frame in processed_frames:
-            writer.append_data(frame)
-
-    logging.info(f"  Saved community rollout video to {output_path}")
-    return str(output_path)
+    return code_segments
 
 
-def render_community_grid_video(
+def render_community_gallery(
     env: Any,
-    results: list["InferenceResult"],
-    structure: "CommunityStructure",
+    all_rollout_states: list[Sequence[Any]],
+    all_rollout_indices: list[np.ndarray],
+    community_codes: list[int],
+    community_id: int,
     output_path: str | Path,
-    samples_per_community: int = 4,
     camera: str | None = None,
     cell_width: int = 320,
     cell_height: int = 240,
     fps: int = 50,
-    max_frames: int = 200,
-) -> str:
-    """Render grid video with rows for each community, columns for sample clips.
+    min_segment_length: int = 20,
+    max_codes_per_row: int = 4,
+    max_frames_per_code: int = 100,
+    num_codes: int | None = None,
+) -> str | None:
+    """Render a gallery video showing frames for each code in a community.
+
+    Creates a grid where each cell shows frames from one code in the community.
+    Only includes segments that meet the minimum length requirement.
 
     Args:
         env: Environment with render method.
-        results: List of InferenceResult with states.
-        structure: CommunityStructure from community analysis.
+        all_rollout_states: List of rollout state sequences.
+        all_rollout_indices: List of code index arrays, each [T].
+        community_codes: List of code indices in this community.
+        community_id: ID of this community (for labeling).
         output_path: Path to save output video.
-        samples_per_community: Number of sample clips per community row.
         camera: Camera name for rendering.
-        cell_width: Width of each cell.
-        cell_height: Height of each cell (includes bar).
+        cell_width: Width of each cell in the grid.
+        cell_height: Height of each cell in the grid.
         fps: Frames per second.
-        max_frames: Maximum frames to render.
+        min_segment_length: Minimum segment length to include (default 20).
+        max_codes_per_row: Maximum codes per row in the grid.
+        max_frames_per_code: Maximum frames to show per code.
+        num_codes: Total number of codes (for colormap).
 
     Returns:
-        Path to saved video file.
+        Path to saved video, or None if no valid segments found.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    n_communities = structure.n_communities
-    community_colors = get_community_colormap(n_communities)
+    # Collect valid segments for each code across all rollouts
+    code_to_segments: dict[int, list[tuple[int, int, int]]] = {
+        code: [] for code in community_codes
+    }  # code -> [(rollout_idx, start, end), ...]
 
-    # Select representative clips for each community
-    # Find clips that spend significant time in each community
-    community_clips: dict[int, list[tuple[int, int]]] = {i: [] for i in range(n_communities)}
+    for rollout_idx, indices in enumerate(all_rollout_indices):
+        segments = find_code_segments(indices, min_segment_length)
+        for code in community_codes:
+            if code in segments:
+                for start, end in segments[code]:
+                    code_to_segments[code].append((rollout_idx, start, end))
 
-    for result_idx, result in enumerate(results):
-        if result.states is None:
-            continue
+    # Filter to codes that have at least one valid segment
+    codes_with_segments = [
+        code for code in community_codes if len(code_to_segments[code]) > 0
+    ]
 
-        # Count frames per community in this clip
-        comm_frames = {i: 0 for i in range(n_communities)}
-        for code_idx in result.code_indices:
-            comm_id = structure.code_to_community.get(int(code_idx), 0)
-            comm_frames[comm_id] += 1
+    if not codes_with_segments:
+        logging.warning(
+            f"Community {community_id}: No codes with segments >= {min_segment_length}"
+        )
+        return None
 
-        # Assign clip to community with most frames
-        dominant_comm = max(comm_frames, key=comm_frames.get)
-        community_clips[dominant_comm].append((result_idx, comm_frames[dominant_comm]))
+    logging.info(
+        f"Community {community_id}: {len(codes_with_segments)}/{len(community_codes)} "
+        f"codes have segments >= {min_segment_length} frames"
+    )
 
-    # Sort clips by dominance and select top samples
-    selected_clips: list[list[tuple[int, "InferenceResult"]]] = []
-    for comm_id in range(n_communities):
-        clips = sorted(community_clips[comm_id], key=lambda x: x[1], reverse=True)
-        selected = []
-        for result_idx, _ in clips[:samples_per_community]:
-            selected.append((result_idx, results[result_idx]))
-        # Pad with None if not enough clips
-        while len(selected) < samples_per_community:
-            selected.append((None, None))
-        selected_clips.append(selected)
+    # Setup grid dimensions
+    n_codes = len(codes_with_segments)
+    grid_cols = min(n_codes, max_codes_per_row)
+    grid_rows = (n_codes + grid_cols - 1) // grid_cols
 
-    # Determine grid size
-    grid_rows = n_communities
-    grid_cols = samples_per_community
-    bar_height = 25
+    # Get colormap
+    if num_codes is None:
+        num_codes = max(community_codes) + 1
+    code_colors = get_nature_colormap(num_codes)
 
-    render_height = cell_height - bar_height
-    grid_width = grid_cols * cell_width
-    grid_height = grid_rows * cell_height
+    # Render frames for each code
+    code_frames_list: list[list[np.ndarray]] = []
 
-    logging.info(f"  Rendering community grid: {grid_rows}x{grid_cols}")
+    for code in codes_with_segments:
+        code_color = code_colors[code]
+        segments = code_to_segments[code]
 
-    # Pre-render all clips
-    rendered_clips: list[list[list[np.ndarray] | None]] = []
-    for comm_id in range(n_communities):
-        comm_renders = []
-        for result_idx, result in selected_clips[comm_id]:
-            if result is None or result.states is None:
-                comm_renders.append(None)
+        # Collect frames from segments (up to max_frames_per_code)
+        frames_to_render: list[tuple[int, int]] = []  # (rollout_idx, frame_idx)
+        for rollout_idx, start, end in segments:
+            for frame_idx in range(start, end):
+                frames_to_render.append((rollout_idx, frame_idx))
+                if len(frames_to_render) >= max_frames_per_code:
+                    break
+            if len(frames_to_render) >= max_frames_per_code:
+                break
+
+        # Group by rollout for efficient rendering
+        rollout_frame_map: dict[int, list[int]] = {}
+        for rollout_idx, frame_idx in frames_to_render:
+            if rollout_idx not in rollout_frame_map:
+                rollout_frame_map[rollout_idx] = []
+            rollout_frame_map[rollout_idx].append(frame_idx)
+
+        # Render frames
+        code_frames: list[np.ndarray] = []
+        for rollout_idx, frame_indices in rollout_frame_map.items():
+            states = all_rollout_states[rollout_idx]
+            # Render only the needed states
+            states_to_render = [states[i] for i in frame_indices if i < len(states)]
+            if not states_to_render:
                 continue
 
-            # Render this clip
-            states = result.states[:max_frames]
-            frames = env.render(states, camera=camera, height=render_height, width=cell_width)
+            rendered = env.render(
+                states_to_render, camera=camera, height=cell_height - 30, width=cell_width
+            )
 
-            # Add community bar to each frame
-            processed = []
-            indices = result.code_indices[:len(frames)]
-            for i, frame in enumerate(frames):
-                # Create cell with bar
-                cell = np.ones((cell_height, cell_width, 3), dtype=np.uint8) * 255
-                cell[:render_height, :] = frame
+            for i, frame in enumerate(rendered):
+                frame_idx = frame_indices[i]
+                # Add code label
+                frame = add_text_overlay(
+                    frame,
+                    f"Code {code}",
+                    position=(5, 5),
+                    font_size=14,
+                    bg_color=(int(code_color[0]), int(code_color[1]), int(code_color[2]), 220),
+                    text_color=(255, 255, 255) if sum(code_color) < 384 else (0, 0, 0),
+                    padding=4,
+                )
 
-                # Add community color bar
-                if i < len(indices):
-                    code_idx = int(indices[i])
-                    c_id = structure.code_to_community.get(code_idx, 0)
-                    color = community_colors[c_id]
-                    cell[render_height:, :] = color
+                # Add colored bar at bottom
+                bar = np.zeros((30, cell_width, 3), dtype=np.uint8)
+                bar[:] = code_color
+                combined = np.vstack([frame, bar])
+                code_frames.append(combined)
 
-                    # Add thin playhead
-                    playhead_x = int(i * cell_width / len(indices))
-                    cell[render_height:, max(0, playhead_x):min(cell_width, playhead_x + 2)] = [255, 255, 255]
+        code_frames_list.append(code_frames)
 
-                processed.append(cell)
+    if not any(code_frames_list):
+        logging.warning(f"Community {community_id}: No frames rendered")
+        return None
 
-            comm_renders.append(processed)
-        rendered_clips.append(comm_renders)
+    # Find max frames across codes
+    max_frames = max(len(frames) for frames in code_frames_list)
 
-    # Find max frames across all clips
-    all_frame_counts = []
-    for comm_renders in rendered_clips:
-        for clip_frames in comm_renders:
-            if clip_frames is not None:
-                all_frame_counts.append(len(clip_frames))
-
-    if not all_frame_counts:
-        logging.warning("No clips with states found for community grid")
-        return ""
-
-    total_frames = min(max(all_frame_counts), max_frames)
-
-    # Create placeholder for empty cells
-    empty_cell = np.ones((cell_height, cell_width, 3), dtype=np.uint8) * 220
-
-    # Add community labels to empty cells
-    for comm_id in range(n_communities):
-        label_img = Image.fromarray(empty_cell.copy())
-        draw = ImageDraw.Draw(label_img)
-        font = _get_font(24, bold=True)
-        text = f"Community {comm_id}"
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        x = (cell_width - text_width) // 2
-        draw.text((x, cell_height // 2 - 12), text, font=font, fill=(100, 100, 100))
+    # Calculate grid dimensions
+    padding = 4
+    grid_width = grid_cols * cell_width + (grid_cols - 1) * padding
+    grid_height = grid_rows * cell_height + (grid_rows - 1) * padding
 
     # Assemble grid frames
     grid_frames = []
-    for frame_idx in range(total_frames):
-        grid = np.ones((grid_height, grid_width, 3), dtype=np.uint8) * 255
+    for frame_idx in range(max_frames):
+        grid = np.ones((grid_height, grid_width, 3), dtype=np.uint8) * 40  # Dark bg
 
-        for row, comm_renders in enumerate(rendered_clips):
-            for col, clip_frames in enumerate(comm_renders):
-                y_start = row * cell_height
-                x_start = col * cell_width
+        for code_num, code_frames in enumerate(code_frames_list):
+            if not code_frames:
+                continue
 
-                if clip_frames is None:
-                    grid[y_start:y_start + cell_height, x_start:x_start + cell_width] = empty_cell
-                else:
-                    # Use last frame if past end
-                    fidx = min(frame_idx, len(clip_frames) - 1)
-                    grid[y_start:y_start + cell_height, x_start:x_start + cell_width] = clip_frames[fidx]
+            row = code_num // grid_cols
+            col = code_num % grid_cols
 
-        # Add row labels (community IDs)
-        grid_img = Image.fromarray(grid)
-        draw = ImageDraw.Draw(grid_img)
-        font = _get_font(18, bold=True)
+            # Use last frame if past end, or blank if no frames
+            if frame_idx < len(code_frames):
+                frame = code_frames[frame_idx]
+            else:
+                frame = code_frames[-1] if code_frames else np.zeros(
+                    (cell_height, cell_width, 3), dtype=np.uint8
+                )
 
-        for row in range(grid_rows):
-            y = row * cell_height + 5
-            color = tuple(community_colors[row])
-            draw.rounded_rectangle([5, y, 35, y + 22], radius=3, fill=color)
-            brightness = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
-            text_color = (0, 0, 0) if brightness > 128 else (255, 255, 255)
-            draw.text((10, y + 2), f"C{row}", font=font, fill=text_color)
+            y_start = row * (cell_height + padding)
+            x_start = col * (cell_width + padding)
 
-        grid_frames.append(np.array(grid_img))
+            grid[y_start:y_start + cell_height, x_start:x_start + cell_width] = frame
 
-    # Write video
+        grid_frames.append(grid)
+
+    # Add community label to all frames
+    community_color = COMMUNITY_COLORS[community_id % len(COMMUNITY_COLORS)]
+    for i, grid in enumerate(grid_frames):
+        grid_frames[i] = add_text_overlay(
+            grid,
+            f"Community {community_id} ({len(codes_with_segments)} codes)",
+            position=(10, grid_height - 35),
+            font_size=16,
+            bg_color=(int(community_color[0]), int(community_color[1]), int(community_color[2]), 220),
+            text_color=(255, 255, 255),
+            padding=5,
+        )
+
+    # Save video
     with imageio.get_writer(str(output_path), fps=fps) as writer:
         for frame in grid_frames:
             writer.append_data(frame)
 
-    logging.info(f"  Saved community grid video to {output_path}")
+    logging.info(
+        f"Community {community_id}: Saved gallery ({n_codes} codes, "
+        f"{max_frames} frames) to {output_path}"
+    )
     return str(output_path)
-
-
-def render_clips_from_qpos(
-    env: Any,
-    results: list["InferenceResult"],
-    output_dir: str | Path,
-    num_clips: int = 10,
-    camera: str | None = None,
-    width: int = 640,
-    height: int = 480,
-    fps: int = 50,
-    num_codes: int = 128,
-    code_to_community: dict[int, int] | None = None,
-    n_communities: int | None = None,
-) -> dict[str, str]:
-    """Render clips from qpos with code and community transition bars.
-
-    Args:
-        env: Environment with mj_model attribute.
-        results: List of InferenceResult with qpos and code_indices.
-        output_dir: Directory to save output videos.
-        num_clips: Number of clips to render.
-        camera: Camera name for rendering.
-        width: Video width.
-        height: Video height.
-        fps: Frames per second.
-        num_codes: Total number of codes.
-        code_to_community: Mapping from code index to community ID.
-        n_communities: Number of communities.
-
-    Returns:
-        Dictionary mapping output names to file paths.
-    """
-    import mujoco
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Get MuJoCo model and data from environment
-    mj_model = env.mj_model
-    mj_data = mujoco.MjData(mj_model)
-
-    # Set up renderer
-    bar_height = 40
-    render_height = height - bar_height
-    renderer = mujoco.Renderer(mj_model, height=render_height, width=width)
-
-    # Find camera ID
-    camera_id = -1
-    if camera is not None:
-        for i in range(mj_model.ncam):
-            cam_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, i)
-            if cam_name and camera in cam_name:
-                camera_id = i
-                break
-
-    # Get colormaps
-    code_colors = get_nature_colormap(num_codes)
-    community_colors = None
-    if n_communities is not None and n_communities > 0:
-        community_colors = get_community_colormap(n_communities)
-
-    paths = {}
-
-    # Select clips to render (first num_clips with valid qpos)
-    clips_to_render = []
-    for result in results:
-        if result.qpos is not None and len(result.qpos) > 0:
-            clips_to_render.append(result)
-        if len(clips_to_render) >= num_clips:
-            break
-
-    logging.info(f"Rendering {len(clips_to_render)} clips from qpos...")
-
-    for clip_num, result in enumerate(clips_to_render):
-        clip_idx = result.clip_idx
-        qpos_data = result.qpos
-        indices = result.code_indices
-
-        logging.info(f"  Clip {clip_num} (idx={clip_idx}): {len(qpos_data)} frames")
-
-        # Render frames from qpos
-        raw_frames = []
-        for qpos in qpos_data:
-            mj_data.qpos[:] = qpos[:mj_model.nq]
-            mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera=camera_id)
-            frame = renderer.render()
-            raw_frames.append(frame.copy())
-
-        # === Render with code bar ===
-        code_frames = []
-        for i, frame in enumerate(raw_frames):
-            # Create full frame with bar
-            full_frame = np.ones((height, width, 3), dtype=np.uint8) * 255
-            full_frame[:render_height, :] = frame
-
-            # Add code transition bar
-            full_frame = add_code_transition_bar(
-                full_frame,
-                current_frame_idx=i,
-                all_indices=indices,
-                code_colors=code_colors,
-                bar_height=bar_height,
-            )
-
-            # Add clip label
-            full_frame = add_text_overlay(
-                full_frame,
-                f"Clip {clip_idx}",
-                position=(10, 10),
-                font_size=18,
-            )
-
-            code_frames.append(full_frame)
-
-        # Save code video
-        code_path = output_dir / f"clip_{clip_idx:03d}_codes.mp4"
-        with imageio.get_writer(str(code_path), fps=fps) as writer:
-            for frame in code_frames:
-                writer.append_data(frame)
-        paths[f"clip_{clip_idx}_codes"] = str(code_path)
-        logging.info(f"    Saved {code_path}")
-
-        # === Render with community bar ===
-        if code_to_community is not None and community_colors is not None:
-            comm_frames = []
-            for i, frame in enumerate(raw_frames):
-                # Create full frame with bar
-                full_frame = np.ones((height, width, 3), dtype=np.uint8) * 255
-                full_frame[:render_height, :] = frame
-
-                # Add community transition bar
-                full_frame = add_community_transition_bar(
-                    full_frame,
-                    current_frame_idx=i,
-                    all_indices=indices,
-                    code_to_community=code_to_community,
-                    community_colors=community_colors,
-                    bar_height=bar_height,
-                )
-
-                # Add clip label
-                full_frame = add_text_overlay(
-                    full_frame,
-                    f"Clip {clip_idx}",
-                    position=(10, 10),
-                    font_size=18,
-                )
-
-                comm_frames.append(full_frame)
-
-            # Save community video
-            comm_path = output_dir / f"clip_{clip_idx:03d}_communities.mp4"
-            with imageio.get_writer(str(comm_path), fps=fps) as writer:
-                for frame in comm_frames:
-                    writer.append_data(frame)
-            paths[f"clip_{clip_idx}_communities"] = str(comm_path)
-            logging.info(f"    Saved {comm_path}")
-
-    renderer.close()
-    return paths
-
-
-def render_popular_code_videos(
-    env: Any,
-    results: list["InferenceResult"],
-    popular_codes: list[tuple[int, int]],
-    segments_by_code: dict[int, list[Any]],
-    output_dir: str | Path,
-    num_codes: int,
-    max_segments_per_code: int = 6,
-    min_segment_frames: int = 10,
-    cell_width: int = 200,
-    cell_height: int = 180,
-    camera: str | None = None,
-    fps: int = 50,
-) -> dict[int, str]:
-    """Render videos for most popular codes showing multiple segments side-by-side.
-
-    Creates grid videos where each column shows a different segment of the same code,
-    arranged by duration (longest segments first).
-
-    Args:
-        env: Environment with mj_model attribute for rendering.
-        results: List of InferenceResult with qpos and code_indices.
-        popular_codes: List of (code_idx, frame_count) tuples for popular codes.
-        segments_by_code: Dictionary mapping code_idx to list of CodeSegment.
-        output_dir: Directory to save videos.
-        num_codes: Total number of codes in codebook.
-        max_segments_per_code: Maximum segments to show per code video.
-        min_segment_frames: Minimum frames for segment inclusion.
-        cell_width: Width of each segment cell.
-        cell_height: Height of each segment cell (including code bar).
-        camera: Camera name for rendering.
-        fps: Frames per second.
-
-    Returns:
-        Dictionary mapping code_idx to video path.
-    """
-    import mujoco
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build a map from clip_idx to result for quick lookup
-    results_by_clip = {r.clip_idx: r for r in results}
-
-    # Get MuJoCo model and data from environment
-    mj_model = env.mj_model
-    mj_data = mujoco.MjData(mj_model)
-
-    # Set up renderer
-    code_bar_height = 30
-    render_height = cell_height - code_bar_height
-    renderer = mujoco.Renderer(mj_model, height=render_height, width=cell_width)
-
-    # Find camera ID
-    camera_id = -1
-    if camera is not None:
-        for i in range(mj_model.ncam):
-            cam_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, i)
-            if cam_name and camera in cam_name:
-                camera_id = i
-                break
-
-    code_colors = get_nature_colormap(num_codes)
-    output_paths: dict[int, str] = {}
-
-    for code_idx, frame_count in popular_codes:
-        segments = segments_by_code.get(code_idx, [])
-
-        # Filter by minimum frames
-        segments = [s for s in segments if s.duration >= min_segment_frames]
-        if len(segments) == 0:
-            logging.info(f"Code {code_idx}: no segments with >= {min_segment_frames} frames")
-            continue
-
-        # Sort by duration descending, take top N
-        segments = sorted(segments, key=lambda s: s.duration, reverse=True)
-        segments = segments[:max_segments_per_code]
-
-        logging.info(
-            f"Code {code_idx} ({frame_count} total frames): rendering {len(segments)} segments "
-            f"(max duration: {segments[0].duration})"
-        )
-
-        # Find max duration for this code's segments
-        max_duration = max(s.duration for s in segments)
-        num_cols = len(segments)
-
-        # Pre-render all segment frames from qpos
-        segment_frames: list[list[np.ndarray]] = []
-
-        for seg in segments:
-            result = results_by_clip.get(seg.clip_idx)
-            if result is None or result.qpos is None:
-                logging.warning(
-                    f"Missing qpos for clip {seg.clip_idx}, skipping segment"
-                )
-                segment_frames.append([])
-                continue
-
-            # Extract qpos for this segment
-            segment_qpos = result.qpos[seg.start_frame : seg.end_frame]
-
-            # Render frames from qpos
-            frames = []
-            for qpos in segment_qpos:
-                mj_data.qpos[:] = qpos[: mj_model.nq]
-                mujoco.mj_forward(mj_model, mj_data)
-                renderer.update_scene(mj_data, camera=camera_id)
-                frame = renderer.render()
-                frames.append(frame.copy())
-
-            # Add segment label overlay to first frame
-            if len(frames) > 0:
-                label = f"clip {seg.clip_idx} | {seg.duration}f"
-                frames[0] = add_text_overlay(
-                    frames[0],
-                    label,
-                    position=(5, 5),
-                    font_size=10,
-                    bg_color=(0, 0, 0, 180),
-                    text_color=(255, 255, 255),
-                    padding=3,
-                )
-
-            segment_frames.append(frames)
-
-        if all(len(f) == 0 for f in segment_frames):
-            logging.warning(f"No valid segments rendered for code {code_idx}")
-            continue
-
-        # Assemble grid video
-        grid_width = num_cols * cell_width + (num_cols - 1) * 2
-        grid_height = cell_height
-
-        video_frames = []
-        for frame_idx in range(max_duration):
-            # Create grid frame with white background
-            grid = np.ones((grid_height, grid_width, 3), dtype=np.uint8) * 255
-
-            for col, frames in enumerate(segment_frames):
-                if len(frames) == 0:
-                    continue
-
-                # Use last frame if past end
-                f_idx = min(frame_idx, len(frames) - 1)
-                frame = frames[f_idx]
-
-                # Create cell with padded content and code bar
-                cell = np.ones((cell_height, cell_width, 3), dtype=np.uint8) * 255
-
-                # Copy rendered frame to top portion
-                h, w = frame.shape[:2]
-                cell[:min(h, render_height), :min(w, cell_width)] = frame[:min(h, render_height), :min(w, cell_width)]
-
-                # Add code bar at bottom
-                bar = np.zeros((code_bar_height, cell_width, 3), dtype=np.uint8)
-                bar[:] = code_colors[code_idx]
-
-                # Add progress indicator
-                total_frames = len(frames)
-                progress = int((f_idx / max(total_frames - 1, 1)) * cell_width)
-                bar[:, max(0, progress - 1) : min(cell_width, progress + 2)] = 255
-
-                cell[render_height:, :] = bar
-
-                x_start = col * (cell_width + 2)
-                grid[:, x_start : x_start + cell_width] = cell
-
-            video_frames.append(grid)
-
-        # Write video
-        video_path = output_dir / f"code_{code_idx}_popular.mp4"
-        with imageio.get_writer(str(video_path), fps=fps) as writer:
-            for frame in video_frames:
-                writer.append_data(frame)
-
-        output_paths[code_idx] = str(video_path)
-        logging.info(f"  Saved {video_path.name}")
-
-    renderer.close()
-    return output_paths

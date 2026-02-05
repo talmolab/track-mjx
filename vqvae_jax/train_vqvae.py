@@ -76,7 +76,8 @@ def vq_rollout_logging_fn(
     """Rollout logging with VQ-VAE specific metrics and code visualization.
 
     Wraps the standard rollout logging to add codebook usage metrics and
-    renders video with code transition timeline overlay.
+    renders video with code transition timeline overlay. Runs multiple rollouts
+    to compute aggregated transition statistics.
     """
     import jax.numpy as jnp
     import numpy as np
@@ -96,60 +97,78 @@ def vq_rollout_logging_fn(
     )
     episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
 
-    # Run standard rollout
+    # Number of rollouts to run for transition matrix aggregation
+    n_rollouts = cfg.render_config.get("eval_rollouts_for_transition", 16)
+
+    # Run multiple rollouts
     key = policy_params_fn_key
-    state = jit_reset(key)
+    all_rollout_indices: list[np.ndarray] = []
+    all_rollout_qpos: list[np.ndarray] = []
+    all_rollout_states: list[list] = []
+    all_rollout_z_e: list[list] = []
+    all_rollout_rewards: list[list] = []
 
-    rollout_states = [state]
-    all_indices = []
-    all_z_e = []
-    all_rewards = []
-
-    # Track previous indices for stickiness bias during evaluation
-    # This ensures eval behavior matches training behavior
-    prev_indices = None
-
-    # Collect rollout
-    for _ in range(episode_length):
+    for rollout_i in range(n_rollouts):
         key, subkey = jax.random.split(key)
-        # Pass prev_indices to apply stickiness bias during evaluation
-        action, extras = jit_logging_inference_fn(params, state.obs, subkey, prev_indices)
+        state = jit_reset(subkey)
 
-        # Collect VQ-specific data
-        # VQ-VAE logging inference returns z_e and indices directly
-        if "indices" in extras:
-            curr_indices = extras["indices"]
-            all_indices.append(curr_indices)
-            # Update prev_indices for next timestep (enables stickiness bias)
-            prev_indices = curr_indices
-        elif "latent_logvar" in extras:
-            # Fallback: ppo.py uses ppo_networks.make_logging_inference_fn which returns
-            # VAE-style keys. For VQ-VAE: indices stored as "latent_logvar" due to API mismatch.
-            curr_indices = extras["latent_logvar"]
-            all_indices.append(curr_indices)
-            prev_indices = curr_indices
+        rollout_states = [state]
+        rollout_indices = []
+        rollout_qpos = []
+        rollout_z_e = []
+        rollout_rewards = []
+        prev_indices = None
 
-        if "z_e" in extras:
-            all_z_e.append(extras["z_e"])
-        elif "latent_mean" in extras:
-            # Fallback for VAE-style API
-            all_z_e.append(extras["latent_mean"])
+        for _ in range(episode_length):
+            key, subkey = jax.random.split(key)
+            action, extras = jit_logging_inference_fn(
+                params, state.obs, subkey, prev_indices
+            )
 
-        state = jit_step(state, action)
-        rollout_states.append(state)
-        all_rewards.append(float(state.reward))
+            # Collect VQ-specific data
+            if "indices" in extras:
+                curr_indices = extras["indices"]
+                rollout_indices.append(int(curr_indices))
+                prev_indices = curr_indices
+            elif "latent_logvar" in extras:
+                curr_indices = extras["latent_logvar"]
+                rollout_indices.append(int(curr_indices))
+                prev_indices = curr_indices
 
-        if state.done:
-            # Reset prev_indices on episode boundary
-            prev_indices = None
-            break
+            if "z_e" in extras:
+                rollout_z_e.append(extras["z_e"])
+            elif "latent_mean" in extras:
+                rollout_z_e.append(extras["latent_mean"])
 
-    # Convert indices to numpy array
-    indices_array = None
-    if all_indices:
-        indices_array = np.array([int(idx) for idx in all_indices])
+            # Collect qpos from state (handle both data and pipeline_state)
+            if hasattr(state, "data"):
+                rollout_qpos.append(np.array(state.data.qpos))
+            elif hasattr(state, "pipeline_state"):
+                rollout_qpos.append(np.array(state.pipeline_state.q))
 
-        # Log VQ metrics
+            state = jit_step(state, action)
+            rollout_states.append(state)
+            rollout_rewards.append(float(state.reward))
+
+            if state.done:
+                prev_indices = None
+                break
+
+        all_rollout_indices.append(np.array(rollout_indices))
+        if rollout_qpos:
+            all_rollout_qpos.append(np.stack(rollout_qpos))
+        all_rollout_states.append(rollout_states)
+        all_rollout_z_e.append(rollout_z_e)
+        all_rollout_rewards.append(rollout_rewards)
+
+    # Use first rollout for single-rollout metrics and video rendering
+    indices_array = all_rollout_indices[0] if all_rollout_indices else None
+    rollout_states = all_rollout_states[0] if all_rollout_states else []
+    all_z_e = all_rollout_z_e[0] if all_rollout_z_e else []
+    all_rewards = all_rollout_rewards[0] if all_rollout_rewards else []
+
+    if indices_array is not None and len(indices_array) > 0:
+        # Log VQ metrics from first rollout
         indices_jnp = jnp.array(indices_array)
         perplexity, utilization, codes_used = compute_codebook_metrics(
             indices_jnp, num_codes
@@ -163,7 +182,7 @@ def vq_rollout_logging_fn(
             commit=False,
         )
 
-        # Compute transition rate for this rollout
+        # Compute transition rate for first rollout
         code_transitions = np.sum(indices_array[1:] != indices_array[:-1])
         transition_rate = code_transitions / max(len(indices_array) - 1, 1)
         wandb.log(
@@ -225,6 +244,31 @@ def vq_rollout_logging_fn(
         table_data = [[int(t), int(c)] for t, c in enumerate(indices_array)]
         table = wandb.Table(columns=["timestep", "code_index"], data=table_data)
         wandb.log({"vq/code_sequence_table": table}, commit=False)
+
+    # Build aggregated transition matrix from ALL rollouts
+    if len(all_rollout_indices) > 0:
+        trans_counts = np.zeros((num_codes, num_codes), dtype=np.int64)
+        for indices in all_rollout_indices:
+            for t in range(len(indices) - 1):
+                trans_counts[indices[t], indices[t + 1]] += 1
+
+        row_sums = trans_counts.sum(axis=1, keepdims=True)
+        trans_probs = np.where(row_sums > 0, trans_counts / row_sums, 0.0)
+
+        # Log aggregated transition matrix heatmap
+        fig, ax = plt.subplots(figsize=(10, 8))
+        im = ax.imshow(trans_probs, cmap="viridis")
+        ax.set_xlabel("To Code")
+        ax.set_ylabel("From Code")
+        ax.set_title(f"Transition Matrix ({n_rollouts} rollouts)")
+        plt.colorbar(im, ax=ax)
+        plt.tight_layout()
+        wandb.log({"vq/eval_transition_matrix": wandb.Image(fig)}, commit=False)
+        plt.close(fig)
+
+        # Log total transition count
+        total_transitions = int(trans_counts.sum())
+        wandb.log({"vq/eval_total_transitions": total_transitions}, commit=False)
 
     if all_z_e:
         z_e = jnp.stack(all_z_e)
@@ -315,86 +359,6 @@ def vq_rollout_logging_fn(
                 commit=False,
             )
 
-    # Community analysis for large codebooks (runs every eval, like PCA)
-    # Graphs and metrics logged here; video rendering happens with regular videos below
-    enable_community_viz = cfg.render_config.get("enable_community_viz", True)
-    code_to_community = None  # Will be set if community analysis runs
-    n_communities = 0
-
-    if enable_community_viz and num_codes > 32 and indices_array is not None and len(indices_array) > 10:
-        try:
-            from analysis.transition_analysis import compute_transition_matrix
-            from analysis.community_analysis import (
-                discover_communities,
-                compute_soft_membership,
-                identify_overlapping_codes,
-                compute_modularity,
-                compute_coarsened_transitions,
-            )
-            from analysis.rendering import get_community_colormap
-            from analysis.inference_cache import InferenceResult
-
-            logging.info("Running community analysis for large codebook...")
-
-            # Create a single InferenceResult for this rollout
-            temp_result = InferenceResult(
-                clip_idx=0,
-                code_indices=indices_array,
-                qpos=np.zeros((len(indices_array), 1)),
-                qvel=np.zeros((len(indices_array), 1)),
-                rewards=np.array(all_rewards),
-                states=rollout_states,
-            )
-
-            # Compute transition matrix from this rollout
-            trans_counts, trans_probs = compute_transition_matrix([temp_result], num_codes)
-
-            # Discover communities
-            labels, embedding, centroids = discover_communities(trans_probs)
-            n_communities = len(np.unique(labels))
-
-            # Compute soft membership
-            membership_probs = compute_soft_membership(embedding, centroids)
-            overlapping_codes, overlap_stats = identify_overlapping_codes(membership_probs)
-
-            # Compute modularity
-            modularity = compute_modularity(trans_probs, labels)
-
-            # Compute coarsened transitions
-            coarsened = compute_coarsened_transitions(trans_probs, membership_probs, n_communities)
-
-            # Build code_to_community mapping (used for video rendering below)
-            code_to_community = {int(i): int(labels[i]) for i in range(num_codes)}
-
-            # Log community metrics (every eval)
-            wandb.log({
-                "community/n_communities": n_communities,
-                "community/modularity": float(modularity),
-                "community/n_overlapping_codes": len(overlapping_codes),
-                "community/overlap_fraction": len(overlapping_codes) / num_codes,
-            }, commit=False)
-
-            # Log coarsened transition matrix (every eval)
-            community_colors = get_community_colormap(n_communities)
-            fig, ax = plt.subplots(figsize=(8, 6))
-            im = ax.imshow(coarsened, cmap="Blues")
-            ax.set_xlabel("To Community")
-            ax.set_ylabel("From Community")
-            ax.set_title(f"Community Transition Matrix ({n_communities} communities)")
-            ax.set_xticks(range(n_communities))
-            ax.set_yticks(range(n_communities))
-            ax.set_xticklabels([f"C{i}" for i in range(n_communities)])
-            ax.set_yticklabels([f"C{i}" for i in range(n_communities)])
-            plt.colorbar(im, ax=ax, label="Probability")
-            plt.tight_layout()
-            wandb.log({"community/transition_matrix": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
-
-            logging.info(f"Community analysis: {n_communities} communities, modularity={modularity:.3f}")
-
-        except Exception as e:
-            logging.warning(f"Failed to run community analysis: {e}")
-
     # Render video with code overlay (runs every render_interval evals)
     if render_video:
         import mujoco
@@ -456,30 +420,129 @@ def vq_rollout_logging_fn(
                 except Exception as e:
                     logging.warning(f"Failed to render per-code videos: {e}")
 
-            # Render community video (same frequency as regular video)
-            if code_to_community is not None and n_communities > 0:
+            # Conditional transition analysis (runs at render_interval)
+            if len(all_rollout_indices) > 0 and len(all_rollout_qpos) > 0:
                 try:
-                    from analysis.rendering import render_rollout_with_community_bar
-
-                    community_video_path = f"{model_path}/{current_step}_community.mp4"
-                    render_rollout_with_community_bar(
-                        env=env,
-                        rollout_states=rollout_states,
-                        output_path=community_video_path,
-                        indices=indices_array,
-                        code_to_community=code_to_community,
-                        n_communities=n_communities,
-                        camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
-                        width=640,
-                        height=480,
-                        fps=render_fps,
+                    from analysis.conditional_logging import (
+                        find_matching_rollouts_by_starting_pose,
+                        compute_conditional_transition_matrix,
+                        detect_communities_from_transitions,
                     )
-                    wandb.log({
-                        "videos/rollout_community": wandb.Video(community_video_path, format="mp4")
-                    }, commit=False)
+
+                    # Pick random reference from the rollouts
+                    key, ref_key = jax.random.split(key)
+                    ref_rollout_idx = int(
+                        jax.random.randint(ref_key, (), 0, len(all_rollout_qpos))
+                    )
+                    reference_qpos_0 = all_rollout_qpos[ref_rollout_idx][0]
+
+                    # Find matching rollouts by starting pose
+                    matched_indices, distances = find_matching_rollouts_by_starting_pose(
+                        all_rollout_qpos,
+                        reference_qpos_0,
+                        threshold=0.05,
+                    )
+
+                    wandb.log(
+                        {
+                            "conditional/n_matched_rollouts": len(matched_indices),
+                            "conditional/ref_rollout_idx": ref_rollout_idx,
+                        },
+                        commit=False,
+                    )
+
+                    if len(matched_indices) >= 3:
+                        # Compute conditional transition matrix
+                        cond_counts, cond_probs = compute_conditional_transition_matrix(
+                            all_rollout_indices,
+                            matched_indices,
+                            num_codes,
+                        )
+
+                        # Log conditional transition matrix heatmap
+                        fig, ax = plt.subplots(figsize=(10, 8))
+                        im = ax.imshow(cond_probs, cmap="viridis")
+                        ax.set_xlabel("To Code")
+                        ax.set_ylabel("From Code")
+                        ax.set_title(
+                            f"Conditional Transitions ({len(matched_indices)} matched)"
+                        )
+                        plt.colorbar(im, ax=ax)
+                        plt.tight_layout()
+                        wandb.log(
+                            {"conditional/transition_matrix": wandb.Image(fig)},
+                            commit=False,
+                        )
+                        plt.close(fig)
+
+                        # Detect communities from conditional transitions
+                        labels, n_communities, code_to_community = (
+                            detect_communities_from_transitions(cond_probs)
+                        )
+                        wandb.log(
+                            {"conditional/n_communities": n_communities}, commit=False
+                        )
+
+                        # Log code-to-community mapping for debugging
+                        community_to_codes = {}
+                        for code, comm in code_to_community.items():
+                            if comm not in community_to_codes:
+                                community_to_codes[comm] = []
+                            community_to_codes[comm].append(code)
+
+                        for comm_id, codes in community_to_codes.items():
+                            logging.info(
+                                f"Community {comm_id}: {len(codes)} codes - {sorted(codes)[:10]}..."
+                            )
+
+                        # Render community gallery showing frames per code
+                        from analysis.rendering import render_community_gallery
+
+                        min_segment_length = cfg.render_config.get(
+                            "min_segment_length", 20
+                        )
+
+                        for comm_id in range(min(n_communities, 8)):
+                            comm_codes = [
+                                c
+                                for c, comm in code_to_community.items()
+                                if comm == comm_id
+                            ]
+                            if not comm_codes:
+                                continue
+
+                            comm_video_path = (
+                                f"{model_path}/cond_comm_{comm_id}_{current_step}.mp4"
+                            )
+
+                            video_path = render_community_gallery(
+                                env=env,
+                                all_rollout_states=all_rollout_states,
+                                all_rollout_indices=all_rollout_indices,
+                                community_codes=comm_codes,
+                                community_id=comm_id,
+                                output_path=comm_video_path,
+                                camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
+                                cell_width=320,
+                                cell_height=240,
+                                fps=render_fps,
+                                min_segment_length=min_segment_length,
+                                max_codes_per_row=4,
+                                num_codes=num_codes,
+                            )
+
+                            if video_path:
+                                wandb.log(
+                                    {
+                                        f"conditional/community_{comm_id}_video": wandb.Video(
+                                            video_path, format="mp4"
+                                        )
+                                    },
+                                    commit=False,
+                                )
 
                 except Exception as e:
-                    logging.warning(f"Failed to render community video: {e}")
+                    logging.warning(f"Conditional analysis failed: {e}")
 
         except mujoco.FatalError as e:
             logging.warning(f"Rendering video failed with MuJoCo error: {e}")

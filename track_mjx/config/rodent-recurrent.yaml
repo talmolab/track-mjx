@@ -153,7 +153,7 @@ train_setup:
     vf_loss_coefficient: 0.25
     reward_scaling: 1
     normalize_observations: true
-    unroll_length: 64                     # Longer unrolls for temporal learning
+    unroll_length: 16                     # Longer unrolls for temporal learning
     seed: 0
     deterministic_eval: true
 

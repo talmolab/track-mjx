@@ -593,6 +593,66 @@ def build_decomposition_trees(
     return trees
 
 
+def _compute_boundary_overlap(seq_a: tuple[int, ...], seq_b: tuple[int, ...]) -> int:
+    """Compute max contiguous overlap at boundaries between two sequences.
+
+    Checks if a suffix of seq_a matches a prefix of seq_b (or vice versa).
+
+    Returns:
+        Length of the longest boundary overlap.
+    """
+    max_overlap = 0
+    n = min(len(seq_a), len(seq_b))
+    # Check seq_a suffix == seq_b prefix
+    for offset in range(1, n):
+        if seq_a[offset:] == seq_b[: len(seq_a) - offset]:
+            max_overlap = max(max_overlap, len(seq_a) - offset)
+    # Check seq_b suffix == seq_a prefix
+    for offset in range(1, n):
+        if seq_b[offset:] == seq_a[: len(seq_b) - offset]:
+            max_overlap = max(max_overlap, len(seq_b) - offset)
+    return max_overlap
+
+
+def filter_distinct_sequences(
+    trees: dict[int, list[DecompositionNode]],
+    max_overlap: int = 2,
+) -> dict[int, list[DecompositionNode]]:
+    """Filter sequences per k level to remove shifted duplicates.
+
+    Uses greedy selection: iterates by popularity (descending) and keeps
+    a sequence only if its boundary overlap with all already-selected
+    sequences is <= max_overlap codes.
+
+    Args:
+        trees: Decomposition trees (sorted by occurrence count descending).
+        max_overlap: Maximum allowed boundary overlap in number of codes.
+            E.g., max_overlap=2 means two sequences can share at most 2
+            codes at their boundary before the less popular one is dropped.
+
+    Returns:
+        Filtered trees with same structure.
+    """
+    filtered: dict[int, list[DecompositionNode]] = {}
+
+    for k, nodes in trees.items():
+        selected: list[DecompositionNode] = []
+        for node in nodes:
+            is_distinct = True
+            for existing in selected:
+                overlap = _compute_boundary_overlap(
+                    node.code_sequence, existing.code_sequence
+                )
+                if overlap > max_overlap:
+                    is_distinct = False
+                    break
+            if is_distinct:
+                selected.append(node)
+        filtered[k] = selected
+
+    return filtered
+
+
 def select_top_sequences(
     index: dict[int, dict[tuple[int, ...], list[TransitionSequence]]],
     top_n: int,
@@ -651,11 +711,39 @@ def _get_code_color(code: int, num_codes: int) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def _videos_to_html(
+    videos: list[dict[str, Any]],
+) -> str:
+    """Render a list of video entries as an HTML flex row.
+
+    Each entry has keys: "b64" (data URL), "clip_idx" (int).
+    """
+    if not videos:
+        return ""
+    items = []
+    for v in videos:
+        src = v.get("b64", "")
+        clip_idx = v.get("clip_idx", "?")
+        if not src:
+            continue
+        items.append(
+            f'<div class="video-cell">'
+            f'<div class="video-label">Clip {clip_idx}</div>'
+            f'<video class="node-video" controls loop muted playsinline '
+            f'width="280" height="210"><source src="{src}" '
+            f'type="video/mp4"></video>'
+            f"</div>"
+        )
+    if not items:
+        return ""
+    return f'<div class="video-row">{"".join(items)}</div>'
+
+
 def _node_to_html(
     node: DecompositionNode,
     num_codes: int,
     depth: int = 0,
-    videos_b64: dict[tuple[int, ...], str] | None = None,
+    videos_b64: dict[tuple[int, ...], list[dict[str, Any]]] | None = None,
 ) -> str:
     """Recursively render a DecompositionNode as HTML.
 
@@ -663,7 +751,8 @@ def _node_to_html(
         node: The decomposition node.
         num_codes: Total number of codes (for coloring).
         depth: Current recursion depth.
-        videos_b64: Optional dict mapping code_sequence to base64 video data URL.
+        videos_b64: Optional dict mapping code_sequence to list of
+            {"b64": str, "clip_idx": int} dicts.
 
     Returns:
         HTML string for this node and its children.
@@ -686,16 +775,10 @@ def _node_to_html(
         f'<span class="stat">pairs={node.n_determinism_pairs}</span>'
     )
 
-    # Video element if available
+    # Video elements if available
     video_html = ""
     if videos_b64 and node.code_sequence in videos_b64:
-        src = videos_b64[node.code_sequence]
-        if src:
-            video_html = (
-                f'<video class="node-video" controls loop muted playsinline '
-                f'width="320" height="240"><source src="{src}" '
-                f'type="video/mp4"></video>'
-            )
+        video_html = _videos_to_html(videos_b64[node.code_sequence])
 
     # Children
     children_html = ""
@@ -748,7 +831,7 @@ def generate_code_tree_html(
     summary: dict[str, Any],
     top_n: int,
     output_path: str | Path,
-    videos_b64: dict[tuple[int, ...], str] | None = None,
+    videos_b64: dict[tuple[int, ...], list[dict[str, Any]]] | None = None,
 ) -> str:
     """Generate the full HTML page for the compositional tree viewer.
 
@@ -758,7 +841,8 @@ def generate_code_tree_html(
         summary: Determinism summary from summarize_determinism().
         top_n: Number of sequences to show per k level.
         output_path: Path to save the HTML file.
-        videos_b64: Optional dict of base64 video data URLs.
+        videos_b64: Optional dict mapping code_sequence to list of
+            {"b64": str, "clip_idx": int} video entries.
 
     Returns:
         Path to the saved HTML file.
@@ -950,8 +1034,24 @@ h2 {{
     margin-bottom: 2px;
     font-style: italic;
 }}
-.node-video {{
+.video-row {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
     margin-top: 8px;
+}}
+.video-cell {{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}}
+.video-label {{
+    font-size: 0.75em;
+    color: #90caf9;
+    margin-bottom: 4px;
+    font-weight: 600;
+}}
+.node-video {{
     border-radius: 8px;
     border: 1px solid rgba(255,255,255,0.1);
 }}
@@ -973,18 +1073,39 @@ h2 {{
 {k_contents}
 
 <script>
+function playVisibleVideos(container) {{
+    var videos = (container || document).querySelectorAll('video');
+    videos.forEach(function(v) {{
+        // Only play if the video's nearest .k-content or .children ancestor is visible
+        if (v.offsetParent !== null) {{
+            v.play().catch(function() {{}});
+        }}
+    }});
+}}
+
+function pauseVideos(container) {{
+    var videos = (container || document).querySelectorAll('video');
+    videos.forEach(function(v) {{
+        v.pause();
+    }});
+}}
+
 function toggleNode(childId, btn) {{
     var el = document.getElementById(childId);
     if (el.style.display === 'none' || el.style.display === '') {{
         el.style.display = 'block';
         btn.textContent = '[-]';
+        playVisibleVideos(el);
     }} else {{
+        pauseVideos(el);
         el.style.display = 'none';
         btn.textContent = '[+]';
     }}
 }}
 
 function showK(k) {{
+    // Pause all videos first
+    pauseVideos(document);
     // Hide all k-contents
     document.querySelectorAll('.k-content').forEach(function(el) {{
         el.style.display = 'none';
@@ -995,7 +1116,10 @@ function showK(k) {{
     }});
     // Show selected
     var content = document.getElementById('content-' + k);
-    if (content) content.style.display = 'block';
+    if (content) {{
+        content.style.display = 'block';
+        playVisibleVideos(content);
+    }}
     var tab = document.getElementById('tab-' + k);
     if (tab) tab.classList.add('active');
 }}
@@ -1061,11 +1185,13 @@ def render_subsequence_video(
         return None
 
     try:
-        from .rendering import get_nature_colormap
+        from .rendering import add_text_overlay, get_nature_colormap
 
         code_colors = get_nature_colormap(num_codes)
+        has_overlay = True
     except ImportError:
         code_colors = None
+        has_overlay = False
 
     bar_height = 30
 
@@ -1087,6 +1213,7 @@ def render_subsequence_video(
         sub_qpos = result.qpos[seq.start_frame : seq.end_frame]
         sub_indices = result.code_indices[seq.start_frame : seq.end_frame]
         n_frames = len(sub_qpos)
+        clip_label = f"Clip {result.clip_idx}"
 
         frames = []
         for i in range(n_frames):
@@ -1097,7 +1224,17 @@ def render_subsequence_video(
                 renderer.update_scene(mj_data, camera=cam_id)
             else:
                 renderer.update_scene(mj_data)
-            render_frame = renderer.render()
+            render_frame = renderer.render().copy()
+
+            # Add clip label to top-right of render area
+            if has_overlay:
+                label_x = max(width - 120, 10)
+                render_frame = add_text_overlay(
+                    render_frame,
+                    clip_label,
+                    position=(label_x, 8),
+                    font_size=16,
+                )
 
             # Build full frame with code timeline bar
             full_frame = np.ones((height, width, 3), dtype=np.uint8) * 40
@@ -1253,8 +1390,11 @@ def run_compositional_transition_analysis(
     max_k = cfg.get("max_k", 8)
     grace_window = cfg.get("grace_window", 10)
     qpos_threshold = cfg.get("qpos_threshold", 0.05)
-    top_n = cfg.get("top_n_sequences", 20)
+    top_n = cfg.get("top_n_sequences", 3)
     render_videos = cfg.get("render_videos", False)
+    max_examples = cfg.get("max_examples", 5)
+    max_child_examples = cfg.get("max_child_examples", 3)
+    max_overlap = cfg.get("max_overlap", 2)
 
     # Select clips
     selected = list(results[:num_clips])
@@ -1286,46 +1426,93 @@ def run_compositional_transition_analysis(
     logging.info("  Building decomposition trees...")
     trees = build_decomposition_trees(index, pairs, min_k, max_k)
 
+    # Filter shifted duplicates
+    logging.info(f"  Filtering overlapping sequences (max_overlap={max_overlap})...")
+    trees = filter_distinct_sequences(trees, max_overlap=max_overlap)
+
     for k in sorted(trees.keys()):
         n_total = len(trees[k])
         n_composable = sum(1 for n in trees[k] if not n.is_leaf)
-        logging.info(f"    k={k}: {n_total} sequences, {n_composable} decomposable")
+        logging.info(
+            f"    k={k}: {n_total} distinct sequences, " f"{n_composable} decomposable"
+        )
 
     # Render videos if enabled
-    videos_b64: dict[tuple[int, ...], str] | None = None
+    videos_b64: dict[tuple[int, ...], list[dict[str, Any]]] | None = None
     if render_videos and env is not None:
         logging.info("  Rendering example videos...")
         videos_b64 = {}
         video_dir = output_dir / "videos"
         video_dir.mkdir(parents=True, exist_ok=True)
+        video_count = 0
+
+        def _render_examples(
+            code_seq: tuple[int, ...],
+            k_level: int,
+            n_examples: int,
+        ) -> None:
+            """Render up to n_examples videos for a code sequence."""
+            nonlocal video_count
+            if code_seq in videos_b64:
+                return  # Already rendered
+            if code_seq not in index.get(k_level, {}):
+                return
+
+            occurrences = index[k_level][code_seq]
+            # Pick examples from distinct clips
+            seen_clips: set[int] = set()
+            entries: list[dict[str, Any]] = []
+
+            for occ in occurrences:
+                if occ.clip_idx in seen_clips:
+                    continue
+                clip_result = results_by_clip.get(occ.clip_idx)
+                if clip_result is None:
+                    continue
+
+                seq_name = "_".join(str(c) for c in code_seq)
+                vid_idx = len(entries)
+                video_path = video_dir / f"k{k_level}_{seq_name}_ex{vid_idx}.mp4"
+                result_path = render_subsequence_video(
+                    env=env,
+                    result=clip_result,
+                    seq=occ,
+                    output_path=video_path,
+                    num_codes=num_codes,
+                    camera=camera,
+                    width=width,
+                    height=height,
+                    fps=fps,
+                )
+                if result_path:
+                    entries.append(
+                        {
+                            "b64": video_to_base64(result_path),
+                            "clip_idx": occ.clip_idx,
+                        }
+                    )
+                    video_count += 1
+                    seen_clips.add(occ.clip_idx)
+
+                if len(entries) >= n_examples:
+                    break
+
+            if entries:
+                videos_b64[code_seq] = entries
+
+        def _render_tree_recursive(node: "DecompositionNode", is_root: bool) -> None:
+            """Recursively render videos for a node and all its children."""
+            n_ex = max_examples if is_root else max_child_examples
+            _render_examples(node.code_sequence, node.k, n_ex)
+            if node.children:
+                for child in node.children:
+                    _render_tree_recursive(child, is_root=False)
 
         for k in sorted(trees.keys()):
             for node in trees[k][:top_n]:
-                code_seq = node.code_sequence
-                # Find the first occurrence to render
-                if code_seq in index[k] and index[k][code_seq]:
-                    seq = index[k][code_seq][0]
-                    clip_result = results_by_clip.get(seq.clip_idx)
-                    if clip_result is None:
-                        continue
+                _render_tree_recursive(node, is_root=True)
 
-                    seq_name = "_".join(str(c) for c in code_seq)
-                    video_path = video_dir / f"k{k}_{seq_name}.mp4"
-                    result_path = render_subsequence_video(
-                        env=env,
-                        result=clip_result,
-                        seq=seq,
-                        output_path=video_path,
-                        num_codes=num_codes,
-                        camera=camera,
-                        width=width,
-                        height=height,
-                        fps=fps,
-                    )
-                    if result_path:
-                        videos_b64[code_seq] = video_to_base64(result_path)
-
-        logging.info(f"  Rendered {len(videos_b64)} videos")
+        logging.info(f"  Rendered {video_count} videos total")
 
     # Generate HTML viewer
     html_path = output_dir / "compositional_tree.html"
@@ -1339,7 +1526,7 @@ def run_compositional_transition_analysis(
     )
 
     # Save JSON summary
-    json_summary = {
+    json_summary: dict[str, Any] = {
         "determinism": summary,
         "composition": {},
     }

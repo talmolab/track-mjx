@@ -433,13 +433,19 @@ def train(
             # Update the 'state' proprioception stats with frozen values
             new_mean = normalizer_params.mean.copy()
             new_mean["state"] = normalizer_params.mean["state"].copy()
-            new_mean["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.mean
+            new_mean["state"][
+                "proprioception"
+            ] = frozen_proprioceptive_normalizer_params.mean
             new_std = normalizer_params.std.copy()
             new_std["state"] = normalizer_params.std["state"].copy()
-            new_std["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.std
+            new_std["state"][
+                "proprioception"
+            ] = frozen_proprioceptive_normalizer_params.std
             new_summed_var = normalizer_params.summed_variance.copy()
             new_summed_var["state"] = normalizer_params.summed_variance["state"].copy()
-            new_summed_var["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.summed_variance
+            new_summed_var["state"][
+                "proprioception"
+            ] = frozen_proprioceptive_normalizer_params.summed_variance
             normalizer_params = running_statistics.RunningStatisticsState(
                 count=normalizer_params.count,
                 mean=new_mean,
@@ -672,25 +678,35 @@ def train(
             # New pytree-based format: normalizer has nested structure
             # mean['state']['proprioception'], etc.
             state_normalizer = normalizer_select(loaded_normalizer_params, "state")
-            frozen_proprioceptive_normalizer_params = running_statistics.RunningStatisticsState(
-                count=state_normalizer.count,
-                mean=state_normalizer.mean["proprioception"],
-                summed_variance=state_normalizer.summed_variance["proprioception"],
-                std=state_normalizer.std["proprioception"],
-                std_eps=state_normalizer.std_eps,
-                mode=state_normalizer.mode,
+            frozen_proprioceptive_normalizer_params = (
+                running_statistics.RunningStatisticsState(
+                    count=state_normalizer.count,
+                    mean=state_normalizer.mean["proprioception"],
+                    summed_variance=state_normalizer.summed_variance["proprioception"],
+                    std=state_normalizer.std["proprioception"],
+                    std_eps=state_normalizer.std_eps,
+                    mode=state_normalizer.mode,
+                )
             )
 
             # Update training state with frozen proprioception normalizer
             new_mean = training_state.normalizer_params.mean.copy()
             new_mean["state"] = training_state.normalizer_params.mean["state"].copy()
-            new_mean["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.mean
+            new_mean["state"][
+                "proprioception"
+            ] = frozen_proprioceptive_normalizer_params.mean
             new_std = training_state.normalizer_params.std.copy()
             new_std["state"] = training_state.normalizer_params.std["state"].copy()
-            new_std["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.std
+            new_std["state"][
+                "proprioception"
+            ] = frozen_proprioceptive_normalizer_params.std
             new_summed_var = training_state.normalizer_params.summed_variance.copy()
-            new_summed_var["state"] = training_state.normalizer_params.summed_variance["state"].copy()
-            new_summed_var["state"]["proprioception"] = frozen_proprioceptive_normalizer_params.summed_variance
+            new_summed_var["state"] = training_state.normalizer_params.summed_variance[
+                "state"
+            ].copy()
+            new_summed_var["state"][
+                "proprioception"
+            ] = frozen_proprioceptive_normalizer_params.summed_variance
             training_state = training_state.replace(
                 normalizer_params=running_statistics.RunningStatisticsState(
                     count=training_state.normalizer_params.count,

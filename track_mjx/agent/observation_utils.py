@@ -129,7 +129,9 @@ def flatten_to_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
     return {k: _flatten_nested_obs(v) for k, v in obs.items()}
 
 
-def flatten_full_obs(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, jnp.ndarray]]:
+def flatten_full_obs(
+    obs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, jnp.ndarray]]:
     """Flatten the full nested observation dict for normalizer update.
 
     Flattens observations at both the 'state' and 'privileged_state' levels.
@@ -166,7 +168,9 @@ def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
     }
 
 
-def get_obs_shape(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, specs.Array]]:
+def get_obs_shape(
+    obs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, specs.Array]]:
     """Extract flattened observation shapes as a pytree for running_statistics.init_state.
 
     Returns specs for FLATTENED observations. The normalizer stores flat stats,
@@ -179,9 +183,12 @@ def get_obs_shape(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, s
         Nested dict with same structure as top two levels, containing specs.Array
         objects with flattened shapes (e.g., {'state': {'imitation_target': Array(640,), ...}}).
     """
+
     def flatten_and_get_spec(inner_obs: Mapping[str, Any]) -> dict[str, specs.Array]:
         return {
-            key: specs.Array((_flatten_nested_obs(val).shape[-1],), jnp.dtype("float32"))
+            key: specs.Array(
+                (_flatten_nested_obs(val).shape[-1],), jnp.dtype("float32")
+            )
             for key, val in inner_obs.items()
         }
 

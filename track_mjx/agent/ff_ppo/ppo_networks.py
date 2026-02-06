@@ -266,7 +266,9 @@ def make_dict_value_network(
         # Flatten observations first, then normalize, then concatenate
         flattened_inner = flatten_to_dict(obs[value_obs_key])
         value_normalizer = normalizer_select(processor_params, value_obs_key)
-        normalized_inner = running_statistics.normalize(flattened_inner, value_normalizer)
+        normalized_inner = running_statistics.normalize(
+            flattened_inner, value_normalizer
+        )
         # Concatenate imitation_target and proprioception
         flat_obs = jnp.concatenate(
             [normalized_inner["imitation_target"], normalized_inner["proprioception"]],

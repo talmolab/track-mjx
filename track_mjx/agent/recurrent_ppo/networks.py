@@ -526,7 +526,9 @@ def make_dict_value_network(
         # Flatten observations first, then normalize, then concatenate
         flattened_inner = flatten_to_dict(obs[value_obs_key])
         value_normalizer = normalizer_select(processor_params, value_obs_key)
-        normalized_inner = running_statistics.normalize(flattened_inner, value_normalizer)
+        normalized_inner = running_statistics.normalize(
+            flattened_inner, value_normalizer
+        )
         # Concatenate imitation_target and proprioception
         flat_obs = jnp.concatenate(
             [normalized_inner["imitation_target"], normalized_inner["proprioception"]],
@@ -639,7 +641,9 @@ def make_recurrent_intention_ppo_networks(
         # Flatten observations first (preserving T, B dims), then normalize
         obs_seq_flat = flatten_to_dict(obs_seq[policy_obs_key])
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
-        obs_seq_normalized = running_statistics.normalize(obs_seq_flat, policy_normalizer)
+        obs_seq_normalized = running_statistics.normalize(
+            obs_seq_flat, policy_normalizer
+        )
 
         # Validate stored_keys shape if provided
         if stored_keys is not None:
@@ -670,7 +674,9 @@ def make_recurrent_intention_ppo_networks(
                 return new_hidden, (logits, mean, logvar)
 
             final_hidden, (logits, means, logvars) = jax.lax.scan(
-                scan_step_stored, initial_hidden, (obs_seq_normalized, done_seq, stored_keys)
+                scan_step_stored,
+                initial_hidden,
+                (obs_seq_normalized, done_seq, stored_keys),
             )
         else:
             # Standard path: generate fresh keys at each timestep

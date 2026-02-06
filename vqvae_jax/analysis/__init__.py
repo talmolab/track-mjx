@@ -16,6 +16,15 @@ This package provides analysis of trained VQ-VAE models:
   - Measure functional consistency across different clips
   - Render transition videos (predecessor → code → successor)
 
+- **mutual_information.py**: MI analysis between codes and kinematic features
+  - KSG estimator for mutual information computation
+  - Extended feature extraction (limb activities, posture PCA, heading)
+  - MI ranking, feature-code heatmap, and code-feature scatter plots
+
+- **determinism_analysis.py**: Code determinism vs body state analysis
+  - Cross-clip code agreement rate as function of qpos distance
+  - Quantifies determinism score and robustness radius
+
 - **inference_cache.py**: Data structures for inference results
 - **checkpoint_utils.py**: Checkpoint loading utilities
 - **rendering.py**: Video rendering utilities and colormaps
@@ -33,12 +42,15 @@ Usage:
     from analysis.inference_cache import InferenceResult
     from analysis.per_clip_analysis import run_per_clip_analysis
     from analysis.transition_context_analysis import run_transition_context_analysis
+    from analysis.mutual_information import run_mutual_information_analysis
 """
 
 __all__ = [
     "checkpoint_utils",
     "code_analysis",
+    "determinism_analysis",
     "inference_cache",
+    "mutual_information",
     "per_clip_analysis",
     "rendering",
     "transition_context_analysis",

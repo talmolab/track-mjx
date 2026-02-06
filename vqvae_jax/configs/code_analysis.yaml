@@ -40,7 +40,7 @@ data:
 per_clip:
   num_clips: 5                 # Number of clips to analyze
   n_communities: null           # Communities per clip (null = auto-detect)
-  render_videos: true           # Render videos with code/community bars
+  render_videos: false           # Render videos with code/community bars
 
 # =============================================================================
 # Transition Context Analysis Configuration
@@ -48,7 +48,7 @@ per_clip:
 # Analyze whether top K codes serve the same function across different clips
 # by comparing their transition contexts (predecessor/successor distributions).
 transition_context:
-  enabled: true                 # Enable transition context analysis
+  enabled: false                 # Enable transition context analysis
   top_k: 5                     # Number of top codes to analyze
   min_clips: 3                  # Minimum clips a code must appear in
   render_videos: true           # Render transition videos (pred → code → succ)
@@ -63,7 +63,7 @@ transition_context:
 
   # Popular code pose gallery - render where each popular code starts across clips
   pose_gallery:
-    enabled: true               # Enable pose gallery rendering
+    enabled: false               # Enable pose gallery rendering
     top_k_codes: 5              # Number of popular codes to visualize
     videos_per_code: 4          # Clips to sample per code
     context_frames: 15          # Frames before/after code start
@@ -86,7 +86,7 @@ community_detection:
 # 4. Run community detection on pooled transitions
 # 5. Render community gallery videos per detected community
 conditioned_community:
-  enabled: true                  # Enable conditioned community analysis
+  enabled: false                  # Enable conditioned community analysis
   n_seed_clips: 10              # Number of random seed clips to sample
   qpos_threshold: 0.05          # Mean absolute difference threshold for qpos matching
   render_videos: true           # Render community gallery videos
@@ -99,10 +99,32 @@ conditioned_community:
 # Render grid videos showing sample segments from each detected community.
 # Each community gets a video with N sample segments showing codes from that community.
 community_gallery:
-  enabled: true                 # Enable community gallery rendering
+  enabled: false                 # Enable community gallery rendering
   samples_per_community: 6      # Number of sample segments per community
   segment_length: 50            # Frames per segment
   min_segment_gap: 10           # Minimum frames between sampled segments
+
+# =============================================================================
+# Mutual Information Analysis Configuration
+# =============================================================================
+# Quantifies which behavioral features are most encoded by the codebook.
+# Uses the KSG estimator (Kraskov-Stögbauer-Grassberger) for MI computation.
+mutual_information:
+  enabled: true
+  n_neighbors: 5                # KSG estimator k-neighbors
+  min_mi_threshold: 0.05        # Minimum MI (nats) to include in heatmap
+  top_k_features: 8             # Max features to show in heatmap
+  posture_pcs: 3                # Number of posture PCA components
+
+# =============================================================================
+# Code Determinism Analysis Configuration
+# =============================================================================
+# Tests whether same body state produces the same code across different clips.
+# Samples random cross-clip frame pairs, bins by qpos distance, plots agreement.
+determinism:
+  enabled: true
+  n_sample_pairs: 1000000        # Random frame pairs to sample
+  n_bins: 50                     # Distance histogram bins
 
 # =============================================================================
 # Rendering Configuration

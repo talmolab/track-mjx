@@ -35,8 +35,11 @@ def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
         Loaded font.
     """
     font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        ),
         "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
     ]
 
@@ -67,7 +70,8 @@ def get_code_colormap(num_codes: int) -> np.ndarray:
         Array of RGB colors, shape [num_codes, 3], values 0-255.
     """
     import matplotlib
-    matplotlib.use('Agg')
+
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     if num_codes <= 20:
@@ -88,8 +92,9 @@ def get_code_colormap(num_codes: int) -> np.ndarray:
         # Use HSV for large codebooks
         colors = [plt.cm.hsv(i / num_codes) for i in range(num_codes)]
 
-    return np.array([[int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)]
-                     for c in colors])
+    return np.array(
+        [[int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)] for c in colors]
+    )
 
 
 def get_nature_colormap(num_codes: int) -> np.ndarray:
@@ -102,7 +107,8 @@ def get_nature_colormap(num_codes: int) -> np.ndarray:
         Array of RGB colors, shape [num_codes, 3], values 0-255.
     """
     import matplotlib
-    matplotlib.use('Agg')
+
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     # Use a perceptually uniform colormap with better aesthetics
@@ -114,8 +120,9 @@ def get_nature_colormap(num_codes: int) -> np.ndarray:
         cmap = plt.cm.viridis
 
     colors = [cmap(i / max(num_codes - 1, 1)) for i in range(num_codes)]
-    return np.array([[int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)]
-                     for c in colors])
+    return np.array(
+        [[int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)] for c in colors]
+    )
 
 
 # =============================================================================
@@ -152,8 +159,12 @@ def add_text_overlay(
     font = _get_font(font_size)
 
     bbox = draw.textbbox(position, text, font=font)
-    bg_rect = (bbox[0] - padding, bbox[1] - padding,
-               bbox[2] + padding, bbox[3] + padding)
+    bg_rect = (
+        bbox[0] - padding,
+        bbox[1] - padding,
+        bbox[2] + padding,
+        bbox[3] + padding,
+    )
     draw.rectangle(bg_rect, fill=bg_color)
     draw.text(position, text, font=font, fill=text_color + (255,))
 
@@ -203,8 +214,12 @@ def add_multi_line_overlay(
         max_width = max(max_width, bbox[2] - bbox[0])
         total_height += bbox[3] - bbox[1] + line_spacing
 
-    bg_rect = (x - padding, y - padding,
-               x + max_width + padding, y + total_height + padding)
+    bg_rect = (
+        x - padding,
+        y - padding,
+        x + max_width + padding,
+        y + total_height + padding,
+    )
     draw.rectangle(bg_rect, fill=bg_color)
 
     for line, (lx, ly, _) in zip(lines, line_bboxes):
@@ -276,7 +291,7 @@ def add_code_transition_bar(
         timeline[bar_content_start:, x_start:x_end] = color
 
     # Overlay timeline on frame
-    result[y_start:y_start + bar_height, :] = timeline
+    result[y_start : y_start + bar_height, :] = timeline
 
     # Draw playhead
     if show_playhead:
@@ -285,10 +300,12 @@ def add_code_transition_bar(
 
         # White playhead with dark border
         if playhead_x > 0:
-            result[y_start:, playhead_x - 1:playhead_x] = [50, 50, 50]
-        result[y_start:, playhead_x:playhead_x + playhead_width] = [255, 255, 255]
+            result[y_start:, playhead_x - 1 : playhead_x] = [50, 50, 50]
+        result[y_start:, playhead_x : playhead_x + playhead_width] = [255, 255, 255]
         if playhead_x + playhead_width < w:
-            result[y_start:, playhead_x + playhead_width:playhead_x + playhead_width + 1] = [50, 50, 50]
+            result[
+                y_start:, playhead_x + playhead_width : playhead_x + playhead_width + 1
+            ] = [50, 50, 50]
 
     # Add code label
     if show_code_label and current_frame_idx < len(all_indices):
@@ -313,14 +330,21 @@ def add_code_transition_bar(
         elif label_position == "bottom_left":
             box_x, box_y = 10, y_start - text_height - padding * 2 - 10
         else:  # bottom_right
-            box_x, box_y = w - text_width - padding * 2 - 10, y_start - text_height - padding * 2 - 10
+            box_x, box_y = (
+                w - text_width - padding * 2 - 10,
+                y_start - text_height - padding * 2 - 10,
+            )
 
         # Draw rounded rectangle background
         draw.rounded_rectangle(
-            [box_x - padding, box_y - padding,
-             box_x + text_width + padding, box_y + text_height + padding],
+            [
+                box_x - padding,
+                box_y - padding,
+                box_x + text_width + padding,
+                box_y + text_height + padding,
+            ],
             radius=4,
-            fill=tuple(color)
+            fill=tuple(color),
         )
 
         # Choose text color for contrast
@@ -422,8 +446,7 @@ def render_rollout_to_video(
         if lines:
             # Position text below the code label area
             frame = add_multi_line_overlay(
-                frame, lines,
-                start_position=(10, 50 if indices is not None else 10)
+                frame, lines, start_position=(10, 50 if indices is not None else 10)
             )
 
         processed_frames.append(frame)
@@ -434,237 +457,6 @@ def render_rollout_to_video(
             writer.append_data(frame)
 
     logging.info(f"  Video saved to {output_path}")
-    return str(output_path)
-
-
-# =============================================================================
-# GRID RENDERING (NATURE PAPER STYLE)
-# =============================================================================
-
-
-def render_clips_grid(
-    env: Any,
-    clip_data: list[dict[str, Any]],
-    output_path: str | Path,
-    max_rows: int = 5,
-    max_cols: int = 5,
-    camera: str | None = None,
-    cell_width: int = 320,
-    cell_height: int = 240,
-    fps: int = 50,
-    num_codes: int | None = None,
-    code_bar_height: int = 30,
-    padding: int = 4,
-    bg_color: tuple[int, int, int] = (255, 255, 255),
-) -> list[str]:
-    """Render multiple clips in a grid layout (Nature paper style).
-
-    Creates professional grid montages with a maximum of max_rows x max_cols
-    clips per video. If more clips are provided, multiple videos are created.
-
-    Args:
-        env: Environment with render method.
-        clip_data: List of dicts, each containing:
-            - "states": Sequence of states
-            - "indices": Code indices (optional)
-            - "clip_idx": Clip index for label (optional)
-        output_path: Base path for output videos (will append _1, _2, etc.).
-        max_rows: Maximum rows per grid.
-        max_cols: Maximum columns per grid.
-        camera: Camera name for rendering.
-        cell_width: Width of each cell.
-        cell_height: Height of each cell.
-        fps: Frames per second.
-        num_codes: Total number of codes.
-        code_bar_height: Height of code bar per cell.
-        padding: Padding between cells.
-        bg_color: Background color (RGB).
-
-    Returns:
-        List of paths to saved video files.
-    """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    clips_per_grid = max_rows * max_cols
-    num_grids = (len(clip_data) + clips_per_grid - 1) // clips_per_grid
-
-    # Get colormap
-    if num_codes is None:
-        all_indices = []
-        for clip in clip_data:
-            if "indices" in clip and clip["indices"] is not None:
-                all_indices.extend(clip["indices"].flatten())
-        num_codes = max(all_indices) + 1 if all_indices else 64
-    code_colors = get_nature_colormap(num_codes)
-
-    output_paths = []
-
-    for grid_idx in range(num_grids):
-        start_idx = grid_idx * clips_per_grid
-        end_idx = min(start_idx + clips_per_grid, len(clip_data))
-        grid_clips = clip_data[start_idx:end_idx]
-
-        num_clips = len(grid_clips)
-        grid_cols = min(num_clips, max_cols)
-        grid_rows = (num_clips + grid_cols - 1) // grid_cols
-
-        logging.info(f"  Rendering grid {grid_idx + 1}/{num_grids} "
-                     f"({grid_rows}x{grid_cols}, {num_clips} clips)")
-
-        # Pre-render all frames for each clip
-        rendered_clips = []
-        for clip in grid_clips:
-            states = clip["states"]
-            frames = env.render(states, camera=camera,
-                                height=cell_height - code_bar_height,
-                                width=cell_width)
-
-            indices = clip.get("indices")
-            clip_idx = clip.get("clip_idx")
-
-            processed = []
-            for i, frame in enumerate(frames):
-                # Pad frame to full cell height
-                full_frame = np.ones((cell_height, cell_width, 3),
-                                     dtype=np.uint8) * 255
-                full_frame[:cell_height - code_bar_height, :] = frame
-
-                # Add code bar
-                if indices is not None:
-                    full_frame = add_code_transition_bar(
-                        full_frame,
-                        current_frame_idx=i,
-                        all_indices=indices,
-                        code_colors=code_colors,
-                        bar_height=code_bar_height,
-                        font_size=12,
-                        show_playhead=True,
-                    )
-
-                # Add clip label
-                if clip_idx is not None:
-                    full_frame = add_text_overlay(
-                        full_frame,
-                        f"#{clip_idx}",
-                        position=(5, 5),
-                        font_size=12,
-                        bg_color=(255, 255, 255, 220),
-                        text_color=(0, 0, 0),
-                        padding=3,
-                    )
-
-                processed.append(full_frame)
-            rendered_clips.append(processed)
-
-        # Find max frames across clips
-        max_frames = max(len(c) for c in rendered_clips)
-
-        # Calculate grid dimensions
-        grid_width = grid_cols * cell_width + (grid_cols - 1) * padding
-        grid_height = grid_rows * cell_height + (grid_rows - 1) * padding
-
-        # Assemble grid frames
-        grid_frames = []
-        for frame_idx in range(max_frames):
-            grid = np.ones((grid_height, grid_width, 3), dtype=np.uint8)
-            grid[:] = bg_color
-
-            for clip_num, clip_frames in enumerate(rendered_clips):
-                row = clip_num // grid_cols
-                col = clip_num % grid_cols
-
-                # Use last frame if past end
-                frame = clip_frames[min(frame_idx, len(clip_frames) - 1)]
-
-                y_start = row * (cell_height + padding)
-                x_start = col * (cell_width + padding)
-
-                grid[y_start:y_start + cell_height,
-                     x_start:x_start + cell_width] = frame
-
-            grid_frames.append(grid)
-
-        # Save video
-        if num_grids > 1:
-            video_path = output_path.parent / f"{output_path.stem}_{grid_idx + 1}{output_path.suffix}"
-        else:
-            video_path = output_path
-
-        with imageio.get_writer(str(video_path), fps=fps) as writer:
-            for frame in grid_frames:
-                writer.append_data(frame)
-
-        output_paths.append(str(video_path))
-        logging.info(f"  Saved grid video to {video_path}")
-
-    return output_paths
-
-
-def render_grid_video(
-    env: Any,
-    rollout_states_list: list[Sequence[Any]],
-    labels: list[str],
-    output_path: str | Path,
-    grid_cols: int = 4,
-    camera: str | None = None,
-    cell_width: int = 320,
-    cell_height: int = 240,
-    fps: int = 50,
-) -> str:
-    """Render multiple rollouts in a grid layout (legacy API).
-
-    Args:
-        env: Environment with render method.
-        rollout_states_list: List of rollout sequences.
-        labels: Label for each rollout.
-        output_path: Path to save output video.
-        grid_cols: Number of columns in grid.
-        camera: Camera name.
-        cell_width: Width of each cell.
-        cell_height: Height of each cell.
-        fps: Frames per second.
-
-    Returns:
-        Path to saved video file.
-    """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    num_rollouts = len(rollout_states_list)
-    grid_rows = (num_rollouts + grid_cols - 1) // grid_cols
-
-    all_frames = []
-    for states in rollout_states_list:
-        frames = env.render(states, camera=camera,
-                            height=cell_height, width=cell_width)
-        all_frames.append(frames)
-
-    max_frames = max(len(f) for f in all_frames)
-
-    grid_frames = []
-    for frame_idx in range(max_frames):
-        grid = np.zeros((grid_rows * cell_height, grid_cols * cell_width, 3),
-                        dtype=np.uint8)
-
-        for rollout_idx, (frames, label) in enumerate(zip(all_frames, labels)):
-            row = rollout_idx // grid_cols
-            col = rollout_idx % grid_cols
-
-            frame = frames[min(frame_idx, len(frames) - 1)]
-            frame = add_text_overlay(frame, label, font_size=14)
-
-            y_start = row * cell_height
-            x_start = col * cell_width
-            grid[y_start:y_start + cell_height,
-                 x_start:x_start + cell_width] = frame
-
-        grid_frames.append(grid)
-
-    with imageio.get_writer(str(output_path), fps=fps) as writer:
-        for frame in grid_frames:
-            writer.append_data(frame)
-
     return str(output_path)
 
 
@@ -719,9 +511,15 @@ def render_per_code_videos(
 
     # Create video for each code that has enough frames
     output_paths: dict[int, str] = {}
-    codes_used = [code for code, frames in code_to_frame_indices.items() if len(frames) >= min_frames_per_code]
+    codes_used = [
+        code
+        for code, frames in code_to_frame_indices.items()
+        if len(frames) >= min_frames_per_code
+    ]
 
-    logging.info(f"  Creating videos for {len(codes_used)} codes with >= {min_frames_per_code} frames")
+    logging.info(
+        f"  Creating videos for {len(codes_used)} codes with >= {min_frames_per_code} frames"
+    )
 
     for code_idx in codes_used:
         frame_indices = code_to_frame_indices[code_idx]
@@ -739,7 +537,12 @@ def render_per_code_videos(
                     f"Code {code_idx} | Frame {frame_idx}",
                     position=(10, 10),
                     font_size=16,
-                    bg_color=(int(code_color[0]), int(code_color[1]), int(code_color[2]), 200),
+                    bg_color=(
+                        int(code_color[0]),
+                        int(code_color[1]),
+                        int(code_color[2]),
+                        200,
+                    ),
                     text_color=(255, 255, 255) if sum(code_color) < 384 else (0, 0, 0),
                 )
 
@@ -748,7 +551,11 @@ def render_per_code_videos(
                 bar[:] = code_color
                 # Add progress marker
                 progress = int((i / max(len(frame_indices) - 1, 1)) * width)
-                bar[:, max(0, progress - 2):min(width, progress + 2)] = [255, 255, 255]
+                bar[:, max(0, progress - 2) : min(width, progress + 2)] = [
+                    255,
+                    255,
+                    255,
+                ]
 
                 # Combine frame and bar
                 combined = np.vstack([frame, bar])
@@ -760,69 +567,11 @@ def render_per_code_videos(
                 for frame in code_frames:
                     writer.append_data(frame)
             output_paths[code_idx] = str(video_path)
-            logging.info(f"    Code {code_idx}: {len(code_frames)} frames -> {video_path.name}")
-
-    return output_paths
-
-
-def render_comparison_video(
-    env: Any,
-    rollout_states: Sequence[Any],
-    reference_states: Sequence[Any],
-    output_path: str | Path,
-    camera: str | None = None,
-    width: int = 640,
-    height: int = 480,
-    fps: int = 50,
-    indices: np.ndarray | None = None,
-) -> str:
-    """Render side-by-side comparison of rollout and reference.
-
-    Args:
-        env: Environment with render method.
-        rollout_states: Sequence of rollout states.
-        reference_states: Sequence of reference states.
-        output_path: Path to save output video.
-        camera: Camera name.
-        width: Width per panel.
-        height: Video height.
-        fps: Frames per second.
-        indices: Optional codebook indices for overlay.
-
-    Returns:
-        Path to saved video file.
-    """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    rollout_frames = env.render(rollout_states, camera=camera,
-                                height=height, width=width)
-    ref_frames = env.render(reference_states, camera=camera,
-                            height=height, width=width)
-
-    combined_frames = []
-    num_frames = min(len(rollout_frames), len(ref_frames))
-
-    for i in range(num_frames):
-        rollout_frame = add_text_overlay(rollout_frames[i], "Rollout",
-                                         position=(10, 10))
-        ref_frame = add_text_overlay(ref_frames[i], "Reference",
-                                     position=(10, 10))
-
-        if indices is not None and i < len(indices):
-            rollout_frame = add_text_overlay(
-                rollout_frame, f"Code: {int(indices[i])}",
-                position=(10, 40)
+            logging.info(
+                f"    Code {code_idx}: {len(code_frames)} frames -> {video_path.name}"
             )
 
-        combined = np.concatenate([rollout_frame, ref_frame], axis=1)
-        combined_frames.append(combined)
-
-    with imageio.get_writer(str(output_path), fps=fps) as writer:
-        for frame in combined_frames:
-            writer.append_data(frame)
-
-    return str(output_path)
+    return output_paths
 
 
 # =============================================================================
@@ -830,16 +579,19 @@ def render_comparison_video(
 # =============================================================================
 
 # Community color palette (8 distinct, saturated colors)
-COMMUNITY_COLORS = np.array([
-    [66, 133, 244],    # Blue
-    [234, 67, 53],     # Red
-    [251, 188, 5],     # Yellow
-    [52, 168, 83],     # Green
-    [155, 89, 182],    # Purple
-    [26, 188, 156],    # Teal
-    [241, 196, 15],    # Gold
-    [230, 126, 34],    # Orange
-], dtype=np.uint8)
+COMMUNITY_COLORS = np.array(
+    [
+        [66, 133, 244],  # Blue
+        [234, 67, 53],  # Red
+        [251, 188, 5],  # Yellow
+        [52, 168, 83],  # Green
+        [155, 89, 182],  # Purple
+        [26, 188, 156],  # Teal
+        [241, 196, 15],  # Gold
+        [230, 126, 34],  # Orange
+    ],
+    dtype=np.uint8,
+)
 
 
 def get_community_colormap(n_communities: int) -> np.ndarray:
@@ -856,6 +608,7 @@ def get_community_colormap(n_communities: int) -> np.ndarray:
 
     # Generate additional colors via HSV
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -1028,7 +781,10 @@ def render_community_gallery(
                 continue
 
             rendered = env.render(
-                states_to_render, camera=camera, height=cell_height - 30, width=cell_width
+                states_to_render,
+                camera=camera,
+                height=cell_height - 30,
+                width=cell_width,
             )
 
             for i, frame in enumerate(rendered):
@@ -1039,7 +795,12 @@ def render_community_gallery(
                     f"Code {code}",
                     position=(5, 5),
                     font_size=14,
-                    bg_color=(int(code_color[0]), int(code_color[1]), int(code_color[2]), 220),
+                    bg_color=(
+                        int(code_color[0]),
+                        int(code_color[1]),
+                        int(code_color[2]),
+                        220,
+                    ),
                     text_color=(255, 255, 255) if sum(code_color) < 384 else (0, 0, 0),
                     padding=4,
                 )
@@ -1080,14 +841,18 @@ def render_community_gallery(
             if frame_idx < len(code_frames):
                 frame = code_frames[frame_idx]
             else:
-                frame = code_frames[-1] if code_frames else np.zeros(
-                    (cell_height, cell_width, 3), dtype=np.uint8
+                frame = (
+                    code_frames[-1]
+                    if code_frames
+                    else np.zeros((cell_height, cell_width, 3), dtype=np.uint8)
                 )
 
             y_start = row * (cell_height + padding)
             x_start = col * (cell_width + padding)
 
-            grid[y_start:y_start + cell_height, x_start:x_start + cell_width] = frame
+            grid[y_start : y_start + cell_height, x_start : x_start + cell_width] = (
+                frame
+            )
 
         grid_frames.append(grid)
 
@@ -1099,7 +864,12 @@ def render_community_gallery(
             f"Community {community_id} ({len(codes_with_segments)} codes)",
             position=(10, grid_height - 35),
             font_size=16,
-            bg_color=(int(community_color[0]), int(community_color[1]), int(community_color[2]), 220),
+            bg_color=(
+                int(community_color[0]),
+                int(community_color[1]),
+                int(community_color[2]),
+                220,
+            ),
             text_color=(255, 255, 255),
             padding=5,
         )

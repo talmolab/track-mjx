@@ -206,8 +206,16 @@ def compute_transition_context(
     pred_sum = predecessor_counts.sum()
     succ_sum = successor_counts.sum()
 
-    predecessor_dist = predecessor_counts / pred_sum if pred_sum > 0 else predecessor_counts.astype(np.float64)
-    successor_dist = successor_counts / succ_sum if succ_sum > 0 else successor_counts.astype(np.float64)
+    predecessor_dist = (
+        predecessor_counts / pred_sum
+        if pred_sum > 0
+        else predecessor_counts.astype(np.float64)
+    )
+    successor_dist = (
+        successor_counts / succ_sum
+        if succ_sum > 0
+        else successor_counts.astype(np.float64)
+    )
 
     return CodeTransitionContext(
         code_idx=code_idx,
@@ -229,6 +237,7 @@ def compute_context_similarity(
     Returns:
         Tuple of (predecessor_similarity, successor_similarity).
     """
+
     def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
         norm_a = np.linalg.norm(a)
         norm_b = np.linalg.norm(b)
@@ -278,7 +287,11 @@ def compute_global_transition_matrix(
     # Log scale for better visualization
     log_counts = np.log1p(global_counts)
     im = ax.imshow(log_counts, cmap="viridis", aspect="auto")
-    ax.set_title(f"Global Transition Matrix (All {len(results)} Clips)", fontsize=14, fontweight="bold")
+    ax.set_title(
+        f"Global Transition Matrix (All {len(results)} Clips)",
+        fontsize=14,
+        fontweight="bold",
+    )
     ax.set_xlabel("To Code", fontsize=11)
     ax.set_ylabel("From Code", fontsize=11)
     plt.colorbar(im, ax=ax, label="log(count + 1)", shrink=0.8)
@@ -286,8 +299,12 @@ def compute_global_transition_matrix(
     # Add total transitions text
     total_transitions = global_counts.sum()
     ax.text(
-        0.02, 0.98, f"Total transitions: {total_transitions:,}",
-        transform=ax.transAxes, fontsize=10, verticalalignment="top",
+        0.02,
+        0.98,
+        f"Total transitions: {total_transitions:,}",
+        transform=ax.transAxes,
+        fontsize=10,
+        verticalalignment="top",
         bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
     )
 
@@ -326,32 +343,44 @@ def compute_stationary_distribution(
     empirical_dist = None
     if frame_counts is not None:
         total_frames = sum(frame_counts.values())
-        empirical_dist = np.array([
-            frame_counts.get(i, 0) / total_frames for i in range(num_codes)
-        ])
+        empirical_dist = np.array(
+            [frame_counts.get(i, 0) / total_frames for i in range(num_codes)]
+        )
 
     # Create figure: Stationary vs Empirical Distribution
     fig, ax = plt.subplots(figsize=(12, 5))
     x = np.arange(num_codes)
     width = 0.35
 
-    ax.bar(x - width/2, stationary, width, label='Stationary (theoretical)',
-           color='steelblue', alpha=0.8)
+    ax.bar(
+        x - width / 2,
+        stationary,
+        width,
+        label="Stationary (theoretical)",
+        color="steelblue",
+        alpha=0.8,
+    )
     if empirical_dist is not None:
-        ax.bar(x + width/2, empirical_dist, width, label='Empirical (observed)',
-               color='coral', alpha=0.8)
+        ax.bar(
+            x + width / 2,
+            empirical_dist,
+            width,
+            label="Empirical (observed)",
+            color="coral",
+            alpha=0.8,
+        )
 
-    ax.set_xlabel('Code Index', fontsize=11)
-    ax.set_ylabel('Probability', fontsize=11)
-    ax.set_title('Stationary vs Empirical Distribution', fontsize=12, fontweight='bold')
-    ax.legend(loc='upper right')
+    ax.set_xlabel("Code Index", fontsize=11)
+    ax.set_ylabel("Probability", fontsize=11)
+    ax.set_title("Stationary vs Empirical Distribution", fontsize=12, fontweight="bold")
+    ax.legend(loc="upper right")
     ax.set_xlim(-1, num_codes)
     plt.tight_layout()
 
     return {
-        'stationary_dist': stationary,
-        'empirical_dist': empirical_dist,
-        'figure': fig,
+        "stationary_dist": stationary,
+        "empirical_dist": empirical_dist,
+        "figure": fig,
     }
 
 
@@ -410,26 +439,30 @@ def detect_transition_communities(
     active_codes = np.where(freq_mask)[0]
     filtered_codes = np.where(~freq_mask)[0]
 
-    logging.info(f"  Filtering: {len(active_codes)} active codes, {len(filtered_codes)} filtered (freq < {min_frequency})")
+    logging.info(
+        f"  Filtering: {len(active_codes)} active codes, {len(filtered_codes)} filtered (freq < {min_frequency})"
+    )
 
     if len(active_codes) < min_communities:
-        logging.warning(f"  Too few active codes ({len(active_codes)}) for community detection")
+        logging.warning(
+            f"  Too few active codes ({len(active_codes)}) for community detection"
+        )
         # Return all codes in community 0
         labels = np.zeros(num_codes, dtype=int)
         labels[filtered_codes] = -1
         return {
-            'community_labels': labels,
-            'n_communities': 1,
-            'modularity': 0.0,
-            'community_sizes': {0: len(active_codes)},
-            'community_codes': {0: list(active_codes)},
-            'filtered_codes': list(filtered_codes),
-            'inter_community_matrix': np.array([[1.0]]),
-            'intra_community_prob': np.array([1.0]),
-            'overall_intra_prob': 1.0,
-            'eigenvalues': np.array([0.0]),
-            'code_frequencies': code_frequencies,
-            'figures': {},
+            "community_labels": labels,
+            "n_communities": 1,
+            "modularity": 0.0,
+            "community_sizes": {0: len(active_codes)},
+            "community_codes": {0: list(active_codes)},
+            "filtered_codes": list(filtered_codes),
+            "inter_community_matrix": np.array([[1.0]]),
+            "intra_community_prob": np.array([1.0]),
+            "overall_intra_prob": 1.0,
+            "eigenvalues": np.array([0.0]),
+            "code_frequencies": code_frequencies,
+            "figures": {},
         }
 
     # Extract submatrix for active codes only
@@ -464,8 +497,8 @@ def detect_transition_communities(
         if max_k < min_communities:
             n_communities = max(1, n_active // 2)
         else:
-            eigengaps = np.diff(eigenvalues[:max_k + 1])
-            best_k = min_communities + np.argmax(eigengaps[min_communities - 1:max_k])
+            eigengaps = np.diff(eigenvalues[: max_k + 1])
+            best_k = min_communities + np.argmax(eigengaps[min_communities - 1 : max_k])
             n_communities = best_k
         logging.info(f"  Auto-detected {n_communities} communities via eigengap")
 
@@ -473,13 +506,15 @@ def detect_transition_communities(
     try:
         sc = SpectralClustering(
             n_clusters=n_communities,
-            affinity='precomputed',
-            assign_labels='kmeans',
+            affinity="precomputed",
+            assign_labels="kmeans",
             random_state=42,
         )
         active_labels = sc.fit_predict(affinity)
     except Exception as e:
-        logging.warning(f"  SpectralClustering failed: {e}, using KMeans on eigenvectors")
+        logging.warning(
+            f"  SpectralClustering failed: {e}, using KMeans on eigenvectors"
+        )
         embedding = eigenvectors[:, :n_communities]
         kmeans = KMeans(n_clusters=n_communities, random_state=42, n_init=10)
         active_labels = kmeans.fit_predict(embedding)
@@ -513,20 +548,33 @@ def detect_transition_communities(
     # Intra-community probability (diagonal of inter-community matrix)
     intra_prob = np.diag(inter_community_prob)
     total_inter = inter_community.sum()
-    overall_intra_prob = np.trace(inter_community) / total_inter if total_inter > 0 else 0.0
+    overall_intra_prob = (
+        np.trace(inter_community) / total_inter if total_inter > 0 else 0.0
+    )
 
     # Compute modularity (only for active codes)
     active_symmetric = symmetric  # Already computed for active codes only
     total_weight = active_symmetric.sum()
     active_degree = degree  # Already computed for active codes
-    expected = np.outer(active_degree, active_degree) / total_weight if total_weight > 0 else np.zeros_like(active_symmetric)
+    expected = (
+        np.outer(active_degree, active_degree) / total_weight
+        if total_weight > 0
+        else np.zeros_like(active_symmetric)
+    )
     modularity = 0.0
     for c in range(n_communities):
         # Get indices of active codes in this community
         active_mask = active_labels == c
         if active_mask.sum() > 0:
-            Q_c = (active_symmetric[np.ix_(active_mask, active_mask)].sum() -
-                   expected[np.ix_(active_mask, active_mask)].sum()) / total_weight if total_weight > 0 else 0
+            Q_c = (
+                (
+                    active_symmetric[np.ix_(active_mask, active_mask)].sum()
+                    - expected[np.ix_(active_mask, active_mask)].sum()
+                )
+                / total_weight
+                if total_weight > 0
+                else 0
+            )
             modularity += Q_c
 
     # Get colors for communities
@@ -543,20 +591,28 @@ def detect_transition_communities(
     bar_colors = []
     for idx in sorted_idx:
         if labels[idx] == -1:
-            bar_colors.append('lightgray')
+            bar_colors.append("lightgray")
         else:
             bar_colors.append(community_colors[labels[idx]])
-    ax0.bar(range(num_codes), sorted_freqs, color=bar_colors, edgecolor='none')
-    ax0.axhline(y=min_frequency, color='red', linestyle='--', linewidth=1.5,
-                label=f'Threshold: {min_frequency}')
-    ax0.set_xlabel('Code (sorted by frequency)')
-    ax0.set_ylabel('Frequency')
-    ax0.set_title(f'Code Usage Frequency (gray = filtered, {len(filtered_codes)} codes below threshold)',
-                  fontsize=12, fontweight='bold')
+    ax0.bar(range(num_codes), sorted_freqs, color=bar_colors, edgecolor="none")
+    ax0.axhline(
+        y=min_frequency,
+        color="red",
+        linestyle="--",
+        linewidth=1.5,
+        label=f"Threshold: {min_frequency}",
+    )
+    ax0.set_xlabel("Code (sorted by frequency)")
+    ax0.set_ylabel("Frequency")
+    ax0.set_title(
+        f"Code Usage Frequency (gray = filtered, {len(filtered_codes)} codes below threshold)",
+        fontsize=12,
+        fontweight="bold",
+    )
     ax0.legend()
     ax0.set_xlim(-1, num_codes)
     fig0.tight_layout()
-    figures['code_frequency'] = fig0
+    figures["code_frequency"] = fig0
 
     # === Figure 1: Reordered transition matrix (square) ===
     # Sort: filtered codes first (gray), then by community
@@ -565,12 +621,15 @@ def detect_transition_communities(
     order = np.argsort(labels + 1000 * (labels == -1))  # Push -1 to end
     reordered = transition_counts[np.ix_(order, order)]
     log_reordered = np.log1p(reordered)
-    im = ax1.imshow(log_reordered, cmap='viridis', aspect='equal')
-    ax1.set_title(f'Transition Matrix (reordered, {len(filtered_codes)} filtered)',
-                  fontsize=12, fontweight='bold')
-    ax1.set_xlabel('To Code (reordered)')
-    ax1.set_ylabel('From Code (reordered)')
-    plt.colorbar(im, ax=ax1, label='log(count + 1)')
+    im = ax1.imshow(log_reordered, cmap="viridis", aspect="equal")
+    ax1.set_title(
+        f"Transition Matrix (reordered, {len(filtered_codes)} filtered)",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax1.set_xlabel("To Code (reordered)")
+    ax1.set_ylabel("From Code (reordered)")
+    plt.colorbar(im, ax=ax1, label="log(count + 1)")
 
     # Draw community boundaries
     boundaries = []
@@ -580,10 +639,10 @@ def detect_transition_communities(
             boundaries.append(i)
             current_comm = labels[idx]
     for b in boundaries:
-        ax1.axhline(y=b - 0.5, color='white', linewidth=1, alpha=0.8)
-        ax1.axvline(x=b - 0.5, color='white', linewidth=1, alpha=0.8)
+        ax1.axhline(y=b - 0.5, color="white", linewidth=1, alpha=0.8)
+        ax1.axvline(x=b - 0.5, color="white", linewidth=1, alpha=0.8)
     fig1.tight_layout()
-    figures['reordered_matrix'] = fig1
+    figures["reordered_matrix"] = fig1
 
     # === Figure 2: Community sizes ===
     fig2, ax2 = plt.subplots(figsize=(8, 5))
@@ -592,78 +651,109 @@ def detect_transition_communities(
     x_labels = list(range(n_communities))
     # Add filtered as a separate bar
     sizes.append(len(filtered_codes))
-    colors.append('lightgray')
-    x_labels.append('filtered')
-    bars = ax2.bar(range(len(sizes)), sizes, color=colors, edgecolor='black', linewidth=0.5)
-    ax2.set_xlabel('Community')
-    ax2.set_ylabel('Number of Codes')
-    ax2.set_title('Community Sizes', fontsize=12, fontweight='bold')
+    colors.append("lightgray")
+    x_labels.append("filtered")
+    bars = ax2.bar(
+        range(len(sizes)), sizes, color=colors, edgecolor="black", linewidth=0.5
+    )
+    ax2.set_xlabel("Community")
+    ax2.set_ylabel("Number of Codes")
+    ax2.set_title("Community Sizes", fontsize=12, fontweight="bold")
     ax2.set_xticks(range(len(sizes)))
     ax2.set_xticklabels(x_labels)
     for bar, size in zip(bars, sizes):
-        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                str(size), ha='center', va='bottom', fontsize=9)
+        ax2.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.5,
+            str(size),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
     fig2.tight_layout()
-    figures['community_sizes'] = fig2
+    figures["community_sizes"] = fig2
 
     # === Figure 3: Inter-community transition probabilities ===
     fig3, ax3 = plt.subplots(figsize=(7, 6))
-    im = ax3.imshow(inter_community_prob, cmap='Blues', vmin=0, vmax=1)
-    ax3.set_title('Inter-Community Transition Probabilities', fontsize=12, fontweight='bold')
-    ax3.set_xlabel('To Community')
-    ax3.set_ylabel('From Community')
+    im = ax3.imshow(inter_community_prob, cmap="Blues", vmin=0, vmax=1)
+    ax3.set_title(
+        "Inter-Community Transition Probabilities", fontsize=12, fontweight="bold"
+    )
+    ax3.set_xlabel("To Community")
+    ax3.set_ylabel("From Community")
     ax3.set_xticks(range(n_communities))
     ax3.set_yticks(range(n_communities))
     plt.colorbar(im, ax=ax3)
     for i in range(n_communities):
         for j in range(n_communities):
             val = inter_community_prob[i, j]
-            color = 'white' if val > 0.5 else 'black'
-            ax3.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=8, color=color)
+            color = "white" if val > 0.5 else "black"
+            ax3.text(
+                j, i, f"{val:.2f}", ha="center", va="center", fontsize=8, color=color
+            )
     fig3.tight_layout()
-    figures['inter_community'] = fig3
+    figures["inter_community"] = fig3
 
     # === Figure 4: Community self-containment ===
     fig4, ax4 = plt.subplots(figsize=(8, 5))
-    bars = ax4.bar(range(n_communities), intra_prob, color=community_colors, edgecolor='black', linewidth=0.5)
-    ax4.axhline(y=overall_intra_prob, color='red', linestyle='--',
-                label=f'Overall: {overall_intra_prob:.2f}')
-    ax4.set_xlabel('Community')
-    ax4.set_ylabel('P(stay in community)')
-    ax4.set_title('Community Self-Containment', fontsize=12, fontweight='bold')
+    bars = ax4.bar(
+        range(n_communities),
+        intra_prob,
+        color=community_colors,
+        edgecolor="black",
+        linewidth=0.5,
+    )
+    ax4.axhline(
+        y=overall_intra_prob,
+        color="red",
+        linestyle="--",
+        label=f"Overall: {overall_intra_prob:.2f}",
+    )
+    ax4.set_xlabel("Community")
+    ax4.set_ylabel("P(stay in community)")
+    ax4.set_title("Community Self-Containment", fontsize=12, fontweight="bold")
     ax4.set_xticks(range(n_communities))
     ax4.set_ylim(0, 1)
     ax4.legend()
     fig4.tight_layout()
-    figures['self_containment'] = fig4
+    figures["self_containment"] = fig4
 
     # === Figure 5: Eigenvalues (eigengap) ===
     fig5, ax5 = plt.subplots(figsize=(8, 5))
     n_show = min(20, n_active)
-    ax5.plot(range(n_show), eigenvalues[:n_show], 'o-', markersize=5, color='teal')
-    ax5.axvline(x=n_communities - 1, color='red', linestyle='--', alpha=0.7,
-                label=f'k={n_communities}')
-    ax5.set_xlabel('Eigenvalue Index')
-    ax5.set_ylabel('Eigenvalue')
-    ax5.set_title(f'Laplacian Eigenvalues ({n_active} active codes)', fontsize=12, fontweight='bold')
+    ax5.plot(range(n_show), eigenvalues[:n_show], "o-", markersize=5, color="teal")
+    ax5.axvline(
+        x=n_communities - 1,
+        color="red",
+        linestyle="--",
+        alpha=0.7,
+        label=f"k={n_communities}",
+    )
+    ax5.set_xlabel("Eigenvalue Index")
+    ax5.set_ylabel("Eigenvalue")
+    ax5.set_title(
+        f"Laplacian Eigenvalues ({n_active} active codes)",
+        fontsize=12,
+        fontweight="bold",
+    )
     ax5.legend()
     ax5.grid(True, alpha=0.3)
     fig5.tight_layout()
-    figures['eigenvalues'] = fig5
+    figures["eigenvalues"] = fig5
 
     return {
-        'community_labels': labels,
-        'n_communities': n_communities,
-        'modularity': modularity,
-        'community_sizes': community_sizes,
-        'community_codes': community_codes,
-        'filtered_codes': list(filtered_codes),
-        'inter_community_matrix': inter_community_prob,
-        'intra_community_prob': intra_prob,
-        'overall_intra_prob': overall_intra_prob,
-        'eigenvalues': eigenvalues,
-        'code_frequencies': code_frequencies,
-        'figures': figures,
+        "community_labels": labels,
+        "n_communities": n_communities,
+        "modularity": modularity,
+        "community_sizes": community_sizes,
+        "community_codes": community_codes,
+        "filtered_codes": list(filtered_codes),
+        "inter_community_matrix": inter_community_prob,
+        "intra_community_prob": intra_prob,
+        "overall_intra_prob": overall_intra_prob,
+        "eigenvalues": eigenvalues,
+        "code_frequencies": code_frequencies,
+        "figures": figures,
     }
 
 
@@ -736,24 +826,16 @@ def compute_conditional_transition_context(
             t_j = times_j[best_idx]
 
             # Get successor codes (if exist)
-            succ_i = (
-                int(result_i.code_indices[t_i + 1])
-                if t_i + 1 < n_frames_i
-                else -1
-            )
-            succ_j = (
-                int(result_j.code_indices[t_j + 1])
-                if t_j + 1 < n_frames_j
-                else -1
-            )
+            succ_i = int(result_i.code_indices[t_i + 1]) if t_i + 1 < n_frames_i else -1
+            succ_j = int(result_j.code_indices[t_j + 1]) if t_j + 1 < n_frames_j else -1
 
             if succ_i >= 0 and succ_j >= 0:
                 # Get window of future codes for both clips
                 end_i = min(t_i + 1 + match_window_size, n_frames_i)
                 end_j = min(t_j + 1 + match_window_size, n_frames_j)
 
-                window_i = tuple(int(c) for c in result_i.code_indices[t_i + 1:end_i])
-                window_j = tuple(int(c) for c in result_j.code_indices[t_j + 1:end_j])
+                window_i = tuple(int(c) for c in result_i.code_indices[t_i + 1 : end_i])
+                window_j = tuple(int(c) for c in result_j.code_indices[t_j + 1 : end_j])
 
                 # Match if succ_i appears in window_j OR succ_j appears in window_i
                 # This checks if either clip's successor appears in the other's future
@@ -761,16 +843,18 @@ def compute_conditional_transition_context(
                 succ_j_in_window_i = succ_j in window_i
                 windows_match = succ_i_in_window_j or succ_j_in_window_i
 
-                matched_pairs.append(MatchedFramePair(
-                    frame_i=t_i,
-                    frame_j=t_j,
-                    qpos_distance=mean_abs_diff,
-                    succ_i=succ_i,
-                    succ_j=succ_j,
-                    window_i=window_i,
-                    window_j=window_j,
-                    windows_match=windows_match,
-                ))
+                matched_pairs.append(
+                    MatchedFramePair(
+                        frame_i=t_i,
+                        frame_j=t_j,
+                        qpos_distance=mean_abs_diff,
+                        succ_i=succ_i,
+                        succ_j=succ_j,
+                        window_i=window_i,
+                        window_j=window_j,
+                        windows_match=windows_match,
+                    )
+                )
 
     if len(matched_pairs) < 1:  # Need at least one match
         return None
@@ -847,7 +931,11 @@ def compute_conditional_similarity_for_code(
             if i >= j:  # Only upper triangle
                 continue
             ctx = compute_conditional_transition_context(
-                result_i, result_j, code_idx, num_codes, qpos_threshold,
+                result_i,
+                result_j,
+                code_idx,
+                num_codes,
+                qpos_threshold,
                 match_window_size=match_window_size,
             )
             if ctx is not None:
@@ -868,7 +956,9 @@ def compute_conditional_similarity_for_code(
         "total_matched_frames": sum(ctx.n_matched_frames for ctx in contexts),
         "avg_conditional_similarity": float(np.mean(similarities)),
         "std_conditional_similarity": float(np.std(similarities)),
-        "avg_qpos_distance": float(np.mean([ctx.avg_qpos_distance for ctx in contexts])),
+        "avg_qpos_distance": float(
+            np.mean([ctx.avg_qpos_distance for ctx in contexts])
+        ),
         "contexts": contexts,
     }
 
@@ -925,7 +1015,9 @@ def plot_conditional_context_comparison(
     ax.set_xticklabels([f"C{c}" for c in clip_indices], fontsize=7)
     ax.set_yticklabels([f"C{c}" for c in clip_indices], fontsize=7)
     plt.colorbar(im, ax=ax, shrink=0.6, label="Cosine Sim")
-    ax.set_title("Conditional Similarity\n(qpos-matched)", fontsize=10, fontweight="bold")
+    ax.set_title(
+        "Conditional Similarity\n(qpos-matched)", fontsize=10, fontweight="bold"
+    )
 
     # === Right: Summary statistics ===
     ax = axes[1]
@@ -961,7 +1053,9 @@ Interpretation:
 """
 
     ax.text(
-        0.1, 0.9, stats_text,
+        0.1,
+        0.9,
+        stats_text,
         transform=ax.transAxes,
         fontsize=10,
         verticalalignment="top",
@@ -971,7 +1065,9 @@ Interpretation:
 
     fig.suptitle(
         f"Conditional Transition Analysis: Code {code_idx}",
-        fontsize=12, fontweight="bold", y=1.02,
+        fontsize=12,
+        fontweight="bold",
+        y=1.02,
     )
     plt.tight_layout()
 
@@ -1022,15 +1118,17 @@ def extract_transition_segments(
             seg_start = max(0, run_start - context_frames)
             seg_end = min(n_frames, run_end + context_frames)
 
-            segments.append(TransitionSegment(
-                code_idx=code_idx,
-                clip_idx=result.clip_idx,
-                start_frame=seg_start,
-                end_frame=seg_end,
-                predecessor_code=pred_code,
-                successor_code=succ_code,
-                code_indices=indices[seg_start:seg_end].copy(),
-            ))
+            segments.append(
+                TransitionSegment(
+                    code_idx=code_idx,
+                    clip_idx=result.clip_idx,
+                    start_frame=seg_start,
+                    end_frame=seg_end,
+                    predecessor_code=pred_code,
+                    successor_code=succ_code,
+                    code_indices=indices[seg_start:seg_end].copy(),
+                )
+            )
         else:
             i += 1
 
@@ -1135,15 +1233,21 @@ def render_transition_video(
 
             # Highlight the target code with a white border
             if code_idx == segment.code_idx:
-                full_frame[bar_y:bar_y + 2, x_start:x_end] = [255, 255, 255]
-                full_frame[bar_y + bar_height - 2:bar_y + bar_height, x_start:x_end] = [255, 255, 255]
-                full_frame[bar_y + 2:bar_y + bar_height - 2, x_start:x_end] = color
+                full_frame[bar_y : bar_y + 2, x_start:x_end] = [255, 255, 255]
+                full_frame[
+                    bar_y + bar_height - 2 : bar_y + bar_height, x_start:x_end
+                ] = [255, 255, 255]
+                full_frame[bar_y + 2 : bar_y + bar_height - 2, x_start:x_end] = color
             else:
-                full_frame[bar_y:bar_y + bar_height, x_start:x_end] = color
+                full_frame[bar_y : bar_y + bar_height, x_start:x_end] = color
 
         # Playhead
         playhead_x = int(i * width / n_frames)
-        full_frame[bar_y:bar_y + bar_height, playhead_x:playhead_x + 2] = [255, 255, 255]
+        full_frame[bar_y : bar_y + bar_height, playhead_x : playhead_x + 2] = [
+            255,
+            255,
+            255,
+        ]
 
         frames.append(full_frame)
 
@@ -1239,7 +1343,9 @@ def render_conditional_comparison_video(
     frames = []
     for i in range(n_frames):
         # Create combined frame (side by side)
-        full_frame = np.ones((height, width, 3), dtype=np.uint8) * 40  # Dark gray background
+        full_frame = (
+            np.ones((height, width, 3), dtype=np.uint8) * 40
+        )  # Dark gray background
 
         # Render clip i (left side)
         frame_idx_i = start_i + min(i, end_i - start_i - 1)
@@ -1264,7 +1370,7 @@ def render_conditional_comparison_video(
         full_frame[:render_height, half_width:] = render_j
 
         # Draw divider line
-        full_frame[:render_height, half_width - 1:half_width + 1] = [100, 100, 100]
+        full_frame[:render_height, half_width - 1 : half_width + 1] = [100, 100, 100]
 
         # Draw code timeline bars
         bar_y = render_height
@@ -1278,11 +1384,15 @@ def render_conditional_comparison_video(
                 c_idx = int(result_i.code_indices[idx])
                 color = code_colors[c_idx]
                 if c_idx == code_idx:
-                    full_frame[bar_y:bar_y + 2, x_start:x_end] = [255, 255, 255]
-                    full_frame[bar_y + bar_height - 2:bar_y + bar_height, x_start:x_end] = [255, 255, 255]
-                    full_frame[bar_y + 2:bar_y + bar_height - 2, x_start:x_end] = color
+                    full_frame[bar_y : bar_y + 2, x_start:x_end] = [255, 255, 255]
+                    full_frame[
+                        bar_y + bar_height - 2 : bar_y + bar_height, x_start:x_end
+                    ] = [255, 255, 255]
+                    full_frame[bar_y + 2 : bar_y + bar_height - 2, x_start:x_end] = (
+                        color
+                    )
                 else:
-                    full_frame[bar_y:bar_y + bar_height, x_start:x_end] = color
+                    full_frame[bar_y : bar_y + bar_height, x_start:x_end] = color
 
         # Right bar (clip j)
         for j in range(end_j - start_j):
@@ -1293,19 +1403,35 @@ def render_conditional_comparison_video(
                 c_idx = int(result_j.code_indices[idx])
                 color = code_colors[c_idx]
                 if c_idx == code_idx:
-                    full_frame[bar_y:bar_y + 2, x_start:x_end] = [255, 255, 255]
-                    full_frame[bar_y + bar_height - 2:bar_y + bar_height, x_start:x_end] = [255, 255, 255]
-                    full_frame[bar_y + 2:bar_y + bar_height - 2, x_start:x_end] = color
+                    full_frame[bar_y : bar_y + 2, x_start:x_end] = [255, 255, 255]
+                    full_frame[
+                        bar_y + bar_height - 2 : bar_y + bar_height, x_start:x_end
+                    ] = [255, 255, 255]
+                    full_frame[bar_y + 2 : bar_y + bar_height - 2, x_start:x_end] = (
+                        color
+                    )
                 else:
-                    full_frame[bar_y:bar_y + bar_height, x_start:x_end] = color
+                    full_frame[bar_y : bar_y + bar_height, x_start:x_end] = color
 
         # Playheads
         if end_i > start_i:
-            playhead_i = int(min(i, end_i - start_i - 1) * half_width / (end_i - start_i))
-            full_frame[bar_y:bar_y + bar_height, playhead_i:playhead_i + 2] = [255, 255, 255]
+            playhead_i = int(
+                min(i, end_i - start_i - 1) * half_width / (end_i - start_i)
+            )
+            full_frame[bar_y : bar_y + bar_height, playhead_i : playhead_i + 2] = [
+                255,
+                255,
+                255,
+            ]
         if end_j > start_j:
-            playhead_j = half_width + int(min(i, end_j - start_j - 1) * half_width / (end_j - start_j))
-            full_frame[bar_y:bar_y + bar_height, playhead_j:playhead_j + 2] = [255, 255, 255]
+            playhead_j = half_width + int(
+                min(i, end_j - start_j - 1) * half_width / (end_j - start_j)
+            )
+            full_frame[bar_y : bar_y + bar_height, playhead_j : playhead_j + 2] = [
+                255,
+                255,
+                255,
+            ]
 
         frames.append(full_frame)
 
@@ -1451,7 +1577,9 @@ def render_code_pose_gallery(
             cell_render = renderer.render()
 
             # Place render in grid
-            grid_frame[y_offset:y_offset + render_height, x_offset:x_offset + cell_width] = cell_render
+            grid_frame[
+                y_offset : y_offset + render_height, x_offset : x_offset + cell_width
+            ] = cell_render
 
             # Draw code timeline bar
             bar_y = y_offset + render_height
@@ -1464,16 +1592,26 @@ def render_code_pose_gallery(
                     color = code_colors[c_idx]
                     if c_idx == code_idx:
                         # Highlight target code with border
-                        grid_frame[bar_y:bar_y + 2, bx_start:bx_end] = [255, 255, 255]
-                        grid_frame[bar_y + bar_height - 2:bar_y + bar_height, bx_start:bx_end] = [255, 255, 255]
-                        grid_frame[bar_y + 2:bar_y + bar_height - 2, bx_start:bx_end] = color
+                        grid_frame[bar_y : bar_y + 2, bx_start:bx_end] = [255, 255, 255]
+                        grid_frame[
+                            bar_y + bar_height - 2 : bar_y + bar_height, bx_start:bx_end
+                        ] = [255, 255, 255]
+                        grid_frame[
+                            bar_y + 2 : bar_y + bar_height - 2, bx_start:bx_end
+                        ] = color
                     else:
-                        grid_frame[bar_y:bar_y + bar_height, bx_start:bx_end] = color
+                        grid_frame[bar_y : bar_y + bar_height, bx_start:bx_end] = color
 
             # Playhead
             if n_clip_frames > 0:
-                playhead_x = x_offset + int(min(t, n_clip_frames - 1) * cell_width / n_clip_frames)
-                grid_frame[bar_y:bar_y + bar_height, playhead_x:playhead_x + 2] = [255, 255, 255]
+                playhead_x = x_offset + int(
+                    min(t, n_clip_frames - 1) * cell_width / n_clip_frames
+                )
+                grid_frame[bar_y : bar_y + bar_height, playhead_x : playhead_x + 2] = [
+                    255,
+                    255,
+                    255,
+                ]
 
             # Clip label
             # (Optional: could add text overlay here)
@@ -1628,7 +1766,9 @@ def render_community_gallery(
             cell_render = renderer.render()
 
             # Place render in grid
-            grid_frame[y_offset:y_offset + render_height, x_offset:x_offset + cell_width] = cell_render
+            grid_frame[
+                y_offset : y_offset + render_height, x_offset : x_offset + cell_width
+            ] = cell_render
 
             # Draw code timeline bar
             bar_y = y_offset + render_height
@@ -1641,15 +1781,23 @@ def render_community_gallery(
                     color = code_colors[c_idx]
                     # Highlight codes from this community with white border
                     if c_idx in community_codes:
-                        grid_frame[bar_y:bar_y + 2, bx_start:bx_end] = [255, 255, 255]
-                        grid_frame[bar_y + bar_height - 2:bar_y + bar_height, bx_start:bx_end] = [255, 255, 255]
-                        grid_frame[bar_y + 2:bar_y + bar_height - 2, bx_start:bx_end] = color
+                        grid_frame[bar_y : bar_y + 2, bx_start:bx_end] = [255, 255, 255]
+                        grid_frame[
+                            bar_y + bar_height - 2 : bar_y + bar_height, bx_start:bx_end
+                        ] = [255, 255, 255]
+                        grid_frame[
+                            bar_y + 2 : bar_y + bar_height - 2, bx_start:bx_end
+                        ] = color
                     else:
-                        grid_frame[bar_y:bar_y + bar_height, bx_start:bx_end] = color
+                        grid_frame[bar_y : bar_y + bar_height, bx_start:bx_end] = color
 
             # Playhead
             playhead_x = x_offset + int(t * cell_width / segment_length)
-            grid_frame[bar_y:bar_y + bar_height, playhead_x:playhead_x + 2] = [255, 255, 255]
+            grid_frame[bar_y : bar_y + bar_height, playhead_x : playhead_x + 2] = [
+                255,
+                255,
+                255,
+            ]
 
         frames_out.append(grid_frame)
 
@@ -1707,7 +1855,11 @@ def plot_code_context_comparison(
         ax.set_xlabel("Predecessor Code", fontsize=9)
         plt.colorbar(im, ax=ax, shrink=0.6, label="P(pred)")
 
-    ax.set_title(f"Code {code_idx}: Predecessor Distributions Across Clips", fontsize=10, fontweight="bold")
+    ax.set_title(
+        f"Code {code_idx}: Predecessor Distributions Across Clips",
+        fontsize=10,
+        fontweight="bold",
+    )
 
     # === Row 0, Col 2: Predecessor similarity matrix ===
     ax = fig.add_subplot(gs[0, 2])
@@ -1742,7 +1894,11 @@ def plot_code_context_comparison(
         ax.set_xlabel("Successor Code", fontsize=9)
         plt.colorbar(im, ax=ax, shrink=0.6, label="P(succ)")
 
-    ax.set_title(f"Code {code_idx}: Successor Distributions Across Clips", fontsize=10, fontweight="bold")
+    ax.set_title(
+        f"Code {code_idx}: Successor Distributions Across Clips",
+        fontsize=10,
+        fontweight="bold",
+    )
 
     # === Row 1, Col 2: Successor similarity matrix ===
     ax = fig.add_subplot(gs[1, 2])
@@ -1792,8 +1948,12 @@ def plot_code_context_comparison(
     ax.axis("off")
 
     # Compute summary stats
-    avg_pred_sim = pred_sim_matrix[np.triu_indices(n_clips, k=1)].mean() if n_clips > 1 else 1.0
-    avg_succ_sim = succ_sim_matrix[np.triu_indices(n_clips, k=1)].mean() if n_clips > 1 else 1.0
+    avg_pred_sim = (
+        pred_sim_matrix[np.triu_indices(n_clips, k=1)].mean() if n_clips > 1 else 1.0
+    )
+    avg_succ_sim = (
+        succ_sim_matrix[np.triu_indices(n_clips, k=1)].mean() if n_clips > 1 else 1.0
+    )
     avg_combined = (avg_pred_sim + avg_succ_sim) / 2
 
     total_occurrences = sum(ctx.occurrence_count for ctx in contexts)
@@ -1819,15 +1979,23 @@ Avg Combined Sim: {avg_combined:.3f}
 Consistency: {consistency}
 """
 
-    ax.text(0.1, 0.9, stats_text,
-            transform=ax.transAxes,
-            fontsize=10,
-            verticalalignment="top",
-            fontfamily="monospace",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8))
+    ax.text(
+        0.1,
+        0.9,
+        stats_text,
+        transform=ax.transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        fontfamily="monospace",
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8),
+    )
 
-    fig.suptitle(f"Transition Context Analysis: Code {code_idx}",
-                 fontsize=14, fontweight="bold", y=0.98)
+    fig.suptitle(
+        f"Transition Context Analysis: Code {code_idx}",
+        fontsize=14,
+        fontweight="bold",
+        y=0.98,
+    )
 
     return fig
 
@@ -1880,7 +2048,7 @@ def generate_context_html(
 
     js_data = json.dumps(code_analyses)
 
-    html = f'''<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -2107,7 +2275,7 @@ def generate_context_html(
         updateCode(0);
     </script>
 </body>
-</html>'''
+</html>"""
 
     with open(output_path, "w") as f:
         f.write(html)
@@ -2198,7 +2366,7 @@ def generate_conditional_html(
 
     js_data = json.dumps(conditional_codes)
 
-    html = f'''<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -2531,7 +2699,7 @@ def generate_conditional_html(
         updateCode(0);
     </script>
 </body>
-</html>'''
+</html>"""
 
     with open(output_path, "w") as f:
         f.write(html)
@@ -2597,11 +2765,15 @@ def run_transition_context_analysis(
         contexts = []
         for result in results:
             ctx = compute_transition_context(result, code_idx, num_codes)
-            if ctx is not None and ctx.occurrence_count >= 2:  # Need at least 2 occurrences for meaningful context
+            if (
+                ctx is not None and ctx.occurrence_count >= 2
+            ):  # Need at least 2 occurrences for meaningful context
                 contexts.append(ctx)
 
         if len(contexts) < min_clips_for_comparison:
-            logging.info(f"    Code {code_idx} appears in only {len(contexts)} clips, skipping")
+            logging.info(
+                f"    Code {code_idx} appears in only {len(contexts)} clips, skipping"
+            )
             continue
 
         logging.info(f"    Found in {len(contexts)} clips")
@@ -2619,7 +2791,9 @@ def run_transition_context_analysis(
 
         for i in range(n_clips):
             for j in range(i + 1, n_clips):
-                pred_sim, succ_sim = compute_context_similarity(contexts[i], contexts[j])
+                pred_sim, succ_sim = compute_context_similarity(
+                    contexts[i], contexts[j]
+                )
                 pred_sim_sum += pred_sim
                 succ_sim_sum += succ_sim
                 n_pairs += 1
@@ -2639,7 +2813,9 @@ def run_transition_context_analysis(
                 if videos_rendered >= max_videos_per_code:
                     break
 
-                segments = extract_transition_segments(result, code_idx, context_frames=15, max_segments=1)
+                segments = extract_transition_segments(
+                    result, code_idx, context_frames=15, max_segments=1
+                )
 
                 for seg in segments:
                     if videos_rendered >= max_videos_per_code:
@@ -2662,15 +2838,19 @@ def run_transition_context_analysis(
                         if path:
                             # Use relative path for HTML
                             rel_path = f"videos/code_{code_idx:03d}/clip_{seg.clip_idx:03d}_transition.mp4"
-                            video_info.append({
-                                "path": rel_path,
-                                "clip_idx": int(seg.clip_idx),
-                                "pred": int(seg.predecessor_code),
-                                "succ": int(seg.successor_code),
-                            })
+                            video_info.append(
+                                {
+                                    "path": rel_path,
+                                    "clip_idx": int(seg.clip_idx),
+                                    "pred": int(seg.predecessor_code),
+                                    "succ": int(seg.successor_code),
+                                }
+                            )
                             videos_rendered += 1
                     except Exception as e:
-                        logging.warning(f"    Failed to render video for clip {seg.clip_idx}: {e}")
+                        logging.warning(
+                            f"    Failed to render video for clip {seg.clip_idx}: {e}"
+                        )
 
             logging.info(f"    Rendered {len(video_info)} transition videos")
 
@@ -2680,12 +2860,17 @@ def run_transition_context_analysis(
             qpos_threshold = conditional_cfg.get("qpos_threshold", 0.1)
             match_window_size = conditional_cfg.get("match_window_size", 5)
             conditional_data = compute_conditional_similarity_for_code(
-                results, code_idx, num_codes, qpos_threshold,
+                results,
+                code_idx,
+                num_codes,
+                qpos_threshold,
                 match_window_size=match_window_size,
             )
             if conditional_data:
                 # Generate conditional visualization
-                cond_fig = plot_conditional_context_comparison(code_idx, conditional_data)
+                cond_fig = plot_conditional_context_comparison(
+                    code_idx, conditional_data
+                )
                 cond_img_b64 = figure_to_base64(cond_fig, dpi=100)
                 plt.close(cond_fig)
 
@@ -2693,15 +2878,21 @@ def run_transition_context_analysis(
                 matched_video_info = []
                 unmatched_video_info = []
                 if render_videos and env is not None:
-                    cond_video_dir = output_dir / "videos" / f"code_{code_idx:03d}_conditional"
+                    cond_video_dir = (
+                        output_dir / "videos" / f"code_{code_idx:03d}_conditional"
+                    )
                     cond_video_dir.mkdir(parents=True, exist_ok=True)
 
                     # Build lookup for results by clip_idx
                     results_by_clip = {r.clip_idx: r for r in results}
 
                     # Get config limits (with backwards compatibility for max_videos)
-                    max_matched_videos = conditional_cfg.get("max_matched_videos", conditional_cfg.get("max_videos", 4))
-                    max_unmatched_videos = conditional_cfg.get("max_unmatched_videos", 2)
+                    max_matched_videos = conditional_cfg.get(
+                        "max_matched_videos", conditional_cfg.get("max_videos", 4)
+                    )
+                    max_unmatched_videos = conditional_cfg.get(
+                        "max_unmatched_videos", 2
+                    )
 
                     matched_rendered = 0
                     unmatched_rendered = 0
@@ -2728,7 +2919,10 @@ def run_transition_context_analysis(
                         if matched_rendered >= max_matched_videos:
                             break
 
-                        video_path = cond_video_dir / f"matched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{matched_rendered}.mp4"
+                        video_path = (
+                            cond_video_dir
+                            / f"matched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{matched_rendered}.mp4"
+                        )
                         try:
                             path = render_conditional_comparison_video(
                                 env=env,
@@ -2745,26 +2939,33 @@ def run_transition_context_analysis(
                             )
                             if path:
                                 rel_path = f"videos/code_{code_idx:03d}_conditional/matched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{matched_rendered}.mp4"
-                                matched_video_info.append({
-                                    "path": rel_path,
-                                    "clip_i": int(ctx.clip_i),
-                                    "clip_j": int(ctx.clip_j),
-                                    "succ_i": int(pair.succ_i),
-                                    "succ_j": int(pair.succ_j),
-                                    "window_i": list(pair.window_i),
-                                    "window_j": list(pair.window_j),
-                                    "qpos_dist": float(pair.qpos_distance),
-                                })
+                                matched_video_info.append(
+                                    {
+                                        "path": rel_path,
+                                        "clip_i": int(ctx.clip_i),
+                                        "clip_j": int(ctx.clip_j),
+                                        "succ_i": int(pair.succ_i),
+                                        "succ_j": int(pair.succ_j),
+                                        "window_i": list(pair.window_i),
+                                        "window_j": list(pair.window_j),
+                                        "qpos_dist": float(pair.qpos_distance),
+                                    }
+                                )
                                 matched_rendered += 1
                         except Exception as e:
-                            logging.warning(f"    Failed to render matched conditional video: {e}")
+                            logging.warning(
+                                f"    Failed to render matched conditional video: {e}"
+                            )
 
                     # Render unmatched videos (different successor)
                     for ctx, r_i, r_j, pair in all_unmatched_pairs:
                         if unmatched_rendered >= max_unmatched_videos:
                             break
 
-                        video_path = cond_video_dir / f"unmatched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{unmatched_rendered}.mp4"
+                        video_path = (
+                            cond_video_dir
+                            / f"unmatched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{unmatched_rendered}.mp4"
+                        )
                         try:
                             path = render_conditional_comparison_video(
                                 env=env,
@@ -2781,21 +2982,27 @@ def run_transition_context_analysis(
                             )
                             if path:
                                 rel_path = f"videos/code_{code_idx:03d}_conditional/unmatched_{ctx.clip_i:03d}_{ctx.clip_j:03d}_{unmatched_rendered}.mp4"
-                                unmatched_video_info.append({
-                                    "path": rel_path,
-                                    "clip_i": int(ctx.clip_i),
-                                    "clip_j": int(ctx.clip_j),
-                                    "succ_i": int(pair.succ_i),
-                                    "succ_j": int(pair.succ_j),
-                                    "window_i": list(pair.window_i),
-                                    "window_j": list(pair.window_j),
-                                    "qpos_dist": float(pair.qpos_distance),
-                                })
+                                unmatched_video_info.append(
+                                    {
+                                        "path": rel_path,
+                                        "clip_i": int(ctx.clip_i),
+                                        "clip_j": int(ctx.clip_j),
+                                        "succ_i": int(pair.succ_i),
+                                        "succ_j": int(pair.succ_j),
+                                        "window_i": list(pair.window_i),
+                                        "window_j": list(pair.window_j),
+                                        "qpos_dist": float(pair.qpos_distance),
+                                    }
+                                )
                                 unmatched_rendered += 1
                         except Exception as e:
-                            logging.warning(f"    Failed to render unmatched conditional video: {e}")
+                            logging.warning(
+                                f"    Failed to render unmatched conditional video: {e}"
+                            )
 
-                    logging.info(f"    Rendered {len(matched_video_info)} matched + {len(unmatched_video_info)} unmatched conditional videos")
+                    logging.info(
+                        f"    Rendered {len(matched_video_info)} matched + {len(unmatched_video_info)} unmatched conditional videos"
+                    )
 
                 conditional_result = {
                     "image": cond_img_b64,
@@ -2814,21 +3021,25 @@ def run_transition_context_analysis(
                     f"sim={conditional_data['avg_conditional_similarity']:.3f}"
                 )
             else:
-                logging.info("    Conditional analysis: insufficient qpos-matched frames")
+                logging.info(
+                    "    Conditional analysis: insufficient qpos-matched frames"
+                )
 
-        code_analyses.append({
-            "code_idx": int(code_idx),
-            "image": img_b64,
-            "stats": {
-                "total_frames": int(total_count),
-                "n_clips": int(n_clips),
-                "avg_pred_sim": float(avg_pred_sim),
-                "avg_succ_sim": float(avg_succ_sim),
-                "avg_combined_sim": float(avg_combined_sim),
-            },
-            "videos": video_info,
-            "conditional": conditional_result,
-        })
+        code_analyses.append(
+            {
+                "code_idx": int(code_idx),
+                "image": img_b64,
+                "stats": {
+                    "total_frames": int(total_count),
+                    "n_clips": int(n_clips),
+                    "avg_pred_sim": float(avg_pred_sim),
+                    "avg_succ_sim": float(avg_succ_sim),
+                    "avg_combined_sim": float(avg_combined_sim),
+                },
+                "videos": video_info,
+                "conditional": conditional_result,
+            }
+        )
 
     # Generate conditional HTML if enabled
     conditional_html_path = None
@@ -3041,10 +3252,11 @@ def render_conditioned_community_gallery(
     height: int = 480,
     fps: int = 50,
 ) -> str:
-    """Render community gallery video from matched clips only.
+    """Render community gallery showing only community-active frames.
 
-    Wrapper around render_community_gallery that uses only the matched clips
-    for segment sampling.
+    For each sampled clip, extracts only the frames where the target
+    community's codes are active and concatenates them, skipping frames
+    belonging to other communities. Each cell is labeled with its clip index.
 
     Args:
         matched_clips: List of InferenceResult matched by starting pose.
@@ -3053,9 +3265,10 @@ def render_conditioned_community_gallery(
         num_codes: Total number of codes.
         env: Environment with mj_model attribute.
         output_path: Path to save video.
-        n_samples: Number of sample segments per community.
-        segment_length: Frames per segment.
-        min_segment_gap: Minimum frames between sampled segments.
+        n_samples: Number of sample clips to show in grid.
+        segment_length: Unused (kept for API compat); frame count is
+            determined by the community-active frames in each clip.
+        min_segment_gap: Unused (kept for API compat).
         camera: Camera name.
         width: Total video width.
         height: Total video height.
@@ -3064,21 +3277,153 @@ def render_conditioned_community_gallery(
     Returns:
         Path to rendered video, or empty string on failure.
     """
-    return render_community_gallery(
-        results=matched_clips,
-        community_labels=community_labels,
-        community_idx=community_idx,
-        num_codes=num_codes,
-        env=env,
-        output_path=output_path,
-        n_samples=n_samples,
-        segment_length=segment_length,
-        min_segment_gap=min_segment_gap,
-        camera=camera,
-        width=width,
-        height=height,
-        fps=fps,
-    )
+    import imageio
+    import mujoco
+
+    from .rendering import add_text_overlay, get_nature_colormap
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    community_codes = set(np.where(community_labels == community_idx)[0])
+    if len(community_codes) == 0:
+        logging.warning(f"Community {community_idx} has no codes")
+        return ""
+
+    # For each clip, collect frame indices where this community is active
+    clip_community_frames: list[tuple[InferenceResult, np.ndarray]] = []
+    for result in matched_clips:
+        if result.qpos is None or len(result.qpos) == 0:
+            continue
+        mask = np.array(
+            [
+                int(result.code_indices[i]) in community_codes
+                for i in range(len(result.code_indices))
+            ]
+        )
+        active_frames = np.where(mask)[0]
+        if len(active_frames) > 0:
+            clip_community_frames.append((result, active_frames))
+
+    if len(clip_community_frames) == 0:
+        logging.warning(f"Community {community_idx}: no active frames in any clip")
+        return ""
+
+    # Sort by number of community frames (most first) and sample
+    clip_community_frames.sort(key=lambda x: len(x[1]), reverse=True)
+    if len(clip_community_frames) > n_samples:
+        indices = np.linspace(0, len(clip_community_frames) - 1, n_samples, dtype=int)
+        selected = [clip_community_frames[i] for i in indices]
+    else:
+        selected = clip_community_frames
+
+    actual_samples = len(selected)
+
+    # Grid layout
+    if actual_samples <= 4:
+        n_rows, n_cols = 2, 2
+    else:
+        n_rows, n_cols = 2, 3
+
+    cell_width = width // n_cols
+    cell_height = height // n_rows
+    bar_height = 20
+    render_height = cell_height - bar_height
+
+    code_colors = get_nature_colormap(num_codes)
+
+    # Find the longest community-frame sequence across cells to set video length
+    max_frames = max(len(frames) for _, frames in selected)
+    # Cap at a reasonable length
+    max_frames = min(max_frames, 500)
+
+    # Setup MuJoCo
+    mj_model = env.mj_model
+    mj_data = mujoco.MjData(mj_model)
+    renderer = mujoco.Renderer(mj_model, height=render_height, width=cell_width)
+
+    cam_id = -1
+    if camera:
+        try:
+            cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+        except Exception:
+            pass
+
+    frames_out = []
+    for t in range(max_frames):
+        grid_frame = np.ones((height, width, 3), dtype=np.uint8) * 30
+
+        for cell_idx, (result, active_frames) in enumerate(selected):
+            if cell_idx >= n_rows * n_cols:
+                break
+
+            row = cell_idx // n_cols
+            col = cell_idx % n_cols
+            y_offset = row * cell_height
+            x_offset = col * cell_width
+
+            n_active = len(active_frames)
+
+            # Map video time t to active-frame index (loop if shorter)
+            if t < n_active:
+                frame_idx = int(active_frames[t])
+            else:
+                # Hold last frame
+                frame_idx = int(active_frames[-1])
+
+            # Render
+            mj_data.qpos[:] = result.qpos[frame_idx]
+            mujoco.mj_forward(mj_model, mj_data)
+            if cam_id >= 0:
+                renderer.update_scene(mj_data, camera=cam_id)
+            else:
+                renderer.update_scene(mj_data)
+            cell_render = renderer.render()
+
+            # Add clip label
+            cell_render = add_text_overlay(
+                cell_render,
+                f"Clip {result.clip_idx}",
+                position=(4, 4),
+                font_size=13,
+            )
+
+            grid_frame[
+                y_offset : y_offset + render_height,
+                x_offset : x_offset + cell_width,
+            ] = cell_render
+
+            # Draw code bar using only community-active frames
+            bar_y = y_offset + render_height
+            for j in range(n_active):
+                bx_start = x_offset + int(j * cell_width / n_active)
+                bx_end = x_offset + int((j + 1) * cell_width / n_active)
+                orig_idx = int(active_frames[j])
+                c_idx = int(result.code_indices[orig_idx])
+                color = code_colors[c_idx]
+                grid_frame[bar_y : bar_y + bar_height, bx_start:bx_end] = color
+
+            # Playhead on the bar
+            if t < n_active:
+                px = x_offset + int(t * cell_width / n_active)
+                grid_frame[bar_y : bar_y + bar_height, px : px + 2] = [
+                    255,
+                    255,
+                    255,
+                ]
+
+        frames_out.append(grid_frame)
+
+    renderer.close()
+
+    if len(frames_out) == 0:
+        return ""
+
+    with imageio.get_writer(str(output_path), fps=fps) as writer:
+        for frame in frames_out:
+            writer.append_data(frame)
+
+    return str(output_path)
 
 
 def generate_conditioned_community_html(
@@ -3142,7 +3487,7 @@ def generate_conditioned_community_html(
 
     js_data = json.dumps(seed_analyses)
 
-    html = f'''<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -3423,7 +3768,7 @@ def generate_conditioned_community_html(
         updateSeed(0);
     </script>
 </body>
-</html>'''
+</html>"""
 
     with open(output_path, "w") as f:
         f.write(html)
@@ -3510,7 +3855,9 @@ def run_conditioned_community_analysis(
             logging.info(f"    Skipping: insufficient matched clips")
             continue
 
-        logging.info(f"    Matched {analysis.n_matched_clips} clips, detected {analysis.n_communities} communities")
+        logging.info(
+            f"    Matched {analysis.n_matched_clips} clips, detected {analysis.n_communities} communities"
+        )
         logging.info(f"    Modularity: {analysis.modularity:.4f}")
 
         # Create seed-specific output directory
@@ -3527,7 +3874,9 @@ def run_conditioned_community_analysis(
             plt.close(fig)
 
         # Get matched clips for video rendering
-        matched_clips = find_clips_by_starting_pose(valid_results, seed_result, qpos_threshold)
+        matched_clips = find_clips_by_starting_pose(
+            valid_results, seed_result, qpos_threshold
+        )
 
         # Render community gallery videos
         community_videos = []
@@ -3556,25 +3905,31 @@ def run_conditioned_community_analysis(
                     if path:
                         # Convert video to base64 for HTML embedding
                         data_url = video_to_base64(path)
-                        community_videos.append({
-                            "community_idx": comm_idx,
-                            "path": str(path),
-                            "data_url": data_url,
-                        })
+                        community_videos.append(
+                            {
+                                "community_idx": comm_idx,
+                                "path": str(path),
+                                "data_url": data_url,
+                            }
+                        )
                         logging.info(f"    Rendered community {comm_idx} gallery")
                 except Exception as e:
                     logging.warning(f"    Failed to render community {comm_idx}: {e}")
 
         # Store analysis data for HTML
-        seed_analyses.append({
-            "seed_clip_idx": int(seed_result.clip_idx),
-            "n_matched_clips": int(analysis.n_matched_clips),
-            "n_communities": int(analysis.n_communities),
-            "modularity": float(analysis.modularity),
-            "community_sizes": {str(k): int(v) for k, v in analysis.community_sizes.items()},
-            "figures": figures_b64,
-            "community_videos": community_videos,
-        })
+        seed_analyses.append(
+            {
+                "seed_clip_idx": int(seed_result.clip_idx),
+                "n_matched_clips": int(analysis.n_matched_clips),
+                "n_communities": int(analysis.n_communities),
+                "modularity": float(analysis.modularity),
+                "community_sizes": {
+                    str(k): int(v) for k, v in analysis.community_sizes.items()
+                },
+                "figures": figures_b64,
+                "community_videos": community_videos,
+            }
+        )
 
     # Generate HTML viewer
     html_path = generate_conditioned_community_html(

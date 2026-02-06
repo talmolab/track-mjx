@@ -21,6 +21,10 @@ This package provides analysis of trained VQ-VAE models:
   - Extended feature extraction (limb activities, posture PCA, heading)
   - MI ranking, feature-code heatmap, and code-feature scatter plots
 
+- **compositional_transition_analysis.py**: Compositional code transition analysis
+  - Determinism testing (same pose + same codes → similar trajectories?)
+  - Compositional decomposition of k-transition sequences
+  - Interactive HTML tree viewer with decomposition and W2 scores
 
 - **inference_cache.py**: Data structures for inference results
 - **checkpoint_utils.py**: Checkpoint loading utilities
@@ -45,6 +49,7 @@ Usage:
 __all__ = [
     "checkpoint_utils",
     "code_analysis",
+    "compositional_transition_analysis",
     "inference_cache",
     "mutual_information",
     "per_clip_analysis",

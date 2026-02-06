@@ -110,7 +110,7 @@ network_config:
   latent_dim: 32                # Same as intention_size
 
   # VQ-VAE specific settings
-  num_codes: 32                    # Population coding for discrete motor intentions
+  num_codes: 16                    # Population coding for discrete motor intentions
   commitment_cost: 0.5           # Lower initially, let codebook stabilize
   codebook_loss_weight: 1.0      # Weight for codebook loss
   codebook_init_scale: 1.0       # Initialization scale

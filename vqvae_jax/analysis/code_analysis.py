@@ -59,6 +59,10 @@ from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 from track_mjx.config import utils as config_utils
 
 from .checkpoint_utils import load_vq_checkpoint, get_codebook
+from .compositional_transition_analysis import (
+    run_compositional_transition_analysis,
+    run_qpos_code_determinism_analysis,
+)
 from .inference_cache import InferenceResult
 from .mutual_information import run_mutual_information_analysis
 from .per_clip_analysis import run_per_clip_analysis
@@ -601,52 +605,128 @@ def main(cfg: DictConfig):
 
         all_paths["mutual_information"] = mi_paths
 
-    # === Section 2: Per-Clip Analysis ===
-    logging.info("\n" + "=" * 40)
-    logging.info("Running per-clip analysis...")
+    # === Section 1f: Qpos+Code Determinism Analysis ===
+    determinism_cfg = cfg.get("qpos_code_determinism", {})
+    if determinism_cfg.get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Running qpos+code determinism analysis...")
 
-    per_clip_cfg = cfg.per_clip
-    per_clip_results = run_per_clip_analysis(
-        results=results,
-        num_codes=num_codes,
-        output_dir=output_dir / "per_clip",
-        num_clips=per_clip_cfg.get("num_clips", 10),
-        n_communities=per_clip_cfg.get("n_communities", None),
-        render_videos=per_clip_cfg.get("render_videos", True),
-        env=env,
-        camera=camera_name,
-        width=cfg.render.get("width", 640),
-        height=cfg.render.get("height", 480),
-        fps=cfg.render.get("fps", 50),
-    )
+        det_dir = output_dir / "qpos_code_determinism"
+        det_results = run_qpos_code_determinism_analysis(
+            results=results,
+            num_codes=num_codes,
+            output_dir=det_dir,
+            cfg=(
+                OmegaConf.to_container(determinism_cfg, resolve=True)
+                if hasattr(determinism_cfg, "_metadata")
+                else dict(determinism_cfg)
+            ),
+        )
 
-    all_paths["per_clip"] = {
-        "html": per_clip_results["html_path"],
-        "json": per_clip_results["json_path"],
-        "videos": per_clip_results.get("video_paths", {}),
-    }
+        if wandb_enabled:
+            import wandb
 
-    # Log per-clip results to WandB immediately
-    if wandb_enabled:
-        import wandb
-
-        html_path = per_clip_results["html_path"]
-        if html_path and Path(html_path).exists():
-            log_to_wandb_immediately(
-                "per_clip/interactive_viewer",
-                wandb.Html(open(html_path).read()),
-                wandb_enabled,
-            )
-        # Log per-clip videos
-        video_paths = per_clip_results.get("video_paths", {})
-        for name, path in video_paths.items():
-            if path and Path(path).exists():
+            for key, fig_path in det_results.get("figure_paths", {}).items():
                 log_to_wandb_immediately(
-                    f"per_clip/videos/{name}",
-                    wandb.Video(path, format="mp4"),
+                    f"qpos_code_determinism/{key}",
+                    wandb.Image(fig_path),
                     wandb_enabled,
                 )
-        logging.info("  Logged per-clip analysis to WandB")
+            logging.info("  Logged determinism figures to WandB")
+
+        all_paths["qpos_code_determinism"] = det_results.get("figure_paths", {})
+        all_paths["qpos_code_determinism"]["json"] = det_results.get("json_path")
+        logging.info(f"  Total determinism pairs: {det_results.get('total_pairs', 0)}")
+
+    # === Section 1g: Compositional Transition Analysis ===
+    comp_cfg = cfg.get("compositional_transition", {})
+    if comp_cfg.get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Running compositional transition analysis...")
+
+        comp_dir = output_dir / "compositional_transition"
+        comp_results = run_compositional_transition_analysis(
+            results=results,
+            num_codes=num_codes,
+            output_dir=comp_dir,
+            cfg=(
+                OmegaConf.to_container(comp_cfg, resolve=True)
+                if hasattr(comp_cfg, "_metadata")
+                else dict(comp_cfg)
+            ),
+            env=env,
+            camera=camera_name,
+            width=cfg.render.get("width", 640),
+            height=cfg.render.get("height", 480),
+            fps=cfg.render.get("fps", 50),
+        )
+
+        if wandb_enabled:
+            import wandb
+
+            # Log HTML viewer
+            html_path = comp_results.get("html_path")
+            if html_path and Path(html_path).exists():
+                log_to_wandb_immediately(
+                    "compositional_transition/viewer",
+                    wandb.Html(open(html_path).read()),
+                    wandb_enabled,
+                )
+            logging.info("  Logged compositional analysis to WandB")
+
+        all_paths["compositional_transition"] = {
+            "html": comp_results.get("html_path"),
+            "json": comp_results.get("json_path"),
+        }
+        logging.info(f"  Total determinism pairs: {comp_results.get('total_pairs', 0)}")
+
+    # === Section 2: Per-Clip Analysis ===
+    if cfg.per_clip.get("enabled", True):
+        logging.info("\n" + "=" * 40)
+        logging.info("Running per-clip analysis...")
+
+        per_clip_cfg = cfg.per_clip
+        per_clip_results = run_per_clip_analysis(
+            results=results,
+            num_codes=num_codes,
+            output_dir=output_dir / "per_clip",
+            num_clips=per_clip_cfg.get("num_clips", 10),
+            n_communities=per_clip_cfg.get("n_communities", None),
+            render_videos=per_clip_cfg.get("render_videos", True),
+            env=env,
+            camera=camera_name,
+            width=cfg.render.get("width", 640),
+            height=cfg.render.get("height", 480),
+            fps=cfg.render.get("fps", 50),
+        )
+
+        all_paths["per_clip"] = {
+            "html": per_clip_results["html_path"],
+            "json": per_clip_results["json_path"],
+            "videos": per_clip_results.get("video_paths", {}),
+        }
+
+        # Log per-clip results to WandB immediately
+        if wandb_enabled:
+            import wandb
+
+            html_path = per_clip_results["html_path"]
+            if html_path and Path(html_path).exists():
+                log_to_wandb_immediately(
+                    "per_clip/interactive_viewer",
+                    wandb.Html(open(html_path).read()),
+                    wandb_enabled,
+                )
+            # Log per-clip videos
+            video_paths = per_clip_results.get("video_paths", {})
+            for name, path in video_paths.items():
+                if path and Path(path).exists():
+                    log_to_wandb_immediately(
+                        f"per_clip/videos/{name}",
+                        wandb.Video(path, format="mp4"),
+                        wandb_enabled,
+                    )
+            logging.info("  Logged per-clip analysis to WandB")
 
     # === Section 3: Per-Clip Context Analysis ===
     if cfg.get("transition_context", {}).get("enabled", False):
@@ -813,7 +893,15 @@ def main(cfg: DictConfig):
             )
         if "community_detection" in all_paths["global"]:
             print(f"Community detection: {all_paths['global']['community_detection']}")
-    print(f"Per-clip viewer: {all_paths['per_clip']['html']}")
+    if "per_clip" in all_paths:
+        print(f"Per-clip viewer: {all_paths['per_clip']['html']}")
+    if "compositional_transition" in all_paths and all_paths[
+        "compositional_transition"
+    ].get("html"):
+        print(
+            f"Compositional tree viewer: "
+            f"{all_paths['compositional_transition']['html']}"
+        )
     if "per_clip_context" in all_paths and all_paths["per_clip_context"].get(
         "conditional_html"
     ):

@@ -117,16 +117,6 @@ mutual_information:
   posture_pcs: 3                # Number of posture PCA components
 
 # =============================================================================
-# Code Determinism Analysis Configuration
-# =============================================================================
-# Tests whether same body state produces the same code across different clips.
-# Samples random cross-clip frame pairs, bins by qpos distance, plots agreement.
-determinism:
-  enabled: true
-  n_sample_pairs: 1000000        # Random frame pairs to sample
-  n_bins: 50                     # Distance histogram bins
-
-# =============================================================================
 # Rendering Configuration
 # =============================================================================
 render:

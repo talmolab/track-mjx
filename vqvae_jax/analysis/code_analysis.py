@@ -60,7 +60,6 @@ from track_mjx.config import utils as config_utils
 
 from .checkpoint_utils import load_vq_checkpoint, get_codebook
 from .inference_cache import InferenceResult
-from .determinism_analysis import run_determinism_analysis
 from .mutual_information import run_mutual_information_analysis
 from .per_clip_analysis import run_per_clip_analysis
 from .transition_context_analysis import (
@@ -601,36 +600,6 @@ def main(cfg: DictConfig):
             logging.info("  Logged MI analysis figures to WandB")
 
         all_paths["mutual_information"] = mi_paths
-
-    # === Section 1f: Code Determinism Analysis ===
-    det_cfg = cfg.get("determinism", {})
-    if det_cfg.get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running code determinism analysis...")
-
-        det_paths = run_determinism_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=output_dir / "determinism",
-            cfg=(
-                OmegaConf.to_container(det_cfg, resolve=True)
-                if hasattr(det_cfg, "_metadata")
-                else dict(det_cfg)
-            ),
-        )
-
-        if wandb_enabled:
-            import wandb
-
-            for key, fig_path in det_paths.items():
-                log_to_wandb_immediately(
-                    f"determinism/{key}",
-                    wandb.Image(fig_path),
-                    wandb_enabled,
-                )
-            logging.info("  Logged determinism analysis to WandB")
-
-        all_paths["determinism"] = det_paths
 
     # === Section 2: Per-Clip Analysis ===
     logging.info("\n" + "=" * 40)

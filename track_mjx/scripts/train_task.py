@@ -1,43 +1,23 @@
-"""Unified high-level decoder transfer training script.
+"""Standard Brax PPO training on any vnl-playground environment.
 
-Trains a high-level policy that outputs latent intentions to a frozen pretrained
-mimic decoder. Supports any task environment registered in vnl-playground.
+Trains an end-to-end MLP policy using standard Brax PPO on any registered
+vnl-playground task. No pretrained decoder or high-level transfer — just
+direct policy optimization.
 
 Usage:
     # Basic usage (any registered task)
-    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260115_005843_966729
-    python train_highlvl.py --task RodentRearing --mimic_checkpoint 260115_005843_966729
-    python train_highlvl.py --task MyCustomTask --mimic_checkpoint 260115_005843_966729
+    python train_task.py --task RodentBowlEscape
+    python train_task.py --task RodentRearing
 
     # With PPO overrides
-    python train_highlvl.py --task RodentRearing \\
-        --mimic_checkpoint 260115_005843_966729 \\
-        --num_timesteps 1e8 --entropy_cost 0.1
+    python train_task.py --task RodentRearing --num_timesteps 1e8 --entropy_cost 0.1
 
     # With env config overrides (dot notation for nested)
-    python train_highlvl.py --task RodentBowlEscape \\
-        --mimic_checkpoint 260115_005843_966729 \\
-        --env "target_speed=1.5 ctrl_dt=0.02"
+    python train_task.py --task RodentBowlEscape --env "target_speed=1.5 ctrl_dt=0.02"
 
-    # With custom observation keys for policy/value networks
-    python train_highlvl.py --task RodentBowlEscape \\
-        --mimic_checkpoint 260115_005843_966729 \\
+    # With custom observation keys
+    python train_task.py --task RodentBowlEscape \\
         --policy_obs_key state --value_obs_key privileged_state
-
-Tasks with preconfigured defaults: RodentBowlEscape, RodentRearing
-Other tasks use base defaults (can be overridden via CLI).
-
-Observation keys:
-    --policy_obs_key: Key for policy network input (default: state)
-    --value_obs_key: Key for value network input (default: privileged_state)
-
-Example configuration:
-
-    # RodentRearing
-    python train_highlvl.py --task RodentRearing \\
-        --mimic_checkpoint 260115_005843_966729 \\
-        --num_timesteps 2e8 --entropy_cost 0.05 --eval_every 2000000 \\
-        --env "reward_terms.head_height_dense.weight=0.0 reward_terms.head_height_sparse.weight=0.0"
 """
 
 import os
@@ -55,7 +35,6 @@ import json
 from datetime import datetime
 from typing import Any
 
-import hydra
 import imageio
 import jax
 import jax.numpy as jp
@@ -67,13 +46,9 @@ from etils import epath
 from flax.training import orbax_utils
 from ml_collections import config_dict
 from mujoco_playground import wrapper
-from omegaconf import OmegaConf
 from orbax import checkpoint as ocp
 
 from vnl_playground import registry
-from vnl_playground.tasks import wrappers as rodent_wrappers
-from track_mjx.agent import checkpointing
-from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from track_mjx.scripts.utils import apply_env_overrides, parse_env_overrides_str
 
 # Enable persistent compilation cache.
@@ -100,20 +75,6 @@ DEFAULT_PPO_PARAMS = {
     "max_grad_norm": 1.0,
     "eval_every": 5_000_000,
 }
-
-
-def load_mimic_checkpoint(checkpoint_path: str) -> tuple:
-    """Load mimic checkpoint config and decoder policy."""
-    if os.path.isabs(checkpoint_path):
-        full_path = checkpoint_path
-    else:
-        full_path = hydra.utils.to_absolute_path(
-            f"./model_checkpoints/{checkpoint_path}"
-        )
-
-    mimic_cfg = OmegaConf.create(checkpointing.load_config_from_checkpoint(full_path))
-    decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(full_path)
-    return mimic_cfg, decoder_policy_fn
 
 
 def create_ppo_params(args: argparse.Namespace):
@@ -143,58 +104,21 @@ def create_ppo_params(args: argparse.Namespace):
     return config_dict.create(**params)
 
 
-def create_env_config(task_name: str, mimic_cfg: Any, cli_env_overrides: dict):
-    """Create environment config with overrides applied."""
-    env_cfg = registry.get_default_config(task_name)
-    env_cfg.ctrl_dt = mimic_cfg.env_config.ctrl_dt
-    apply_env_overrides(env_cfg, cli_env_overrides)
-    return env_cfg
-
-
-def create_environments(
-    task_name: str,
-    env_cfg: Any,
-    decoder_policy_fn,
-    intention_size: int,
-    highlvl_obs_key: str,
-):
-    """Create training and eval environments with HighLevelWrapper."""
-    base_env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
-    eval_base_env = registry.load(
-        task_name, config=env_cfg, clips=None, flatten_obs=False
-    )
-
-    env = rodent_wrappers.HighLevelWrapper(
-        base_env,
-        decoder_policy_fn,
-        intention_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key="proprioception",
-    )
-    eval_env = rodent_wrappers.HighLevelWrapper(
-        eval_base_env,
-        decoder_policy_fn,
-        intention_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key="proprioception",
-    )
-
+def create_environments(task_name: str, env_cfg: Any):
+    """Create training and eval environments."""
+    env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
+    eval_env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
     return env, eval_env
 
 
 def make_logging_inference_fn(ppo_networks):
-    """Creates inference function for the PPO agent.
-
-    The policy_network already handles dict observation routing via policy_obs_key
-    configured in the network factory.
-    """
+    """Creates inference function for eval rollouts."""
 
     def make_logging_policy(deterministic: bool = False):
         policy_network = ppo_networks.policy_network
         parametric_action_distribution = ppo_networks.parametric_action_distribution
 
         def logging_policy(params, observations, key_sample):
-            # Pass full dict observations - network handles extraction via policy_obs_key
             param_subset = (params[0], params[1])
             logits = policy_network.apply(*param_subset, observations)
             if deterministic:
@@ -266,16 +190,15 @@ def create_policy_params_fn(
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Unified high-level decoder transfer training.",
+        description="Standard Brax PPO training on any vnl-playground environment.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260115_005843_966729
+    python train_task.py --task RodentBowlEscape
 
-    python train_highlvl.py --task RodentRearing --mimic_checkpoint 260115_005843_966729 \\
-        --num_timesteps 1e8 --entropy_cost 0.1
+    python train_task.py --task RodentRearing --num_timesteps 1e8 --entropy_cost 0.1
 
-    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260115_005843_966729 \\
+    python train_task.py --task RodentBowlEscape \\
         --env "target_speed=1.5 reward_terms.head_height_dense.weight=0.0"
         """,
     )
@@ -285,12 +208,6 @@ Examples:
         type=str,
         required=True,
         help="Task environment name (any task registered in vnl-playground)",
-    )
-    parser.add_argument(
-        "--mimic_checkpoint",
-        type=str,
-        required=True,
-        help="Mimic checkpoint path or run ID",
     )
 
     # PPO overrides
@@ -322,12 +239,6 @@ Examples:
         help='Env config overrides (space-separated key=value, e.g., "target_speed=1.0")',
     )
     parser.add_argument(
-        "--highlvl_obs_key",
-        type=str,
-        default="task_obs",
-        help="Observation key for high-level policy passed to HighLevelWrapper (default: task_obs)",
-    )
-    parser.add_argument(
         "--policy_obs_key",
         type=str,
         default="state",
@@ -344,11 +255,14 @@ Examples:
     parser.add_argument(
         "--checkpoint_dir",
         type=str,
-        default="highlvl_checkpoints",
+        default="task_checkpoints",
         help="Base checkpoint directory",
     )
     parser.add_argument(
-        "--wandb_project", type=str, default="vnl-playground", help="Wandb project name"
+        "--wandb_project",
+        type=str,
+        default="vnl-playground",
+        help="Wandb project name",
     )
 
     return parser.parse_args()
@@ -359,19 +273,16 @@ def main():
     args = parse_args()
     print(f"Task: {args.task}")
 
-    # Load mimic checkpoint
-    print(f"Loading mimic checkpoint: {args.mimic_checkpoint}")
-    mimic_cfg, decoder_policy_fn = load_mimic_checkpoint(args.mimic_checkpoint)
-
     # Create configs
     cli_env_overrides = parse_env_overrides_str(args.env)
-    env_cfg = create_env_config(args.task, mimic_cfg, cli_env_overrides)
+    env_cfg = registry.get_default_config(args.task)
+    apply_env_overrides(env_cfg, cli_env_overrides)
     ppo_params = create_ppo_params(args)
     print(f"env_cfg:\n{env_cfg}")
     print(f"ppo_params:\n{ppo_params}")
 
     # Setup experiment (include microseconds to avoid run ID collisions)
-    exp_name = f"{args.task}-highlvl-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
+    exp_name = f"{args.task}-ppo-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
     ckpt_path = epath.Path(args.checkpoint_dir).resolve() / exp_name
     ckpt_path.mkdir(parents=True, exist_ok=True)
     print(f"Experiment name: {exp_name}")
@@ -382,9 +293,7 @@ def main():
         "task": args.task,
         "env_config": env_cfg.to_dict(),
         "ppo_params": dict(ppo_params),
-        "mimic_checkpoint": args.mimic_checkpoint,
         "cli_env_overrides": cli_env_overrides,
-        "highlvl_obs_key": args.highlvl_obs_key,
         "policy_obs_key": args.policy_obs_key,
         "value_obs_key": args.value_obs_key,
     }
@@ -395,8 +304,8 @@ def main():
     wandb.init(
         project=args.wandb_project,
         config=config_to_save,
-        id=f"highlvl-{exp_name}",
-        notes=f"task: {args.task}, mimic: {args.mimic_checkpoint}",
+        id=f"task-ppo-{exp_name}",
+        notes=f"task: {args.task}",
     )
 
     def wandb_progress(num_steps, metrics):
@@ -405,13 +314,7 @@ def main():
         wandb.log(metrics)
 
     # Create environments
-    env, eval_env = create_environments(
-        args.task,
-        env_cfg,
-        decoder_policy_fn,
-        mimic_cfg.network_config.intention_size,
-        args.highlvl_obs_key,
-    )
+    env, eval_env = create_environments(args.task, env_cfg)
 
     # Setup training
     training_params = dict(ppo_params)

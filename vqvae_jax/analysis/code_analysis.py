@@ -63,6 +63,7 @@ from .compositional_transition_analysis import (
     run_compositional_transition_analysis,
     run_qpos_code_determinism_analysis,
 )
+from .tsne_trajectory_analysis import run_tsne_trajectory_analysis
 from .inference_cache import InferenceResult
 from .mutual_information import run_mutual_information_analysis
 from .per_clip_analysis import run_per_clip_analysis
@@ -680,6 +681,46 @@ def main(cfg: DictConfig):
         }
         logging.info(f"  Total determinism pairs: {comp_results.get('total_pairs', 0)}")
 
+    # === Section 1h: t-SNE Skill-Space Trajectory Analysis ===
+    tsne_cfg = cfg.get("tsne_trajectory", {})
+    if tsne_cfg.get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Running t-SNE trajectory analysis...")
+
+        tsne_dir = output_dir / "tsne_trajectory"
+        tsne_results = run_tsne_trajectory_analysis(
+            results=results,
+            codebook=np.array(codebook),
+            output_dir=tsne_dir,
+            cfg=(
+                OmegaConf.to_container(tsne_cfg, resolve=True)
+                if hasattr(tsne_cfg, "_metadata")
+                else dict(tsne_cfg)
+            ),
+            env=env,
+            camera=camera_name,
+            width=cfg.render.get("width", 640),
+            height=cfg.render.get("height", 480),
+            fps=cfg.render.get("fps", 50),
+        )
+
+        if wandb_enabled:
+            import wandb
+
+            html_path = tsne_results.get("html_path")
+            if html_path and Path(html_path).exists():
+                log_to_wandb_immediately(
+                    "tsne_trajectory/viewer",
+                    wandb.Html(open(html_path).read()),
+                    wandb_enabled,
+                )
+            logging.info("  Logged t-SNE trajectory viewer to WandB")
+
+        all_paths["tsne_trajectory"] = {
+            "html": tsne_results.get("html_path"),
+            "json": tsne_results.get("json_path"),
+        }
+
     # === Section 2: Per-Clip Analysis ===
     if cfg.per_clip.get("enabled", True):
         logging.info("\n" + "=" * 40)
@@ -908,6 +949,8 @@ def main(cfg: DictConfig):
         print(
             f"Per-clip context viewer: {all_paths['per_clip_context']['conditional_html']}"
         )
+    if "tsne_trajectory" in all_paths and all_paths["tsne_trajectory"].get("html"):
+        print(f"t-SNE trajectory viewer: {all_paths['tsne_trajectory']['html']}")
     if "conditioned_community" in all_paths and all_paths["conditioned_community"].get(
         "html"
     ):

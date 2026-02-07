@@ -124,7 +124,7 @@ mutual_information:
 # qpos trajectories. Computes Wasserstein-2 distance between trajectory pairs
 # that share code sequences and similar starting poses.
 qpos_code_determinism:
-  enabled: true
+  enabled: false
   num_clips: 842               # Number of clips to analyze
   min_k: 2                     # Minimum number of transitions
   max_k: 8                     # Maximum number of transitions
@@ -138,7 +138,7 @@ qpos_code_determinism:
 # observed shorter ones. Builds decomposition trees showing how k-transitions
 # break down into sub-sequences, with determinism scores at each level.
 compositional_transition:
-  enabled: true                 # ON for initial testing
+  enabled: false                 # ON for initial testing
   num_clips: 200               # Number of clips to analyze
   min_k: 2                     # Minimum number of transitions
   max_k: 8                     # Maximum number of transitions
@@ -149,6 +149,19 @@ compositional_transition:
   max_child_examples: 3        # Max example videos per decomposition child
   max_overlap: 2               # Max boundary overlap (codes) before dedup
   render_videos: true          # Render example videos in tree nodes
+
+# =============================================================================
+# t-SNE Skill-Space Trajectory Visualization
+# =============================================================================
+# Visualize how clips traverse the "skill space" by embedding k-transition
+# sequences (concatenated codebook vectors) into 2D via t-SNE. Creates a
+# synchronized HTML viewer with animated canvas + video playback.
+tsne_trajectory:
+  enabled: true                 # Enable t-SNE trajectory visualization
+  n_clips: 3                    # Number of high-movement clips to compare
+  k_transitions: 5              # Number of code transitions per t-SNE point
+  tsne_perplexity: 30           # t-SNE perplexity parameter
+  render_videos: true           # Render clip videos for synchronized viewer
 
 # =============================================================================
 # Rendering Configuration

@@ -26,6 +26,11 @@ This package provides analysis of trained VQ-VAE models:
   - Compositional decomposition of k-transition sequences
   - Interactive HTML tree viewer with decomposition and W2 scores
 
+- **tsne_trajectory_analysis.py**: t-SNE skill-space trajectory visualization
+  - Select high-movement clips by root XYZ displacement
+  - Embed k-transition sequences (concatenated codebook vectors) via t-SNE
+  - Synchronized HTML viewer: animated t-SNE canvas + video playback
+
 - **inference_cache.py**: Data structures for inference results
 - **checkpoint_utils.py**: Checkpoint loading utilities
 - **rendering.py**: Video rendering utilities and colormaps
@@ -55,4 +60,5 @@ __all__ = [
     "per_clip_analysis",
     "rendering",
     "transition_context_analysis",
+    "tsne_trajectory_analysis",
 ]

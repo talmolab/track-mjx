@@ -23,6 +23,7 @@ import base64
 import json
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -77,6 +78,66 @@ class ClipTrajectoryData:
     avg_frames_per_transition: float
 
 
+class MovementCategory(Enum):
+    """Movement category for t-SNE trajectory clip selection.
+
+    Attributes:
+        HIGH_XYZ: Top clips by total XYZ displacement.
+        HIGH_XY: High XY movement, low Z (locomotion without rearing).
+        HIGH_Z: High Z movement, low XY (rearing/vertical in place).
+        LOW_XYZ: Lowest total XYZ movement (stationary).
+        MIXED: One representative clip from each of the 4 above.
+    """
+
+    HIGH_XYZ = "high_xyz"
+    HIGH_XY = "high_xy"
+    HIGH_Z = "high_z"
+    LOW_XYZ = "low_xyz"
+    MIXED = "mixed"
+
+
+# Labels and descriptions for each category (for UI display)
+_CATEGORY_META: dict[MovementCategory, tuple[str, str]] = {
+    MovementCategory.HIGH_XYZ: (
+        "High XYZ",
+        "Top clips by total XYZ displacement",
+    ),
+    MovementCategory.HIGH_XY: (
+        "High XY",
+        "High XY movement, low Z (locomotion)",
+    ),
+    MovementCategory.HIGH_Z: (
+        "High Z",
+        "High Z movement, low XY (rearing)",
+    ),
+    MovementCategory.LOW_XYZ: (
+        "Low XYZ",
+        "Lowest total XYZ movement (stationary)",
+    ),
+    MovementCategory.MIXED: (
+        "Mixed",
+        "One representative clip from each category",
+    ),
+}
+
+
+@dataclass
+class CategoryData:
+    """All data for one movement category in the multicategory viewer.
+
+    Attributes:
+        category: The movement category enum value.
+        label: Human-readable label for the category.
+        description: Short description of what this category captures.
+        clip_data_list: List of ClipTrajectoryData for clips in this category.
+    """
+
+    category: MovementCategory
+    label: str
+    description: str
+    clip_data_list: list[ClipTrajectoryData]
+
+
 # =============================================================================
 # CLIP SELECTION
 # =============================================================================
@@ -120,6 +181,109 @@ def select_clips_by_movement(
         logging.info(f"  Selected clip {result.clip_idx}: movement={movement:.4f}")
 
     return [r for _, r in selected]
+
+
+def compute_clip_xy_movement(result: InferenceResult) -> float:
+    """Compute total root XY-plane displacement for a clip.
+
+    Args:
+        result: InferenceResult for one clip.
+
+    Returns:
+        Total XY displacement in meters.
+    """
+    root_xy = result.qpos[:, :2]  # [T, 2] - xy only
+    displacements = np.linalg.norm(np.diff(root_xy, axis=0), axis=1)
+    return float(np.sum(displacements))
+
+
+def compute_clip_z_movement(result: InferenceResult) -> float:
+    """Compute total absolute root Z displacement for a clip.
+
+    Args:
+        result: InferenceResult for one clip.
+
+    Returns:
+        Total absolute Z displacement in meters.
+    """
+    root_z = result.qpos[:, 2]  # [T] - z only
+    displacements = np.abs(np.diff(root_z))
+    return float(np.sum(displacements))
+
+
+def select_clips_by_category(
+    results: Sequence[InferenceResult],
+    n_clips: int,
+) -> dict[MovementCategory, list[InferenceResult]]:
+    """Select clips for each movement category.
+
+    Args:
+        results: All InferenceResult objects.
+        n_clips: Number of clips to select per category.
+
+    Returns:
+        Dict mapping each MovementCategory to its selected clips.
+    """
+    # Pre-compute scores for all clips
+    scores = []
+    for r in results:
+        scores.append(
+            {
+                "result": r,
+                "xyz": compute_clip_movement(r),
+                "xy": compute_clip_xy_movement(r),
+                "z": compute_clip_z_movement(r),
+            }
+        )
+
+    # Compute medians for filtering
+    all_z = [s["z"] for s in scores]
+    all_xy = [s["xy"] for s in scores]
+    median_z = float(np.median(all_z))
+    median_xy = float(np.median(all_xy))
+
+    categories: dict[MovementCategory, list[InferenceResult]] = {}
+
+    # HIGH_XYZ: top n_clips by total XYZ movement
+    by_xyz = sorted(scores, key=lambda s: s["xyz"], reverse=True)
+    categories[MovementCategory.HIGH_XYZ] = [s["result"] for s in by_xyz[:n_clips]]
+
+    # HIGH_XY: filter to clips with Z below median, then top by XY
+    low_z_pool = [s for s in scores if s["z"] <= median_z]
+    low_z_pool.sort(key=lambda s: s["xy"], reverse=True)
+    categories[MovementCategory.HIGH_XY] = [s["result"] for s in low_z_pool[:n_clips]]
+
+    # HIGH_Z: filter to clips with XY below median, then top by Z
+    low_xy_pool = [s for s in scores if s["xy"] <= median_xy]
+    low_xy_pool.sort(key=lambda s: s["z"], reverse=True)
+    categories[MovementCategory.HIGH_Z] = [s["result"] for s in low_xy_pool[:n_clips]]
+
+    # LOW_XYZ: bottom n_clips by total XYZ movement
+    by_xyz_asc = sorted(scores, key=lambda s: s["xyz"])
+    categories[MovementCategory.LOW_XYZ] = [s["result"] for s in by_xyz_asc[:n_clips]]
+
+    # MIXED: top 1 unique clip from each of the 4 categories above
+    seen_idxs: set[int] = set()
+    mixed: list[InferenceResult] = []
+    for cat in [
+        MovementCategory.HIGH_XYZ,
+        MovementCategory.HIGH_XY,
+        MovementCategory.HIGH_Z,
+        MovementCategory.LOW_XYZ,
+    ]:
+        for r in categories[cat]:
+            if r.clip_idx not in seen_idxs:
+                mixed.append(r)
+                seen_idxs.add(r.clip_idx)
+                break
+    categories[MovementCategory.MIXED] = mixed
+
+    # Log category selections
+    for cat, clips in categories.items():
+        clip_idxs = [r.clip_idx for r in clips]
+        logging.info(f"  {cat.value}: {len(clips)} clips -> {clip_idxs}")
+
+    return categories
 
 
 # =============================================================================
@@ -501,7 +665,7 @@ h1 {{
 canvas {{
     display: block;
     border-radius: 8px;
-    background: #0d1117;
+    background: #ffffff;
     cursor: crosshair;
 }}
 .video-row {{
@@ -698,7 +862,7 @@ function drawCanvas() {{
     ctx.clearRect(0, 0, W, H);
 
     // Draw grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.06)';
     ctx.lineWidth = 1;
     for (var gx = 0; gx < W; gx += 50) {{
         ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
@@ -767,7 +931,7 @@ function drawCanvas() {{
             ctx.arc(ap[0], ap[1], pulseSize + 4, 0, Math.PI * 2);
             ctx.fillStyle = hexToRGBA(color, 0.9);
             ctx.fill();
-            ctx.strokeStyle = '#fff';
+            ctx.strokeStyle = '#000';
             ctx.lineWidth = 2;
             ctx.stroke();
         }} else {{
@@ -925,6 +1089,755 @@ function setSpeed(speed, btn) {{
     return str(output_path)
 
 
+def generate_tsne_trajectory_html_multicategory(
+    category_data_list: list[CategoryData],
+    clip_data_by_idx: dict[int, ClipTrajectoryData],
+    tsne_coords_per_category: dict[str, np.ndarray],
+    clip_point_ranges_per_category: dict[str, dict[int, tuple[int, int]]],
+    videos_by_idx: dict[int, str],
+    k: int,
+    fps: int,
+    output_path: str | Path,
+) -> str:
+    """Generate multicategory t-SNE trajectory HTML viewer.
+
+    Creates an HTML page with category buttons at the top. Each category has
+    its own t-SNE embedding. Switching categories shows the relevant videos
+    and redraws the canvas with that category's t-SNE coordinates.
+
+    Args:
+        category_data_list: List of CategoryData for each category.
+        clip_data_by_idx: All unique ClipTrajectoryData keyed by clip_idx.
+        tsne_coords_per_category: Map from category key to 2D t-SNE coords.
+        clip_point_ranges_per_category: Map from category key to
+            {clip_idx: (start, end)} index ranges in that category's coords.
+        videos_by_idx: Map from clip_idx to base64 video data URL.
+        k: Number of transitions per point.
+        fps: Video frames per second.
+        output_path: Path to save the HTML file.
+
+    Returns:
+        Path to the saved HTML file.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build per-category clip point data and bounds for JS
+    categories_js = []
+    for cat_data in category_data_list:
+        cat_key = cat_data.category.value
+        tsne_coords = tsne_coords_per_category[cat_key]
+        point_ranges = clip_point_ranges_per_category[cat_key]
+
+        # Per-clip points for this category
+        clips_in_cat = {}
+        for cd in cat_data.clip_data_list:
+            clip_idx = cd.clip_idx
+            start, end = point_ranges[clip_idx]
+            points = []
+            for pi, t in enumerate(cd.transitions):
+                coord_idx = start + pi
+                x = float(tsne_coords[coord_idx, 0])
+                y = float(tsne_coords[coord_idx, 1])
+                points.append(
+                    {
+                        "x": round(x, 3),
+                        "y": round(y, 3),
+                        "sf": t.start_frame,
+                        "ef": t.end_frame,
+                        "mf": t.midpoint_frame,
+                        "codes": list(t.code_sequence),
+                    }
+                )
+            clips_in_cat[clip_idx] = {
+                "clipIdx": clip_idx,
+                "movement": round(cd.total_movement, 4),
+                "avgFrames": round(cd.avg_frames_per_transition, 1),
+                "points": points,
+            }
+
+        # Compute bounds for this category's t-SNE space
+        x_min, x_max = float(tsne_coords[:, 0].min()), float(tsne_coords[:, 0].max())
+        y_min, y_max = float(tsne_coords[:, 1].min()), float(tsne_coords[:, 1].max())
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        margin = 0.08
+        x_min -= x_range * margin
+        x_max += x_range * margin
+        y_min -= y_range * margin
+        y_max += y_range * margin
+
+        clip_idxs = [cd.clip_idx for cd in cat_data.clip_data_list]
+        categories_js.append(
+            {
+                "key": cat_key,
+                "label": cat_data.label,
+                "description": cat_data.description,
+                "clipIdxs": clip_idxs,
+                "clips": clips_in_cat,
+                "bounds": {
+                    "xMin": round(x_min, 3),
+                    "xMax": round(x_max, 3),
+                    "yMin": round(y_min, 3),
+                    "yMax": round(y_max, 3),
+                },
+            }
+        )
+
+    # Build video HTML for all unique clips (all hidden by default, JS shows active)
+    all_unique_clip_idxs = sorted(clip_data_by_idx.keys())
+    video_elements_html = ""
+    for clip_idx in all_unique_clip_idxs:
+        cd = clip_data_by_idx[clip_idx]
+        video_src = videos_by_idx.get(clip_idx, "")
+        video_elements_html += (
+            f'<div class="video-cell" id="vcell-{clip_idx}" '
+            f'data-clip-idx="{clip_idx}" '
+            f'onclick="setActiveClip({clip_idx})" style="display:none">\n'
+            f'  <div class="video-label" id="vlabel-{clip_idx}">'
+            f"Clip {clip_idx}"
+            f' <span class="movement-tag">'
+            f"mvmt={cd.total_movement:.3f}</span></div>\n"
+            f'  <video id="vid-{clip_idx}" loop muted playsinline'
+            f' src="{video_src}">'
+            f"</video>\n"
+            f"</div>\n"
+        )
+
+    # Build category button bar HTML
+    cat_buttons_html = ""
+    for i, cat_data in enumerate(category_data_list):
+        active_cls = " active" if i == 0 else ""
+        cat_buttons_html += (
+            f'<button class="cat-btn{active_cls}" '
+            f'data-cat-idx="{i}" '
+            f'onclick="switchCategory({i})" '
+            f'title="{cat_data.description}">'
+            f"{cat_data.label}</button>\n"
+        )
+
+    # Stats
+    total_points = sum(len(cd.transitions) for cd in clip_data_by_idx.values())
+    n_unique_clips = len(clip_data_by_idx)
+
+    # Serialize JS data
+    categories_json = json.dumps(categories_js)
+    colors_json = json.dumps(_CLIP_COLORS)
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>t-SNE Skill-Space Trajectory Viewer</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #e0e0e0;
+    min-height: 100vh;
+    padding: 16px;
+}}
+h1 {{
+    text-align: center;
+    font-size: 1.6em;
+    margin-bottom: 12px;
+    color: #64b5f6;
+}}
+.outer-container {{
+    max-width: 1400px;
+    margin: 0 auto;
+}}
+.category-bar {{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 10px 16px;
+    border: 1px solid rgba(100,181,246,0.2);
+    margin-bottom: 12px;
+    align-items: center;
+}}
+.category-bar .label {{
+    font-size: 0.85em;
+    color: #888;
+    margin-right: 4px;
+}}
+.cat-btn {{
+    padding: 6px 16px;
+    border: 1px solid rgba(100,181,246,0.3);
+    border-radius: 14px;
+    background: rgba(255,255,255,0.06);
+    color: #90caf9;
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: background 0.2s, border-color 0.2s;
+}}
+.cat-btn:hover {{ background: rgba(100,181,246,0.2); }}
+.cat-btn.active {{
+    background: rgba(100,181,246,0.3);
+    border-color: #64b5f6;
+    color: #fff;
+}}
+.canvas-panel {{
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 12px;
+    border: 1px solid rgba(100,181,246,0.2);
+    margin-bottom: 16px;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}}
+.canvas-wrapper {{
+    flex: 0 0 auto;
+}}
+.canvas-sidebar {{
+    flex: 1;
+    min-width: 200px;
+}}
+canvas {{
+    display: block;
+    border-radius: 8px;
+    background: #ffffff;
+    cursor: crosshair;
+}}
+.video-row {{
+    display: flex;
+    gap: 12px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 12px;
+    border: 1px solid rgba(100,181,246,0.2);
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}}
+.video-cell {{
+    flex: 1;
+    min-width: 250px;
+    max-width: 400px;
+    cursor: pointer;
+    border-radius: 10px;
+    border: 3px solid transparent;
+    padding: 6px;
+    transition: border-color 0.2s, background 0.2s;
+}}
+.video-cell:hover {{
+    background: rgba(255,255,255,0.04);
+}}
+.video-cell.active {{
+    border-color: currentColor;
+    background: rgba(255,255,255,0.06);
+}}
+.video-label {{
+    font-size: 0.9em;
+    font-weight: 600;
+    margin-bottom: 6px;
+    text-align: center;
+}}
+.movement-tag {{
+    font-size: 0.75em;
+    font-weight: 400;
+    opacity: 0.7;
+}}
+.video-cell video {{
+    width: 100%;
+    border-radius: 8px;
+    background: #000;
+    display: block;
+}}
+.controls-bar {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 10px 16px;
+    border: 1px solid rgba(100,181,246,0.2);
+}}
+.controls-bar button {{
+    padding: 5px 14px;
+    border: 1px solid rgba(100,181,246,0.3);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.06);
+    color: #90caf9;
+    cursor: pointer;
+    font-size: 0.85em;
+}}
+.controls-bar button:hover {{ background: rgba(100,181,246,0.2); }}
+.controls-bar button.active {{
+    background: rgba(100,181,246,0.3);
+    border-color: #64b5f6;
+    color: #fff;
+}}
+.stats {{
+    font-size: 0.8em;
+    color: #888;
+    line-height: 1.6;
+}}
+.legend {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 8px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 8px;
+}}
+.legend-item {{
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.8em;
+}}
+.legend-dot {{
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}}
+.info-box {{
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    font-size: 0.8em;
+    color: #aaa;
+    min-height: 36px;
+}}
+.cat-desc {{
+    margin-top: 8px;
+    font-size: 0.8em;
+    color: #999;
+    font-style: italic;
+}}
+.spacer {{ flex: 1; }}
+</style>
+</head>
+<body>
+<h1>t-SNE Skill-Space Trajectory Viewer</h1>
+<div class="outer-container">
+
+  <div class="category-bar">
+    <span class="label">Category:</span>
+    {cat_buttons_html}
+  </div>
+
+  <div class="canvas-panel">
+    <div class="canvas-wrapper">
+      <canvas id="tsneCanvas" width="576" height="576"></canvas>
+    </div>
+    <div class="canvas-sidebar">
+      <div class="legend" id="legend"></div>
+      <div class="info-box" id="infoBox">Press Play to begin.</div>
+      <div class="cat-desc" id="catDesc"></div>
+      <div class="stats">
+        {n_unique_clips} unique clips | {total_points} t-SNE points | k={k}
+      </div>
+    </div>
+  </div>
+
+  <div class="video-row" id="videoRow">
+    {video_elements_html}
+  </div>
+
+  <div class="controls-bar">
+    <button id="playPauseBtn" onclick="togglePlay()">Play All</button>
+    <button class="active" data-speed="1" onclick="setSpeed(1, this)">1x</button>
+    <button data-speed="0.5" onclick="setSpeed(0.5, this)">0.5x</button>
+    <button data-speed="2" onclick="setSpeed(2, this)">2x</button>
+    <span class="spacer"></span>
+    <span class="stats">Click a video to highlight its trail on the canvas</span>
+  </div>
+
+</div>
+
+<script>
+// === DATA ===
+// Each category has its own clips data, t-SNE coords, and bounds
+var categories = {categories_json};
+var COLORS = {colors_json};
+var FPS = {fps};
+
+// Build a list of all unique clip indices across all categories
+var allClipIdxSet = {{}};
+categories.forEach(function(cat) {{
+    cat.clipIdxs.forEach(function(ci) {{ allClipIdxSet[ci] = true; }});
+}});
+var allClipIdxs = Object.keys(allClipIdxSet).map(Number).sort(function(a,b){{ return a-b; }});
+
+// === STATE ===
+var activeCatIdx = 0;
+var activeClipIdx = -1;
+var currentFrame = 0;
+var trailLength = 12;
+
+// === DOM REFS ===
+var canvas = document.getElementById('tsneCanvas');
+var ctx = canvas.getContext('2d');
+var W = canvas.width, H = canvas.height;
+var infoBox = document.getElementById('infoBox');
+var catDesc = document.getElementById('catDesc');
+
+// === HELPERS ===
+function getCat() {{ return categories[activeCatIdx]; }}
+function getActiveCatClipIdxs() {{ return getCat().clipIdxs; }}
+
+function tsneToCanvas(x, y) {{
+    var b = getCat().bounds;
+    var cx = ((x - b.xMin) / (b.xMax - b.xMin)) * (W - 40) + 20;
+    var cy = ((y - b.yMin) / (b.yMax - b.yMin)) * (H - 40) + 20;
+    cy = H - cy;
+    return [cx, cy];
+}}
+
+function getCatClipData(clipIdx) {{
+    return getCat().clips[clipIdx];
+}}
+
+function getColorForClip(clipIdx) {{
+    var catClips = getActiveCatClipIdxs();
+    var idx = catClips.indexOf(clipIdx);
+    if (idx < 0) return '#666';
+    return COLORS[idx % COLORS.length];
+}}
+
+function findActivePoint(points, frame) {{
+    var bestIdx = -1;
+    for (var i = 0; i < points.length; i++) {{
+        if (frame >= points[i].sf && frame < points[i].ef) return i;
+        if (frame >= points[i].ef) bestIdx = i;
+    }}
+    if (bestIdx === -1 && points.length > 0) bestIdx = 0;
+    return bestIdx;
+}}
+
+function hexToRGBA(hex, alpha) {{
+    var r = parseInt(hex.slice(1, 3), 16);
+    var g = parseInt(hex.slice(3, 5), 16);
+    var b = parseInt(hex.slice(5, 7), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}}
+
+// === CATEGORY MANAGEMENT ===
+function switchCategory(catIdx) {{
+    // Save current playback time
+    var savedTime = 0;
+    var wasPlaying = false;
+    var oldClips = getActiveCatClipIdxs();
+    if (oldClips.length > 0) {{
+        var masterVid = document.getElementById('vid-' + oldClips[0]);
+        if (masterVid) {{
+            savedTime = masterVid.currentTime;
+            wasPlaying = !masterVid.paused;
+        }}
+    }}
+
+    // Pause old videos
+    oldClips.forEach(function(ci) {{
+        var v = document.getElementById('vid-' + ci);
+        if (v) v.pause();
+    }});
+
+    activeCatIdx = catIdx;
+
+    // Update category button styles
+    document.querySelectorAll('.cat-btn').forEach(function(btn, i) {{
+        btn.classList.toggle('active', i === catIdx);
+    }});
+
+    // Hide all video cells, show active category's
+    allClipIdxs.forEach(function(ci) {{
+        document.getElementById('vcell-' + ci).style.display = 'none';
+    }});
+    var newClips = getActiveCatClipIdxs();
+    newClips.forEach(function(ci) {{
+        document.getElementById('vcell-' + ci).style.display = '';
+    }});
+
+    // Update category description
+    catDesc.textContent = categories[catIdx].description;
+
+    // Rebuild legend
+    rebuildLegend();
+
+    // Set active clip to first in new category
+    if (newClips.length > 0) {{
+        setActiveClip(newClips[0]);
+
+        // Restore playback time
+        newClips.forEach(function(ci) {{
+            var v = document.getElementById('vid-' + ci);
+            if (v) {{
+                v.currentTime = savedTime;
+                if (wasPlaying) v.play().catch(function(){{}});
+            }}
+        }});
+    }}
+
+    drawCanvas();
+}}
+
+function rebuildLegend() {{
+    var legend = document.getElementById('legend');
+    legend.innerHTML = '';
+    var catClips = getActiveCatClipIdxs();
+    catClips.forEach(function(clipIdx, i) {{
+        var clip = getCatClipData(clipIdx);
+        var color = COLORS[i % COLORS.length];
+        var item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML =
+            '<span class="legend-dot" style="background:' + color + '"></span>' +
+            'Clip ' + clip.clipIdx + ' (mvmt=' + clip.movement.toFixed(3) +
+            ', avg ' + clip.avgFrames.toFixed(0) + 'f/trans)';
+        legend.appendChild(item);
+    }});
+}}
+
+// === DRAWING ===
+var pulsePhase = 0;
+
+function drawCanvas() {{
+    ctx.clearRect(0, 0, W, H);
+
+    // Draw grid
+    ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+    ctx.lineWidth = 1;
+    for (var gx = 0; gx < W; gx += 50) {{
+        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+    }}
+    for (var gy = 0; gy < H; gy += 50) {{
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+    }}
+
+    pulsePhase += 0.08;
+    var pulseSize = 3 + Math.sin(pulsePhase) * 2;
+
+    var catClips = getActiveCatClipIdxs();
+
+    // Draw active category clips
+    // Non-active-clip first, then active-clip for z-order
+    var drawOrder = [];
+    catClips.forEach(function(ci) {{
+        if (ci !== activeClipIdx) drawOrder.push(ci);
+    }});
+    if (catClips.indexOf(activeClipIdx) >= 0) drawOrder.push(activeClipIdx);
+
+    for (var di = 0; di < drawOrder.length; di++) {{
+        var clipIdx = drawOrder[di];
+        var clip = getCatClipData(clipIdx);
+        var isActive = (clipIdx === activeClipIdx);
+        var color = getColorForClip(clipIdx);
+        var points = clip.points;
+        var activePointIdx = findActivePoint(points, currentFrame);
+
+        // Draw all points as small dots
+        for (var pi = 0; pi < points.length; pi++) {{
+            var p = tsneToCanvas(points[pi].x, points[pi].y);
+            ctx.beginPath();
+            ctx.arc(p[0], p[1], isActive ? 3 : 2, 0, Math.PI * 2);
+            ctx.fillStyle = isActive
+                ? hexToRGBA(color, 0.4)
+                : hexToRGBA(color, 0.15);
+            ctx.fill();
+        }}
+
+        if (activePointIdx < 0) continue;
+        var trailStart = Math.max(0, activePointIdx - trailLength);
+
+        if (isActive) {{
+            // Bright trail
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = hexToRGBA(color, 0.7);
+            ctx.beginPath();
+            for (var ti = trailStart; ti <= activePointIdx; ti++) {{
+                var tp = tsneToCanvas(points[ti].x, points[ti].y);
+                if (ti === trailStart) ctx.moveTo(tp[0], tp[1]);
+                else ctx.lineTo(tp[0], tp[1]);
+            }}
+            ctx.stroke();
+
+            // Trail dots with fading
+            for (var ti = trailStart; ti <= activePointIdx; ti++) {{
+                var tp = tsneToCanvas(points[ti].x, points[ti].y);
+                var alpha = 0.3 + 0.7 * ((ti - trailStart) / Math.max(activePointIdx - trailStart, 1));
+                ctx.beginPath();
+                ctx.arc(tp[0], tp[1], 4, 0, Math.PI * 2);
+                ctx.fillStyle = hexToRGBA(color, alpha);
+                ctx.fill();
+            }}
+
+            // Pulsing active point
+            var ap = tsneToCanvas(points[activePointIdx].x, points[activePointIdx].y);
+            ctx.beginPath();
+            ctx.arc(ap[0], ap[1], pulseSize + 4, 0, Math.PI * 2);
+            ctx.fillStyle = hexToRGBA(color, 0.9);
+            ctx.fill();
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }} else {{
+            // Dimmer trail for non-active clips in category
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = hexToRGBA(color, 0.35);
+            ctx.beginPath();
+            for (var ti = trailStart; ti <= activePointIdx; ti++) {{
+                var tp = tsneToCanvas(points[ti].x, points[ti].y);
+                if (ti === trailStart) ctx.moveTo(tp[0], tp[1]);
+                else ctx.lineTo(tp[0], tp[1]);
+            }}
+            ctx.stroke();
+
+            // Active dot (no pulse)
+            var ap = tsneToCanvas(points[activePointIdx].x, points[activePointIdx].y);
+            ctx.beginPath();
+            ctx.arc(ap[0], ap[1], 5, 0, Math.PI * 2);
+            ctx.fillStyle = hexToRGBA(color, 0.6);
+            ctx.fill();
+            ctx.strokeStyle = hexToRGBA(color, 0.9);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }}
+    }}
+
+    // Update info box with active clip details
+    var ac = (activeClipIdx >= 0) ? getCatClipData(activeClipIdx) : null;
+    if (ac) {{
+        var ai = findActivePoint(ac.points, currentFrame);
+        if (ai >= 0 && ai < ac.points.length) {{
+            var pt = ac.points[ai];
+            var color = getColorForClip(activeClipIdx);
+            infoBox.innerHTML =
+                '<b style="color:' + color + '">Clip ' + ac.clipIdx + '</b> | ' +
+                'Frame ' + currentFrame + ' | ' +
+                'Point ' + (ai + 1) + '/' + ac.points.length + ' | ' +
+                'Codes: [' + pt.codes.join(', ') + '] | ' +
+                'Frames ' + pt.sf + '\\u2013' + pt.ef;
+        }}
+    }}
+}}
+
+// === VIDEO SYNC ===
+var animRunning = false;
+
+function getMasterVideo() {{
+    var catClips = getActiveCatClipIdxs();
+    if (catClips.length === 0) return null;
+    return document.getElementById('vid-' + catClips[0]);
+}}
+
+function animLoop() {{
+    var master = getMasterVideo();
+    if (master && !master.paused) {{
+        currentFrame = Math.floor(master.currentTime * FPS);
+        var catClips = getActiveCatClipIdxs();
+        for (var i = 1; i < catClips.length; i++) {{
+            var v = document.getElementById('vid-' + catClips[i]);
+            if (v && Math.abs(v.currentTime - master.currentTime) > 0.1) {{
+                v.currentTime = master.currentTime;
+            }}
+        }}
+        drawCanvas();
+    }}
+    if (animRunning) requestAnimationFrame(animLoop);
+}}
+
+// Attach listeners to all videos
+allClipIdxs.forEach(function(clipIdx) {{
+    var vid = document.getElementById('vid-' + clipIdx);
+    if (!vid) return;
+    vid.addEventListener('play', function() {{
+        if (vid === getMasterVideo()) {{
+            animRunning = true;
+            document.getElementById('playPauseBtn').textContent = 'Pause All';
+            animLoop();
+        }}
+    }});
+    vid.addEventListener('pause', function() {{
+        if (vid === getMasterVideo()) {{
+            animRunning = false;
+            document.getElementById('playPauseBtn').textContent = 'Play All';
+        }}
+    }});
+    vid.addEventListener('timeupdate', function() {{
+        if (vid === getMasterVideo()) {{
+            currentFrame = Math.floor(vid.currentTime * FPS);
+            drawCanvas();
+        }}
+    }});
+    vid.addEventListener('seeked', function() {{
+        if (vid === getMasterVideo()) {{
+            var catClips = getActiveCatClipIdxs();
+            for (var i = 1; i < catClips.length; i++) {{
+                var v = document.getElementById('vid-' + catClips[i]);
+                if (v) v.currentTime = vid.currentTime;
+            }}
+            currentFrame = Math.floor(vid.currentTime * FPS);
+            drawCanvas();
+        }}
+    }});
+}});
+
+// === CLIP SELECTION (highlight) ===
+function setActiveClip(clipIdx) {{
+    activeClipIdx = clipIdx;
+    var color = getColorForClip(clipIdx);
+    allClipIdxs.forEach(function(ci) {{
+        var cell = document.getElementById('vcell-' + ci);
+        cell.classList.toggle('active', ci === clipIdx);
+        cell.style.borderColor = (ci === clipIdx) ? color : 'transparent';
+    }});
+    drawCanvas();
+}}
+
+// === PLAYBACK CONTROLS ===
+function togglePlay() {{
+    var master = getMasterVideo();
+    if (!master) return;
+    var catClips = getActiveCatClipIdxs();
+    if (master.paused) {{
+        catClips.forEach(function(ci) {{
+            var v = document.getElementById('vid-' + ci);
+            if (v) v.play().catch(function(){{}});
+        }});
+    }} else {{
+        catClips.forEach(function(ci) {{
+            var v = document.getElementById('vid-' + ci);
+            if (v) v.pause();
+        }});
+    }}
+}}
+
+function setSpeed(speed, btn) {{
+    allClipIdxs.forEach(function(ci) {{
+        var v = document.getElementById('vid-' + ci);
+        if (v) v.playbackRate = speed;
+    }});
+    document.querySelectorAll('.controls-bar button[data-speed]').forEach(function(b) {{
+        b.classList.toggle('active', b === btn);
+    }});
+}}
+
+// === INIT ===
+(function init() {{
+    switchCategory(0);
+    drawCanvas();
+}})();
+</script>
+</body>
+</html>"""
+
+    with open(output_path, "w") as f:
+        f.write(html_content)
+
+    logging.info(f"Saved multicategory t-SNE trajectory HTML to {output_path}")
+    return str(output_path)
+
+
 # =============================================================================
 # PIPELINE ENTRY POINT
 # =============================================================================
@@ -943,8 +1856,9 @@ def run_tsne_trajectory_analysis(
 ) -> dict[str, Any]:
     """Run the full t-SNE skill-space trajectory analysis.
 
-    Selects high-movement clips, extracts k-transition features, runs t-SNE,
-    renders videos, and generates a synchronized HTML viewer.
+    Selects clips across 5 movement categories, extracts k-transition features,
+    runs t-SNE separately per category, renders videos once per unique clip, and
+    generates a multicategory HTML viewer.
 
     Args:
         results: List of InferenceResult objects.
@@ -972,62 +1886,108 @@ def run_tsne_trajectory_analysis(
 
     logging.info(f"t-SNE trajectory analysis: n_clips={n_clips}, k={k}")
 
-    # Step 1: Select high-movement clips
-    logging.info("  Selecting high-movement clips...")
-    selected_results = select_clips_by_movement(results, n_clips)
+    # Step 1: Select clips for all 5 movement categories
+    logging.info("  Selecting clips by movement category...")
+    categories_map = select_clips_by_category(results, n_clips)
 
-    if not selected_results:
+    # Step 2: Deduplicate unique clips across all categories
+    unique_results: dict[int, InferenceResult] = {}
+    for cat_results in categories_map.values():
+        for r in cat_results:
+            unique_results[r.clip_idx] = r
+
+    if not unique_results:
         logging.warning("  No clips found. Aborting t-SNE trajectory analysis.")
         return {"html_path": None, "summary": {}}
 
-    # Step 2: Extract k-transitions for each clip
-    logging.info(f"  Extracting k={k} transitions...")
-    clip_data_list: list[ClipTrajectoryData] = []
+    logging.info(f"  {len(unique_results)} unique clips across all categories")
 
-    for result in selected_results:
+    # Step 3: Extract k-transitions once per unique clip
+    logging.info(f"  Extracting k={k} transitions...")
+    clip_data_by_idx: dict[int, ClipTrajectoryData] = {}
+
+    for clip_idx, result in unique_results.items():
         transitions = extract_k_transitions_for_clip(result, k, codebook)
         movement = compute_clip_movement(result)
 
         if not transitions:
-            logging.warning(
-                f"  Clip {result.clip_idx}: no k-transitions extracted, skipping"
-            )
+            logging.warning(f"  Clip {clip_idx}: no k-transitions extracted, skipping")
             continue
 
         avg_frames = np.mean([t.end_frame - t.start_frame for t in transitions])
 
-        clip_data_list.append(
-            ClipTrajectoryData(
-                clip_idx=result.clip_idx,
-                result=result,
-                transitions=transitions,
-                total_movement=movement,
-                avg_frames_per_transition=float(avg_frames),
-            )
+        clip_data_by_idx[clip_idx] = ClipTrajectoryData(
+            clip_idx=clip_idx,
+            result=result,
+            transitions=transitions,
+            total_movement=movement,
+            avg_frames_per_transition=float(avg_frames),
         )
 
         logging.info(
-            f"  Clip {result.clip_idx}: {len(transitions)} points, "
+            f"  Clip {clip_idx}: {len(transitions)} points, "
             f"avg {avg_frames:.1f} frames/transition"
         )
 
-    if not clip_data_list:
+    if not clip_data_by_idx:
         logging.warning("  No clips with valid transitions. Aborting.")
         return {"html_path": None, "summary": {}}
 
-    # Step 3: Run t-SNE on all transitions
-    all_transitions = []
-    for cd in clip_data_list:
-        all_transitions.extend(cd.transitions)
+    # Step 4: Build CategoryData and run t-SNE per category
+    category_data_list: list[CategoryData] = []
+    tsne_coords_per_category: dict[str, np.ndarray] = {}
+    clip_point_ranges_per_category: dict[str, dict[int, tuple[int, int]]] = {}
 
-    tsne_coords = compute_tsne_embedding(all_transitions, perplexity)
+    for cat in MovementCategory:
+        cat_results = categories_map.get(cat, [])
+        cat_clips = [
+            clip_data_by_idx[r.clip_idx]
+            for r in cat_results
+            if r.clip_idx in clip_data_by_idx
+        ]
+        if not cat_clips:
+            logging.info(f"  Skipping category {cat.value}: no valid clips")
+            continue
 
-    # Step 4: Render videos if enabled
-    videos_b64: list[str] = []
+        label, description = _CATEGORY_META[cat]
+        category_data_list.append(
+            CategoryData(
+                category=cat,
+                label=label,
+                description=description,
+                clip_data_list=cat_clips,
+            )
+        )
+
+        # Gather transitions for this category only
+        cat_key = cat.value
+        cat_transitions: list[KTransition] = []
+        cat_ranges: dict[int, tuple[int, int]] = {}
+        for cd in cat_clips:
+            start = len(cat_transitions)
+            cat_transitions.extend(cd.transitions)
+            cat_ranges[cd.clip_idx] = (start, len(cat_transitions))
+
+        logging.info(
+            f"  Running t-SNE for {cat_key}: "
+            f"{len(cat_clips)} clips, {len(cat_transitions)} points"
+        )
+        tsne_coords_per_category[cat_key] = compute_tsne_embedding(
+            cat_transitions, perplexity
+        )
+        clip_point_ranges_per_category[cat_key] = cat_ranges
+
+    if not category_data_list:
+        logging.warning("  No categories with valid clips. Aborting.")
+        return {"html_path": None, "summary": {}}
+
+    # Step 5: Render videos once per unique clip
+    videos_by_idx: dict[int, str] = {}
     if render_videos and env is not None:
         logging.info("  Rendering clip videos...")
-        for cd in clip_data_list:
-            logging.info(f"    Rendering clip {cd.clip_idx}...")
+        for clip_idx in sorted(clip_data_by_idx.keys()):
+            cd = clip_data_by_idx[clip_idx]
+            logging.info(f"    Rendering clip {clip_idx}...")
             b64 = render_clip_video_for_tsne(
                 env=env,
                 result=cd.result,
@@ -1036,30 +1996,40 @@ def run_tsne_trajectory_analysis(
                 height=height,
                 fps=fps,
             )
-            videos_b64.append(b64)
-        logging.info(f"  Rendered {len(videos_b64)} videos")
+            videos_by_idx[clip_idx] = b64
+        logging.info(f"  Rendered {len(videos_by_idx)} unique videos")
     else:
-        # No video rendering - use empty placeholders
-        videos_b64 = ["" for _ in clip_data_list]
+        videos_by_idx = {idx: "" for idx in clip_data_by_idx}
 
-    # Step 5: Generate HTML viewer
+    # Step 6: Generate multicategory HTML viewer
     html_path = output_dir / "tsne_trajectory.html"
-    generate_tsne_trajectory_html(
-        clip_data_list=clip_data_list,
-        tsne_coords=tsne_coords,
-        videos_b64=videos_b64,
+    generate_tsne_trajectory_html_multicategory(
+        category_data_list=category_data_list,
+        clip_data_by_idx=clip_data_by_idx,
+        tsne_coords_per_category=tsne_coords_per_category,
+        clip_point_ranges_per_category=clip_point_ranges_per_category,
+        videos_by_idx=videos_by_idx,
         k=k,
         fps=fps,
         output_path=html_path,
     )
 
     # Save JSON summary
-    total_points = sum(len(cd.transitions) for cd in clip_data_list)
+    total_points = sum(len(cd.transitions) for cd in clip_data_by_idx.values())
     summary = {
-        "n_clips": len(clip_data_list),
+        "n_unique_clips": len(clip_data_by_idx),
         "k_transitions": k,
         "total_points": total_points,
         "tsne_perplexity": perplexity,
+        "categories": [
+            {
+                "category": cat_data.category.value,
+                "label": cat_data.label,
+                "n_clips": len(cat_data.clip_data_list),
+                "clip_idxs": [cd.clip_idx for cd in cat_data.clip_data_list],
+            }
+            for cat_data in category_data_list
+        ],
         "clips": [
             {
                 "clip_idx": cd.clip_idx,
@@ -1067,7 +2037,7 @@ def run_tsne_trajectory_analysis(
                 "n_transitions": len(cd.transitions),
                 "avg_frames_per_transition": cd.avg_frames_per_transition,
             }
-            for cd in clip_data_list
+            for cd in clip_data_by_idx.values()
         ],
     }
 
@@ -1076,8 +2046,8 @@ def run_tsne_trajectory_analysis(
         json.dump(summary, f, indent=2)
 
     logging.info(
-        f"  t-SNE trajectory analysis complete: {len(clip_data_list)} clips, "
-        f"{total_points} points"
+        f"  t-SNE trajectory analysis complete: {len(clip_data_by_idx)} unique clips, "
+        f"{len(category_data_list)} categories, {total_points} points"
     )
 
     return {

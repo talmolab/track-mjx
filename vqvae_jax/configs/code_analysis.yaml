@@ -38,7 +38,7 @@ data:
 # All analysis is done per-clip: transition matrices, community detection,
 # transition graphs, and video rendering with code/community overlays.
 per_clip:
-  enabled: true                  # Enable per-clip analysis
+  enabled: false                  # Enable per-clip analysis
   num_clips: 5                 # Number of clips to analyze
   n_communities: null           # Communities per clip (null = auto-detect)
   render_videos: false           # Render videos with code/community bars
@@ -87,7 +87,7 @@ community_detection:
 # 4. Run community detection on pooled transitions
 # 5. Render community gallery videos per detected community
 conditioned_community:
-  enabled: false                  # Enable conditioned community analysis
+  enabled: true                  # Enable conditioned community analysis
   n_seed_clips: 10              # Number of random seed clips to sample
   qpos_threshold: 0.05          # Mean absolute difference threshold for qpos matching
   render_videos: true           # Render community gallery videos
@@ -111,7 +111,7 @@ community_gallery:
 # Quantifies which behavioral features are most encoded by the codebook.
 # Uses the KSG estimator (Kraskov-Stögbauer-Grassberger) for MI computation.
 mutual_information:
-  enabled: false
+  enabled: true
   n_neighbors: 5                # KSG estimator k-neighbors
   min_mi_threshold: 0.05        # Minimum MI (nats) to include in heatmap
   top_k_features: 8             # Max features to show in heatmap
@@ -124,7 +124,7 @@ mutual_information:
 # qpos trajectories. Computes Wasserstein-2 distance between trajectory pairs
 # that share code sequences and similar starting poses.
 qpos_code_determinism:
-  enabled: false
+  enabled: true
   num_clips: 842               # Number of clips to analyze
   min_k: 2                     # Minimum number of transitions
   max_k: 8                     # Maximum number of transitions
@@ -138,7 +138,7 @@ qpos_code_determinism:
 # observed shorter ones. Builds decomposition trees showing how k-transitions
 # break down into sub-sequences, with determinism scores at each level.
 compositional_transition:
-  enabled: false                 # ON for initial testing
+  enabled: true                 # ON for initial testing
   num_clips: 200               # Number of clips to analyze
   min_k: 2                     # Minimum number of transitions
   max_k: 8                     # Maximum number of transitions

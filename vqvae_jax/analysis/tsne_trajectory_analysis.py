@@ -371,9 +371,9 @@ def generate_tsne_trajectory_html(
 ) -> str:
     """Generate the synchronized t-SNE trajectory HTML viewer.
 
-    Creates an HTML page with a t-SNE canvas on the left and a video player
-    on the right. The canvas highlights the active k-transition point as the
-    video plays, with trails connecting recent points.
+    Creates an HTML page with a t-SNE canvas on top and all clip videos
+    side-by-side below. All videos play in sync; clicking a video highlights
+    that clip's trail on the canvas.
 
     Args:
         clip_data_list: List of ClipTrajectoryData for each clip.
@@ -439,6 +439,23 @@ def generate_tsne_trajectory_html(
     total_points = sum(len(cd.transitions) for cd in clip_data_list)
     n_clips = len(clip_data_list)
 
+    # Build video elements HTML (one per clip, side by side)
+    video_cells_html = ""
+    for i, cd in enumerate(clip_data_list):
+        color = _CLIP_COLORS[i % len(_CLIP_COLORS)]
+        video_cells_html += (
+            f'<div class="video-cell" data-clip-idx="{i}" '
+            f'onclick="setActiveClip({i})">\n'
+            f'  <div class="video-label" style="color:{color}">'
+            f"Clip {cd.clip_idx}"
+            f' <span class="movement-tag">'
+            f"mvmt={cd.total_movement:.3f}</span></div>\n"
+            f'  <video id="vid{i}" loop muted playsinline'
+            f' src="{videos_b64[i] if i < len(videos_b64) else ""}">'
+            f"</video>\n"
+            f"</div>\n"
+        )
+
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -459,27 +476,27 @@ h1 {{
     margin-bottom: 12px;
     color: #64b5f6;
 }}
-.main-container {{
-    display: flex;
-    gap: 16px;
+.outer-container {{
     max-width: 1400px;
     margin: 0 auto;
-    align-items: flex-start;
 }}
 .canvas-panel {{
-    flex: 0 0 600px;
     background: rgba(255,255,255,0.03);
     border-radius: 12px;
     padding: 12px;
     border: 1px solid rgba(100,181,246,0.2);
+    margin-bottom: 16px;
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    flex-wrap: wrap;
 }}
-.video-panel {{
+.canvas-wrapper {{
+    flex: 0 0 auto;
+}}
+.canvas-sidebar {{
     flex: 1;
-    min-width: 300px;
-    background: rgba(255,255,255,0.03);
-    border-radius: 12px;
-    padding: 12px;
-    border: 1px solid rgba(100,181,246,0.2);
+    min-width: 200px;
 }}
 canvas {{
     display: block;
@@ -487,41 +504,59 @@ canvas {{
     background: #0d1117;
     cursor: crosshair;
 }}
-.clip-buttons {{
+.video-row {{
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 10px;
+    gap: 12px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 12px;
+    border: 1px solid rgba(100,181,246,0.2);
+    margin-bottom: 12px;
 }}
-.clip-btn {{
-    padding: 6px 14px;
-    border: 2px solid rgba(255,255,255,0.3);
-    border-radius: 16px;
-    background: rgba(255,255,255,0.05);
-    color: #e0e0e0;
+.video-cell {{
+    flex: 1;
+    min-width: 0;
     cursor: pointer;
-    font-size: 0.85em;
-    transition: all 0.2s;
+    border-radius: 10px;
+    border: 3px solid transparent;
+    padding: 6px;
+    transition: border-color 0.2s, background 0.2s;
 }}
-.clip-btn:hover {{ background: rgba(255,255,255,0.15); }}
-.clip-btn.active {{
+.video-cell:hover {{
+    background: rgba(255,255,255,0.04);
+}}
+.video-cell.active {{
     border-color: currentColor;
-    background: rgba(255,255,255,0.12);
-    font-weight: 600;
+    background: rgba(255,255,255,0.06);
 }}
-video {{
+.video-label {{
+    font-size: 0.9em;
+    font-weight: 600;
+    margin-bottom: 6px;
+    text-align: center;
+}}
+.movement-tag {{
+    font-size: 0.75em;
+    font-weight: 400;
+    opacity: 0.7;
+}}
+.video-cell video {{
     width: 100%;
     border-radius: 8px;
     background: #000;
+    display: block;
 }}
-.controls {{
+.controls-bar {{
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-top: 10px;
     flex-wrap: wrap;
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 10px 16px;
+    border: 1px solid rgba(100,181,246,0.2);
 }}
-.controls button {{
+.controls-bar button {{
     padding: 5px 14px;
     border: 1px solid rgba(100,181,246,0.3);
     border-radius: 12px;
@@ -530,8 +565,8 @@ video {{
     cursor: pointer;
     font-size: 0.85em;
 }}
-.controls button:hover {{ background: rgba(100,181,246,0.2); }}
-.controls button.active {{
+.controls-bar button:hover {{ background: rgba(100,181,246,0.2); }}
+.controls-bar button.active {{
     background: rgba(100,181,246,0.3);
     border-color: #64b5f6;
     color: #fff;
@@ -539,7 +574,6 @@ video {{
 .stats {{
     font-size: 0.8em;
     color: #888;
-    margin-top: 8px;
     line-height: 1.6;
 }}
 .legend {{
@@ -570,31 +604,41 @@ video {{
     border-radius: 8px;
     font-size: 0.8em;
     color: #aaa;
-    min-height: 40px;
+    min-height: 36px;
 }}
+.spacer {{ flex: 1; }}
 </style>
 </head>
 <body>
 <h1>t-SNE Skill-Space Trajectory Viewer</h1>
-<div class="main-container">
+<div class="outer-container">
+
   <div class="canvas-panel">
-    <canvas id="tsneCanvas" width="576" height="576"></canvas>
-    <div class="legend" id="legend"></div>
-    <div class="stats">
-      {n_clips} clips | {total_points} t-SNE points | k={k} transitions | perplexity auto
+    <div class="canvas-wrapper">
+      <canvas id="tsneCanvas" width="576" height="576"></canvas>
+    </div>
+    <div class="canvas-sidebar">
+      <div class="legend" id="legend"></div>
+      <div class="info-box" id="infoBox">Press Play to begin.</div>
+      <div class="stats">
+        {n_clips} clips | {total_points} t-SNE points | k={k} transitions
+      </div>
     </div>
   </div>
-  <div class="video-panel">
-    <div class="clip-buttons" id="clipButtons"></div>
-    <video id="videoPlayer" controls loop muted playsinline></video>
-    <div class="controls">
-      <button id="playPauseBtn" onclick="togglePlay()">Play</button>
-      <button class="active" data-speed="1" onclick="setSpeed(1, this)">1x</button>
-      <button data-speed="0.5" onclick="setSpeed(0.5, this)">0.5x</button>
-      <button data-speed="2" onclick="setSpeed(2, this)">2x</button>
-    </div>
-    <div class="info-box" id="infoBox">Select a clip to begin.</div>
+
+  <div class="video-row">
+    {video_cells_html}
   </div>
+
+  <div class="controls-bar">
+    <button id="playPauseBtn" onclick="togglePlay()">Play All</button>
+    <button class="active" data-speed="1" onclick="setSpeed(1, this)">1x</button>
+    <button data-speed="0.5" onclick="setSpeed(0.5, this)">0.5x</button>
+    <button data-speed="2" onclick="setSpeed(2, this)">2x</button>
+    <span class="spacer"></span>
+    <span class="stats">Click a video to highlight its trail on the canvas</span>
+  </div>
+
 </div>
 
 <script>
@@ -602,6 +646,7 @@ video {{
 var clips = {clips_json};
 var videoSources = {video_sources};
 var FPS = {fps};
+var nClips = {n_clips};
 var xMin = {x_min}, xMax = {x_max}, yMin = {y_min}, yMax = {y_max};
 
 // === STATE ===
@@ -609,26 +654,28 @@ var activeClipIdx = 0;
 var currentFrame = 0;
 var trailLength = 12;
 
-// === CANVAS SETUP ===
+// === DOM REFS ===
 var canvas = document.getElementById('tsneCanvas');
 var ctx = canvas.getContext('2d');
 var W = canvas.width, H = canvas.height;
-var video = document.getElementById('videoPlayer');
 var infoBox = document.getElementById('infoBox');
+
+// Collect all video elements
+var videos = [];
+for (var i = 0; i < nClips; i++) {{
+    videos.push(document.getElementById('vid' + i));
+}}
 
 // === COORDINATE TRANSFORM ===
 function tsneToCanvas(x, y) {{
     var cx = ((x - xMin) / (xMax - xMin)) * (W - 40) + 20;
     var cy = ((y - yMin) / (yMax - yMin)) * (H - 40) + 20;
-    // Flip Y so that larger values go up
     cy = H - cy;
     return [cx, cy];
 }}
 
 // === FIND ACTIVE POINT ===
 function findActivePoint(points, frame) {{
-    // Find the k-transition whose frame range contains the current frame.
-    // If between transitions, return the last completed one.
     var bestIdx = -1;
     for (var i = 0; i < points.length; i++) {{
         if (frame >= points[i].sf && frame < points[i].ef) {{
@@ -638,7 +685,6 @@ function findActivePoint(points, frame) {{
             bestIdx = i;
         }}
     }}
-    // If frame is past all transitions, return the last one
     if (bestIdx === -1 && points.length > 0) {{
         bestIdx = 0;
     }}
@@ -661,12 +707,18 @@ function drawCanvas() {{
         ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
     }}
 
-    // Pulsing animation
     pulsePhase += 0.08;
     var pulseSize = 3 + Math.sin(pulsePhase) * 2;
 
-    // Draw all clips
+    // Draw all clips (non-active first, active last for z-order)
+    var drawOrder = [];
     for (var ci = 0; ci < clips.length; ci++) {{
+        if (ci !== activeClipIdx) drawOrder.push(ci);
+    }}
+    drawOrder.push(activeClipIdx);
+
+    for (var di = 0; di < drawOrder.length; di++) {{
+        var ci = drawOrder[di];
         var clip = clips[ci];
         var isActive = (ci === activeClipIdx);
         var color = clip.color;
@@ -684,23 +736,22 @@ function drawCanvas() {{
             ctx.fill();
         }}
 
-        // Draw trail for active clip
-        if (isActive && activeIdx >= 0) {{
-            var trailStart = Math.max(0, activeIdx - trailLength);
+        if (activeIdx < 0) continue;
+        var trailStart = Math.max(0, activeIdx - trailLength);
+
+        if (isActive) {{
+            // Bright trail
             ctx.lineWidth = 2.5;
             ctx.strokeStyle = hexToRGBA(color, 0.7);
             ctx.beginPath();
             for (var ti = trailStart; ti <= activeIdx; ti++) {{
                 var tp = tsneToCanvas(points[ti].x, points[ti].y);
-                if (ti === trailStart) {{
-                    ctx.moveTo(tp[0], tp[1]);
-                }} else {{
-                    ctx.lineTo(tp[0], tp[1]);
-                }}
+                if (ti === trailStart) ctx.moveTo(tp[0], tp[1]);
+                else ctx.lineTo(tp[0], tp[1]);
             }}
             ctx.stroke();
 
-            // Trail dots with fading opacity
+            // Trail dots with fading
             for (var ti = trailStart; ti <= activeIdx; ti++) {{
                 var tp = tsneToCanvas(points[ti].x, points[ti].y);
                 var alpha = 0.3 + 0.7 * ((ti - trailStart) / Math.max(activeIdx - trailStart, 1));
@@ -710,7 +761,7 @@ function drawCanvas() {{
                 ctx.fill();
             }}
 
-            // Active point (pulsing)
+            // Pulsing active point
             var ap = tsneToCanvas(points[activeIdx].x, points[activeIdx].y);
             ctx.beginPath();
             ctx.arc(ap[0], ap[1], pulseSize + 4, 0, Math.PI * 2);
@@ -719,42 +770,41 @@ function drawCanvas() {{
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 2;
             ctx.stroke();
-        }} else if (!isActive && activeIdx >= 0) {{
+        }} else {{
             // Dimmer trail for non-active clips
-            var trailStart = Math.max(0, activeIdx - trailLength);
-            ctx.lineWidth = 1;
-            ctx.strokeStyle = hexToRGBA(color, 0.25);
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = hexToRGBA(color, 0.35);
             ctx.beginPath();
             for (var ti = trailStart; ti <= activeIdx; ti++) {{
                 var tp = tsneToCanvas(points[ti].x, points[ti].y);
-                if (ti === trailStart) {{
-                    ctx.moveTo(tp[0], tp[1]);
-                }} else {{
-                    ctx.lineTo(tp[0], tp[1]);
-                }}
+                if (ti === trailStart) ctx.moveTo(tp[0], tp[1]);
+                else ctx.lineTo(tp[0], tp[1]);
             }}
             ctx.stroke();
 
-            // Dim active dot
+            // Active dot (no pulse)
             var ap = tsneToCanvas(points[activeIdx].x, points[activeIdx].y);
             ctx.beginPath();
-            ctx.arc(ap[0], ap[1], 4, 0, Math.PI * 2);
-            ctx.fillStyle = hexToRGBA(color, 0.5);
+            ctx.arc(ap[0], ap[1], 5, 0, Math.PI * 2);
+            ctx.fillStyle = hexToRGBA(color, 0.6);
             ctx.fill();
+            ctx.strokeStyle = hexToRGBA(color, 0.9);
+            ctx.lineWidth = 1;
+            ctx.stroke();
         }}
     }}
 
-    // Update info
+    // Update info box with active clip details
     var ac = clips[activeClipIdx];
     var ai = findActivePoint(ac.points, currentFrame);
     if (ai >= 0 && ai < ac.points.length) {{
         var pt = ac.points[ai];
         infoBox.innerHTML =
-            '<b>Clip ' + ac.clipIdx + '</b> | ' +
+            '<b style="color:' + ac.color + '">Clip ' + ac.clipIdx + '</b> | ' +
             'Frame ' + currentFrame + ' | ' +
             'Point ' + (ai + 1) + '/' + ac.points.length + ' | ' +
             'Codes: [' + pt.codes.join(', ') + '] | ' +
-            'Frames ' + pt.sf + '-' + pt.ef;
+            'Frames ' + pt.sf + '\\u2013' + pt.ef;
     }}
 }}
 
@@ -766,80 +816,88 @@ function hexToRGBA(hex, alpha) {{
 }}
 
 // === VIDEO SYNC ===
-function onVideoTimeUpdate() {{
-    currentFrame = Math.floor(video.currentTime * FPS);
-    drawCanvas();
-}}
-video.addEventListener('timeupdate', onVideoTimeUpdate);
+// Use the first video as the time source; sync others to it.
+var masterVideo = videos[0];
 
-// Use requestAnimationFrame for smooth pulsing when video is playing
 var animRunning = false;
 function animLoop() {{
-    if (!video.paused) {{
-        currentFrame = Math.floor(video.currentTime * FPS);
+    if (masterVideo && !masterVideo.paused) {{
+        currentFrame = Math.floor(masterVideo.currentTime * FPS);
+        // Sync other videos to master
+        for (var i = 1; i < videos.length; i++) {{
+            if (videos[i] && Math.abs(videos[i].currentTime - masterVideo.currentTime) > 0.1) {{
+                videos[i].currentTime = masterVideo.currentTime;
+            }}
+        }}
         drawCanvas();
     }}
     if (animRunning) requestAnimationFrame(animLoop);
 }}
 
-video.addEventListener('play', function() {{
+masterVideo.addEventListener('play', function() {{
     animRunning = true;
-    document.getElementById('playPauseBtn').textContent = 'Pause';
+    document.getElementById('playPauseBtn').textContent = 'Pause All';
     animLoop();
 }});
-video.addEventListener('pause', function() {{
+masterVideo.addEventListener('pause', function() {{
     animRunning = false;
-    document.getElementById('playPauseBtn').textContent = 'Play';
+    document.getElementById('playPauseBtn').textContent = 'Play All';
+}});
+masterVideo.addEventListener('timeupdate', function() {{
+    currentFrame = Math.floor(masterVideo.currentTime * FPS);
+    drawCanvas();
+}});
+masterVideo.addEventListener('seeked', function() {{
+    // Sync all on seek
+    for (var i = 1; i < videos.length; i++) {{
+        if (videos[i]) videos[i].currentTime = masterVideo.currentTime;
+    }}
+    currentFrame = Math.floor(masterVideo.currentTime * FPS);
+    drawCanvas();
 }});
 
-// === CLIP SELECTION ===
-function selectClip(idx) {{
+// === CLIP SELECTION (highlight) ===
+function setActiveClip(idx) {{
     activeClipIdx = idx;
-    video.src = videoSources[idx];
-    video.load();
-    currentFrame = 0;
-
-    // Update button states
-    var btns = document.querySelectorAll('.clip-btn');
-    btns.forEach(function(btn, i) {{
-        btn.classList.toggle('active', i === idx);
+    // Update cell borders
+    var cells = document.querySelectorAll('.video-cell');
+    cells.forEach(function(cell, i) {{
+        cell.classList.toggle('active', i === idx);
+        if (i === idx) {{
+            cell.style.borderColor = clips[idx].color;
+        }} else {{
+            cell.style.borderColor = 'transparent';
+        }}
     }});
-
     drawCanvas();
 }}
 
 // === PLAYBACK CONTROLS ===
 function togglePlay() {{
-    if (video.paused) {{
-        video.play().catch(function() {{}});
+    if (masterVideo.paused) {{
+        // Play all
+        for (var i = 0; i < videos.length; i++) {{
+            if (videos[i]) videos[i].play().catch(function() {{}});
+        }}
     }} else {{
-        video.pause();
+        // Pause all
+        for (var i = 0; i < videos.length; i++) {{
+            if (videos[i]) videos[i].pause();
+        }}
     }}
 }}
 
 function setSpeed(speed, btn) {{
-    video.playbackRate = speed;
-    document.querySelectorAll('.controls button[data-speed]').forEach(function(b) {{
+    for (var i = 0; i < videos.length; i++) {{
+        if (videos[i]) videos[i].playbackRate = speed;
+    }}
+    document.querySelectorAll('.controls-bar button[data-speed]').forEach(function(b) {{
         b.classList.toggle('active', b === btn);
     }});
 }}
 
 // === INIT ===
 (function init() {{
-    // Build clip buttons
-    var btnContainer = document.getElementById('clipButtons');
-    clips.forEach(function(clip, idx) {{
-        var btn = document.createElement('button');
-        btn.className = 'clip-btn' + (idx === 0 ? ' active' : '');
-        btn.style.color = clip.color;
-        btn.style.borderColor = clip.color;
-        btn.innerHTML = 'Clip ' + clip.clipIdx +
-            ' <span style="font-size:0.75em;opacity:0.7">(' +
-            clip.movement.toFixed(3) + ')</span>';
-        btn.onclick = function() {{ selectClip(idx); }};
-        btnContainer.appendChild(btn);
-    }});
-
     // Build legend
     var legend = document.getElementById('legend');
     clips.forEach(function(clip) {{
@@ -852,10 +910,8 @@ function setSpeed(speed, btn) {{
         legend.appendChild(item);
     }});
 
-    // Load first clip
-    if (videoSources.length > 0) {{
-        selectClip(0);
-    }}
+    // Set first clip as active
+    setActiveClip(0);
     drawCanvas();
 }})();
 </script>

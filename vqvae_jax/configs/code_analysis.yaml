@@ -12,7 +12,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260202_201705_679577/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260206_063100_814357/
   step: null  # null = latest step
 
 # =============================================================================
@@ -29,7 +29,7 @@ wandb:
 # Analysis loads pre-computed rollout data from H5 files.
 # Use `python -m inference.run_inference` to generate H5 files.
 data:
-  h5_path: ./outputs/rollout_64.h5  # Path to H5 file with rollout data (required)
+  h5_path: ./outputs/rollout_16.h5  # Path to H5 file with rollout data (required)
   clip_length: 500               # Frames per clip (for environment setup)
 
 # =============================================================================
@@ -49,7 +49,7 @@ per_clip:
 # Analyze whether top K codes serve the same function across different clips
 # by comparing their transition contexts (predecessor/successor distributions).
 transition_context:
-  enabled: false                 # Enable transition context analysis
+  enabled: true                 # Enable transition context analysis
   top_k: 5                     # Number of top codes to analyze
   min_clips: 3                  # Minimum clips a code must appear in
   render_videos: true           # Render transition videos (pred → code → succ)
@@ -139,7 +139,7 @@ qpos_code_determinism:
 # break down into sub-sequences, with determinism scores at each level.
 compositional_transition:
   enabled: true                 # ON for initial testing
-  num_clips: 200               # Number of clips to analyze
+  num_clips: 842               # Number of clips to analyze
   min_k: 2                     # Minimum number of transitions
   max_k: 8                     # Maximum number of transitions
   grace_window: 10             # Boundary alignment tolerance (frames)
@@ -159,9 +159,13 @@ compositional_transition:
 tsne_trajectory:
   enabled: true                 # Enable t-SNE trajectory visualization
   n_clips: 3                    # Number of high-movement clips to compare
-  k_transitions: 5              # Number of code transitions per t-SNE point
-  tsne_perplexity: 30           # t-SNE perplexity parameter
+  k_transitions: 8              # Number of code transitions per t-SNE point
+  tsne_perplexity: 50           # t-SNE perplexity parameter
   render_videos: true           # Render clip videos for synchronized viewer
+  umap_n_neighbors: 15          # UMAP n_neighbors (larger = more global)
+  umap_min_dist: 0.1            # UMAP min_dist (smaller = tighter clusters)
+  xy_vs_xyz:
+    n_clips_per_group: 1        # Clips per group in XY vs XYZ comparison
 
 # =============================================================================
 # Rendering Configuration

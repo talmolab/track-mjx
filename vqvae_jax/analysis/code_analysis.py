@@ -714,10 +714,37 @@ def main(cfg: DictConfig):
                     wandb.Html(open(html_path).read()),
                     wandb_enabled,
                 )
-            logging.info("  Logged t-SNE trajectory viewer to WandB")
+
+            static_html_path = tsne_results.get("static_html_path")
+            if static_html_path and Path(static_html_path).exists():
+                log_to_wandb_immediately(
+                    "tsne_trajectory/static_viewer",
+                    wandb.Html(open(static_html_path).read()),
+                    wandb_enabled,
+                )
+
+            umap_html_path = tsne_results.get("umap_html_path")
+            if umap_html_path and Path(umap_html_path).exists():
+                log_to_wandb_immediately(
+                    "tsne_trajectory/umap_viewer",
+                    wandb.Html(open(umap_html_path).read()),
+                    wandb_enabled,
+                )
+
+            umap_static_path = tsne_results.get("umap_static_html_path")
+            if umap_static_path and Path(umap_static_path).exists():
+                log_to_wandb_immediately(
+                    "tsne_trajectory/umap_static_viewer",
+                    wandb.Html(open(umap_static_path).read()),
+                    wandb_enabled,
+                )
+            logging.info("  Logged t-SNE/UMAP trajectory viewers to WandB")
 
         all_paths["tsne_trajectory"] = {
             "html": tsne_results.get("html_path"),
+            "static_html": tsne_results.get("static_html_path"),
+            "umap_html": tsne_results.get("umap_html_path"),
+            "umap_static_html": tsne_results.get("umap_static_html_path"),
             "json": tsne_results.get("json_path"),
         }
 
@@ -949,8 +976,16 @@ def main(cfg: DictConfig):
         print(
             f"Per-clip context viewer: {all_paths['per_clip_context']['conditional_html']}"
         )
-    if "tsne_trajectory" in all_paths and all_paths["tsne_trajectory"].get("html"):
-        print(f"t-SNE trajectory viewer: {all_paths['tsne_trajectory']['html']}")
+    if "tsne_trajectory" in all_paths:
+        tp = all_paths["tsne_trajectory"]
+        if tp.get("html"):
+            print(f"t-SNE trajectory viewer: {tp['html']}")
+        if tp.get("static_html"):
+            print(f"t-SNE static viewer: {tp['static_html']}")
+        if tp.get("umap_html"):
+            print(f"UMAP trajectory viewer: {tp['umap_html']}")
+        if tp.get("umap_static_html"):
+            print(f"UMAP static viewer: {tp['umap_static_html']}")
     if "conditioned_community" in all_paths and all_paths["conditioned_community"].get(
         "html"
     ):

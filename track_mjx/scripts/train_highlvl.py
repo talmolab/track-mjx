@@ -24,20 +24,10 @@ Usage:
         --mimic_checkpoint 260115_005843_966729 \\
         --policy_obs_key state --value_obs_key privileged_state
 
-Tasks with preconfigured defaults: RodentBowlEscape, RodentRearing
-Other tasks use base defaults (can be overridden via CLI).
-
-Observation keys:
-    --policy_obs_key: Key for policy network input (default: state)
-    --value_obs_key: Key for value network input (default: privileged_state)
-
-Example configuration:
-
-    # RodentRearing
-    python train_highlvl.py --task RodentRearing \\
-        --mimic_checkpoint 260115_005843_966729 \\
-        --num_timesteps 2e8 --entropy_cost 0.05 --eval_every 2000000 \\
-        --env "reward_terms.head_height_dense.weight=0.0 reward_terms.head_height_sparse.weight=0.0"
+    # Warp backend (full-collision rodent model)
+    python train_highlvl.py --task RodentBowlEscape \\
+        --mimic_checkpoint 260131_223134_344901 \\
+        --env "mujoco_impl=warp" --num_envs 1024
 """
 
 import os
@@ -49,58 +39,37 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
-import argparse
 import functools
 import json
 from datetime import datetime
 from typing import Any
 
 import hydra
-import imageio
 import jax
-import jax.numpy as jp
 import wandb
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from etils import epath
-from flax.training import orbax_utils
-from ml_collections import config_dict
 from mujoco_playground import wrapper
 from omegaconf import OmegaConf
-from orbax import checkpoint as ocp
 
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
-from vnl_playground.tasks.rodent import consts
 from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
-from track_mjx.scripts.utils import apply_env_overrides, parse_env_overrides_str
+from track_mjx.scripts.utils import (
+    apply_env_overrides,
+    configure_warp_backend,
+    create_base_parser,
+    create_policy_params_fn,
+    create_ppo_params,
+    make_logging_inference_fn,
+    parse_env_overrides_str,
+    setup_jax_cache,
+)
 
-# Enable persistent compilation cache.
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-
-
-# Default PPO parameters (task-independent)
-DEFAULT_PPO_PARAMS = {
-    "num_timesteps": int(3e8),
-    "reward_scaling": 1.0,
-    "episode_length": 1000,
-    "normalize_observations": True,
-    "action_repeat": 1,
-    "unroll_length": 20,
-    "num_minibatches": 16,
-    "num_updates_per_batch": 4,
-    "discounting": 0.99,
-    "learning_rate": 1e-4,
-    "entropy_cost": 0.01,
-    "num_envs": 4096,
-    "batch_size": 1024,
-    "max_grad_norm": 1.0,
-    "eval_every": 5_000_000,
-}
+setup_jax_cache()
 
 
 def load_mimic_checkpoint(checkpoint_path: str) -> tuple:
@@ -115,33 +84,6 @@ def load_mimic_checkpoint(checkpoint_path: str) -> tuple:
     mimic_cfg = OmegaConf.create(checkpointing.load_config_from_checkpoint(full_path))
     decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(full_path)
     return mimic_cfg, decoder_policy_fn
-
-
-def create_ppo_params(args: argparse.Namespace):
-    """Create PPO parameters from defaults and CLI overrides."""
-    params = dict(DEFAULT_PPO_PARAMS)
-
-    # Add network factory (not in DEFAULT_PPO_PARAMS since it's a nested config)
-    params["network_factory"] = config_dict.create(
-        policy_hidden_layer_sizes=(1024, 512, 256),
-        value_hidden_layer_sizes=(1024, 512, 256),
-    )
-
-    # Apply CLI overrides
-    if args.num_timesteps is not None:
-        params["num_timesteps"] = int(float(args.num_timesteps))
-    if args.entropy_cost is not None:
-        params["entropy_cost"] = args.entropy_cost
-    if args.episode_length is not None:
-        params["episode_length"] = args.episode_length
-    if args.eval_every is not None:
-        params["eval_every"] = args.eval_every
-    if args.learning_rate is not None:
-        params["learning_rate"] = args.learning_rate
-    if args.num_envs is not None:
-        params["num_envs"] = args.num_envs
-
-    return config_dict.create(**params)
 
 
 def create_env_config(task_name: str, mimic_cfg: Any, cli_env_overrides: dict):
@@ -183,92 +125,10 @@ def create_environments(
     return env, eval_env
 
 
-def make_logging_inference_fn(ppo_networks):
-    """Creates inference function for the PPO agent.
-
-    The policy_network already handles dict observation routing via policy_obs_key
-    configured in the network factory.
-    """
-
-    def make_logging_policy(deterministic: bool = False):
-        policy_network = ppo_networks.policy_network
-        parametric_action_distribution = ppo_networks.parametric_action_distribution
-
-        def logging_policy(params, observations, key_sample):
-            # Pass full dict observations - network handles extraction via policy_obs_key
-            param_subset = (params[0], params[1])
-            logits = policy_network.apply(*param_subset, observations)
-            if deterministic:
-                return (
-                    jp.array(ppo_networks.parametric_action_distribution.mode(logits)),
-                    {},
-                )
-            raw_actions = parametric_action_distribution.sample_no_postprocessing(
-                logits, key_sample
-            )
-            log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
-            postprocessed_actions = parametric_action_distribution.postprocess(
-                raw_actions
-            )
-            return jp.array(postprocessed_actions), {
-                "log_prob": log_prob,
-                "raw_action": raw_actions,
-            }
-
-        return logging_policy
-
-    return make_logging_policy
-
-
-def create_policy_params_fn(
-    ppo_params,
-    ckpt_path: epath.Path,
-    env,
-    jit_reset,
-    jit_step,
-    jit_logging_inference_fn,
-):
-    """Create the policy_params_fn for evaluation and checkpointing."""
-
-    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
-        del make_policy
-
-        steps_k = current_step * ppo_params.eval_every / 1000
-        wandb.log({"train/steps_k": steps_k}, commit=False)
-
-        # Generate rollout with randomized initial state based on current_step
-        rng = jax.random.PRNGKey(current_step)
-        rng, reset_rng = jax.random.split(rng)
-        state = jit_reset(reset_rng)
-        rollout = [state]
-        for _ in range(int(ppo_params.episode_length)):
-            _, rng = jax.random.split(rng)
-            action, _ = jit_logging_inference_fn(params, state.obs, rng)
-            state = jit_step(state, action)
-            rollout.append(state)
-
-        # Render and save video
-        video_path = f"{ckpt_path}/{current_step}.mp4"
-        frames = env.render(rollout, camera="close_profile-rodent")
-        imageio.mimsave(video_path, frames, fps=int(1.0 / float(env.dt)))
-        wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")}, commit=False)
-
-        # Save checkpoint
-        orbax_checkpointer = ocp.PyTreeCheckpointer()
-        save_args = orbax_utils.save_args_from_target(params)
-        path = ckpt_path / f"{current_step}"
-        orbax_checkpointer.save(path, params, force=True, save_args=save_args)
-
-    return functools.partial(
-        policy_params_fn, jit_logging_inference_fn=jit_logging_inference_fn
-    )
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
+    parser = create_base_parser(
         description="Unified high-level decoder transfer training.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
     python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260115_005843_966729
@@ -281,47 +141,12 @@ Examples:
         """,
     )
 
-    parser.add_argument(
-        "--task",
-        type=str,
-        required=True,
-        help="Task environment name (any task registered in vnl-playground)",
-    )
+    # Highlvl-specific args
     parser.add_argument(
         "--mimic_checkpoint",
         type=str,
         required=True,
         help="Mimic checkpoint path or run ID",
-    )
-
-    # PPO overrides
-    parser.add_argument(
-        "--num_timesteps",
-        type=str,
-        default=None,
-        help="Override num_timesteps (e.g., 3e8)",
-    )
-    parser.add_argument(
-        "--entropy_cost", type=float, default=None, help="Override entropy_cost"
-    )
-    parser.add_argument(
-        "--episode_length", type=int, default=None, help="Override episode_length"
-    )
-    parser.add_argument(
-        "--eval_every", type=int, default=None, help="Override eval frequency"
-    )
-    parser.add_argument(
-        "--learning_rate", type=float, default=None, help="Override learning rate"
-    )
-    parser.add_argument("--num_envs", type=int, default=None, help="Override num_envs")
-    parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
-
-    # Env config overrides
-    parser.add_argument(
-        "--env",
-        type=str,
-        default=None,
-        help='Env config overrides (space-separated key=value, e.g., "target_speed=1.0")',
     )
     parser.add_argument(
         "--highlvl_obs_key",
@@ -329,31 +154,11 @@ Examples:
         default="task_obs",
         help="Observation key for high-level policy passed to HighLevelWrapper (default: task_obs)",
     )
-    parser.add_argument(
-        "--policy_obs_key",
-        type=str,
-        default="state",
-        help="Observation key for policy network (default: state)",
-    )
-    parser.add_argument(
-        "--value_obs_key",
-        type=str,
-        default="privileged_state",
-        help="Observation key for value network (default: privileged_state)",
-    )
 
-    # Output options
-    parser.add_argument(
-        "--checkpoint_dir",
-        type=str,
-        default="highlvl_checkpoints",
-        help="Base checkpoint directory",
-    )
-    parser.add_argument(
-        "--wandb_project", type=str, default="vnl-playground", help="Wandb project name"
-    )
-
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = "highlvl_checkpoints"
+    return args
 
 
 def main():
@@ -372,13 +177,7 @@ def main():
 
     # Auto-configure Warp backend settings
     if getattr(env_cfg, "mujoco_impl", None) == "warp":
-        env_cfg.walker_xml_path = consts.RODENT_NO_TAIL_COLLISION_XML
-        naconmax_per_env = 90
-        env_cfg.naconmax = ppo_params.num_envs * naconmax_per_env
-        env_cfg.njmax = 1200
-        print(f"Warp backend: walker=rodent_no_tail_collisions.xml, "
-              f"naconmax={env_cfg.naconmax} ({ppo_params.num_envs}*{naconmax_per_env}), "
-              f"njmax={env_cfg.njmax}")
+        configure_warp_backend(env_cfg, ppo_params.num_envs)
 
     print(f"env_cfg:\n{env_cfg}")
     print(f"ppo_params:\n{ppo_params}")

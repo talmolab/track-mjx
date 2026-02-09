@@ -4,6 +4,9 @@ Trains an end-to-end MLP policy using standard Brax PPO on any registered
 vnl-playground task. No pretrained decoder or high-level transfer — just
 direct policy optimization.
 
+Supports both JAX/MJX (default) and Warp backends. For Warp, pass
+--env "mujoco_impl=warp" to enable the full-collision rodent model.
+
 Usage:
     # Basic usage (any registered task)
     python train_task.py --task RodentBowlEscape
@@ -18,6 +21,11 @@ Usage:
     # With custom observation keys
     python train_task.py --task RodentBowlEscape \\
         --policy_obs_key state --value_obs_key privileged_state
+
+    # Warp backend (full-collision rodent model)
+    python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp"
+    python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp" \\
+        --naconmax_per_env 90 --njmax 1200
 """
 
 import os
@@ -29,126 +37,35 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
-import argparse
 import functools
 import json
 from datetime import datetime
-from typing import Any
 
-from collections.abc import Mapping
-
-import imageio
 import jax
-import jax.numpy as jp
 import wandb
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from etils import epath
-from flax.training import orbax_utils
-from ml_collections import config_dict
 from mujoco_playground import wrapper
-from orbax import checkpoint as ocp
 
 from vnl_playground import registry
-from track_mjx.scripts.utils import apply_env_overrides, parse_env_overrides_str
+from track_mjx.scripts.utils import (
+    FlattenInnerObsWrapper,
+    apply_env_overrides,
+    configure_warp_backend,
+    create_base_parser,
+    create_policy_params_fn,
+    create_ppo_params,
+    make_logging_inference_fn,
+    parse_env_overrides_str,
+    setup_jax_cache,
+)
 
-# Enable persistent compilation cache.
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-
-
-# Default PPO parameters (task-independent)
-DEFAULT_PPO_PARAMS = {
-    "num_timesteps": int(3e8),
-    "reward_scaling": 1.0,
-    "episode_length": 1000,
-    "normalize_observations": True,
-    "action_repeat": 1,
-    "unroll_length": 20,
-    "num_minibatches": 16,
-    "num_updates_per_batch": 4,
-    "discounting": 0.99,
-    "learning_rate": 1e-4,
-    "entropy_cost": 0.01,
-    "num_envs": 4096,
-    "batch_size": 1024,
-    "max_grad_norm": 1.0,
-    "eval_every": 5_000_000,
-}
+setup_jax_cache()
 
 
-def create_ppo_params(args: argparse.Namespace):
-    """Create PPO parameters from defaults and CLI overrides."""
-    params = dict(DEFAULT_PPO_PARAMS)
-
-    # Network factory
-    policy_sizes = tuple(int(x) for x in args.policy_hidden_sizes.split(","))
-    value_sizes = tuple(int(x) for x in args.value_hidden_sizes.split(","))
-    params["network_factory"] = config_dict.create(
-        policy_hidden_layer_sizes=policy_sizes,
-        value_hidden_layer_sizes=value_sizes,
-    )
-
-    # Apply CLI overrides
-    if args.num_timesteps is not None:
-        params["num_timesteps"] = int(float(args.num_timesteps))
-    if args.entropy_cost is not None:
-        params["entropy_cost"] = args.entropy_cost
-    if args.episode_length is not None:
-        params["episode_length"] = args.episode_length
-    if args.eval_every is not None:
-        params["eval_every"] = args.eval_every
-    if args.learning_rate is not None:
-        params["learning_rate"] = args.learning_rate
-    if args.num_envs is not None:
-        params["num_envs"] = args.num_envs
-    if args.unroll_length is not None:
-        params["unroll_length"] = args.unroll_length
-    if args.discounting is not None:
-        params["discounting"] = args.discounting
-    if args.batch_size is not None:
-        params["batch_size"] = args.batch_size
-
-    return config_dict.create(**params)
-
-
-def _flatten_inner_obs(obs):
-    """Flatten nested dict obs values to flat arrays, keeping top-level keys."""
-    result = {}
-    for key, value in obs.items():
-        if isinstance(value, Mapping):
-            leaves = jax.tree.leaves(value)
-            result[key] = jp.concatenate(leaves, axis=-1)
-        else:
-            result[key] = value
-    return result
-
-
-class FlattenInnerObsWrapper:
-    """Wraps an env to flatten inner observation dicts to flat arrays.
-
-    Converts obs like {'state': {'a': arr1, 'b': arr2}, ...}
-    to {'state': concat(arr1, arr2), ...} so Brax's MLP networks work.
-    """
-
-    def __init__(self, env):
-        self._env = env
-
-    def __getattr__(self, name):
-        return getattr(self._env, name)
-
-    def reset(self, rng):
-        state = self._env.reset(rng)
-        return state.replace(obs=_flatten_inner_obs(state.obs))
-
-    def step(self, state, action):
-        state = self._env.step(state, action)
-        return state.replace(obs=_flatten_inner_obs(state.obs))
-
-
-def create_environments(task_name: str, env_cfg: Any):
+def create_environments(task_name, env_cfg):
     """Create training and eval environments."""
     env = FlattenInnerObsWrapper(
         registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
@@ -159,87 +76,10 @@ def create_environments(task_name: str, env_cfg: Any):
     return env, eval_env
 
 
-def make_logging_inference_fn(ppo_networks):
-    """Creates inference function for eval rollouts."""
-
-    def make_logging_policy(deterministic: bool = False):
-        policy_network = ppo_networks.policy_network
-        parametric_action_distribution = ppo_networks.parametric_action_distribution
-
-        def logging_policy(params, observations, key_sample):
-            param_subset = (params[0], params[1])
-            logits = policy_network.apply(*param_subset, observations)
-            if deterministic:
-                return (
-                    jp.array(ppo_networks.parametric_action_distribution.mode(logits)),
-                    {},
-                )
-            raw_actions = parametric_action_distribution.sample_no_postprocessing(
-                logits, key_sample
-            )
-            log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
-            postprocessed_actions = parametric_action_distribution.postprocess(
-                raw_actions
-            )
-            return jp.array(postprocessed_actions), {
-                "log_prob": log_prob,
-                "raw_action": raw_actions,
-            }
-
-        return logging_policy
-
-    return make_logging_policy
-
-
-def create_policy_params_fn(
-    ppo_params,
-    ckpt_path: epath.Path,
-    env,
-    jit_reset,
-    jit_step,
-    jit_logging_inference_fn,
-):
-    """Create the policy_params_fn for evaluation and checkpointing."""
-
-    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
-        del make_policy
-
-        steps_k = current_step * ppo_params.eval_every / 1000
-        wandb.log({"train/steps_k": steps_k}, commit=False)
-
-        # Generate rollout with randomized initial state based on current_step
-        rng = jax.random.PRNGKey(current_step)
-        rng, reset_rng = jax.random.split(rng)
-        state = jit_reset(reset_rng)
-        rollout = [state]
-        for _ in range(int(ppo_params.episode_length)):
-            _, rng = jax.random.split(rng)
-            action, _ = jit_logging_inference_fn(params, state.obs, rng)
-            state = jit_step(state, action)
-            rollout.append(state)
-
-        # Render and save video
-        video_path = f"{ckpt_path}/{current_step}.mp4"
-        frames = env.render(rollout, camera="close_profile-rodent")
-        imageio.mimsave(video_path, frames, fps=int(1.0 / float(env.dt)))
-        wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")}, commit=False)
-
-        # Save checkpoint
-        orbax_checkpointer = ocp.PyTreeCheckpointer()
-        save_args = orbax_utils.save_args_from_target(params)
-        path = ckpt_path / f"{current_step}"
-        orbax_checkpointer.save(path, params, force=True, save_args=save_args)
-
-    return functools.partial(
-        policy_params_fn, jit_logging_inference_fn=jit_logging_inference_fn
-    )
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
+    parser = create_base_parser(
         description="Standard Brax PPO training on any vnl-playground environment.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
     python train_task.py --task RodentBowlEscape
@@ -248,96 +88,31 @@ Examples:
 
     python train_task.py --task RodentBowlEscape \\
         --env "target_speed=1.5 reward_terms.head_height_dense.weight=0.0"
+
+    # Warp backend (full-collision rodent model)
+    python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp"
         """,
     )
 
+    # Warp-specific args
     parser.add_argument(
-        "--task",
-        type=str,
-        required=True,
-        help="Task environment name (any task registered in vnl-playground)",
+        "--naconmax_per_env",
+        type=int,
+        default=90,
+        help="Max active contacts per env for Warp backend (default: 90). "
+        "naconmax is computed as num_envs * naconmax_per_env.",
+    )
+    parser.add_argument(
+        "--njmax",
+        type=int,
+        default=1200,
+        help="Max constraint rows per env for Warp backend (default: 1200).",
     )
 
-    # PPO overrides
-    parser.add_argument(
-        "--num_timesteps",
-        type=str,
-        default=None,
-        help="Override num_timesteps (e.g., 3e8)",
-    )
-    parser.add_argument(
-        "--entropy_cost", type=float, default=None, help="Override entropy_cost"
-    )
-    parser.add_argument(
-        "--episode_length", type=int, default=None, help="Override episode_length"
-    )
-    parser.add_argument(
-        "--eval_every", type=int, default=None, help="Override eval frequency"
-    )
-    parser.add_argument(
-        "--learning_rate", type=float, default=None, help="Override learning rate"
-    )
-    parser.add_argument("--num_envs", type=int, default=None, help="Override num_envs")
-    parser.add_argument(
-        "--unroll_length", type=int, default=None, help="Override unroll_length"
-    )
-    parser.add_argument(
-        "--discounting", type=float, default=None, help="Override discounting"
-    )
-    parser.add_argument(
-        "--batch_size", type=int, default=None, help="Override batch_size"
-    )
-    parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
-
-    # Network architecture
-    parser.add_argument(
-        "--policy_hidden_sizes",
-        type=str,
-        default="1024,512,256",
-        help="Comma-separated policy hidden layer sizes (default: 1024,512,256)",
-    )
-    parser.add_argument(
-        "--value_hidden_sizes",
-        type=str,
-        default="1024,512,256",
-        help="Comma-separated value hidden layer sizes (default: 1024,512,256)",
-    )
-
-    # Env config overrides
-    parser.add_argument(
-        "--env",
-        type=str,
-        default=None,
-        help='Env config overrides (space-separated key=value, e.g., "target_speed=1.0")',
-    )
-    parser.add_argument(
-        "--policy_obs_key",
-        type=str,
-        default="state",
-        help="Observation key for policy network (default: state)",
-    )
-    parser.add_argument(
-        "--value_obs_key",
-        type=str,
-        default="privileged_state",
-        help="Observation key for value network (default: privileged_state)",
-    )
-
-    # Output options
-    parser.add_argument(
-        "--checkpoint_dir",
-        type=str,
-        default="task_checkpoints",
-        help="Base checkpoint directory",
-    )
-    parser.add_argument(
-        "--wandb_project",
-        type=str,
-        default="vnl-playground",
-        help="Wandb project name",
-    )
-
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = "task_checkpoints"
+    return args
 
 
 def main():
@@ -349,12 +124,25 @@ def main():
     cli_env_overrides = parse_env_overrides_str(args.env)
     env_cfg = registry.get_default_config(args.task)
     apply_env_overrides(env_cfg, cli_env_overrides)
-    ppo_params = create_ppo_params(args)
+
+    # Detect Warp backend and auto-configure
+    is_warp = getattr(env_cfg, "mujoco_impl", None) == "warp"
+    default_num_envs = 1024 if is_warp else 4096
+    ppo_params = create_ppo_params(args, default_num_envs=default_num_envs)
+
+    if is_warp:
+        configure_warp_backend(
+            env_cfg, ppo_params.num_envs, args.naconmax_per_env, args.njmax
+        )
+
     print(f"env_cfg:\n{env_cfg}")
     print(f"ppo_params:\n{ppo_params}")
 
     # Setup experiment (include microseconds to avoid run ID collisions)
-    exp_name = f"{args.task}-ppo-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
+    backend_tag = "warp-ppo" if is_warp else "ppo"
+    exp_name = (
+        f"{args.task}-{backend_tag}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
+    )
     ckpt_path = epath.Path(args.checkpoint_dir).resolve() / exp_name
     ckpt_path.mkdir(parents=True, exist_ok=True)
     print(f"Experiment name: {exp_name}")
@@ -370,15 +158,20 @@ def main():
         "value_obs_key": args.value_obs_key,
         "seed": args.seed,
     }
+    if is_warp:
+        config_to_save["backend"] = "warp"
+        config_to_save["naconmax_per_env"] = args.naconmax_per_env
+        config_to_save["njmax"] = args.njmax
     with open(ckpt_path / "config.json", "w") as fp:
         json.dump(config_to_save, fp, indent=4, default=lambda o: str(o))
 
     # Initialize wandb
+    wandb_id = f"task-{backend_tag}-{exp_name}"
     wandb.init(
         project=args.wandb_project,
         config=config_to_save,
-        id=f"task-ppo-{exp_name}",
-        notes=f"task: {args.task}",
+        id=wandb_id,
+        notes=f"task: {args.task}" + (" (warp, full-collision)" if is_warp else ""),
     )
 
     def wandb_progress(num_steps, metrics):

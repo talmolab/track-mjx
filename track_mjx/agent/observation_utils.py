@@ -7,67 +7,17 @@ where the structure is:
         'privileged_state': {'imitation_target': ..., 'proprioception': ...}
     }
 
+Each leaf value is a flat 1D array (unbatched) or 2D array (batched).
+
 Key components:
 - normalizer_select: Extracts per-key running statistics from a pytree-structured normalizer
-- Flattening utilities for nested observation structures
+- get_obs_sizes / get_obs_shape: Extract observation metadata from example observations
 """
 
 from typing import Mapping, Any
 
-import jax
 import jax.numpy as jnp
 from brax.training.acme import running_statistics, specs
-from jax import flatten_util
-
-
-def _flatten_nested_obs(nested: Any) -> jnp.ndarray:
-    """Flatten a potentially nested observation, preserving batch dimensions.
-
-    Handles both flat arrays and nested dicts/pytrees. Preserves the first
-    dimension (batch) and flattens all trailing dimensions.
-
-    Args:
-        nested: Either a flat array or a nested dict of arrays.
-            - 1D array (obs_size,): returned as-is (unbatched)
-            - 2D array (batch, obs_size): returned as-is (already flat)
-            - 3D+ array (batch, d1, d2, ...): flattened to (batch, d1*d2*...)
-            - Nested dict: leaves are concatenated along last axis
-
-    Returns:
-        Flattened array with shape (obs_size,) or (batch, obs_size).
-    """
-    if isinstance(nested, jnp.ndarray):
-        if nested.ndim <= 2:
-            # 1D (unbatched) or 2D (batched, already flat) - return as-is
-            return nested
-        else:
-            # 3D+ array: preserve batch dim (first), flatten the rest
-            # (batch, d1, d2, ...) -> (batch, d1*d2*...)
-            return nested.reshape(nested.shape[0], -1)
-
-    # For nested dicts/pytrees, flatten the observation structure
-    leaves = jax.tree_util.tree_leaves(nested)
-    if not leaves:
-        return jnp.array([])
-
-    # Find batch dims: leading dimensions that are identical across all leaves
-    # E.g., (1,64,5,3) and (1,64,18,5,3) share prefix (1,64)
-    ref = min(leaves, key=lambda x: x.ndim)
-    n_batch = 0
-    for i in range(ref.ndim - 1):
-        if len({leaf.shape[i] for leaf in leaves}) == 1:
-            n_batch += 1
-        else:
-            break
-
-    if n_batch == 0:
-        # Unbatched: flatten everything to 1D
-        flat, _ = flatten_util.ravel_pytree(nested)
-        return flat
-
-    # Batched: reshape each leaf to (*batch_shape, -1) and concatenate
-    batch_shape = ref.shape[:n_batch]
-    return jnp.concatenate([leaf.reshape(*batch_shape, -1) for leaf in leaves], axis=-1)
 
 
 def normalizer_select(
@@ -98,98 +48,37 @@ def normalizer_select(
     )
 
 
-def flatten_obs_dict(obs: Mapping[str, Any]) -> jnp.ndarray:
-    """Flatten an observation dict to a single array.
-
-    Concatenates imitation_target and proprioception in that order.
-
-    Args:
-        obs: Observation dict with 'imitation_target' and 'proprioception' keys.
-
-    Returns:
-        Single flat array with all observations concatenated.
-    """
-    imitation_target = _flatten_nested_obs(obs["imitation_target"])
-    proprioception = _flatten_nested_obs(obs["proprioception"])
-    return jnp.concatenate([imitation_target, proprioception], axis=-1)
-
-
-def flatten_to_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
-    """Flatten each leaf of an observation dict while preserving dict structure.
-
-    Used after normalization to prepare observations for networks that expect
-    flat arrays for each observation key.
-
-    Args:
-        obs: Observation dict with potentially nested arrays.
-
-    Returns:
-        Dict with same keys but flattened array values.
-    """
-    return {k: _flatten_nested_obs(v) for k, v in obs.items()}
-
-
-def flatten_full_obs(
-    obs: Mapping[str, Mapping[str, Any]],
-) -> dict[str, dict[str, jnp.ndarray]]:
-    """Flatten the full nested observation dict for normalizer update.
-
-    Flattens observations at both the 'state' and 'privileged_state' levels.
-
-    Args:
-        obs: Full observation dict with structure:
-            {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
-
-    Returns:
-        Flattened dict with same structure but flat array values.
-    """
-    return {key: flatten_to_dict(inner) for key, inner in obs.items()}
-
-
 def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
-    """Extract observation sizes from an example nested observation dict.
+    """Extract observation sizes from an example observation dict.
 
     Args:
-        obs: Example nested observation dict with structure:
-            {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
+        obs: Example observation dict with structure:
+            {'state': {'imitation_target': array, 'proprioception': array}, ...}
+            Each leaf array should be flat (1D unbatched or 2D batched).
 
     Returns:
-        Dict with 'imitation_target' and 'proprioception' sizes.
+        Dict mapping each inner key to its feature dimension size.
     """
-    # Use 'state' (or first available key) to determine observation shapes
     state_obs = obs.get("state", next(iter(obs.values())))
-
-    imitation_target_flat = _flatten_nested_obs(state_obs["imitation_target"])
-    proprioception_flat = _flatten_nested_obs(state_obs["proprioception"])
-
-    return {
-        "imitation_target": imitation_target_flat.shape[-1],
-        "proprioception": proprioception_flat.shape[-1],
-    }
+    return {key: val.shape[-1] for key, val in state_obs.items()}
 
 
 def get_obs_shape(
     obs: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, dict[str, specs.Array]]:
-    """Extract flattened observation shapes as a pytree for running_statistics.init_state.
-
-    Returns specs for FLATTENED observations. The normalizer stores flat stats,
-    and observations should be flattened before update/normalize calls.
+    """Extract observation shapes as a pytree for running_statistics.init_state.
 
     Args:
-        obs: Example nested observation dict.
+        obs: Example observation dict with flat leaf arrays.
 
     Returns:
-        Nested dict with same structure as top two levels, containing specs.Array
-        objects with flattened shapes (e.g., {'state': {'imitation_target': Array(640,), ...}}).
+        Nested dict matching obs structure, with specs.Array for each leaf.
     """
 
-    def flatten_and_get_spec(inner_obs: Mapping[str, Any]) -> dict[str, specs.Array]:
+    def get_specs(inner_obs: Mapping[str, Any]) -> dict[str, specs.Array]:
         return {
-            key: specs.Array(
-                (_flatten_nested_obs(val).shape[-1],), jnp.dtype("float32")
-            )
+            key: specs.Array((val.shape[-1],), jnp.dtype("float32"))
             for key, val in inner_obs.items()
         }
 
-    return {key: flatten_and_get_spec(inner) for key, inner in obs.items()}
+    return {key: get_specs(inner) for key, inner in obs.items()}

@@ -38,8 +38,6 @@ from brax.training.acme import running_statistics
 from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
 from track_mjx.agent.observation_utils import (
     normalizer_select,
-    flatten_obs_dict,
-    flatten_to_dict,
 )
 
 # Type aliases
@@ -523,11 +521,9 @@ def make_dict_value_network(
         obs: Mapping[str, Mapping[str, jnp.ndarray]],
     ):
         """Apply value network with nested observation normalization."""
-        # Flatten observations first, then normalize, then concatenate
-        flattened_inner = flatten_to_dict(obs[value_obs_key])
         value_normalizer = normalizer_select(processor_params, value_obs_key)
         normalized_inner = running_statistics.normalize(
-            flattened_inner, value_normalizer
+            obs[value_obs_key], value_normalizer
         )
         # Concatenate imitation_target and proprioception
         flat_obs = jnp.concatenate(
@@ -598,10 +594,8 @@ def make_recurrent_intention_ppo_networks(
         deterministic: bool = False,
     ):
         """Apply policy with observation normalization."""
-        # Flatten observations first, then normalize
-        flattened_obs = flatten_to_dict(obs[policy_obs_key])
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
-        normalized_obs = running_statistics.normalize(flattened_obs, policy_normalizer)
+        normalized_obs = running_statistics.normalize(obs[policy_obs_key], policy_normalizer)
         return policy_module.apply(
             policy_params,
             obs=normalized_obs,
@@ -638,11 +632,9 @@ def make_recurrent_intention_ppo_networks(
             Tuple of (logits, latent_mean, latent_logvar, final_hidden).
             Each output has shape [T, B, ...].
         """
-        # Flatten observations first (preserving T, B dims), then normalize
-        obs_seq_flat = flatten_to_dict(obs_seq[policy_obs_key])
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
         obs_seq_normalized = running_statistics.normalize(
-            obs_seq_flat, policy_normalizer
+            obs_seq[policy_obs_key], policy_normalizer
         )
 
         # Validate stored_keys shape if provided

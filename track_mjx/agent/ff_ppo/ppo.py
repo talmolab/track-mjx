@@ -49,7 +49,6 @@ from track_mjx.agent.observation_utils import (
     get_obs_sizes,
     get_obs_shape,
     normalizer_select,
-    flatten_full_obs,
 )
 
 # Type aliases
@@ -417,11 +416,9 @@ def train(
         # Update normalization params (only if normalization is enabled).
         # When disabled, normalizer stays at identity (mean=0, std=1).
         if normalize_observations:
-            # Flatten observations before updating normalizer
-            flattened_obs = flatten_full_obs(data.observation)
             normalizer_params = running_statistics.update(
                 training_state.normalizer_params,
-                flattened_obs,
+                data.observation,
                 pmap_axis_name=_PMAP_AXIS_NAME,
             )
         else:

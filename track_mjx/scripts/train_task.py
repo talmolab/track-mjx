@@ -35,6 +35,8 @@ import json
 from datetime import datetime
 from typing import Any
 
+from collections.abc import Mapping
+
 import imageio
 import jax
 import jax.numpy as jp
@@ -81,10 +83,12 @@ def create_ppo_params(args: argparse.Namespace):
     """Create PPO parameters from defaults and CLI overrides."""
     params = dict(DEFAULT_PPO_PARAMS)
 
-    # Add network factory (not in DEFAULT_PPO_PARAMS since it's a nested config)
+    # Network factory
+    policy_sizes = tuple(int(x) for x in args.policy_hidden_sizes.split(","))
+    value_sizes = tuple(int(x) for x in args.value_hidden_sizes.split(","))
     params["network_factory"] = config_dict.create(
-        policy_hidden_layer_sizes=(1024, 512, 256),
-        value_hidden_layer_sizes=(1024, 512, 256),
+        policy_hidden_layer_sizes=policy_sizes,
+        value_hidden_layer_sizes=value_sizes,
     )
 
     # Apply CLI overrides
@@ -100,14 +104,58 @@ def create_ppo_params(args: argparse.Namespace):
         params["learning_rate"] = args.learning_rate
     if args.num_envs is not None:
         params["num_envs"] = args.num_envs
+    if args.unroll_length is not None:
+        params["unroll_length"] = args.unroll_length
+    if args.discounting is not None:
+        params["discounting"] = args.discounting
+    if args.batch_size is not None:
+        params["batch_size"] = args.batch_size
 
     return config_dict.create(**params)
 
 
+def _flatten_inner_obs(obs):
+    """Flatten nested dict obs values to flat arrays, keeping top-level keys."""
+    result = {}
+    for key, value in obs.items():
+        if isinstance(value, Mapping):
+            leaves = jax.tree.leaves(value)
+            result[key] = jp.concatenate(leaves, axis=-1)
+        else:
+            result[key] = value
+    return result
+
+
+class FlattenInnerObsWrapper:
+    """Wraps an env to flatten inner observation dicts to flat arrays.
+
+    Converts obs like {'state': {'a': arr1, 'b': arr2}, ...}
+    to {'state': concat(arr1, arr2), ...} so Brax's MLP networks work.
+    """
+
+    def __init__(self, env):
+        self._env = env
+
+    def __getattr__(self, name):
+        return getattr(self._env, name)
+
+    def reset(self, rng):
+        state = self._env.reset(rng)
+        return state.replace(obs=_flatten_inner_obs(state.obs))
+
+    def step(self, state, action):
+        state = self._env.step(state, action)
+        return state.replace(obs=_flatten_inner_obs(state.obs))
+
+
 def create_environments(task_name: str, env_cfg: Any):
     """Create training and eval environments."""
-    env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
-    eval_env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
+    env = FlattenInnerObsWrapper(
+        registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
+    )
+    eval_env = FlattenInnerObsWrapper(
+        registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
+    )
     return env, eval_env
 
 
@@ -230,6 +278,30 @@ Examples:
         "--learning_rate", type=float, default=None, help="Override learning rate"
     )
     parser.add_argument("--num_envs", type=int, default=None, help="Override num_envs")
+    parser.add_argument(
+        "--unroll_length", type=int, default=None, help="Override unroll_length"
+    )
+    parser.add_argument(
+        "--discounting", type=float, default=None, help="Override discounting"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=None, help="Override batch_size"
+    )
+    parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
+
+    # Network architecture
+    parser.add_argument(
+        "--policy_hidden_sizes",
+        type=str,
+        default="1024,512,256",
+        help="Comma-separated policy hidden layer sizes (default: 1024,512,256)",
+    )
+    parser.add_argument(
+        "--value_hidden_sizes",
+        type=str,
+        default="1024,512,256",
+        help="Comma-separated value hidden layer sizes (default: 1024,512,256)",
+    )
 
     # Env config overrides
     parser.add_argument(
@@ -296,6 +368,7 @@ def main():
         "cli_env_overrides": cli_env_overrides,
         "policy_obs_key": args.policy_obs_key,
         "value_obs_key": args.value_obs_key,
+        "seed": args.seed,
     }
     with open(ckpt_path / "config.json", "w") as fp:
         json.dump(config_to_save, fp, indent=4, default=lambda o: str(o))
@@ -334,6 +407,7 @@ def main():
     train_fn = functools.partial(
         ppo.train,
         **training_params,
+        seed=args.seed,
         num_evals=int(ppo_params.num_timesteps / ppo_params.eval_every),
         network_factory=network_factory,
         restore_checkpoint_path=None,
@@ -344,11 +418,11 @@ def main():
     # Setup logging
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.PRNGKey(args.seed)
     start_state = jit_reset(rng)
 
-    # Get observation size from dict structure (policy obs key)
-    obs_size = start_state.obs[args.policy_obs_key].shape[-1]
+    # Get observation size as nested dict (Brax handles per-key extraction)
+    obs_size = jax.tree.map(lambda x: x.shape[-1], start_state.obs)
 
     ppo_network = network_factory(
         obs_size,

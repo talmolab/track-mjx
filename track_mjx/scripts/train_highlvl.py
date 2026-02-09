@@ -72,6 +72,7 @@ from orbax import checkpoint as ocp
 
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
+from vnl_playground.tasks.rodent import consts
 from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from track_mjx.scripts.utils import apply_env_overrides, parse_env_overrides_str
@@ -313,6 +314,7 @@ Examples:
         "--learning_rate", type=float, default=None, help="Override learning rate"
     )
     parser.add_argument("--num_envs", type=int, default=None, help="Override num_envs")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
 
     # Env config overrides
     parser.add_argument(
@@ -367,6 +369,17 @@ def main():
     cli_env_overrides = parse_env_overrides_str(args.env)
     env_cfg = create_env_config(args.task, mimic_cfg, cli_env_overrides)
     ppo_params = create_ppo_params(args)
+
+    # Auto-configure Warp backend settings
+    if getattr(env_cfg, "mujoco_impl", None) == "warp":
+        env_cfg.walker_xml_path = consts.RODENT_NO_TAIL_COLLISION_XML
+        naconmax_per_env = 90
+        env_cfg.naconmax = ppo_params.num_envs * naconmax_per_env
+        env_cfg.njmax = 1200
+        print(f"Warp backend: walker=rodent_no_tail_collisions.xml, "
+              f"naconmax={env_cfg.naconmax} ({ppo_params.num_envs}*{naconmax_per_env}), "
+              f"njmax={env_cfg.njmax}")
+
     print(f"env_cfg:\n{env_cfg}")
     print(f"ppo_params:\n{ppo_params}")
 
@@ -387,6 +400,7 @@ def main():
         "highlvl_obs_key": args.highlvl_obs_key,
         "policy_obs_key": args.policy_obs_key,
         "value_obs_key": args.value_obs_key,
+        "seed": args.seed,
     }
     with open(ckpt_path / "config.json", "w") as fp:
         json.dump(config_to_save, fp, indent=4, default=lambda o: str(o))
@@ -431,6 +445,7 @@ def main():
     train_fn = functools.partial(
         ppo.train,
         **training_params,
+        seed=args.seed,
         num_evals=int(ppo_params.num_timesteps / ppo_params.eval_every),
         network_factory=network_factory,
         restore_checkpoint_path=None,
@@ -441,7 +456,7 @@ def main():
     # Setup logging
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.PRNGKey(args.seed)
     start_state = jit_reset(rng)
 
     # Get observation size from dict structure (policy obs key)

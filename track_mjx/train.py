@@ -60,9 +60,6 @@ def main(cfg: DictConfig) -> None:
     # between discovery and saving (prepare_config modifies cfg by adding paths)
     cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
 
-    # Get environment name from config
-    env_name = cfg.env_config.env_name
-
     # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
 
@@ -73,8 +70,9 @@ def main(cfg: DictConfig) -> None:
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
-    # Create the reference clips using registry
+    # Create the reference clips using registry, get environment name from config
     logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
+    env_name = cfg.env_config.env_name
     reference_clips = registry.load_reference_clips(
         env_name,
         data_path=cfg.env_config.reference_data_path,

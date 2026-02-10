@@ -155,7 +155,9 @@ def make_abstract_vq_policy(
     return (normalizer_state, init_policy_params)
 
 
-def _dict_to_running_statistics_state(d: dict) -> running_statistics.RunningStatisticsState:
+def _dict_to_running_statistics_state(
+    d: dict,
+) -> running_statistics.RunningStatisticsState:
     """Convert a dict restored by orbax to RunningStatisticsState.
 
     Handles both old and new Brax versions (with/without std_eps, mode fields).
@@ -212,7 +214,10 @@ def load_vq_policy(
         normalizer_dict, policy_params = policy
 
         # Check if it's a dict normalizer or flat normalizer
-        if "imitation_target" in normalizer_dict and "proprioception" in normalizer_dict:
+        if (
+            "imitation_target" in normalizer_dict
+            and "proprioception" in normalizer_dict
+        ):
             # Already dict normalizer structure
             normalizer_state = DictRunningStatisticsState(
                 imitation_target=_dict_to_running_statistics_state(
@@ -404,19 +409,53 @@ def load_vq_inference_fn_with_stickiness(
     return inference_fn, stickiness_bias
 
 
-def get_codebook(policy_params: tuple[Any, Any]) -> jnp.ndarray:
+def get_codebook(policy_params: tuple[Any, Any], depth: int = 0) -> jnp.ndarray:
     """Extract codebook embeddings from policy parameters.
+
+    Supports both old (flat VQ) and new (RVQ) parameter structures.
 
     Args:
         policy_params: Tuple of (normalizer_state, policy_params).
+        depth: Which RVQ level to return (default 0 = primary/coarse).
 
     Returns:
         Codebook array of shape [num_codes, latent_dim].
     """
     _, params = policy_params
-    # Navigate the nested parameter structure
-    # Structure: {'params': {'encoder': ..., 'quantizer': {'embeddings': ...}, 'decoder': ...}}
-    return params["params"]["quantizer"]["embeddings"]
+    quantizer = params["params"]["quantizer"]
+
+    # New RVQ structure: quantizer/codebooks_0/embeddings
+    codebook_key = f"codebooks_{depth}"
+    if codebook_key in quantizer:
+        return quantizer[codebook_key]["embeddings"]
+
+    # Legacy flat VQ structure: quantizer/embeddings
+    return quantizer["embeddings"]
+
+
+def get_all_codebooks(policy_params: tuple[Any, Any]) -> list[jnp.ndarray]:
+    """Extract all codebook embeddings from policy parameters.
+
+    Args:
+        policy_params: Tuple of (normalizer_state, policy_params).
+
+    Returns:
+        List of codebook arrays, one per RVQ depth level.
+    """
+    _, params = policy_params
+    quantizer = params["params"]["quantizer"]
+
+    codebooks = []
+    d = 0
+    while f"codebooks_{d}" in quantizer:
+        codebooks.append(quantizer[f"codebooks_{d}"]["embeddings"])
+        d += 1
+
+    # Fallback for legacy structure
+    if not codebooks and "embeddings" in quantizer:
+        codebooks.append(quantizer["embeddings"])
+
+    return codebooks
 
 
 def get_decoder_params(policy_params: tuple[Any, Any]) -> dict[str, Any]:
@@ -457,7 +496,9 @@ def create_standalone_decoder(
         Decoder Flax module.
     """
     action_size = cfg.network_config.action_size
-    decoder_layer_sizes = list(cfg.network_config.decoder_layer_sizes) + [action_size * 2]
+    decoder_layer_sizes = list(cfg.network_config.decoder_layer_sizes) + [
+        action_size * 2
+    ]
 
     return Decoder(layer_sizes=decoder_layer_sizes)
 

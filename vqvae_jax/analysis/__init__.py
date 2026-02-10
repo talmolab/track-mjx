@@ -6,10 +6,7 @@ This package provides analysis of trained VQ-VAE models:
 
 - **per_clip_analysis.py**: Per-clip analysis module
   - Per-clip transition matrices and probability heatmaps
-  - Per-clip community detection via spectral clustering
-  - Per-clip transition graphs with community-colored nodes
-  - Dual timeline visualization (code + community colors)
-  - Video rendering with code/community bars
+  - Video rendering with code timeline bars
 
 - **transition_context_analysis.py**: Cross-clip code consistency analysis
   - Compare predecessor/successor patterns for top K codes

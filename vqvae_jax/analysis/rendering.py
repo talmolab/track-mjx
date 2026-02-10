@@ -2,21 +2,15 @@
 
 This module provides functions for rendering rollouts to video with
 informative overlays showing codebook indices and transition patterns.
-Supports both individual clips and grid montages, as well as community-based
-visualization for large codebooks.
 """
 
 import logging
 from pathlib import Path
-from typing import Any, Sequence, TYPE_CHECKING
+from typing import Any, Sequence
 
 import imageio
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-
-if TYPE_CHECKING:
-    from .community_analysis import CommunityStructure
-    from .inference_cache import InferenceResult
 
 
 # =============================================================================
@@ -362,6 +356,135 @@ def add_code_transition_bar(
 # =============================================================================
 
 
+def _build_stacked_bars(
+    width: int,
+    current_frame_idx: int,
+    indices_per_depth: list[np.ndarray],
+    code_colors: np.ndarray,
+    bar_height: int = 30,
+    separator_height: int = 2,
+    playhead_width: int = 3,
+) -> np.ndarray:
+    """Build a stacked bar image for multi-depth RVQ timelines.
+
+    Each depth level gets its own colored bar, stacked top-to-bottom
+    (depth 0 on top, depth D-1 on bottom) with thin separators.
+
+    Args:
+        width: Width of the bar in pixels.
+        current_frame_idx: Current frame index for playhead.
+        indices_per_depth: List of D arrays, each shape [T].
+        code_colors: Color for each code, shape [num_codes, 3].
+        bar_height: Height of each individual bar in pixels.
+        separator_height: Height of separator between bars.
+        playhead_width: Width of the playhead marker.
+
+    Returns:
+        Stacked bar image, shape [total_height, width, 3].
+    """
+    n_depths = len(indices_per_depth)
+    total_height = n_depths * bar_height + (n_depths - 1) * separator_height
+    bar_img = np.ones((total_height, width, 3), dtype=np.uint8) * 255
+
+    num_frames = len(indices_per_depth[0])
+    playhead_x = int(current_frame_idx * width / num_frames)
+    playhead_x = min(playhead_x, width - playhead_width)
+
+    for d, depth_indices in enumerate(indices_per_depth):
+        y_start = d * (bar_height + separator_height)
+
+        # Draw code segments for this depth
+        for j, code_idx in enumerate(depth_indices):
+            x_start = int(j * width / num_frames)
+            x_end = int((j + 1) * width / num_frames)
+            color = code_colors[int(code_idx) % len(code_colors)]
+            bar_img[y_start : y_start + bar_height, x_start:x_end] = color
+
+        # Draw playhead
+        if playhead_x > 0:
+            bar_img[y_start : y_start + bar_height, playhead_x - 1 : playhead_x] = [
+                50,
+                50,
+                50,
+            ]
+        bar_img[
+            y_start : y_start + bar_height,
+            playhead_x : playhead_x + playhead_width,
+        ] = [255, 255, 255]
+        if playhead_x + playhead_width < width:
+            bar_img[
+                y_start : y_start + bar_height,
+                playhead_x + playhead_width : playhead_x + playhead_width + 1,
+            ] = [50, 50, 50]
+
+        # Draw separator below (except for last bar)
+        if d < n_depths - 1:
+            sep_y = y_start + bar_height
+            bar_img[sep_y : sep_y + separator_height, :] = [50, 50, 50]
+
+    return bar_img
+
+
+def _add_multi_depth_code_label(
+    frame: np.ndarray,
+    current_frame_idx: int,
+    indices_per_depth: list[np.ndarray],
+    code_colors: np.ndarray,
+    font_size: int = 16,
+) -> np.ndarray:
+    """Add a multi-depth code label badge (e.g. 'L0:5 L1:12') to frame.
+
+    Args:
+        frame: Input frame as numpy array, shape [H, W, 3].
+        current_frame_idx: Current frame index.
+        indices_per_depth: List of D index arrays.
+        code_colors: Color for each code, shape [num_codes, 3].
+        font_size: Font size for label.
+
+    Returns:
+        Frame with code label overlay.
+    """
+    parts = []
+    for d, depth_indices in enumerate(indices_per_depth):
+        if current_frame_idx < len(depth_indices):
+            parts.append(f"L{d}:{int(depth_indices[current_frame_idx])}")
+    if not parts:
+        return frame
+
+    label_text = " ".join(parts)
+    # Use depth-0 code color for the badge background
+    code_0 = int(indices_per_depth[0][current_frame_idx])
+    color = code_colors[code_0 % len(code_colors)]
+
+    label_img = Image.fromarray(frame)
+    draw = ImageDraw.Draw(label_img)
+    font = _get_font(font_size, bold=True)
+
+    bbox = draw.textbbox((0, 0), label_text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    padding = 6
+    box_x, box_y = 10, 10
+
+    draw.rounded_rectangle(
+        [
+            box_x - padding,
+            box_y - padding,
+            box_x + text_width + padding,
+            box_y + text_height + padding,
+        ],
+        radius=4,
+        fill=tuple(color),
+    )
+
+    brightness = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
+    text_color = (0, 0, 0) if brightness > 128 else (255, 255, 255)
+    draw.text((box_x, box_y), label_text, font=font, fill=text_color)
+
+    return np.array(label_img)
+
+
 def render_rollout_to_video(
     env: Any,
     rollout_states: Sequence[Any],
@@ -377,8 +500,13 @@ def render_rollout_to_video(
     code_bar_height: int = 40,
     clip_idx: int | None = None,
     show_clip_idx: bool = True,
+    indices_per_depth: list[np.ndarray] | None = None,
 ) -> str:
     """Render rollout states to video with Nature-style overlays.
+
+    Supports multi-depth RVQ: when ``indices_per_depth`` is provided
+    (list of D arrays), stacked timeline bars are drawn (one per depth).
+    Falls back to single bar when only ``indices`` is given.
 
     Args:
         env: Environment with render method.
@@ -388,13 +516,16 @@ def render_rollout_to_video(
         width: Video width.
         height: Video height.
         fps: Frames per second.
-        indices: Optional codebook indices per frame.
+        indices: Optional codebook indices per frame (depth-0 only).
         num_codes: Total number of codes.
         rewards: Optional rewards per frame.
         extra_info: Optional list of dicts with extra info per frame.
         code_bar_height: Height of the code color bar.
         clip_idx: Optional clip index to display.
         show_clip_idx: Whether to show clip index.
+        indices_per_depth: Optional list of D index arrays for multi-depth
+            RVQ. When provided, stacked bars are drawn and ``indices`` is
+            ignored.
 
     Returns:
         Path to saved video file.
@@ -408,18 +539,43 @@ def render_rollout_to_video(
     frames = env.render(rollout_states, camera=camera, height=height, width=width)
     logging.info(f"  Rendered {len(frames)} frames")
 
+    # Determine whether to use multi-depth or single-depth rendering
+    use_multi_depth = indices_per_depth is not None and len(indices_per_depth) > 1
+
     code_colors = None
-    if indices is not None:
+    has_indices = use_multi_depth or indices is not None
+    if has_indices:
         if num_codes is None:
-            num_codes = int(np.max(indices)) + 1
+            if use_multi_depth:
+                num_codes = int(max(np.max(a) for a in indices_per_depth)) + 1
+            else:
+                num_codes = int(np.max(indices)) + 1
         code_colors = get_nature_colormap(num_codes)
 
     logging.info("  Adding overlays...")
     processed_frames = []
 
     for i, frame in enumerate(frames):
-        # Add code transition bar
-        if indices is not None:
+        if use_multi_depth:
+            # Build stacked bars and append below the frame
+            bar_img = _build_stacked_bars(
+                width=frame.shape[1],
+                current_frame_idx=i,
+                indices_per_depth=indices_per_depth,
+                code_colors=code_colors,
+                bar_height=code_bar_height,
+            )
+            frame = np.vstack([frame, bar_img])
+
+            # Add multi-depth code label
+            frame = _add_multi_depth_code_label(
+                frame,
+                current_frame_idx=i,
+                indices_per_depth=indices_per_depth,
+                code_colors=code_colors,
+            )
+        elif indices is not None:
+            # Single-depth: original behavior
             frame = add_code_transition_bar(
                 frame,
                 current_frame_idx=i,
@@ -446,7 +602,7 @@ def render_rollout_to_video(
         if lines:
             # Position text below the code label area
             frame = add_multi_line_overlay(
-                frame, lines, start_position=(10, 50 if indices is not None else 10)
+                frame, lines, start_position=(10, 50 if has_indices else 10)
             )
 
         processed_frames.append(frame)
@@ -574,53 +730,6 @@ def render_per_code_videos(
     return output_paths
 
 
-# =============================================================================
-# COMMUNITY-BASED VISUALIZATION
-# =============================================================================
-
-# Community color palette (8 distinct, saturated colors)
-COMMUNITY_COLORS = np.array(
-    [
-        [66, 133, 244],  # Blue
-        [234, 67, 53],  # Red
-        [251, 188, 5],  # Yellow
-        [52, 168, 83],  # Green
-        [155, 89, 182],  # Purple
-        [26, 188, 156],  # Teal
-        [241, 196, 15],  # Gold
-        [230, 126, 34],  # Orange
-    ],
-    dtype=np.uint8,
-)
-
-
-def get_community_colormap(n_communities: int) -> np.ndarray:
-    """Get a colormap for community visualization.
-
-    Args:
-        n_communities: Number of communities.
-
-    Returns:
-        Array of RGB colors, shape [n_communities, 3], values 0-255.
-    """
-    if n_communities <= len(COMMUNITY_COLORS):
-        return COMMUNITY_COLORS[:n_communities]
-
-    # Generate additional colors via HSV
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    colors = list(COMMUNITY_COLORS)
-    for i in range(len(COMMUNITY_COLORS), n_communities):
-        hue = (i - len(COMMUNITY_COLORS)) / (n_communities - len(COMMUNITY_COLORS) + 1)
-        c = plt.cm.hsv(hue)
-        colors.append([int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)])
-
-    return np.array(colors, dtype=np.uint8)
-
-
 def find_code_segments(
     indices: np.ndarray,
     min_segment_length: int = 20,
@@ -664,223 +773,3 @@ def find_code_segments(
         code_segments[current_code].append((segment_start, len(indices)))
 
     return code_segments
-
-
-def render_community_gallery(
-    env: Any,
-    all_rollout_states: list[Sequence[Any]],
-    all_rollout_indices: list[np.ndarray],
-    community_codes: list[int],
-    community_id: int,
-    output_path: str | Path,
-    camera: str | None = None,
-    cell_width: int = 320,
-    cell_height: int = 240,
-    fps: int = 50,
-    min_segment_length: int = 20,
-    max_codes_per_row: int = 4,
-    max_frames_per_code: int = 100,
-    num_codes: int | None = None,
-) -> str | None:
-    """Render a gallery video showing frames for each code in a community.
-
-    Creates a grid where each cell shows frames from one code in the community.
-    Only includes segments that meet the minimum length requirement.
-
-    Args:
-        env: Environment with render method.
-        all_rollout_states: List of rollout state sequences.
-        all_rollout_indices: List of code index arrays, each [T].
-        community_codes: List of code indices in this community.
-        community_id: ID of this community (for labeling).
-        output_path: Path to save output video.
-        camera: Camera name for rendering.
-        cell_width: Width of each cell in the grid.
-        cell_height: Height of each cell in the grid.
-        fps: Frames per second.
-        min_segment_length: Minimum segment length to include (default 20).
-        max_codes_per_row: Maximum codes per row in the grid.
-        max_frames_per_code: Maximum frames to show per code.
-        num_codes: Total number of codes (for colormap).
-
-    Returns:
-        Path to saved video, or None if no valid segments found.
-    """
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Collect valid segments for each code across all rollouts
-    code_to_segments: dict[int, list[tuple[int, int, int]]] = {
-        code: [] for code in community_codes
-    }  # code -> [(rollout_idx, start, end), ...]
-
-    for rollout_idx, indices in enumerate(all_rollout_indices):
-        segments = find_code_segments(indices, min_segment_length)
-        for code in community_codes:
-            if code in segments:
-                for start, end in segments[code]:
-                    code_to_segments[code].append((rollout_idx, start, end))
-
-    # Filter to codes that have at least one valid segment
-    codes_with_segments = [
-        code for code in community_codes if len(code_to_segments[code]) > 0
-    ]
-
-    if not codes_with_segments:
-        logging.warning(
-            f"Community {community_id}: No codes with segments >= {min_segment_length}"
-        )
-        return None
-
-    logging.info(
-        f"Community {community_id}: {len(codes_with_segments)}/{len(community_codes)} "
-        f"codes have segments >= {min_segment_length} frames"
-    )
-
-    # Setup grid dimensions
-    n_codes = len(codes_with_segments)
-    grid_cols = min(n_codes, max_codes_per_row)
-    grid_rows = (n_codes + grid_cols - 1) // grid_cols
-
-    # Get colormap
-    if num_codes is None:
-        num_codes = max(community_codes) + 1
-    code_colors = get_nature_colormap(num_codes)
-
-    # Render frames for each code
-    code_frames_list: list[list[np.ndarray]] = []
-
-    for code in codes_with_segments:
-        code_color = code_colors[code]
-        segments = code_to_segments[code]
-
-        # Collect frames from segments (up to max_frames_per_code)
-        frames_to_render: list[tuple[int, int]] = []  # (rollout_idx, frame_idx)
-        for rollout_idx, start, end in segments:
-            for frame_idx in range(start, end):
-                frames_to_render.append((rollout_idx, frame_idx))
-                if len(frames_to_render) >= max_frames_per_code:
-                    break
-            if len(frames_to_render) >= max_frames_per_code:
-                break
-
-        # Group by rollout for efficient rendering
-        rollout_frame_map: dict[int, list[int]] = {}
-        for rollout_idx, frame_idx in frames_to_render:
-            if rollout_idx not in rollout_frame_map:
-                rollout_frame_map[rollout_idx] = []
-            rollout_frame_map[rollout_idx].append(frame_idx)
-
-        # Render frames
-        code_frames: list[np.ndarray] = []
-        for rollout_idx, frame_indices in rollout_frame_map.items():
-            states = all_rollout_states[rollout_idx]
-            # Render only the needed states
-            states_to_render = [states[i] for i in frame_indices if i < len(states)]
-            if not states_to_render:
-                continue
-
-            rendered = env.render(
-                states_to_render,
-                camera=camera,
-                height=cell_height - 30,
-                width=cell_width,
-            )
-
-            for i, frame in enumerate(rendered):
-                frame_idx = frame_indices[i]
-                # Add code label
-                frame = add_text_overlay(
-                    frame,
-                    f"Code {code}",
-                    position=(5, 5),
-                    font_size=14,
-                    bg_color=(
-                        int(code_color[0]),
-                        int(code_color[1]),
-                        int(code_color[2]),
-                        220,
-                    ),
-                    text_color=(255, 255, 255) if sum(code_color) < 384 else (0, 0, 0),
-                    padding=4,
-                )
-
-                # Add colored bar at bottom
-                bar = np.zeros((30, cell_width, 3), dtype=np.uint8)
-                bar[:] = code_color
-                combined = np.vstack([frame, bar])
-                code_frames.append(combined)
-
-        code_frames_list.append(code_frames)
-
-    if not any(code_frames_list):
-        logging.warning(f"Community {community_id}: No frames rendered")
-        return None
-
-    # Find max frames across codes
-    max_frames = max(len(frames) for frames in code_frames_list)
-
-    # Calculate grid dimensions
-    padding = 4
-    grid_width = grid_cols * cell_width + (grid_cols - 1) * padding
-    grid_height = grid_rows * cell_height + (grid_rows - 1) * padding
-
-    # Assemble grid frames
-    grid_frames = []
-    for frame_idx in range(max_frames):
-        grid = np.ones((grid_height, grid_width, 3), dtype=np.uint8) * 40  # Dark bg
-
-        for code_num, code_frames in enumerate(code_frames_list):
-            if not code_frames:
-                continue
-
-            row = code_num // grid_cols
-            col = code_num % grid_cols
-
-            # Use last frame if past end, or blank if no frames
-            if frame_idx < len(code_frames):
-                frame = code_frames[frame_idx]
-            else:
-                frame = (
-                    code_frames[-1]
-                    if code_frames
-                    else np.zeros((cell_height, cell_width, 3), dtype=np.uint8)
-                )
-
-            y_start = row * (cell_height + padding)
-            x_start = col * (cell_width + padding)
-
-            grid[y_start : y_start + cell_height, x_start : x_start + cell_width] = (
-                frame
-            )
-
-        grid_frames.append(grid)
-
-    # Add community label to all frames
-    community_color = COMMUNITY_COLORS[community_id % len(COMMUNITY_COLORS)]
-    for i, grid in enumerate(grid_frames):
-        grid_frames[i] = add_text_overlay(
-            grid,
-            f"Community {community_id} ({len(codes_with_segments)} codes)",
-            position=(10, grid_height - 35),
-            font_size=16,
-            bg_color=(
-                int(community_color[0]),
-                int(community_color[1]),
-                int(community_color[2]),
-                220,
-            ),
-            text_color=(255, 255, 255),
-            padding=5,
-        )
-
-    # Save video
-    with imageio.get_writer(str(output_path), fps=fps) as writer:
-        for frame in grid_frames:
-            writer.append_data(frame)
-
-    logging.info(
-        f"Community {community_id}: Saved gallery ({n_codes} codes, "
-        f"{max_frames} frames) to {output_path}"
-    )
-    return str(output_path)

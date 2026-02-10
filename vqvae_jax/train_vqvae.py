@@ -72,6 +72,7 @@ def vq_rollout_logging_fn(
     policy_params_fn_key,
     render_video=True,
     ppo_network=None,  # Added for compatibility with main PPO code
+    reinit_data=None,
 ):
     """Rollout logging with VQ-VAE specific metrics and code visualization.
 
@@ -108,6 +109,11 @@ def vq_rollout_logging_fn(
     all_rollout_z_e: list[list] = []
     all_rollout_rewards: list[list] = []
 
+    rvq_depth = int(cfg.network_config.get("rvq_depth", 1))
+    all_rollout_indices_per_depth = [[] for _ in range(rvq_depth)]
+    # Per-rollout per-depth indices (for first-rollout video rendering)
+    per_rollout_depth_indices: list[list[list[int]]] = []
+
     for rollout_i in range(n_rollouts):
         key, subkey = jax.random.split(key)
         state = jit_reset(subkey)
@@ -117,6 +123,8 @@ def vq_rollout_logging_fn(
         rollout_qpos = []
         rollout_z_e = []
         rollout_rewards = []
+        # Per-depth indices for RVQ logging
+        rollout_indices_per_depth = [[] for _ in range(rvq_depth)]
         prev_indices = None
 
         for _ in range(episode_length):
@@ -129,16 +137,21 @@ def vq_rollout_logging_fn(
             if "indices" in extras:
                 curr_indices = extras["indices"]
                 rollout_indices.append(int(curr_indices))
-                prev_indices = curr_indices
-            elif "latent_logvar" in extras:
-                curr_indices = extras["latent_logvar"]
-                rollout_indices.append(int(curr_indices))
-                prev_indices = curr_indices
+
+                # Update prev_indices: use all_indices tuple for multi-level stickiness
+                if "all_indices" in extras:
+                    prev_indices = extras["all_indices"]
+                    # Collect per-depth indices
+                    for d in range(rvq_depth):
+                        if d < len(extras["all_indices"]):
+                            rollout_indices_per_depth[d].append(
+                                int(extras["all_indices"][d])
+                            )
+                else:
+                    prev_indices = curr_indices
 
             if "z_e" in extras:
                 rollout_z_e.append(extras["z_e"])
-            elif "latent_mean" in extras:
-                rollout_z_e.append(extras["latent_mean"])
 
             # Collect qpos from state (handle both data and pipeline_state)
             if hasattr(state, "data"):
@@ -160,12 +173,35 @@ def vq_rollout_logging_fn(
         all_rollout_states.append(rollout_states)
         all_rollout_z_e.append(rollout_z_e)
         all_rollout_rewards.append(rollout_rewards)
+        # Save this rollout's per-depth indices and accumulate globally
+        per_rollout_depth_indices.append(rollout_indices_per_depth)
+        for d in range(rvq_depth):
+            all_rollout_indices_per_depth[d].extend(rollout_indices_per_depth[d])
+
+    # Store rollout data for dead code reinit (if enabled)
+    if reinit_data is not None:
+        # Aggregate z_e across all rollouts
+        all_z_e_flat = []
+        for rollout_z_e_list in all_rollout_z_e:
+            all_z_e_flat.extend(rollout_z_e_list)
+        if all_z_e_flat:
+            reinit_data["z_e"] = np.stack([np.array(z) for z in all_z_e_flat])
+        # Store accumulated per-depth indices
+        if all_rollout_indices_per_depth[0]:
+            reinit_data["all_indices"] = tuple(
+                np.array(all_rollout_indices_per_depth[d]) for d in range(rvq_depth)
+            )
 
     # Use first rollout for single-rollout metrics and video rendering
     indices_array = all_rollout_indices[0] if all_rollout_indices else None
     rollout_states = all_rollout_states[0] if all_rollout_states else []
     all_z_e = all_rollout_z_e[0] if all_rollout_z_e else []
     all_rewards = all_rollout_rewards[0] if all_rollout_rewards else []
+
+    # First rollout's per-depth indices (for video + per-depth metrics)
+    first_rollout_per_depth = (
+        per_rollout_depth_indices[0] if per_rollout_depth_indices else None
+    )
 
     if indices_array is not None and len(indices_array) > 0:
         # Log VQ metrics from first rollout
@@ -193,6 +229,22 @@ def vq_rollout_logging_fn(
             },
             commit=False,
         )
+
+        # Log per-depth metrics for RVQ (using first rollout)
+        if rvq_depth > 1 and first_rollout_per_depth:
+            for d in range(rvq_depth):
+                if first_rollout_per_depth[d]:
+                    d_arr = np.array(first_rollout_per_depth[d])
+                    d_trans = np.sum(d_arr[1:] != d_arr[:-1])
+                    d_rate = d_trans / max(len(d_arr) - 1, 1)
+                    d_unique = len(np.unique(d_arr))
+                    wandb.log(
+                        {
+                            f"vq/eval_transition_rate_d{d}": float(d_rate),
+                            f"vq/eval_codes_used_d{d}": d_unique,
+                        },
+                        commit=False,
+                    )
 
         # Create code sequence timeline plot
         fig, axes = plt.subplots(2, 1, figsize=(12, 4), height_ratios=[1, 2])
@@ -245,31 +297,6 @@ def vq_rollout_logging_fn(
         table = wandb.Table(columns=["timestep", "code_index"], data=table_data)
         wandb.log({"vq/code_sequence_table": table}, commit=False)
 
-    # Build aggregated transition matrix from ALL rollouts
-    if len(all_rollout_indices) > 0:
-        trans_counts = np.zeros((num_codes, num_codes), dtype=np.int64)
-        for indices in all_rollout_indices:
-            for t in range(len(indices) - 1):
-                trans_counts[indices[t], indices[t + 1]] += 1
-
-        row_sums = trans_counts.sum(axis=1, keepdims=True)
-        trans_probs = np.where(row_sums > 0, trans_counts / row_sums, 0.0)
-
-        # Log aggregated transition matrix heatmap
-        fig, ax = plt.subplots(figsize=(10, 8))
-        im = ax.imshow(trans_probs, cmap="viridis")
-        ax.set_xlabel("To Code")
-        ax.set_ylabel("From Code")
-        ax.set_title(f"Transition Matrix ({n_rollouts} rollouts)")
-        plt.colorbar(im, ax=ax)
-        plt.tight_layout()
-        wandb.log({"vq/eval_transition_matrix": wandb.Image(fig)}, commit=False)
-        plt.close(fig)
-
-        # Log total transition count
-        total_transitions = int(trans_counts.sum())
-        wandb.log({"vq/eval_total_transitions": total_transitions}, commit=False)
-
     if all_z_e:
         z_e = jnp.stack(all_z_e)
         # Log z_e statistics (similar to latent_mean in VAE)
@@ -282,83 +309,6 @@ def vq_rollout_logging_fn(
                 commit=False,
             )
 
-        # PCA visualization of latent space: z_e and codebook vectors
-        if indices_array is not None and len(indices_array) > 0:
-            from sklearn.decomposition import PCA
-
-            # Get codebook from params (params is tuple of (normalizer_params, policy_params))
-            policy_params = params[1]
-            codebook = np.array(policy_params["params"]["quantizer"]["embeddings"])
-            z_e_np = np.array(z_e)
-
-            # Fit PCA on combined z_e and codebook for consistent projection
-            combined = np.vstack([z_e_np, codebook])
-            pca = PCA(n_components=2)
-            combined_2d = pca.fit_transform(combined)
-
-            # Split back into z_e and codebook projections
-            z_e_2d = combined_2d[: len(z_e_np)]
-            codebook_2d = combined_2d[len(z_e_np) :]
-
-            # Create PCA visualization
-            fig, ax = plt.subplots(figsize=(10, 8))
-
-            # Plot z_e points colored by their assigned code
-            colors = get_nature_colormap(num_codes) / 255.0
-            for code_idx in range(num_codes):
-                mask = indices_array == code_idx
-                if np.any(mask):
-                    ax.scatter(
-                        z_e_2d[mask, 0],
-                        z_e_2d[mask, 1],
-                        c=[colors[code_idx]],
-                        label=f"z_e → code {code_idx}",
-                        alpha=0.6,
-                        s=30,
-                    )
-
-            # Plot codebook vectors as larger stars
-            for code_idx in range(num_codes):
-                ax.scatter(
-                    codebook_2d[code_idx, 0],
-                    codebook_2d[code_idx, 1],
-                    c=[colors[code_idx]],
-                    marker="*",
-                    s=400,
-                    edgecolors="black",
-                    linewidths=1.5,
-                    zorder=10,
-                )
-
-            # Compute mean distance from z_e to their assigned codebook vectors
-            z_e_to_codebook_dist = np.mean(
-                [
-                    np.linalg.norm(z_e_np[i] - codebook[indices_array[i]])
-                    for i in range(len(z_e_np))
-                ]
-            )
-
-            ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.1%} var)")
-            ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.1%} var)")
-            ax.set_title(
-                f"Latent Space PCA: z_e (dots) and Codebook (stars)\n"
-                f"Mean z_e-to-codebook distance: {z_e_to_codebook_dist:.3f}"
-            )
-            ax.legend(loc="upper right", fontsize=8)
-            ax.grid(True, alpha=0.3)
-
-            plt.tight_layout()
-            wandb.log({"vq/latent_pca": wandb.Image(fig)}, commit=False)
-            plt.close(fig)
-
-            # Also log the mean distance as a metric
-            wandb.log(
-                {
-                    "vq/eval_z_e_to_codebook_dist": float(z_e_to_codebook_dist),
-                },
-                commit=False,
-            )
-
     # Render video with code overlay (runs every render_interval evals)
     if render_video:
         import mujoco
@@ -367,7 +317,14 @@ def vq_rollout_logging_fn(
         video_path = f"{model_path}/{current_step}.mp4"
 
         try:
-            # Use custom rendering with code transition bar
+            # Build per-depth index arrays for multi-depth bar rendering
+            video_indices_per_depth = None
+            if rvq_depth > 1 and first_rollout_per_depth and first_rollout_per_depth[0]:
+                video_indices_per_depth = [
+                    np.array(first_rollout_per_depth[d]) for d in range(rvq_depth)
+                ]
+
+            # Use custom rendering with code transition bar(s)
             render_rollout_to_video(
                 env=env,
                 rollout_states=rollout_states,
@@ -378,7 +335,8 @@ def vq_rollout_logging_fn(
                 fps=render_fps,
                 indices=indices_array,
                 num_codes=num_codes,
-                code_bar_height=40,
+                code_bar_height=30,
+                indices_per_depth=video_indices_per_depth,
             )
 
             wandb.log(
@@ -419,130 +377,6 @@ def vq_rollout_logging_fn(
                     )
                 except Exception as e:
                     logging.warning(f"Failed to render per-code videos: {e}")
-
-            # Conditional transition analysis (runs at render_interval)
-            if len(all_rollout_indices) > 0 and len(all_rollout_qpos) > 0:
-                try:
-                    from analysis.conditional_logging import (
-                        find_matching_rollouts_by_starting_pose,
-                        compute_conditional_transition_matrix,
-                        detect_communities_from_transitions,
-                    )
-
-                    # Pick random reference from the rollouts
-                    key, ref_key = jax.random.split(key)
-                    ref_rollout_idx = int(
-                        jax.random.randint(ref_key, (), 0, len(all_rollout_qpos))
-                    )
-                    reference_qpos_0 = all_rollout_qpos[ref_rollout_idx][0]
-
-                    # Find matching rollouts by starting pose
-                    matched_indices, distances = find_matching_rollouts_by_starting_pose(
-                        all_rollout_qpos,
-                        reference_qpos_0,
-                        threshold=0.05,
-                    )
-
-                    wandb.log(
-                        {
-                            "conditional/n_matched_rollouts": len(matched_indices),
-                            "conditional/ref_rollout_idx": ref_rollout_idx,
-                        },
-                        commit=False,
-                    )
-
-                    if len(matched_indices) >= 3:
-                        # Compute conditional transition matrix
-                        cond_counts, cond_probs = compute_conditional_transition_matrix(
-                            all_rollout_indices,
-                            matched_indices,
-                            num_codes,
-                        )
-
-                        # Log conditional transition matrix heatmap
-                        fig, ax = plt.subplots(figsize=(10, 8))
-                        im = ax.imshow(cond_probs, cmap="viridis")
-                        ax.set_xlabel("To Code")
-                        ax.set_ylabel("From Code")
-                        ax.set_title(
-                            f"Conditional Transitions ({len(matched_indices)} matched)"
-                        )
-                        plt.colorbar(im, ax=ax)
-                        plt.tight_layout()
-                        wandb.log(
-                            {"conditional/transition_matrix": wandb.Image(fig)},
-                            commit=False,
-                        )
-                        plt.close(fig)
-
-                        # Detect communities from conditional transitions
-                        labels, n_communities, code_to_community = (
-                            detect_communities_from_transitions(cond_probs)
-                        )
-                        wandb.log(
-                            {"conditional/n_communities": n_communities}, commit=False
-                        )
-
-                        # Log code-to-community mapping for debugging
-                        community_to_codes = {}
-                        for code, comm in code_to_community.items():
-                            if comm not in community_to_codes:
-                                community_to_codes[comm] = []
-                            community_to_codes[comm].append(code)
-
-                        for comm_id, codes in community_to_codes.items():
-                            logging.info(
-                                f"Community {comm_id}: {len(codes)} codes - {sorted(codes)[:10]}..."
-                            )
-
-                        # Render community gallery showing frames per code
-                        from analysis.rendering import render_community_gallery
-
-                        min_segment_length = cfg.render_config.get(
-                            "min_segment_length", 20
-                        )
-
-                        for comm_id in range(min(n_communities, 8)):
-                            comm_codes = [
-                                c
-                                for c, comm in code_to_community.items()
-                                if comm == comm_id
-                            ]
-                            if not comm_codes:
-                                continue
-
-                            comm_video_path = (
-                                f"{model_path}/cond_comm_{comm_id}_{current_step}.mp4"
-                            )
-
-                            video_path = render_community_gallery(
-                                env=env,
-                                all_rollout_states=all_rollout_states,
-                                all_rollout_indices=all_rollout_indices,
-                                community_codes=comm_codes,
-                                community_id=comm_id,
-                                output_path=comm_video_path,
-                                camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
-                                cell_width=320,
-                                cell_height=240,
-                                fps=render_fps,
-                                min_segment_length=min_segment_length,
-                                max_codes_per_row=4,
-                                num_codes=num_codes,
-                            )
-
-                            if video_path:
-                                wandb.log(
-                                    {
-                                        f"conditional/community_{comm_id}_video": wandb.Video(
-                                            video_path, format="mp4"
-                                        )
-                                    },
-                                    commit=False,
-                                )
-
-                except Exception as e:
-                    logging.warning(f"Conditional analysis failed: {e}")
 
         except mujoco.FatalError as e:
             logging.warning(f"Rendering video failed with MuJoCo error: {e}")
@@ -614,6 +448,31 @@ def main(cfg: DictConfig) -> None:
 
     logging.info("Using VQ-VAE PPO Pipeline")
 
+    # Resolve stickiness_bias: may be float or list/ListConfig from config
+    raw_bias = cfg.network_config.get("stickiness_bias", 0.0)
+    try:
+        # Handles list, tuple, and OmegaConf ListConfig
+        stickiness_bias = tuple(float(b) for b in raw_bias)
+    except TypeError:
+        # Scalar float/int
+        stickiness_bias = float(raw_bias)
+
+    rvq_depth = int(cfg.network_config.get("rvq_depth", 1))
+    use_rotation = bool(cfg.network_config.get("use_rotation", False))
+    coupled_residual_grad = bool(cfg.network_config.get("coupled_residual_grad", False))
+    codebook_entropy_weight = float(
+        cfg.network_config.get("codebook_entropy_weight", 0.0)
+    )
+    codebook_entropy_temperature = float(
+        cfg.network_config.get("codebook_entropy_temperature", 1.0)
+    )
+    dead_code_reinit = bool(cfg.network_config.get("dead_code_reinit", False))
+    dead_code_threshold = float(cfg.network_config.get("dead_code_threshold", 0.01))
+    num_codes = int(cfg.network_config.get("num_codes", 32))
+
+    # Shared mutable dict for dead code reinit data (populated by rollout callback)
+    reinit_data = {} if dead_code_reinit else None
+
     # VQ-VAE network factory
     network_factory = functools.partial(
         make_vq_intention_ppo_networks,
@@ -626,7 +485,10 @@ def main(cfg: DictConfig) -> None:
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        stickiness_bias=cfg.network_config.get("stickiness_bias", 0.0),
+        stickiness_bias=stickiness_bias,
+        rvq_depth=rvq_depth,
+        use_rotation=use_rotation,
+        coupled_residual_grad=coupled_residual_grad,
     )
 
     # Initialize wandb
@@ -648,10 +510,17 @@ def main(cfg: DictConfig) -> None:
             "ce_stickiness_temperature": cfg.network_config.get(
                 "ce_stickiness_temperature", 1.0
             ),
-            "stickiness_bias": cfg.network_config.get("stickiness_bias", 0.0),
+            "stickiness_bias": stickiness_bias,
             "latent_dim": cfg.network_config.get(
                 "latent_dim", cfg.network_config.intention_size
             ),
+            "rvq_depth": rvq_depth,
+            "use_rotation": use_rotation,
+            "coupled_residual_grad": coupled_residual_grad,
+            "codebook_entropy_weight": codebook_entropy_weight,
+            "codebook_entropy_temperature": codebook_entropy_temperature,
+            "dead_code_reinit": dead_code_reinit,
+            "dead_code_threshold": dead_code_threshold,
         }
     )
 
@@ -711,7 +580,14 @@ def main(cfg: DictConfig) -> None:
         ce_stickiness_temperature=cfg.network_config.get(
             "ce_stickiness_temperature", 1.0
         ),
-        stickiness_bias=cfg.network_config.get("stickiness_bias", 0.0),
+        stickiness_bias=stickiness_bias,
+        rvq_depth=rvq_depth,
+        codebook_entropy_weight=codebook_entropy_weight,
+        codebook_entropy_temperature=codebook_entropy_temperature,
+        dead_code_reinit=dead_code_reinit,
+        dead_code_threshold=dead_code_threshold,
+        num_codes=num_codes,
+        reinit_data=reinit_data,
     )
 
     # Set the render env start frame to always be 0
@@ -730,6 +606,7 @@ def main(cfg: DictConfig) -> None:
         jit_step,
         cfg,
         checkpoint_path,
+        reinit_data=reinit_data,
     )
 
     # Run training

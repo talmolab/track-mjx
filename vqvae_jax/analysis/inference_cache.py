@@ -16,11 +16,13 @@ class InferenceResult:
 
     Attributes:
         clip_idx: Index of the reference clip.
-        code_indices: Discrete code indices per frame, shape [T].
+        code_indices: Primary (L0) code indices per frame, shape [T].
         qpos: Generalized positions per frame, shape [T, nq].
         qvel: Generalized velocities per frame, shape [T, nv].
         rewards: Reward values per frame, shape [T].
         states: Optional list of environment states for rendering.
+        rvq_indices: Optional per-depth code indices, tuple of D arrays each [T].
+            rvq_indices[0] == code_indices for consistency.
     """
 
     clip_idx: int
@@ -29,3 +31,4 @@ class InferenceResult:
     qvel: np.ndarray
     rewards: np.ndarray
     states: list[Any] | None = None
+    rvq_indices: tuple[np.ndarray, ...] | None = None

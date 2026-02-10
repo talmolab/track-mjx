@@ -15,7 +15,7 @@ env_config:
   solver: "newton"
   iterations: 5
   ls_iterations: 5
-  naconmax: 256
+  nconmax: 256
   njmax: 128
   noslip_iterations: 0
 
@@ -110,13 +110,24 @@ network_config:
   latent_dim: 32                # Same as intention_size
 
   # VQ-VAE specific settings
-  num_codes: 16                    # Population coding for discrete motor intentions
-  commitment_cost: 0.5           # Lower initially, let codebook stabilize
+  num_codes: 32                    # Codebook entries per RVQ level
+  commitment_cost: 0.1           # Low to avoid premature lock-in
   codebook_loss_weight: 1.0      # Weight for codebook loss
+  codebook_entropy_weight: 0.1   # Weight for soft codebook entropy regularization
+  codebook_entropy_temperature: 1.0  # Temperature for soft code assignments
   codebook_init_scale: 1.0       # Initialization scale
   ce_stickiness_cost: 0.0        # Weight for cross-entropy stickiness loss (disabled, use bias instead)
   ce_stickiness_temperature: 1.0 # Temperature for CE stickiness softmax
-  stickiness_bias: 3.5           # Bias for temporal code persistence (~2-3% transition rate)
+  stickiness_bias: [0.0, 0.0]   # No stickiness bias (was causing lock-in)
+
+  # Dead code reinitialization
+  dead_code_reinit: true          # Reinitialize dead codebook entries from z_e
+  dead_code_threshold: 0.01       # Fraction of uniform usage below which code is dead
+
+  # Residual VQ settings
+  rvq_depth: 2                   # Number of RVQ levels (1 = vanilla VQ)
+  use_rotation: true            # Householder rotation-augmented STE (STAR)
+  coupled_residual_grad: true   # Couple depth gradients through rotation
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false

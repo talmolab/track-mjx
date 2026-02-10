@@ -3,9 +3,8 @@
 # =============================================================================
 # Pipeline for analyzing VQ-VAE code patterns on a per-clip basis:
 # - Transition matrices and probability heatmaps per clip
-# - Community detection via spectral clustering per clip
 # - Interactive HTML viewer with slider navigation
-# - Video rendering with code/community timeline overlays
+# - Video rendering with code timeline overlays
 # =============================================================================
 
 # =============================================================================
@@ -35,13 +34,13 @@ data:
 # =============================================================================
 # Per-Clip Analysis Configuration
 # =============================================================================
-# All analysis is done per-clip: transition matrices, community detection,
-# transition graphs, and video rendering with code/community overlays.
+# All analysis is done per-clip: transition matrices,
+# transition graphs, and video rendering with code overlays.
 per_clip:
   enabled: false                  # Enable per-clip analysis
   num_clips: 5                 # Number of clips to analyze
   n_communities: null           # Communities per clip (null = auto-detect)
-  render_videos: false           # Render videos with code/community bars
+  render_videos: false           # Render videos with code bars
 
 # =============================================================================
 # Transition Context Analysis Configuration
@@ -68,42 +67,6 @@ transition_context:
     top_k_codes: 5              # Number of popular codes to visualize
     videos_per_code: 4          # Clips to sample per code
     context_frames: 15          # Frames before/after code start
-
-# =============================================================================
-# Community Detection Configuration
-# =============================================================================
-# Settings for spectral clustering of codes into behavioral communities.
-# Uses cosine similarity of transition probability rows as affinity.
-community_detection:
-  min_frequency: 0.005          # Minimum code frequency (0.1%). Codes below are filtered.
-
-# =============================================================================
-# Conditioned Community Analysis Configuration
-# =============================================================================
-# Analyze pose-conditioned transition patterns by:
-# 1. Sample random seed clips
-# 2. Match clips with similar starting pose (qpos[0])
-# 3. Pool code sequences and build transition matrix
-# 4. Run community detection on pooled transitions
-# 5. Render community gallery videos per detected community
-conditioned_community:
-  enabled: true                  # Enable conditioned community analysis
-  n_seed_clips: 10              # Number of random seed clips to sample
-  qpos_threshold: 0.05          # Mean absolute difference threshold for qpos matching
-  render_videos: true           # Render community gallery videos
-  samples_per_community: 4      # Video segments per community
-  segment_length: 30            # Frames per segment
-
-# =============================================================================
-# Community Gallery Configuration
-# =============================================================================
-# Render grid videos showing sample segments from each detected community.
-# Each community gets a video with N sample segments showing codes from that community.
-community_gallery:
-  enabled: false                 # Enable community gallery rendering
-  samples_per_community: 6      # Number of sample segments per community
-  segment_length: 50            # Frames per segment
-  min_segment_gap: 10           # Minimum frames between sampled segments
 
 # =============================================================================
 # Mutual Information Analysis Configuration
@@ -142,7 +105,7 @@ compositional_transition:
   num_clips: 842               # Number of clips to analyze
   min_k: 2                     # Minimum number of transitions
   max_k: 8                     # Maximum number of transitions
-  grace_window: 10             # Boundary alignment tolerance (frames)
+  grace_window: 20             # Boundary alignment tolerance (frames)
   qpos_threshold: 0.05         # Max mean abs diff for starting qpos match
   top_n_sequences: 3           # Top N most popular distinct sequences per k
   max_examples: 5              # Max example videos per top-level sequence
@@ -159,8 +122,8 @@ compositional_transition:
 tsne_trajectory:
   enabled: true                 # Enable t-SNE trajectory visualization
   n_clips: 3                    # Number of high-movement clips to compare
-  k_transitions: 8              # Number of code transitions per t-SNE point
-  tsne_perplexity: 50           # t-SNE perplexity parameter
+  k_transitions: 3              # Number of code transitions per t-SNE point
+  tsne_perplexity: 30           # t-SNE perplexity parameter
   render_videos: true           # Render clip videos for synchronized viewer
   umap_n_neighbors: 15          # UMAP n_neighbors (larger = more global)
   umap_min_dist: 0.1            # UMAP min_dist (smaller = tighter clusters)

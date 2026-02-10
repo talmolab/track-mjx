@@ -6,8 +6,12 @@ temporarily patching the loss module.
 """
 
 import functools
+import logging
 from typing import Any, Callable
 
+import jax
+import jax.numpy as jnp
+import numpy as np
 from brax import envs
 from brax.training.types import Metrics
 import orbax.checkpoint as ocp
@@ -19,7 +23,7 @@ from track_mjx.agent.ff_ppo import ppo_networks as original_ppo_networks
 
 # Import VQ-VAE specific modules
 from vq_ppo_networks import make_vq_intention_ppo_networks, make_vq_logging_inference_fn
-from vq_losses import compute_vq_ppo_loss, PPONetworkParams
+from vq_losses import compute_vq_ppo_loss, PPONetworkParams, reinit_dead_codes
 
 
 def train(
@@ -67,7 +71,14 @@ def train(
     codebook_loss_weight: float = 1.0,
     ce_stickiness_cost: float = 0.0,
     ce_stickiness_temperature: float = 1.0,
-    stickiness_bias: float = 0.0,
+    stickiness_bias: float | tuple[float, ...] = 0.0,
+    rvq_depth: int = 1,
+    codebook_entropy_weight: float = 0.0,
+    codebook_entropy_temperature: float = 1.0,
+    dead_code_reinit: bool = False,
+    dead_code_threshold: float = 0.01,
+    num_codes: int = 32,
+    reinit_data: dict | None = None,
 ):
     """Train a VQ-VAE PPO agent.
 
@@ -81,8 +92,13 @@ def train(
         ce_stickiness_cost: Weight for cross-entropy stickiness loss (code space).
         ce_stickiness_temperature: Temperature for CE stickiness softmax.
         stickiness_bias: Bias subtracted from distance to previous code.
-            When > 0, creates hysteresis in code selection, reducing rapid
-            code switching. Uses sequential processing via jax.lax.scan.
+        codebook_entropy_weight: Weight for soft codebook entropy regularization.
+        codebook_entropy_temperature: Temperature for soft code assignments.
+        dead_code_reinit: Whether to reinitialize dead codebook entries.
+        dead_code_threshold: Fraction of uniform usage below which a code is dead.
+        num_codes: Number of codes per level.
+        reinit_data: Mutable dict shared with rollout callback for dead code reinit.
+            Expected keys after rollout: "z_e" (ndarray) and "all_indices" (tuple).
 
     Returns:
         Tuple of (make_policy, params, metrics).
@@ -130,7 +146,53 @@ def train(
             clipping_epsilon=clipping_epsilon,
             normalize_advantage=normalize_advantage,
             vq_loss_schedule=None,
+            rvq_depth=rvq_depth,
+            codebook_entropy_weight=codebook_entropy_weight,
+            codebook_entropy_temperature=codebook_entropy_temperature,
         )
+
+    # Build post-eval hook for dead code reinit
+    post_eval_fn = None
+    if dead_code_reinit and reinit_data is not None:
+
+        def _post_eval_params_fn(training_state, it):
+            """Reinitialize dead codes using rollout data collected by callback."""
+            z_e = reinit_data.get("z_e")
+            all_indices = reinit_data.get("all_indices")
+            if z_e is None or all_indices is None:
+                return None
+
+            try:
+                from track_mjx.agent.ff_ppo.ppo import _unpmap
+
+                unpmap_state = _unpmap(training_state)
+                policy_params = unpmap_state.params.policy
+
+                new_policy_params = reinit_dead_codes(
+                    policy_params=policy_params,
+                    z_e_samples=jnp.array(z_e),
+                    all_indices=all_indices,
+                    num_codes=num_codes,
+                    rvq_depth=rvq_depth,
+                    threshold=dead_code_threshold,
+                    rng=jax.random.PRNGKey(it),
+                )
+
+                # Check if anything changed
+                if new_policy_params is policy_params:
+                    return None
+
+                # Rebuild training state with new params on all devices
+                new_params = unpmap_state.params.replace(policy=new_policy_params)
+                new_state = unpmap_state.replace(params=new_params)
+                new_state = jax.device_put_replicated(new_state, jax.local_devices())
+                logging.info(f"Dead code reinit applied at iteration {it}")
+                return new_state
+            except Exception as e:
+                logging.warning(f"Dead code reinit failed: {e}")
+                return None
+
+        post_eval_fn = _post_eval_params_fn
 
     # Monkey-patch the loss function
     original_losses.compute_ppo_loss = vq_compute_ppo_loss
@@ -183,10 +245,13 @@ def train(
             freeze_decoder=freeze_decoder,
             checkpoint_callback=checkpoint_callback,
             wrap_for_training=wrap_for_training,
+            post_eval_params_fn=post_eval_fn,
         )
     finally:
         # Restore original functions
         original_losses.compute_ppo_loss = original_compute_ppo_loss
-        original_ppo_networks.make_logging_inference_fn = original_make_logging_inference_fn
+        original_ppo_networks.make_logging_inference_fn = (
+            original_make_logging_inference_fn
+        )
 
     return result

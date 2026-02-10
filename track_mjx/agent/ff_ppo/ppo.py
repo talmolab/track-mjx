@@ -225,6 +225,7 @@ def train(
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
+    post_eval_params_fn: Callable | None = None,
 ) -> tuple[Callable, InferenceParams, Metrics]:
     """Train a PPO agent on the given environment.
 
@@ -866,6 +867,12 @@ def train(
                     config_dict,
                     checkpoint_callback,
                 )
+
+            # Post-eval param modification hook (e.g., dead code reinit)
+            if post_eval_params_fn is not None:
+                new_state = post_eval_params_fn(training_state, it)
+                if new_state is not None:
+                    training_state = new_state
 
     total_steps = current_step
     # TODO: this assert will fail

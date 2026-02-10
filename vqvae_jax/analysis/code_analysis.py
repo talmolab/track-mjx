@@ -3,9 +3,9 @@
 Main entry point for analyzing VQ-VAE code semantics:
 
 1. Per-clip analysis:
-   - Transition matrices and community detection per clip
+   - Transition matrices per clip
    - Interactive HTML viewer with slider navigation
-   - Video rendering with code and community timeline overlays
+   - Video rendering with code timeline overlays
 
 2. Transition context analysis:
    - Compare predecessor/successor patterns for top K codes across clips
@@ -71,12 +71,9 @@ from .transition_context_analysis import (
     run_transition_context_analysis,
     compute_global_transition_matrix,
     compute_stationary_distribution,
-    detect_transition_communities,
     compute_code_popularity,
     get_top_k_codes,
     render_code_pose_gallery,
-    render_community_gallery,
-    run_conditioned_community_analysis,
 )
 
 
@@ -181,7 +178,6 @@ def generate_summary_report(
 
     per_clip_paths = all_paths.get("per_clip", {})
     tc_paths = all_paths.get("per_clip_context", {})
-    cond_comm_paths = all_paths.get("conditioned_community", {})
 
     lines = [
         "# VQ-VAE Code Analysis Report",
@@ -199,15 +195,11 @@ def generate_summary_report(
         "## Per-Clip Analysis",
         "",
         f"- Analyzed {cfg.per_clip.get('num_clips', 10)} individual clips",
-        f"- Communities per clip: {cfg.per_clip.get('n_communities', 'auto-detect')}",
         f"- Video rendering: {cfg.per_clip.get('render_videos', True)}",
         "",
         "Each clip includes:",
         "- Transition matrix and probability heatmap",
-        "- Community detection via spectral clustering",
-        "- Transition graph with community-colored nodes",
-        "- Dual timeline showing code and community colors",
-        "- Video with code/community overlay bars",
+        "- Video with code overlay bars",
         "",
     ]
 
@@ -252,16 +244,6 @@ def generate_summary_report(
             ]
         )
 
-    if cond_comm_paths:
-        lines.extend(
-            [
-                "### Conditioned Community Analysis",
-                f"- Interactive HTML viewer: `{cond_comm_paths.get('html', 'N/A')}`",
-                f"- Seed analysis outputs: `{output_dir}/conditioned_community/seed_*/`",
-                "",
-            ]
-        )
-
     with open(report_path, "w") as f:
         f.write("\n".join(lines))
 
@@ -279,9 +261,6 @@ def generate_summary_report(
         "per_clip": OmegaConf.to_container(cfg.per_clip, resolve=True),
         "transition_context": OmegaConf.to_container(
             cfg.get("transition_context", {}), resolve=True
-        ),
-        "conditioned_community": OmegaConf.to_container(
-            cfg.get("conditioned_community", {}), resolve=True
         ),
         "output_paths": all_paths,
     }
@@ -422,155 +401,7 @@ def main(cfg: DictConfig):
         f"  Top stationary codes: {[c['code'] for c in top_stationary_codes[:3]]}"
     )
 
-    # === Section 1c: Community Detection ===
-    logging.info("\n" + "=" * 40)
-    logging.info("Detecting transition graph communities...")
-
-    # Compute code frequencies for filtering
-    total_frames = sum(frame_counts.values())
-    code_frequencies = np.array(
-        [
-            frame_counts.get(i, 0) / total_frames if total_frames > 0 else 0
-            for i in range(num_codes)
-        ]
-    )
-
-    # Get min_frequency from config (default 0.001 = 0.1%)
-    community_cfg = cfg.get("community_detection", {})
-    min_frequency = community_cfg.get("min_frequency", 0.001)
-
-    community_results = detect_transition_communities(
-        transition_counts=global_counts,
-        code_frequencies=code_frequencies,
-        n_communities=None,  # Auto-detect
-        min_frequency=min_frequency,
-    )
-
-    # Save and log each figure separately
-    community_figures = community_results["figures"]
-    figure_names = {
-        "code_frequency": "Code Usage Frequency",
-        "reordered_matrix": "Transition Matrix (reordered)",
-        "community_sizes": "Community Sizes",
-        "inter_community": "Inter-Community Transitions",
-        "self_containment": "Community Self-Containment",
-        "eigenvalues": "Laplacian Eigenvalues",
-    }
-
-    for fig_key, fig in community_figures.items():
-        # Save locally
-        fig.savefig(
-            global_matrix_dir / f"community_{fig_key}.png", dpi=150, bbox_inches="tight"
-        )
-
-        # Log to WandB immediately
-        if wandb_enabled:
-            import wandb
-
-            log_to_wandb_immediately(
-                f"global/community_{fig_key}",
-                wandb.Image(fig),
-                wandb_enabled,
-            )
-
-        plt.close(fig)
-
-    if wandb_enabled:
-        logging.info("  Logged community detection figures to WandB")
-
-    # Save community analysis JSON
-    filtered_codes = community_results.get("filtered_codes", [])
-    community_json = {
-        "n_communities": int(community_results["n_communities"]),
-        "modularity": float(community_results["modularity"]),
-        "overall_intra_prob": float(community_results["overall_intra_prob"]),
-        "min_frequency": float(min_frequency),
-        "n_filtered_codes": len(filtered_codes),
-        "filtered_codes": [int(c) for c in filtered_codes],
-        "community_sizes": {
-            str(k): v for k, v in community_results["community_sizes"].items()
-        },
-        "community_codes": {
-            str(k): [int(c) for c in v]
-            for k, v in community_results["community_codes"].items()
-        },
-        "intra_community_prob": {
-            str(i): float(p)
-            for i, p in enumerate(community_results["intra_community_prob"])
-        },
-    }
-    with open(global_matrix_dir / "community_analysis.json", "w") as f:
-        json.dump(community_json, f, indent=2)
-
-    for fig_key in community_figures.keys():
-        all_paths["global"][f"community_{fig_key}"] = str(
-            global_matrix_dir / f"community_{fig_key}.png"
-        )
-    all_paths["global"]["community_json"] = str(
-        global_matrix_dir / "community_analysis.json"
-    )
-
-    logging.info(f"  Detected {community_results['n_communities']} communities")
-    logging.info(
-        f"  Filtered {len(filtered_codes)} low-frequency codes (freq < {min_frequency})"
-    )
-    logging.info(f"  Modularity: {community_results['modularity']:.4f}")
-    logging.info(
-        f"  Intra-community prob: {community_results['overall_intra_prob']:.3f}"
-    )
-
-    # === Section 1d: Community Gallery Videos ===
-    community_gallery_cfg = cfg.get("community_gallery", {})
-    if community_gallery_cfg.get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Rendering community gallery videos...")
-
-        community_video_dir = global_matrix_dir / "community_videos"
-        community_video_dir.mkdir(parents=True, exist_ok=True)
-
-        n_communities = community_results["n_communities"]
-        community_labels = community_results["community_labels"]
-
-        all_paths["global"]["community_videos"] = {}
-
-        for comm_idx in range(n_communities):
-            video_path = community_video_dir / f"community_{comm_idx}.mp4"
-            result_path = render_community_gallery(
-                results=results,
-                community_labels=community_labels,
-                community_idx=comm_idx,
-                num_codes=num_codes,
-                env=env,
-                output_path=video_path,
-                n_samples=community_gallery_cfg.get("samples_per_community", 6),
-                segment_length=community_gallery_cfg.get("segment_length", 30),
-                min_segment_gap=community_gallery_cfg.get("min_segment_gap", 10),
-                camera=camera_name,
-                width=cfg.render.get("width", 640),
-                height=cfg.render.get("height", 480),
-                fps=cfg.render.get("fps", 50),
-            )
-
-            if result_path:
-                all_paths["global"]["community_videos"][
-                    f"community_{comm_idx}"
-                ] = result_path
-                logging.info(f"  Rendered community {comm_idx} gallery")
-
-                # Log to WandB immediately
-                if wandb_enabled:
-                    import wandb
-
-                    log_to_wandb_immediately(
-                        f"global_community_gallery/community_{comm_idx}",
-                        wandb.Video(result_path, format="mp4"),
-                        wandb_enabled,
-                    )
-
-        if wandb_enabled:
-            logging.info("  Logged community gallery videos to WandB")
-
-    # === Section 1e: Mutual Information Analysis ===
+    # === Section 1c: Mutual Information Analysis ===
     mi_cfg = cfg.get("mutual_information", {})
     if mi_cfg.get("enabled", False):
         logging.info("\n" + "=" * 40)
@@ -578,14 +409,12 @@ def main(cfg: DictConfig):
 
         mi_dir = output_dir / "mutual_information"
         joint_names = list(cfg.get("walker_config", {}).get("joint_names", []))
-        community_labels = community_results.get("community_labels")
 
         mi_paths = run_mutual_information_analysis(
             results=results,
             num_codes=num_codes,
             output_dir=mi_dir,
             joint_names=joint_names,
-            community_labels=community_labels,
             cfg=(
                 OmegaConf.to_container(mi_cfg, resolve=True)
                 if hasattr(mi_cfg, "_metadata")
@@ -837,47 +666,7 @@ def main(cfg: DictConfig):
                     )
                 logging.info("  Logged conditional transition analysis to WandB")
 
-    # === Section 4: Conditioned Community Analysis ===
-    conditioned_cfg = cfg.get("conditioned_community", {})
-    if conditioned_cfg.get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running conditioned community analysis...")
-
-        cond_results = run_conditioned_community_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=output_dir / "conditioned_community",
-            n_seed_clips=conditioned_cfg.get("n_seed_clips", 10),
-            qpos_threshold=conditioned_cfg.get("qpos_threshold", 0.05),
-            min_frequency=community_cfg.get("min_frequency", 0.005),
-            render_videos=conditioned_cfg.get("render_videos", True),
-            samples_per_community=conditioned_cfg.get("samples_per_community", 4),
-            segment_length=conditioned_cfg.get("segment_length", 30),
-            env=env,
-            camera=camera_name,
-            width=cfg.render.get("width", 640),
-            height=cfg.render.get("height", 480),
-            fps=cfg.render.get("fps", 50),
-        )
-
-        all_paths["conditioned_community"] = {
-            "html": cond_results.get("html_path"),
-        }
-
-        # Log conditioned community HTML to WandB
-        if wandb_enabled and cond_results.get("html_path"):
-            import wandb
-
-            html_path = cond_results["html_path"]
-            if Path(html_path).exists():
-                log_to_wandb_immediately(
-                    "conditioned_community/viewer",
-                    wandb.Html(open(html_path).read()),
-                    wandb_enabled,
-                )
-            logging.info("  Logged conditioned community analysis to WandB")
-
-    # === Section 5: Pose Gallery (Popular Code Start Positions) ===
+    # === Section 4: Pose Gallery (Popular Code Start Positions) ===
     pose_gallery_cfg = cfg.get("transition_context", {}).get("pose_gallery", {})
     if pose_gallery_cfg.get("enabled", False):
         logging.info("\n" + "=" * 40)
@@ -959,8 +748,6 @@ def main(cfg: DictConfig):
             print(
                 f"Stationary distribution: {all_paths['global']['stationary_distribution']}"
             )
-        if "community_detection" in all_paths["global"]:
-            print(f"Community detection: {all_paths['global']['community_detection']}")
     if "per_clip" in all_paths:
         print(f"Per-clip viewer: {all_paths['per_clip']['html']}")
     if "compositional_transition" in all_paths and all_paths[
@@ -986,12 +773,6 @@ def main(cfg: DictConfig):
             print(f"UMAP trajectory viewer: {tp['umap_html']}")
         if tp.get("umap_static_html"):
             print(f"UMAP static viewer: {tp['umap_static_html']}")
-    if "conditioned_community" in all_paths and all_paths["conditioned_community"].get(
-        "html"
-    ):
-        print(
-            f"Conditioned community viewer: {all_paths['conditioned_community']['html']}"
-        )
     if "pose_gallery" in all_paths:
         print(f"Pose gallery videos: {len(all_paths['pose_gallery'])} codes")
     print(f"Summary report: {report_path}")

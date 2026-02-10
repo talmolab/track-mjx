@@ -103,147 +103,295 @@ def compute_gae(
 
 def compute_vq_loss(
     z_e: jnp.ndarray,
-    z_q: jnp.ndarray,
+    z_q: jnp.ndarray | None = None,
     commitment_cost: float = 0.25,
+    all_z_q: tuple[jnp.ndarray, ...] | None = None,
+    all_residuals: tuple[jnp.ndarray, ...] | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Compute VQ-VAE auxiliary losses with proper gradient routing.
 
-    The VQ-VAE has two auxiliary losses:
-    1. Commitment loss: Encourages encoder to commit to codebook entries
-       - Gradients flow to encoder only (codebook stopped)
-    2. Codebook loss: Moves codebook entries toward encoder outputs
-       - Gradients flow to codebook only (encoder stopped)
+    Supports both single-level (z_q) and multi-level RVQ (all_z_q + all_residuals).
+    When multi-level inputs are provided, per-depth losses are averaged with 1/D scaling.
 
     Args:
         z_e: Encoder output (continuous), shape [..., latent_dim].
-        z_q: Quantized vectors (from codebook lookup), shape [..., latent_dim].
+        z_q: Single-level quantized vectors, shape [..., latent_dim].
+            Used when all_z_q is None (backward compat).
         commitment_cost: Weight for commitment loss (beta in paper).
+        all_z_q: Tuple of D quantized vectors (no STE), each [..., latent_dim].
+        all_residuals: Tuple of D+1 residuals. residuals[d] is the input
+            to level d (residuals[0] = z_e).
 
     Returns:
-        Tuple of:
-            - vq_loss: Combined commitment + codebook loss.
-            - commitment_loss: Encoder commitment term.
-            - codebook_loss: Codebook update term.
+        Tuple of (vq_loss, commitment_loss, codebook_loss).
     """
-    # Commitment loss: encoder learns to commit to codebook entries
-    # Gradient flows to z_e only (z_q stopped)
-    commitment_loss = jnp.mean((z_e - jax.lax.stop_gradient(z_q)) ** 2)
+    if all_z_q is not None and all_residuals is not None:
+        # Multi-depth RVQ loss with 1/D scaling
+        D = len(all_z_q)
+        scale = 1.0 / D
+        total_commitment = jnp.array(0.0)
+        total_codebook = jnp.array(0.0)
 
-    # Codebook loss: codebook moves toward encoder outputs
-    # Gradient flows to z_q only (z_e stopped)
-    codebook_loss = jnp.mean((jax.lax.stop_gradient(z_e) - z_q) ** 2)
+        for d in range(D):
+            r_d = all_residuals[d]  # Input to level d
+            z_q_d = all_z_q[d]  # Quantized output of level d
+            commitment_d = jnp.mean((r_d - jax.lax.stop_gradient(z_q_d)) ** 2)
+            codebook_d = jnp.mean((jax.lax.stop_gradient(r_d) - z_q_d) ** 2)
+            total_commitment = total_commitment + scale * commitment_d
+            total_codebook = total_codebook + scale * codebook_d
 
-    vq_loss = commitment_cost * commitment_loss + codebook_loss
+        vq_loss = commitment_cost * total_commitment + total_codebook
+        return vq_loss, total_commitment, total_codebook
+    else:
+        # Single-level backward compat
+        assert z_q is not None, "Must provide z_q or (all_z_q, all_residuals)"
+        commitment_loss = jnp.mean((z_e - jax.lax.stop_gradient(z_q)) ** 2)
+        codebook_loss = jnp.mean((jax.lax.stop_gradient(z_e) - z_q) ** 2)
+        vq_loss = commitment_cost * commitment_loss + codebook_loss
+        return vq_loss, commitment_loss, codebook_loss
 
-    return vq_loss, commitment_loss, codebook_loss
 
-
-def compute_codebook_metrics(
+def _compute_single_codebook_metrics(
     indices: jnp.ndarray,
     num_codes: int,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Compute codebook health metrics.
-
-    These metrics help diagnose codebook collapse (when only a few
-    codes are used) and monitor training health.
+    """Compute codebook health metrics for a single level.
 
     Args:
         indices: Codebook indices, shape [...].
         num_codes: Total number of codebook entries.
 
     Returns:
-        Tuple of:
-            - perplexity: Effective number of codes used (exp(entropy)).
-                Higher is better; max is num_codes.
-            - utilization: Fraction of codes used at least once.
-            - codes_used: Count of unique codes in batch.
+        Tuple of (perplexity, utilization, codes_used).
     """
-    # Flatten indices
     flat_indices = indices.reshape(-1)
+    code_one_hot = jax.nn.one_hot(flat_indices, num_codes)
+    code_probs = jnp.mean(code_one_hot, axis=0)
 
-    # Compute code usage histogram (one-hot then average)
-    code_one_hot = jax.nn.one_hot(flat_indices, num_codes)  # [N, K]
-    code_probs = jnp.mean(code_one_hot, axis=0)  # [K] - usage frequency
-
-    # Perplexity: exp(entropy of code usage distribution)
-    # Higher perplexity = more uniform usage = better
     code_entropy = -jnp.sum(
         jnp.where(code_probs > 0, code_probs * jnp.log(code_probs + 1e-10), 0.0)
     )
     perplexity = jnp.exp(code_entropy)
 
-    # Utilization: fraction of codes used
     codes_used = jnp.sum(code_probs > 0)
     utilization = codes_used / num_codes
 
     return perplexity, utilization, codes_used
 
 
-def compute_ce_stickiness_cost(
+def compute_codebook_metrics(
+    indices: jnp.ndarray | tuple[jnp.ndarray, ...],
+    num_codes: int,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute codebook health metrics.
+
+    Supports both single-level indices (array) and multi-level (tuple).
+    For multi-level, returns metrics for level 0 (primary/coarse).
+
+    Args:
+        indices: Codebook indices. Single array [...] or tuple of D arrays.
+        num_codes: Total number of codebook entries per level.
+
+    Returns:
+        Tuple of (perplexity, utilization, codes_used) for the primary level.
+    """
+    if isinstance(indices, tuple):
+        return _compute_single_codebook_metrics(indices[0], num_codes)
+    return _compute_single_codebook_metrics(indices, num_codes)
+
+
+def compute_codebook_metrics_per_depth(
+    all_indices: tuple[jnp.ndarray, ...],
+    num_codes: int,
+) -> dict[str, jnp.ndarray]:
+    """Compute codebook health metrics for each RVQ depth level.
+
+    Args:
+        all_indices: Tuple of D index arrays, each shape [...].
+        num_codes: Number of codebook entries per level.
+
+    Returns:
+        Dict with per-depth metrics: perplexity_d{i}, utilization_d{i},
+        codes_used_d{i} for each depth i.
+    """
+    metrics = {}
+    for d, indices_d in enumerate(all_indices):
+        perp, util, used = _compute_single_codebook_metrics(indices_d, num_codes)
+        metrics[f"perplexity_d{d}"] = perp
+        metrics[f"utilization_d{d}"] = util
+        metrics[f"codes_used_d{d}"] = used
+    return metrics
+
+
+def compute_codebook_entropy_loss(
+    z_e: jnp.ndarray,
+    codebooks: tuple[jnp.ndarray, ...],
+    all_residuals: tuple[jnp.ndarray, ...],
+    temperature: float = 1.0,
+) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
+    """Compute differentiable codebook entropy regularization.
+
+    Uses soft code assignments via softmax(-distances/temperature) to compute
+    a differentiable Shannon entropy of the batch-averaged code distribution.
+    Maximizing entropy encourages uniform codebook usage.
+
+    Args:
+        z_e: Encoder output, shape [..., latent_dim].
+        codebooks: Tuple of D codebook arrays, each [K, latent_dim].
+        all_residuals: Tuple of D+1 residuals. residuals[d] is the input
+            to codebook level d.
+        temperature: Softmax temperature. Lower = sharper assignments.
+
+    Returns:
+        Tuple of (negative_mean_entropy, metrics_dict).
+        negative_mean_entropy is averaged across depths with 1/D scaling.
+    """
+    D = len(codebooks)
+    scale = 1.0 / D
+    total_neg_entropy = jnp.array(0.0)
+    metrics = {}
+
+    for d in range(D):
+        r_d = all_residuals[d]  # Input to level d: [..., latent_dim]
+        cb_d = codebooks[d]  # [K, latent_dim]
+
+        # Squared distances: [..., K]
+        r_sq = jnp.sum(r_d**2, axis=-1, keepdims=True)  # [..., 1]
+        cb_sq = jnp.sum(cb_d**2, axis=-1)  # [K]
+        cross = jnp.matmul(r_d, cb_d.T)  # [..., K]
+        sq_distances = r_sq + cb_sq - 2 * cross  # [..., K]
+
+        # Soft assignments via softmax
+        soft_assignments = jax.nn.softmax(-sq_distances / temperature, axis=-1)
+
+        # Batch-averaged soft distribution
+        flat_soft = soft_assignments.reshape(-1, soft_assignments.shape[-1])
+        avg_distribution = jnp.mean(flat_soft, axis=0)  # [K]
+
+        # Shannon entropy: H = -sum(p * log(p))
+        entropy_d = -jnp.sum(
+            jnp.where(
+                avg_distribution > 1e-10,
+                avg_distribution * jnp.log(avg_distribution + 1e-10),
+                0.0,
+            )
+        )
+
+        total_neg_entropy = total_neg_entropy + scale * (-entropy_d)
+        metrics[f"soft_code_entropy_d{d}"] = entropy_d
+
+    return total_neg_entropy, metrics
+
+
+def _compute_ce_stickiness_single(
     z_e: jnp.ndarray,
     indices: jnp.ndarray,
     codebook: jnp.ndarray,
     valid_mask: jnp.ndarray,
     temperature: float = 1.0,
-) -> tuple[jnp.ndarray, dict]:
-    """Cross-entropy loss encouraging code persistence.
-
-    Encourages z_e[t+1] to remain closest to the same codebook entry
-    that z_e[t] was assigned to. This operates directly in code space
-    rather than continuous embedding space, respecting the Voronoi
-    tessellation of the codebook.
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """CE stickiness for a single codebook level.
 
     Args:
-        z_e: Encoder outputs with shape [T, B, D].
-        indices: Hard code assignments with shape [T, B].
-        codebook: Codebook embeddings with shape [K, D].
-        valid_mask: Binary mask for valid transitions [T-1, B].
-        temperature: Softmax temperature (lower = sharper).
+        z_e: Input vectors with shape [T, B, D].
+        indices: Code assignments with shape [T, B].
+        codebook: Codebook [K, D].
+        valid_mask: [T-1, B].
+        temperature: Softmax temperature.
 
     Returns:
-        Tuple of (ce_stickiness_loss, metrics_dict).
+        (loss, prob_of_prev_code) scalars.
     """
     num_codes = codebook.shape[0]
+    z_e_curr = z_e[1:]
+    targets = indices[:-1]
 
-    # Step 1: Get consecutive timesteps
-    z_e_curr = z_e[1:]  # [T-1, B, D] - encoder outputs at t+1
-    targets = indices[:-1]  # [T-1, B] - code indices at t (our target)
-
-    # Step 2: Compute squared distances from z_e[t+1] to all codes
-    # Stop gradient on codebook to prevent this loss from moving codes
     codebook_sg = jax.lax.stop_gradient(codebook)
-
-    # [T-1, B, 1, D] - [1, 1, K, D] -> [T-1, B, K, D] -> sum -> [T-1, B, K]
     sq_distances = jnp.sum(
         jnp.square(z_e_curr[:, :, None, :] - codebook_sg[None, None, :, :]),
         axis=-1,
     )
+    logits = -sq_distances / temperature
 
-    # Step 3: Convert to logits (negate distances, scale by temperature)
-    logits = -sq_distances / temperature  # [T-1, B, K]
-
-    # Step 4: Cross-entropy loss
-    # Target is the code from the previous timestep
-    ce_loss = optax.softmax_cross_entropy_with_integer_labels(
-        logits, targets
-    )  # [T-1, B]
-
-    # Step 5: Mask and average
+    ce_loss = optax.softmax_cross_entropy_with_integer_labels(logits, targets)
     num_valid = jnp.sum(valid_mask) + 1e-8
-    ce_stickiness_loss = jnp.sum(ce_loss * valid_mask) / num_valid
+    loss = jnp.sum(ce_loss * valid_mask) / num_valid
 
-    # Metrics for monitoring
-    probs = jax.nn.softmax(logits, axis=-1)  # [T-1, B, K]
-    target_one_hot = jax.nn.one_hot(targets, num_codes)  # [T-1, B, K]
-    prob_of_target = jnp.sum(probs * target_one_hot, axis=-1)  # [T-1, B]
-    mean_prob_of_prev_code = jnp.sum(prob_of_target * valid_mask) / num_valid
+    probs = jax.nn.softmax(logits, axis=-1)
+    target_one_hot = jax.nn.one_hot(targets, num_codes)
+    prob_of_target = jnp.sum(probs * target_one_hot, axis=-1)
+    mean_prob = jnp.sum(prob_of_target * valid_mask) / num_valid
 
-    metrics = {
-        "ce_stickiness_loss": ce_stickiness_loss,
-        "prob_of_prev_code": mean_prob_of_prev_code,
-    }
+    return loss, mean_prob
 
-    return ce_stickiness_loss, metrics
+
+def compute_ce_stickiness_cost(
+    z_e: jnp.ndarray,
+    indices: jnp.ndarray | tuple[jnp.ndarray, ...],
+    codebook: jnp.ndarray | tuple[jnp.ndarray, ...],
+    valid_mask: jnp.ndarray,
+    temperature: float = 1.0,
+    all_residuals: tuple[jnp.ndarray, ...] | None = None,
+) -> tuple[jnp.ndarray, dict]:
+    """Cross-entropy loss encouraging code persistence.
+
+    For multi-level RVQ, applies CE stickiness to each level using that
+    level's residual input and codebook, then averages with 1/D scaling.
+
+    Args:
+        z_e: Encoder outputs [T, B, D].
+        indices: Code assignments [T, B] or tuple of D arrays.
+        codebook: Codebook [K, D] or tuple of D codebooks.
+        valid_mask: [T-1, B].
+        temperature: Softmax temperature.
+        all_residuals: Tuple of D+1 residuals for multi-level.
+            residuals[d] is input to level d (shape [T, B, D]).
+
+    Returns:
+        Tuple of (ce_stickiness_loss, metrics_dict).
+    """
+    if isinstance(indices, tuple) and isinstance(codebook, tuple):
+        # Multi-level: apply per-level and average
+        D = len(indices)
+        scale = 1.0 / D
+        total_loss = jnp.array(0.0)
+        total_prob = jnp.array(0.0)
+        metrics = {}
+
+        for d in range(D):
+            # Use residual input for each level
+            if all_residuals is not None and d < len(all_residuals):
+                input_d = all_residuals[d]  # [T, B, D]
+            else:
+                input_d = z_e  # Fallback for depth=0
+
+            loss_d, prob_d = _compute_ce_stickiness_single(
+                input_d, indices[d], codebook[d], valid_mask, temperature
+            )
+            total_loss = total_loss + scale * loss_d
+            total_prob = total_prob + scale * prob_d
+            metrics[f"ce_stickiness_loss_d{d}"] = loss_d
+            metrics[f"prob_of_prev_code_d{d}"] = prob_d
+
+        metrics["ce_stickiness_loss"] = total_loss
+        metrics["prob_of_prev_code"] = total_prob
+        return total_loss, metrics
+    else:
+        # Single-level backward compat
+        loss, prob = _compute_ce_stickiness_single(
+            z_e, indices, codebook, valid_mask, temperature
+        )
+        return loss, {
+            "ce_stickiness_loss": loss,
+            "prob_of_prev_code": prob,
+        }
+
+
+def _has_any_stickiness(stickiness_bias) -> bool:
+    """Check if any level has nonzero stickiness bias."""
+    if isinstance(stickiness_bias, (int, float)):
+        return stickiness_bias > 0
+    return any(b > 0 for b in stickiness_bias)
 
 
 def compute_vq_ppo_loss(
@@ -258,56 +406,45 @@ def compute_vq_ppo_loss(
     codebook_loss_weight: float = 1.0,
     ce_stickiness_cost: float = 0.0,
     ce_stickiness_temperature: float = 1.0,
-    stickiness_bias: float = 0.0,
+    stickiness_bias: float | tuple[float, ...] = 0.0,
     discounting: float = 0.9,
     reward_scaling: float = 1.0,
     gae_lambda: float = 0.95,
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
     vq_loss_schedule: Callable[[int], float] | None = None,
+    rvq_depth: int = 1,
+    codebook_entropy_weight: float = 0.0,
+    codebook_entropy_temperature: float = 1.0,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss with VQ-VAE auxiliary losses.
 
-    Computes the standard PPO clipped surrogate loss plus:
-    - Value function MSE loss
-    - Entropy bonus for exploration
-    - VQ-VAE commitment loss (encoder commits to codebook)
-    - VQ-VAE codebook loss (codebook tracks encoder)
-    - Cross-entropy stickiness loss (directly encourages code persistence)
-    - Stickiness bias (directly modifies code selection to favor previous code)
-
-    Unlike the VAE version, there is no KL divergence loss. The
-    commitment and codebook losses serve as regularization.
+    Supports multi-depth RVQ. Codebooks are accessed from the param tree at
+    params.policy["params"]["quantizer"]["codebooks_{d}"]["embeddings"].
 
     Args:
         params: PPO network parameters (policy and value).
         normalizer_params: Running statistics for observation normalization.
-        data: Transition batch with shape [B, T]. Required extra fields:
-            - data.extras["state_extras"]["truncation"]
-            - data.extras["policy_extras"]["raw_action"]
-            - data.extras["policy_extras"]["log_prob"]
+        data: Transition batch with shape [B, T].
         rng: JAX random key.
-        step: Current training step (for optional VQ loss schedule).
-        ppo_network: PPO network container with policy, value, and distribution.
+        step: Current training step.
+        ppo_network: PPO network container.
         entropy_cost: Entropy bonus coefficient.
         commitment_cost: Weight for commitment loss (beta).
         codebook_loss_weight: Weight for codebook loss.
-        ce_stickiness_cost: Weight for cross-entropy stickiness loss (code space).
+        ce_stickiness_cost: Weight for CE stickiness loss.
         ce_stickiness_temperature: Temperature for CE stickiness softmax.
-        stickiness_bias: Bias subtracted from distance to previous code in
-            quantization. When > 0, uses sequential processing via scan to
-            create temporal hysteresis in code selection.
-        discounting: Discount factor (gamma) for GAE.
-        reward_scaling: Multiplier applied to rewards.
-        gae_lambda: GAE lambda parameter.
-        clipping_epsilon: PPO clipping range for policy ratio.
+        stickiness_bias: Per-level stickiness bias. Float or tuple.
+        discounting: Discount factor (gamma).
+        reward_scaling: Reward multiplier.
+        gae_lambda: GAE lambda.
+        clipping_epsilon: PPO clipping range.
         normalize_advantage: Whether to normalize advantages.
         vq_loss_schedule: Optional schedule function(step) -> vq_weight.
+        rvq_depth: Number of RVQ depth levels.
 
     Returns:
-        Tuple of:
-            - total_loss: Scalar loss value.
-            - metrics: Dict with individual loss components for logging.
+        Tuple of (total_loss, metrics_dict).
     """
     _, policy_key, entropy_key = jax.random.split(rng, 3)
     parametric_action_distribution = ppo_network.parametric_action_distribution
@@ -318,48 +455,52 @@ def compute_vq_ppo_loss(
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
     # Forward pass through VQ policy
-    # Use temporal processing if stickiness_bias > 0, otherwise standard apply
-    if stickiness_bias > 0 and hasattr(policy_network, "apply_temporal"):
-        # Create episode mask from discount signal
-        # discount=0 indicates episode end, so the NEXT timestep is episode start
-        # We want mask[t]=0 when t is an episode start (prev_indices invalid)
-        # Shift discount by 1: mask[t] = discount[t-1] for t > 0, mask[0] = 0
+    # all_indices is a tuple of D arrays, each [T, B]
+    has_stickiness = _has_any_stickiness(stickiness_bias)
+    if has_stickiness and hasattr(policy_network, "apply_temporal"):
         truncation = data.extras["state_extras"]["truncation"]
         discount = data.discount
-        T = discount.shape[0]
-
-        # Episode continues if discount > 0 AND not truncated
-        continues = discount * (1 - truncation)  # [T, B]
-
-        # Shift: mask[t] indicates if we can use prev_indices from t-1
-        # First timestep always has mask=0 (no valid previous)
+        continues = discount * (1 - truncation)
         episode_mask = jnp.concatenate(
             [jnp.zeros((1, continues.shape[1])), continues[:-1]], axis=0
-        )  # [T, B]
-
-        # Use temporal apply with sequential quantization
-        policy_logits, z_e, indices = policy_network.apply_temporal(
+        )
+        policy_logits, z_e, all_indices = policy_network.apply_temporal(
             normalizer_params, params.policy, data.observation, episode_mask
         )
     else:
-        # Standard parallel processing (no bias or bias=0)
-        policy_logits, z_e, indices = policy_network.apply(
+        policy_logits, z_e, all_indices = policy_network.apply(
             normalizer_params, params.policy, data.observation, policy_key
         )
 
     # Value function
     baseline = value_apply(normalizer_params, params.value, data.observation)
-    # Get the last timestep from dict observation (tree_map handles dict structure)
     last_next_obs = jax.tree_util.tree_map(lambda x: x[-1], data.next_observation)
     bootstrap_value = value_apply(normalizer_params, params.value, last_next_obs)
 
-    # Reconstruct z_q from current codebook for loss computation
-    # This ensures gradients flow to the current codebook parameters
-    codebook = params.policy["params"]["quantizer"]["embeddings"]
-    z_q = codebook[indices]  # [..., latent_dim]
+    # Extract codebooks from param tree and reconstruct z_q per level
+    quantizer_params = params.policy["params"]["quantizer"]
+    codebooks = tuple(
+        quantizer_params[f"codebooks_{d}"]["embeddings"] for d in range(rvq_depth)
+    )
 
-    # VQ-VAE auxiliary losses
-    vq_loss, commitment_loss, codebook_loss = compute_vq_loss(z_e, z_q, commitment_cost)
+    # Reconstruct all_z_q and all_residuals for loss computation
+    all_z_q = tuple(codebooks[d][all_indices[d]] for d in range(rvq_depth))
+
+    # Reconstruct residuals: residuals[0] = z_e, residuals[d] = residuals[d-1] - z_q[d-1]
+    all_residuals = [z_e]
+    residual = z_e
+    for d in range(rvq_depth):
+        residual = residual - jax.lax.stop_gradient(all_z_q[d])
+        all_residuals.append(residual)
+    all_residuals = tuple(all_residuals)
+
+    # VQ-VAE auxiliary losses (multi-depth with 1/D scaling)
+    vq_loss, commitment_loss, codebook_loss = compute_vq_loss(
+        z_e=z_e,
+        commitment_cost=commitment_cost,
+        all_z_q=all_z_q,
+        all_residuals=all_residuals,
+    )
 
     # Apply schedule if provided
     vq_weight = 1.0
@@ -370,44 +511,61 @@ def compute_vq_ppo_loss(
         commitment_cost * commitment_loss + codebook_loss_weight * codebook_loss
     )
 
-    # Codebook health metrics
-    num_codes = codebook.shape[0]
-    perplexity, utilization, codes_used = compute_codebook_metrics(indices, num_codes)
+    # Codebook health metrics (primary level for backward compat)
+    num_codes = codebooks[0].shape[0]
+    perplexity, utilization, codes_used = compute_codebook_metrics(
+        all_indices, num_codes
+    )
+
+    # Per-depth metrics
+    depth_metrics = compute_codebook_metrics_per_depth(all_indices, num_codes)
+
+    # Codebook entropy regularization (differentiable)
+    if codebook_entropy_weight > 0.0:
+        neg_entropy, entropy_metrics = compute_codebook_entropy_loss(
+            z_e=z_e,
+            codebooks=codebooks,
+            all_residuals=all_residuals,
+            temperature=codebook_entropy_temperature,
+        )
+        scaled_entropy_reg = codebook_entropy_weight * neg_entropy
+    else:
+        scaled_entropy_reg = jnp.array(0.0)
+        entropy_metrics = {}
 
     # Standard PPO loss computation
     rewards = data.reward * reward_scaling
     truncation = data.extras["state_extras"]["truncation"]
     termination = (1 - data.discount) * (1 - truncation)
 
-    # Compute valid mask and transition rate for temporal metrics
-    # Shapes after axis swap: z_e [T, B, D], indices [T, B], discount [T, B]
+    # Transition rate using primary (L0) indices
+    primary_indices = all_indices[0]
     if z_e.shape[0] > 1:
-        # Mask: valid if episode continues (not done AND not truncated)
-        valid_mask = data.discount[:-1] * (1 - truncation[:-1])  # [T-1, B]
+        valid_mask = data.discount[:-1] * (1 - truncation[:-1])
         num_valid = jnp.sum(valid_mask) + 1e-8
 
-        # Transition rate metric (monitoring only, no gradient)
-        indices_prev = indices[:-1]  # [T-1, B]
-        indices_curr = indices[1:]  # [T-1, B]
+        indices_prev = primary_indices[:-1]
+        indices_curr = primary_indices[1:]
         code_changed = (indices_curr != indices_prev).astype(jnp.float32)
         transition_rate = jnp.sum(code_changed * valid_mask) / num_valid
     else:
         transition_rate = jnp.array(0.0)
-        valid_mask = jnp.array(0.0)  # Placeholder for single-step case
+        valid_mask = jnp.array(0.0)
 
-    # Cross-entropy stickiness loss (operates in code space)
-    # Directly encourages code persistence by penalizing code boundary crossings
+    # Cross-entropy stickiness loss
     if z_e.shape[0] > 1 and ce_stickiness_cost > 0.0:
         ce_stickiness_loss, ce_stickiness_metrics = compute_ce_stickiness_cost(
             z_e=z_e,
-            indices=indices,
-            codebook=codebook,
+            indices=all_indices if rvq_depth > 1 else all_indices[0],
+            codebook=codebooks if rvq_depth > 1 else codebooks[0],
             valid_mask=valid_mask,
             temperature=ce_stickiness_temperature,
+            all_residuals=all_residuals if rvq_depth > 1 else None,
         )
         prob_of_prev_code = ce_stickiness_metrics["prob_of_prev_code"]
     else:
         ce_stickiness_loss = jnp.array(0.0)
+        ce_stickiness_metrics = {}
         prob_of_prev_code = jnp.array(0.0)
 
     scaled_ce_stickiness_loss = ce_stickiness_cost * ce_stickiness_loss
@@ -438,22 +596,24 @@ def compute_vq_ppo_loss(
     )
     policy_loss = -jnp.mean(jnp.minimum(surrogate_loss1, surrogate_loss2))
 
-    # Value function loss
     v_error = vs - baseline
     v_loss = jnp.mean(v_error * v_error) * 0.5 * 0.5
 
-    # Entropy bonus
     entropy = jnp.mean(
         parametric_action_distribution.entropy(policy_logits, entropy_key)
     )
     entropy_loss = entropy_cost * -entropy
 
-    # Total loss
     total_loss = (
-        policy_loss + v_loss + entropy_loss + scaled_vq_loss + scaled_ce_stickiness_loss
+        policy_loss
+        + v_loss
+        + entropy_loss
+        + scaled_vq_loss
+        + scaled_ce_stickiness_loss
+        + scaled_entropy_reg
     )
 
-    return total_loss, {
+    metrics = {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
@@ -464,17 +624,105 @@ def compute_vq_ppo_loss(
         "codebook_loss": codebook_loss,
         "scaled_vq_loss": scaled_vq_loss,
         "vq_weight": vq_weight,
-        # Codebook health metrics
+        # Codebook health metrics (primary level)
         "perplexity": perplexity,
         "codebook_utilization": utilization,
         "codes_used": codes_used,
-        # Stickiness metrics (bias + cross-entropy)
-        "stickiness_bias": jnp.array(stickiness_bias),
+        # Stickiness metrics
         "ce_stickiness_loss": ce_stickiness_loss,
         "scaled_ce_stickiness_loss": scaled_ce_stickiness_loss,
         "prob_of_prev_code": prob_of_prev_code,
         "transition_rate": transition_rate,
+        # Codebook entropy regularization
+        "scaled_codebook_entropy_reg": scaled_entropy_reg,
     }
+
+    # Add per-depth metrics
+    metrics.update(depth_metrics)
+
+    # Add per-depth CE stickiness metrics
+    for key, val in ce_stickiness_metrics.items():
+        if key not in metrics:
+            metrics[key] = val
+
+    # Add per-depth soft entropy metrics
+    metrics.update(entropy_metrics)
+
+    return total_loss, metrics
+
+
+def reinit_dead_codes(
+    policy_params: dict,
+    z_e_samples: jnp.ndarray,
+    all_indices: tuple[jnp.ndarray, ...],
+    num_codes: int,
+    rvq_depth: int,
+    threshold: float = 0.01,
+    noise_scale: float = 0.01,
+    rng: jnp.ndarray | None = None,
+) -> dict:
+    """Reinitialize dead codebook entries from encoder samples.
+
+    Dead codes (usage below threshold) are replaced with randomly sampled
+    z_e vectors plus small noise. This prevents permanent codebook collapse.
+
+    Args:
+        policy_params: Policy parameter dict (FrozenDict-compatible).
+        z_e_samples: Encoder outputs from recent rollout, shape [N, latent_dim].
+        all_indices: Tuple of D index arrays from recent rollout.
+        num_codes: Number of codes per level.
+        rvq_depth: Number of RVQ depth levels.
+        threshold: Fraction of uniform usage below which a code is "dead".
+        noise_scale: Scale of noise added to reinitialized codes.
+        rng: Optional JAX random key for sampling.
+
+    Returns:
+        New policy_params dict with dead codes replaced.
+    """
+    import numpy as np
+    from flax.core import freeze, unfreeze
+    from flax.core.frozen_dict import FrozenDict
+
+    if rng is None:
+        rng = jax.random.PRNGKey(0)
+
+    was_frozen = isinstance(policy_params, FrozenDict)
+    params = unfreeze(policy_params)
+    flat_z_e = z_e_samples.reshape(-1, z_e_samples.shape[-1])
+    n_samples = flat_z_e.shape[0]
+
+    for d in range(rvq_depth):
+        indices_d = all_indices[d]
+        flat_idx = np.array(indices_d).reshape(-1)
+        counts = np.bincount(flat_idx, minlength=num_codes)
+        total = counts.sum()
+        usage = counts / max(total, 1)
+
+        # Dead = usage below threshold fraction of uniform (1/K)
+        uniform_usage = 1.0 / num_codes
+        dead_mask = usage < (threshold * uniform_usage)
+        dead_indices = np.where(dead_mask)[0]
+
+        if len(dead_indices) == 0:
+            continue
+
+        # Sample replacement vectors from z_e
+        rng, sample_key = jax.random.split(rng)
+        sample_idx = jax.random.randint(sample_key, (len(dead_indices),), 0, n_samples)
+        replacements = flat_z_e[sample_idx]
+
+        # Add noise
+        rng, noise_key = jax.random.split(rng)
+        noise = jax.random.normal(noise_key, replacements.shape) * noise_scale
+        replacements = replacements + noise
+
+        # Update codebook
+        cb_key = f"codebooks_{d}"
+        embeddings = params["params"]["quantizer"][cb_key]["embeddings"]
+        embeddings = embeddings.at[dead_indices].set(replacements)
+        params["params"]["quantizer"][cb_key]["embeddings"] = embeddings
+
+    return freeze(params) if was_frozen else params
 
 
 def create_vq_schedule(

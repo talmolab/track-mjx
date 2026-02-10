@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .inference_cache import InferenceResult
-from .rendering import get_nature_colormap, get_community_colormap
+from .rendering import get_nature_colormap
 
 if TYPE_CHECKING:
     pass
@@ -114,9 +114,7 @@ def detect_clip_communities(
         )
         labels = clustering.fit_predict(affinity)
 
-        code_to_community = {
-            unique_codes[i]: int(labels[i]) for i in range(n_unique)
-        }
+        code_to_community = {unique_codes[i]: int(labels[i]) for i in range(n_unique)}
         modularity = _compute_modularity(sym_matrix, labels)
 
     except Exception as e:
@@ -196,16 +194,16 @@ def plot_clip_analysis(
 
     # Community colors - use distinct, saturated colors
     DISTINCT_COLORS = [
-        (0.122, 0.467, 0.706, 1.0),   # Blue
-        (1.000, 0.498, 0.055, 1.0),   # Orange
-        (0.173, 0.627, 0.173, 1.0),   # Green
-        (0.839, 0.153, 0.157, 1.0),   # Red
-        (0.580, 0.404, 0.741, 1.0),   # Purple
-        (0.549, 0.337, 0.294, 1.0),   # Brown
-        (0.890, 0.467, 0.761, 1.0),   # Pink
-        (0.498, 0.498, 0.498, 1.0),   # Gray
-        (0.737, 0.741, 0.133, 1.0),   # Yellow-green
-        (0.090, 0.745, 0.812, 1.0),   # Cyan
+        (0.122, 0.467, 0.706, 1.0),  # Blue
+        (1.000, 0.498, 0.055, 1.0),  # Orange
+        (0.173, 0.627, 0.173, 1.0),  # Green
+        (0.839, 0.153, 0.157, 1.0),  # Red
+        (0.580, 0.404, 0.741, 1.0),  # Purple
+        (0.549, 0.337, 0.294, 1.0),  # Brown
+        (0.890, 0.467, 0.761, 1.0),  # Pink
+        (0.498, 0.498, 0.498, 1.0),  # Gray
+        (0.737, 0.741, 0.133, 1.0),  # Yellow-green
+        (0.090, 0.745, 0.812, 1.0),  # Cyan
     ]
     comm_colors = {
         i: DISTINCT_COLORS[i % len(DISTINCT_COLORS)]
@@ -246,7 +244,9 @@ def plot_clip_analysis(
         ax.set_xlabel("To Code", fontsize=9)
         ax.set_ylabel("From Code", fontsize=9)
 
-    ax.set_title(f"Transition Matrix ({n_active} codes)", fontsize=10, fontweight="bold")
+    ax.set_title(
+        f"Transition Matrix ({n_active} codes)", fontsize=10, fontweight="bold"
+    )
 
     # === Row 1, Col 2: Transition graph ===
     ax = fig.add_subplot(gs[0, 2])
@@ -264,10 +264,10 @@ def plot_clip_analysis(
     # Top section: Code colors
     for i, code in enumerate(analysis.code_indices):
         color = code_colors[int(code)]
-        timeline[:timeline_height//2 - 2, i] = color
+        timeline[: timeline_height // 2 - 2, i] = color
 
     # Separator line
-    timeline[timeline_height//2 - 2:timeline_height//2, :] = [50, 50, 50]
+    timeline[timeline_height // 2 - 2 : timeline_height // 2, :] = [50, 50, 50]
 
     # Bottom section: Community colors
     for i, code in enumerate(analysis.code_indices):
@@ -275,14 +275,16 @@ def plot_clip_analysis(
         # Convert matplotlib color to RGB uint8
         comm_rgba = comm_colors.get(comm_id, (0.5, 0.5, 0.5, 1.0))
         comm_rgb = [int(c * 255) for c in comm_rgba[:3]]
-        timeline[timeline_height//2:, i] = comm_rgb
+        timeline[timeline_height // 2 :, i] = comm_rgb
 
     ax.imshow(timeline, aspect="auto")
     ax.set_xlabel("Frame", fontsize=9)
     ax.set_ylabel("")
-    ax.set_yticks([timeline_height//4, 3*timeline_height//4])
+    ax.set_yticks([timeline_height // 4, 3 * timeline_height // 4])
     ax.set_yticklabels(["Codes", "Communities"], fontsize=8)
-    ax.set_title(f"Code & Community Timeline ({n_frames} frames)", fontsize=10, fontweight="bold")
+    ax.set_title(
+        f"Code & Community Timeline ({n_frames} frames)", fontsize=10, fontweight="bold"
+    )
 
     # Add frame markers
     for x in range(0, n_frames, 50):
@@ -297,8 +299,13 @@ def plot_clip_analysis(
         comm_labels = [analysis.communities[c] for c in codes_sorted]
         bar_colors = [comm_colors[l] for l in comm_labels]
 
-        ax.bar(range(len(codes_sorted)), [1] * len(codes_sorted),
-               color=bar_colors, edgecolor="white", linewidth=0.5)
+        ax.bar(
+            range(len(codes_sorted)),
+            [1] * len(codes_sorted),
+            color=bar_colors,
+            edgecolor="white",
+            linewidth=0.5,
+        )
         ax.set_xticks(range(len(codes_sorted)))
         ax.set_xticklabels(codes_sorted, fontsize=7, rotation=45)
         ax.set_xlabel("Code Index", fontsize=9)
@@ -308,11 +315,19 @@ def plot_clip_analysis(
             plt.Rectangle((0, 0), 1, 1, color=comm_colors[i])
             for i in range(analysis.n_communities)
         ]
-        ax.legend(handles, [f"C{i}" for i in range(analysis.n_communities)],
-                  loc="upper right", fontsize=7, ncol=2)
+        ax.legend(
+            handles,
+            [f"C{i}" for i in range(analysis.n_communities)],
+            loc="upper right",
+            fontsize=7,
+            ncol=2,
+        )
 
-    ax.set_title(f"Community Assignment (n={analysis.n_communities}, Q={analysis.modularity:.3f})",
-                 fontsize=10, fontweight="bold")
+    ax.set_title(
+        f"Community Assignment (n={analysis.n_communities}, Q={analysis.modularity:.3f})",
+        fontsize=10,
+        fontweight="bold",
+    )
 
     # === Row 3, Col 0: Self-loop probabilities ===
     ax = fig.add_subplot(gs[2, 0])
@@ -380,9 +395,7 @@ def plot_clip_analysis(
     self_loop_pct = 100 * self_loop_total / max(total_transitions, 1)
 
     sorted_codes = sorted(
-        analysis.code_frame_counts.items(),
-        key=lambda x: x[1],
-        reverse=True
+        analysis.code_frame_counts.items(), key=lambda x: x[1], reverse=True
     )
 
     stats_lines = [
@@ -401,15 +414,20 @@ def plot_clip_analysis(
         pct = 100 * count / analysis.num_frames
         stats_lines.append(f"  Code {code:2d}: {count:4d} ({pct:5.1f}%)")
 
-    ax.text(0.05, 0.95, "\n".join(stats_lines),
-            transform=ax.transAxes,
-            fontsize=10,
-            verticalalignment="top",
-            fontfamily="monospace",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8))
+    ax.text(
+        0.05,
+        0.95,
+        "\n".join(stats_lines),
+        transform=ax.transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        fontfamily="monospace",
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8),
+    )
 
-    fig.suptitle(f"Clip {analysis.clip_idx} Analysis",
-                 fontsize=14, fontweight="bold", y=0.98)
+    fig.suptitle(
+        f"Clip {analysis.clip_idx} Analysis", fontsize=14, fontweight="bold", y=0.98
+    )
 
     return fig
 
@@ -425,8 +443,14 @@ def _plot_transition_graph(
     try:
         import networkx as nx
     except ImportError:
-        ax.text(0.5, 0.5, "NetworkX not installed",
-                ha="center", va="center", transform=ax.transAxes)
+        ax.text(
+            0.5,
+            0.5,
+            "NetworkX not installed",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
         ax.set_title("Transition Graph (unavailable)")
         ax.axis("off")
         return
@@ -435,8 +459,14 @@ def _plot_transition_graph(
     n_active = len(active_codes)
 
     if n_active < 2:
-        ax.text(0.5, 0.5, "Not enough codes",
-                ha="center", va="center", transform=ax.transAxes)
+        ax.text(
+            0.5,
+            0.5,
+            "Not enough codes",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
         ax.set_title("Transition Graph")
         ax.axis("off")
         return
@@ -455,8 +485,14 @@ def _plot_transition_graph(
                 edges.append((i, j, prob))
 
     if len(edges) == 0:
-        ax.text(0.5, 0.5, "No transitions above threshold",
-                ha="center", va="center", transform=ax.transAxes)
+        ax.text(
+            0.5,
+            0.5,
+            "No transitions above threshold",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
         ax.set_title("Transition Graph")
         ax.axis("off")
         return
@@ -481,7 +517,9 @@ def _plot_transition_graph(
     # Draw edges
     edge_widths = [G[u][v]["weight"] * 5 for u, v in G.edges()]
     nx.draw_networkx_edges(
-        G, pos, ax=ax,
+        G,
+        pos,
+        ax=ax,
         width=edge_widths,
         alpha=0.4,
         edge_color="gray",
@@ -492,7 +530,9 @@ def _plot_transition_graph(
 
     # Draw nodes
     nx.draw_networkx_nodes(
-        G, pos, ax=ax,
+        G,
+        pos,
+        ax=ax,
         node_color=node_colors,
         node_size=node_sizes,
         alpha=0.9,
@@ -502,7 +542,9 @@ def _plot_transition_graph(
 
     # Draw labels
     nx.draw_networkx_labels(
-        G, pos, ax=ax,
+        G,
+        pos,
+        ax=ax,
         font_size=7,
         font_weight="bold",
     )
@@ -540,17 +582,23 @@ def generate_interactive_html(
         img_b64 = figure_to_base64(fig, dpi=100)
         plt.close(fig)
 
-        images_data.append({
-            "clip_idx": analysis.clip_idx,
-            "image": img_b64,
-            "stats": {
-                "num_frames": analysis.num_frames,
-                "unique_codes": len(analysis.unique_codes),
-                "n_communities": analysis.n_communities,
-                "modularity": round(analysis.modularity, 4),
-                "top_code": max(analysis.code_frame_counts.items(), key=lambda x: x[1])[0] if analysis.code_frame_counts else 0,
+        images_data.append(
+            {
+                "clip_idx": analysis.clip_idx,
+                "image": img_b64,
+                "stats": {
+                    "num_frames": analysis.num_frames,
+                    "unique_codes": len(analysis.unique_codes),
+                    "n_communities": analysis.n_communities,
+                    "modularity": round(analysis.modularity, 4),
+                    "top_code": (
+                        max(analysis.code_frame_counts.items(), key=lambda x: x[1])[0]
+                        if analysis.code_frame_counts
+                        else 0
+                    ),
+                },
             }
-        })
+        )
 
     html_content = _generate_html_template(images_data, title)
 
@@ -565,7 +613,7 @@ def _generate_html_template(images_data: list[dict], title: str) -> str:
     """Generate HTML template with embedded JavaScript."""
     js_data = json.dumps(images_data)
 
-    html = f'''<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -717,7 +765,7 @@ def _generate_html_template(images_data: list[dict], title: str) -> str:
         updateClip(0);
     </script>
 </body>
-</html>'''
+</html>"""
 
     return html
 
@@ -766,21 +814,24 @@ def render_clip_video(
 
     # Distinct community colors
     DISTINCT_COLORS = [
-        [31, 119, 180],    # Blue
-        [255, 127, 14],    # Orange
-        [44, 160, 44],     # Green
-        [214, 39, 40],     # Red
-        [148, 103, 189],   # Purple
-        [140, 86, 75],     # Brown
-        [227, 119, 194],   # Pink
-        [127, 127, 127],   # Gray
-        [188, 189, 34],    # Yellow-green
-        [23, 190, 207],    # Cyan
+        [31, 119, 180],  # Blue
+        [255, 127, 14],  # Orange
+        [44, 160, 44],  # Green
+        [214, 39, 40],  # Red
+        [148, 103, 189],  # Purple
+        [140, 86, 75],  # Brown
+        [227, 119, 194],  # Pink
+        [127, 127, 127],  # Gray
+        [188, 189, 34],  # Yellow-green
+        [23, 190, 207],  # Cyan
     ]
-    comm_colors = np.array([
-        DISTINCT_COLORS[i % len(DISTINCT_COLORS)]
-        for i in range(max(analysis.n_communities, 1))
-    ], dtype=np.uint8)
+    comm_colors = np.array(
+        [
+            DISTINCT_COLORS[i % len(DISTINCT_COLORS)]
+            for i in range(max(analysis.n_communities, 1))
+        ],
+        dtype=np.uint8,
+    )
 
     # Setup MuJoCo renderer
     mj_model = env.mj_model
@@ -824,14 +875,20 @@ def render_clip_video(
             x_end = int((j + 1) * width / n_frames)
             code_idx = int(indices[j]) if j < len(indices) else 0
             color = code_colors[code_idx]
-            full_frame[code_bar_y:code_bar_y + bar_height - 2, x_start:x_end] = color
+            full_frame[code_bar_y : code_bar_y + bar_height - 2, x_start:x_end] = color
 
         # Playhead for code bar
         playhead_x = int(i * width / n_frames)
-        full_frame[code_bar_y:code_bar_y + bar_height - 2, playhead_x:playhead_x + 2] = [255, 255, 255]
+        full_frame[
+            code_bar_y : code_bar_y + bar_height - 2, playhead_x : playhead_x + 2
+        ] = [255, 255, 255]
 
         # Separator
-        full_frame[code_bar_y + bar_height - 2:code_bar_y + bar_height, :] = [50, 50, 50]
+        full_frame[code_bar_y + bar_height - 2 : code_bar_y + bar_height, :] = [
+            50,
+            50,
+            50,
+        ]
 
         # === Bottom bar: Community timeline ===
         comm_bar_y = code_bar_y + bar_height
@@ -841,10 +898,12 @@ def render_clip_video(
             code_idx = int(indices[j]) if j < len(indices) else 0
             comm_id = analysis.communities.get(code_idx, 0)
             color = comm_colors[comm_id]
-            full_frame[comm_bar_y:comm_bar_y + bar_height - 2, x_start:x_end] = color
+            full_frame[comm_bar_y : comm_bar_y + bar_height - 2, x_start:x_end] = color
 
         # Playhead for community bar
-        full_frame[comm_bar_y:comm_bar_y + bar_height - 2, playhead_x:playhead_x + 2] = [255, 255, 255]
+        full_frame[
+            comm_bar_y : comm_bar_y + bar_height - 2, playhead_x : playhead_x + 2
+        ] = [255, 255, 255]
 
         frames.append(full_frame)
 
@@ -912,7 +971,8 @@ def run_per_clip_analysis(
 
     # Generate interactive HTML viewer
     html_path = generate_interactive_html(
-        analyses, num_codes,
+        analyses,
+        num_codes,
         output_dir / "per_clip_analysis.html",
         title="Per-Clip VQ-VAE Analysis",
     )
@@ -920,15 +980,17 @@ def run_per_clip_analysis(
     # Save JSON stats
     analyses_data = []
     for a in analyses:
-        analyses_data.append({
-            "clip_idx": a.clip_idx,
-            "num_frames": a.num_frames,
-            "unique_codes": a.unique_codes,
-            "n_communities": a.n_communities,
-            "modularity": a.modularity,
-            "code_frame_counts": a.code_frame_counts,
-            "communities": a.communities,
-        })
+        analyses_data.append(
+            {
+                "clip_idx": a.clip_idx,
+                "num_frames": a.num_frames,
+                "unique_codes": a.unique_codes,
+                "n_communities": a.n_communities,
+                "modularity": a.modularity,
+                "code_frame_counts": a.code_frame_counts,
+                "communities": a.communities,
+            }
+        )
 
     json_path = output_dir / "per_clip_stats.json"
     with open(json_path, "w") as f:
@@ -943,11 +1005,15 @@ def run_per_clip_analysis(
 
         for i, (result, analysis) in enumerate(zip(clips_to_analyze, analyses)):
             if result.qpos is None:
-                logging.warning(f"  Clip {analysis.clip_idx}: No qpos data, skipping video")
+                logging.warning(
+                    f"  Clip {analysis.clip_idx}: No qpos data, skipping video"
+                )
                 continue
 
             video_path = video_dir / f"clip_{analysis.clip_idx:03d}.mp4"
-            logging.info(f"  Rendering clip {analysis.clip_idx} ({i+1}/{len(analyses)})...")
+            logging.info(
+                f"  Rendering clip {analysis.clip_idx} ({i+1}/{len(analyses)})..."
+            )
 
             try:
                 path = render_clip_video(

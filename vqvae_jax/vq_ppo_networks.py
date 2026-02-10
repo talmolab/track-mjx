@@ -39,9 +39,10 @@ class VQPPOImitationNetworks:
         policy_network: VQ-VAE encoder-quantizer-decoder policy network.
         value_network: Feedforward value function network.
         parametric_action_distribution: Action distribution (NormalTanh).
-        num_codes: Number of codebook entries.
+        num_codes: Number of codebook entries per level.
         latent_dim: Dimension of latent/codebook embeddings.
         stickiness_bias: Bias for temporal code persistence.
+        rvq_depth: Number of RVQ depth levels.
     """
 
     policy_network: networks.FeedForwardNetwork
@@ -50,6 +51,7 @@ class VQPPOImitationNetworks:
     num_codes: int = 512
     latent_dim: int = 60
     stickiness_bias: float = 0.0
+    rvq_depth: int = 1
 
 
 def make_vq_inference_fn(
@@ -95,7 +97,7 @@ def make_vq_inference_fn(
             activations = None
 
             if get_activation:
-                logits, z_e, indices, activations = policy_network.apply(
+                logits, z_e, all_indices, activations = policy_network.apply(
                     *params,
                     observations,
                     key_network,
@@ -103,15 +105,19 @@ def make_vq_inference_fn(
                     get_activation=True,
                 )
             else:
-                logits, z_e, indices = policy_network.apply(
+                logits, z_e, all_indices = policy_network.apply(
                     *params, observations, key_network, deterministic=deterministic
                 )
+
+            # all_indices is tuple of D arrays; primary level for compat
+            indices = all_indices[0] if isinstance(all_indices, tuple) else all_indices
 
             if deterministic:
                 action = jnp.array(parametric_action_distribution.mode(logits))
                 extras = {
                     "z_e": z_e,
                     "indices": indices,
+                    "all_indices": all_indices,
                 }
                 if get_activation:
                     extras["activations"] = activations
@@ -129,6 +135,7 @@ def make_vq_inference_fn(
             return jnp.array(postprocessed_actions), {
                 "z_e": z_e,
                 "indices": indices,
+                "all_indices": all_indices,
                 "log_prob": log_prob,
                 "raw_action": raw_actions,
                 "logits": logits,
@@ -175,17 +182,21 @@ def make_vq_logging_inference_fn(
             params: types.PolicyParams,
             observations: types.Observation,
             key_sample: PRNGKey,
-            prev_indices: jnp.ndarray | None = None,
+            prev_indices: tuple[jnp.ndarray, ...] | jnp.ndarray | None = None,
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
-            logits, z_e, indices = policy_network.apply(
+            logits, z_e, all_indices = policy_network.apply(
                 *params, observations, key_network, prev_indices=prev_indices
             )
+
+            # Primary level indices for backward compat
+            indices = all_indices[0] if isinstance(all_indices, tuple) else all_indices
 
             if deterministic:
                 return jnp.array(parametric_action_distribution.mode(logits)), {
                     "z_e": z_e,
                     "indices": indices,
+                    "all_indices": all_indices,
                 }
 
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
@@ -199,6 +210,7 @@ def make_vq_logging_inference_fn(
             return jnp.array(postprocessed_actions), {
                 "z_e": z_e,
                 "indices": indices,
+                "all_indices": all_indices,
                 "log_prob": log_prob,
                 "raw_action": raw_actions,
                 "logits": logits,
@@ -261,29 +273,27 @@ def make_vq_intention_ppo_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
-    stickiness_bias: float = 0.0,
+    stickiness_bias: float | tuple[float, ...] = 0.0,
+    rvq_depth: int = 1,
+    use_rotation: bool = False,
+    coupled_residual_grad: bool = False,
 ) -> VQPPOImitationNetworks:
     """Create VQ-VAE intention-based PPO networks for imitation learning.
 
-    Creates an encoder-quantizer-decoder policy network where the encoder
-    processes reference trajectory observations, the quantizer maps to
-    discrete codebook entries, and the decoder generates actions conditioned
-    on proprioceptive state and quantized intention.
-
     Args:
-        obs_sizes: Dict mapping observation keys to their sizes, e.g.
-            {"imitation_target": 3716, "proprioception": 226}.
+        obs_sizes: Dict mapping observation keys to their sizes.
         action_size: Action dimension.
         latent_dim: Dimension of VQ-VAE latent/codebook embeddings.
-        num_codes: Number of codebook entries (vocabulary size).
+        num_codes: Number of codebook entries per level.
         commitment_cost: Weight for commitment loss (beta).
         codebook_init_scale: Scale for codebook initialization.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
         value_hidden_layer_sizes: MLP layer sizes for value network.
-        stickiness_bias: Bias for temporal code persistence. When > 0,
-            the quantizer favors selecting the previous timestep's code,
-            creating hysteresis that reduces rapid code switching.
+        stickiness_bias: Per-level stickiness bias. Float or tuple.
+        rvq_depth: Number of RVQ depth levels. 1 = vanilla VQ.
+        use_rotation: If True, use Householder rotation-augmented STE.
+        coupled_residual_grad: If True and use_rotation, couple depth gradients.
 
     Returns:
         VQPPOImitationNetworks containing policy, value, and action distribution.
@@ -302,6 +312,9 @@ def make_vq_intention_ppo_networks(
         commitment_cost=commitment_cost,
         codebook_init_scale=codebook_init_scale,
         stickiness_bias=stickiness_bias,
+        rvq_depth=rvq_depth,
+        use_rotation=use_rotation,
+        coupled_residual_grad=coupled_residual_grad,
     )
 
     value_network = make_vq_dict_value_network(
@@ -316,4 +329,5 @@ def make_vq_intention_ppo_networks(
         num_codes=num_codes,
         latent_dim=latent_dim,
         stickiness_bias=stickiness_bias,
+        rvq_depth=rvq_depth,
     )

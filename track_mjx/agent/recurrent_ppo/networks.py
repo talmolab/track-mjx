@@ -14,8 +14,8 @@ Supported RNN cell types: SimpleCell, GRU, LSTM
 
 Observations are expected as nested dictionaries:
     {
-        'state': {'imitation_target': ..., 'proprioception': ...},
-        'privileged_state': {'imitation_target': ..., 'proprioception': ...}
+        'state': {'task_obs': ..., 'proprioception': ...},
+        'privileged_state': {'task_obs': ..., 'proprioception': ...}
     }
 
 The policy uses 'state' for both encoder and decoder.
@@ -37,6 +37,7 @@ from brax.training.acme import running_statistics
 
 from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
 from track_mjx.agent.observation_utils import (
+    make_dict_value_network,
     normalizer_select,
 )
 
@@ -214,7 +215,7 @@ class RecurrentDecoder(nn.Module):
 class RecurrentIntentionNetwork(nn.Module):
     """VAE-style policy with MLP encoder and RNN decoder.
 
-    The encoder processes obs['state']['imitation_target'] to produce latent
+    The encoder processes obs['state']['task_obs'] to produce latent
     intention distribution parameters (mean, logvar). The decoder uses an RNN
     to process the sampled latent along with obs['state']['proprioception'].
 
@@ -252,7 +253,7 @@ class RecurrentIntentionNetwork(nn.Module):
 
         Args:
             obs: Inner observation dict (already selected and normalized):
-                {'imitation_target': ..., 'proprioception': ...}
+                {'task_obs': ..., 'proprioception': ...}
             hidden: RNN hidden state(s) from previous timestep.
             key: JAX random key for sampling. Either shape [2] (single key
                 for all samples) or [batch_size, 2] (per-sample keys for
@@ -263,7 +264,7 @@ class RecurrentIntentionNetwork(nn.Module):
             Tuple of (action_params, latent_mean, latent_logvar, new_hidden).
         """
         # Encode trajectory observations to latent distribution
-        traj = obs["imitation_target"]
+        traj = obs["task_obs"]
         egocentric_obs = obs["proprioception"]
 
         # Check if observations are actually batched (based on obs shape)
@@ -489,55 +490,6 @@ def make_logging_inference_fn(
     return make_logging_policy
 
 
-def make_dict_value_network(
-    obs_sizes: Mapping[str, int],
-    hidden_layer_sizes: Sequence[int] = (1024,) * 2,
-    value_obs_key: str = "privileged_state",
-) -> networks.FeedForwardNetwork:
-    """Create a value network that accepts nested dictionary observations.
-
-    The value network uses the specified observation key (default: 'privileged_state')
-    which contains both imitation_target and proprioception.
-
-    Args:
-        obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
-        hidden_layer_sizes: MLP layer sizes for value network.
-        value_obs_key: Top-level observation key for value network (default: 'privileged_state').
-
-    Returns:
-        FeedForwardNetwork that accepts nested dict observations.
-    """
-    total_obs_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
-
-    base_value_network = networks.make_value_network(
-        total_obs_size,
-        preprocess_observations_fn=types.identity_observation_preprocessor,
-        hidden_layer_sizes=hidden_layer_sizes,
-    )
-
-    def apply(
-        processor_params: running_statistics.RunningStatisticsState,
-        value_params,
-        obs: Mapping[str, Mapping[str, jnp.ndarray]],
-    ):
-        """Apply value network with nested observation normalization."""
-        value_normalizer = normalizer_select(processor_params, value_obs_key)
-        normalized_inner = running_statistics.normalize(
-            obs[value_obs_key], value_normalizer
-        )
-        # Concatenate imitation_target and proprioception
-        flat_obs = jnp.concatenate(
-            [normalized_inner["imitation_target"], normalized_inner["proprioception"]],
-            axis=-1,
-        )
-        return base_value_network.apply((), value_params, flat_obs)
-
-    return networks.FeedForwardNetwork(
-        init=lambda key: base_value_network.init(key),
-        apply=apply,
-    )
-
-
 def make_recurrent_intention_ppo_networks(
     obs_sizes: Mapping[str, int],
     action_size: int,
@@ -552,13 +504,13 @@ def make_recurrent_intention_ppo_networks(
     """Create recurrent intention-based PPO networks.
 
     Creates an encoder-decoder policy network where the encoder is an MLP
-    that processes obs[policy_obs_key]['imitation_target'], and the decoder is an
+    that processes obs[policy_obs_key]['task_obs'], and the decoder is an
     RNN that processes the latent intention along with obs[policy_obs_key]['proprioception'].
 
     The value network uses obs[value_obs_key].
 
     Args:
-        obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
+        obs_sizes: Dict with 'task_obs' and 'proprioception' sizes.
         action_size: Action dimension.
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
@@ -595,7 +547,9 @@ def make_recurrent_intention_ppo_networks(
     ):
         """Apply policy with observation normalization."""
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
-        normalized_obs = running_statistics.normalize(obs[policy_obs_key], policy_normalizer)
+        normalized_obs = running_statistics.normalize(
+            obs[policy_obs_key], policy_normalizer
+        )
         return policy_module.apply(
             policy_params,
             obs=normalized_obs,
@@ -640,7 +594,7 @@ def make_recurrent_intention_ppo_networks(
         # Validate stored_keys shape if provided
         if stored_keys is not None:
             # Get expected shape from observations [T, B, ...]
-            ref_obs = obs_seq_normalized["imitation_target"]
+            ref_obs = obs_seq_normalized["task_obs"]
             expected_shape = (ref_obs.shape[0], ref_obs.shape[1], 2)
             if stored_keys.shape != expected_shape:
                 raise ValueError(
@@ -696,7 +650,7 @@ def make_recurrent_intention_ppo_networks(
 
     # Create dummy inner observations for initialization (already selected/normalized)
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     dummy_key = jax.random.PRNGKey(0)
@@ -724,6 +678,7 @@ def make_recurrent_intention_ppo_networks(
     value_network = make_dict_value_network(
         obs_sizes=obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
+        value_obs_key=value_obs_key,
     )
 
     return RecurrentPPONetworks(

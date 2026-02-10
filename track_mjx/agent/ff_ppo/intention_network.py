@@ -12,11 +12,11 @@ information into a compact latent space that conditions the policy.
 
 Observations are expected as nested dictionaries:
     {
-        'state': {'imitation_target': ..., 'proprioception': ...},
-        'privileged_state': {'imitation_target': ..., 'proprioception': ...}
+        'state': {'task_obs': ..., 'proprioception': ...},
+        'privileged_state': {'task_obs': ..., 'proprioception': ...}
     }
 
-The encoder uses 'state'['imitation_target'] and decoder uses 'state'['proprioception'].
+The encoder uses 'state'['task_obs'] and decoder uses 'state'['proprioception'].
 """
 
 from collections.abc import Mapping, Sequence
@@ -181,7 +181,7 @@ class IntentionNetwork(nn.Module):
     """Full VAE model combining encoder and decoder for intention-based policy.
 
     The network receives nested observations. The encoder processes
-    obs['state']['imitation_target'] to produce latent intentions, which are
+    obs['state']['task_obs'] to produce latent intentions, which are
     then concatenated with obs['state']['proprioception'] and decoded into
     action distribution parameters.
 
@@ -208,8 +208,8 @@ class IntentionNetwork(nn.Module):
         get_activation: bool = False,
     ):
         # Access inner observations: already normalized and selected for 'state'
-        # obs is the inner dict: {'imitation_target': ..., 'proprioception': ...}
-        traj = obs["imitation_target"]
+        # obs is the inner dict: {'task_obs': ..., 'proprioception': ...}
+        traj = obs["task_obs"]
         egocentric_obs = obs["proprioception"]
 
         # Check if observations are actually batched (based on normalized obs shape)
@@ -275,14 +275,14 @@ def make_intention_policy(
     """Create an intention-based policy network.
 
     Constructs an encoder-decoder VAE policy where the encoder processes
-    obs[policy_obs_key]['imitation_target'] and the decoder generates action
+    obs[policy_obs_key]['task_obs'] and the decoder generates action
     parameters conditioned on latent intentions and obs[policy_obs_key]['proprioception'].
 
     Args:
         action_param_size: Output dimension (typically 2x action_size for
             Gaussian mean and variance).
         latent_size: Dimension of the latent intention space.
-        obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
+        obs_sizes: Dict with 'task_obs' and 'proprioception' sizes.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
         policy_obs_key: Top-level observation key for policy (default: 'state').
@@ -318,7 +318,9 @@ def make_intention_policy(
             get_activation: If True, return activations.
         """
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
-        normalized_obs = running_statistics.normalize(obs[policy_obs_key], policy_normalizer)
+        normalized_obs = running_statistics.normalize(
+            obs[policy_obs_key], policy_normalizer
+        )
         return policy_module.apply(
             policy_params,
             obs=normalized_obs,
@@ -329,7 +331,7 @@ def make_intention_policy(
 
     # Create dummy inner observation for initialization (already selected/normalized)
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     dummy_key = jax.random.PRNGKey(0)

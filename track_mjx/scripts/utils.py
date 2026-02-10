@@ -149,7 +149,7 @@ def _flatten_inner_obs(obs):
 
     Note: For nested dict values, concatenation order follows JAX's tree leaf
     ordering, which is alphabetical by dict key. E.g., {'proprioception': ...,
-    'imitation_target': ...} concatenates as imitation_target || proprioception.
+    'task_obs': ...} concatenates as proprioception || task_obs.
     """
     result = {}
     for key, value in obs.items():

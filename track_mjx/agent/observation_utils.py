@@ -3,8 +3,8 @@
 This module provides utilities for working with nested dictionary observations
 where the structure is:
     {
-        'state': {'imitation_target': ..., 'proprioception': ...},
-        'privileged_state': {'imitation_target': ..., 'proprioception': ...}
+        'state': {'task_obs': ..., 'proprioception': ...},
+        'privileged_state': {'task_obs': ..., 'proprioception': ...}
     }
 
 Each leaf value is a flat 1D array (unbatched) or 2D array (batched).
@@ -12,11 +12,14 @@ Each leaf value is a flat 1D array (unbatched) or 2D array (batched).
 Key components:
 - normalizer_select: Extracts per-key running statistics from a pytree-structured normalizer
 - get_obs_sizes / get_obs_shape: Extract observation metadata from example observations
+- make_dict_value_network: Creates a value network accepting nested dict observations
 """
 
+from collections.abc import Sequence
 from typing import Mapping, Any
 
 import jax.numpy as jnp
+from brax.training import networks, types
 from brax.training.acme import running_statistics, specs
 
 
@@ -53,7 +56,7 @@ def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
 
     Args:
         obs: Example observation dict with structure:
-            {'state': {'imitation_target': array, 'proprioception': array}, ...}
+            {'state': {'task_obs': array, 'proprioception': array}, ...}
             Each leaf array should be flat (1D unbatched or 2D batched).
 
     Returns:
@@ -87,3 +90,53 @@ def get_obs_shape(
         return type(inner_obs)(specs_dict)
 
     return type(obs)({key: get_specs(inner) for key, inner in obs.items()})
+
+
+def make_dict_value_network(
+    obs_sizes: Mapping[str, int],
+    hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    value_obs_key: str = "privileged_state",
+) -> networks.FeedForwardNetwork:
+    """Create a value network that accepts nested dictionary observations.
+
+    The value network uses the specified observation key (default: 'privileged_state')
+    which contains both task_obs and proprioception.
+
+    Args:
+        obs_sizes: Dict with 'task_obs' and 'proprioception' sizes.
+        hidden_layer_sizes: MLP layer sizes for value network.
+        value_obs_key: Top-level observation key for value network (default: 'privileged_state').
+
+    Returns:
+        FeedForwardNetwork that accepts nested dict observations.
+    """
+    total_obs_size = obs_sizes["task_obs"] + obs_sizes["proprioception"]
+
+    # Create underlying value network with flat observations
+    base_value_network = networks.make_value_network(
+        total_obs_size,
+        preprocess_observations_fn=types.identity_observation_preprocessor,
+        hidden_layer_sizes=hidden_layer_sizes,
+    )
+
+    def apply(
+        processor_params: running_statistics.RunningStatisticsState,
+        value_params,
+        obs: Mapping[str, Mapping[str, jnp.ndarray]],
+    ):
+        """Apply value network with nested observation normalization."""
+        value_normalizer = normalizer_select(processor_params, value_obs_key)
+        normalized_inner = running_statistics.normalize(
+            obs[value_obs_key], value_normalizer
+        )
+        # Concatenate task_obs and proprioception
+        flat_obs = jnp.concatenate(
+            [normalized_inner["task_obs"], normalized_inner["proprioception"]],
+            axis=-1,
+        )
+        return base_value_network.apply((), value_params, flat_obs)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: base_value_network.init(key),
+        apply=apply,
+    )

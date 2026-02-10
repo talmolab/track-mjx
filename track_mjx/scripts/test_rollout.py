@@ -31,9 +31,7 @@ def main():
         default="260131_223134_344901",
         help="Checkpoint run ID or path",
     )
-    parser.add_argument(
-        "--clip_idx", type=int, default=0, help="Reference clip index"
-    )
+    parser.add_argument("--clip_idx", type=int, default=0, help="Reference clip index")
     args = parser.parse_args()
 
     # Resolve checkpoint path

@@ -218,7 +218,7 @@ def make_abstract_policy(
     if "obs_sizes" not in network_config:
         raise ValueError(
             "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "Config must have network_config.obs_sizes with 'task_obs' "
             "and 'proprioception' keys."
         )
 
@@ -226,7 +226,7 @@ def make_abstract_policy(
     # Create nested dummy observation structure matching the environment's
     # OrderedDict format so the normalizer pytree is compatible with env obs.
     inner = collections.OrderedDict(
-        imitation_target=jnp.zeros((1, obs_sizes["imitation_target"])),
+        task_obs=jnp.zeros((1, obs_sizes["task_obs"])),
         proprioception=jnp.zeros((1, obs_sizes["proprioception"])),
     )
     dummy_obs = collections.OrderedDict(
@@ -276,7 +276,7 @@ def load_inference_fn(
     if not (hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config):
         raise ValueError(
             "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "Config must have network_config.obs_sizes with 'task_obs' "
             "and 'proprioception' keys."
         )
 
@@ -313,7 +313,7 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
     if not (hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config):
         raise ValueError(
             "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes with 'imitation_target' "
+            "Config must have network_config.obs_sizes with 'task_obs' "
             "and 'proprioception' keys."
         )
     obs_sizes = dict(network_config.obs_sizes)

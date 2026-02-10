@@ -10,8 +10,8 @@ The key components are:
 
 Observations are expected as nested dictionaries:
     {
-        'state': {'imitation_target': ..., 'proprioception': ...},
-        'privileged_state': {'imitation_target': ..., 'proprioception': ...}
+        'state': {'task_obs': ..., 'proprioception': ...},
+        'privileged_state': {'task_obs': ..., 'proprioception': ...}
     }
 
 The policy uses 'state' for both encoder and decoder.
@@ -31,6 +31,7 @@ from jax import numpy as jnp
 from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import intention_network
 from track_mjx.agent.observation_utils import (
+    make_dict_value_network,
     normalizer_select,
 )
 
@@ -228,56 +229,6 @@ def make_logging_inference_fn(
     return make_logging_policy
 
 
-def make_dict_value_network(
-    obs_sizes: Mapping[str, int],
-    hidden_layer_sizes: Sequence[int] = (1024,) * 2,
-    value_obs_key: str = "privileged_state",
-) -> networks.FeedForwardNetwork:
-    """Create a value network that accepts nested dictionary observations.
-
-    The value network uses the specified observation key (default: 'privileged_state')
-    which contains both imitation_target and proprioception.
-
-    Args:
-        obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
-        hidden_layer_sizes: MLP layer sizes for value network.
-        value_obs_key: Top-level observation key for value network (default: 'privileged_state').
-
-    Returns:
-        FeedForwardNetwork that accepts nested dict observations.
-    """
-    total_obs_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
-
-    # Create underlying value network with flat observations
-    base_value_network = networks.make_value_network(
-        total_obs_size,
-        preprocess_observations_fn=types.identity_observation_preprocessor,
-        hidden_layer_sizes=hidden_layer_sizes,
-    )
-
-    def apply(
-        processor_params: running_statistics.RunningStatisticsState,
-        value_params,
-        obs: Mapping[str, Mapping[str, jnp.ndarray]],
-    ):
-        """Apply value network with nested observation normalization."""
-        value_normalizer = normalizer_select(processor_params, value_obs_key)
-        normalized_inner = running_statistics.normalize(
-            obs[value_obs_key], value_normalizer
-        )
-        # Concatenate imitation_target and proprioception
-        flat_obs = jnp.concatenate(
-            [normalized_inner["imitation_target"], normalized_inner["proprioception"]],
-            axis=-1,
-        )
-        return base_value_network.apply((), value_params, flat_obs)
-
-    return networks.FeedForwardNetwork(
-        init=lambda key: base_value_network.init(key),
-        apply=apply,
-    )
-
-
 def make_intention_ppo_networks(
     obs_sizes: Mapping[str, int],
     action_size: int,
@@ -291,13 +242,13 @@ def make_intention_ppo_networks(
     """Create intention-based PPO networks for imitation learning.
 
     Creates an encoder-decoder policy network where the encoder processes
-    obs[policy_obs_key]['imitation_target'] and the decoder generates actions
+    obs[policy_obs_key]['task_obs'] and the decoder generates actions
     conditioned on obs[policy_obs_key]['proprioception'] and latent intention.
 
     The value network uses obs[value_obs_key].
 
     Args:
-        obs_sizes: Dict with 'imitation_target' and 'proprioception' sizes.
+        obs_sizes: Dict with 'task_obs' and 'proprioception' sizes.
         action_size: Action dimension.
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
@@ -377,8 +328,8 @@ def make_decoder_policy_fn(
             "Config must have network_config.obs_sizes."
         )
     obs_sizes = network_config["obs_sizes"]
-    reference_obs_size = obs_sizes["imitation_target"]
-    observation_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
+    reference_obs_size = obs_sizes["task_obs"]
+    observation_size = obs_sizes["task_obs"] + obs_sizes["proprioception"]
 
     action_size = network_config["action_size"]
     intention_latent_size = network_config["intention_size"]

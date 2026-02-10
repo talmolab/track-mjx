@@ -22,8 +22,8 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
 
     Uses the vnl-playground registry to create the environment with reference
     clips, returning nested dictionary observations:
-        {'state': {'imitation_target': ..., 'proprioception': ...},
-         'privileged_state': {'imitation_target': ..., 'proprioception': ...}}
+        {'state': {'task_obs': ..., 'proprioception': ...},
+         'privileged_state': {'task_obs': ..., 'proprioception': ...}}
 
     Args:
         cfg_dict: Configuration dictionary. Can be either:
@@ -56,7 +56,9 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
         n_frames_per_clip=env_cfg_ml.clip_length,
         keep_clips_idx=env_cfg_ml.get("keep_clips_idx", None),
     )
-    return registry.load(env_name, config=env_cfg_ml, clips=reference_clips, flatten_obs=False)
+    return registry.load(
+        env_name, config=env_cfg_ml, clips=reference_clips, flatten_obs=False
+    )
 
 
 def create_rollout_generator(

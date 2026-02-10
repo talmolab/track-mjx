@@ -65,12 +65,13 @@ from .vq_prior_rollout import VQPriorFreelloopEvaluator
 # Imports from parent vqvae_jax directory
 import sys
 from pathlib import Path
+
 _DISTILL_DIR = Path(__file__).parent
 _VQVAE_DIR = _DISTILL_DIR.parent
 if str(_VQVAE_DIR) not in sys.path:
     sys.path.insert(0, str(_VQVAE_DIR))
 
-from vq_intention_network import VQEncoder, Decoder, VectorQuantizer
+from vq_intention_network import VQEncoder, Decoder
 from analysis.checkpoint_utils import (
     load_vq_checkpoint,
     get_codebook,
@@ -861,7 +862,9 @@ def train(
             eval_interval=freeloop_config.get("eval_interval", 1),
             render_best_rollout=freeloop_config.get("render_best_rollout", True),
             render_fps=freeloop_config.get("render_fps", 50),
-            render_camera_name=freeloop_config.get("render_camera_name", "close_profile"),
+            render_camera_name=freeloop_config.get(
+                "render_camera_name", "close_profile"
+            ),
             model_path=model_path,
         )
         logging.info(

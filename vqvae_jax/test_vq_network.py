@@ -11,14 +11,9 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-# Add scratch directory to path for imports
-import sys
-
-sys.path.insert(0, "/home/jovyan/vast/kaiwen/track-mjx/scratch/vqvae_jax")
-
 from vq_intention_network import (
     VQEncoder,
-    VectorQuantizer,
+    ResidualVectorQuantizer,
     Decoder,
     VQIntentionNetwork,
     make_vq_intention_policy,
@@ -77,46 +72,47 @@ class TestVQEncoder:
         assert activations["layer_1"].shape == (4, 128)
 
 
-class TestVectorQuantizer:
-    """Test VectorQuantizer behavior."""
+class TestResidualVectorQuantizer:
+    """Test ResidualVectorQuantizer behavior."""
 
     def test_output_shapes(self):
         """Verify quantizer output shapes."""
-        quantizer = VectorQuantizer(num_codes=512, latent_dim=64)
+        quantizer = ResidualVectorQuantizer(num_codes=512, latent_dim=64)
         key = jax.random.PRNGKey(0)
         z_e = jnp.ones((4, 64))  # [batch, latent_dim]
 
         params = quantizer.init(key, z_e)
-        z_q_st, indices, z_q = quantizer.apply(params, z_e)
+        z_hat_st, all_indices, all_z_q, all_residuals = quantizer.apply(params, z_e)
 
-        assert z_q_st.shape == (4, 64), f"z_q_st shape: {z_q_st.shape}"
-        assert indices.shape == (4,), f"indices shape: {indices.shape}"
-        assert z_q.shape == (4, 64), f"z_q shape: {z_q.shape}"
+        assert z_hat_st.shape == (4, 64), f"z_hat_st shape: {z_hat_st.shape}"
+        assert isinstance(all_indices, tuple)
+        assert all_indices[0].shape == (4,), f"indices shape: {all_indices[0].shape}"
+        assert all_z_q[0].shape == (4, 64), f"z_q shape: {all_z_q[0].shape}"
 
     def test_output_shapes_with_time(self):
         """Verify quantizer handles time dimension."""
-        quantizer = VectorQuantizer(num_codes=512, latent_dim=64)
+        quantizer = ResidualVectorQuantizer(num_codes=512, latent_dim=64)
         key = jax.random.PRNGKey(0)
         z_e = jnp.ones((10, 4, 64))  # [time, batch, latent_dim]
 
         params = quantizer.init(key, z_e)
-        z_q_st, indices, z_q = quantizer.apply(params, z_e)
+        z_hat_st, all_indices, all_z_q, all_residuals = quantizer.apply(params, z_e)
 
-        assert z_q_st.shape == (10, 4, 64)
-        assert indices.shape == (10, 4)
-        assert z_q.shape == (10, 4, 64)
+        assert z_hat_st.shape == (10, 4, 64)
+        assert all_indices[0].shape == (10, 4)
+        assert all_z_q[0].shape == (10, 4, 64)
 
     def test_straight_through_gradient(self):
         """Verify gradients flow through quantization to encoder."""
-        quantizer = VectorQuantizer(num_codes=512, latent_dim=64)
+        quantizer = ResidualVectorQuantizer(num_codes=512, latent_dim=64)
         key = jax.random.PRNGKey(0)
         z_e = jnp.ones((4, 64))
 
         params = quantizer.init(key, z_e)
 
         def loss_fn(z_e_input):
-            z_q_st, _, _ = quantizer.apply(params, z_e_input)
-            return jnp.mean(z_q_st**2)
+            z_hat_st, _, _, _ = quantizer.apply(params, z_e_input)
+            return jnp.mean(z_hat_st**2)
 
         # Gradient should flow through straight-through estimator
         grad = jax.grad(loss_fn)(z_e)
@@ -126,21 +122,21 @@ class TestVectorQuantizer:
 
     def test_codebook_gradient(self):
         """Verify gradients flow to codebook via z_q."""
-        quantizer = VectorQuantizer(num_codes=512, latent_dim=64)
+        quantizer = ResidualVectorQuantizer(num_codes=512, latent_dim=64)
         key = jax.random.PRNGKey(0)
         z_e = jnp.ones((4, 64))
 
         params = quantizer.init(key, z_e)
 
         def loss_fn(params):
-            z_q_st, indices, z_q = quantizer.apply(params, z_e)
-            # Codebook loss: gradient to codebook via z_q
-            codebook = params["params"]["embeddings"]
-            z_q_from_codebook = codebook[indices]
+            z_hat_st, all_indices, all_z_q, _ = quantizer.apply(params, z_e)
+            # Codebook loss: gradient to codebook via z_q (L0)
+            codebook = params["params"]["codebooks_0"]["embeddings"]
+            z_q_from_codebook = codebook[all_indices[0]]
             return jnp.mean((jax.lax.stop_gradient(z_e) - z_q_from_codebook) ** 2)
 
         grad = jax.grad(loss_fn)(params)
-        codebook_grad = grad["params"]["embeddings"]
+        codebook_grad = grad["params"]["codebooks_0"]["embeddings"]
         assert codebook_grad is not None
         assert codebook_grad.shape == (512, 64)
         # Only used codes should have non-zero gradients
@@ -172,55 +168,62 @@ class TestVQIntentionNetwork:
         network = VQIntentionNetwork(
             encoder_layers=[256, 128],
             decoder_layers=[256, 128, 32],
-            reference_obs_size=50,
             latent_dim=64,
             num_codes=512,
         )
         key = jax.random.PRNGKey(0)
-        obs = jnp.ones((4, 100))  # [batch, obs_dim]
+        obs = {
+            "imitation_target": jnp.ones((4, 50)),
+            "proprioception": jnp.ones((4, 50)),
+        }
 
         params = network.init(key, obs, key)
-        action, z_e, indices = network.apply(params, obs, key)
+        action, z_e, all_indices = network.apply(params, obs, key)
 
         assert action.shape == (4, 32), f"action shape: {action.shape}"
         assert z_e.shape == (4, 64), f"z_e shape: {z_e.shape}"
-        assert indices.shape == (4,), f"indices shape: {indices.shape}"
+        assert isinstance(all_indices, tuple)
+        assert all_indices[0].shape == (4,), f"indices shape: {all_indices[0].shape}"
 
     def test_output_shapes_with_time(self):
         """Verify network handles time dimension."""
         network = VQIntentionNetwork(
             encoder_layers=[256, 128],
             decoder_layers=[256, 128, 32],
-            reference_obs_size=50,
             latent_dim=64,
             num_codes=512,
         )
         key = jax.random.PRNGKey(0)
-        obs = jnp.ones((10, 4, 100))  # [time, batch, obs_dim]
+        obs = {
+            "imitation_target": jnp.ones((10, 4, 50)),
+            "proprioception": jnp.ones((10, 4, 50)),
+        }
 
         params = network.init(key, obs, key)
-        action, z_e, indices = network.apply(params, obs, key)
+        action, z_e, all_indices = network.apply(params, obs, key)
 
         assert action.shape == (10, 4, 32)
         assert z_e.shape == (10, 4, 64)
-        assert indices.shape == (10, 4)
+        assert all_indices[0].shape == (10, 4)
 
     def test_end_to_end_gradient(self):
         """Verify gradients flow through entire network."""
         network = VQIntentionNetwork(
             encoder_layers=[256, 128],
             decoder_layers=[256, 128, 32],
-            reference_obs_size=50,
             latent_dim=64,
             num_codes=512,
         )
         key = jax.random.PRNGKey(0)
-        obs = jnp.ones((4, 100))
+        obs = {
+            "imitation_target": jnp.ones((4, 50)),
+            "proprioception": jnp.ones((4, 50)),
+        }
 
         params = network.init(key, obs, key)
 
         def loss_fn(params):
-            action, z_e, indices = network.apply(params, obs, key)
+            action, z_e, all_indices = network.apply(params, obs, key)
             return jnp.mean(action**2)
 
         grad = jax.grad(loss_fn)(params)
@@ -231,7 +234,7 @@ class TestVQIntentionNetwork:
         decoder_grad = grad["params"]["decoder"]
         assert decoder_grad is not None
         # Check codebook gradients exist (via straight-through)
-        codebook_grad = grad["params"]["quantizer"]["embeddings"]
+        codebook_grad = grad["params"]["quantizer"]["codebooks_0"]["embeddings"]
         assert codebook_grad is not None
 
 
@@ -521,11 +524,13 @@ class TestMakeVQIntentionPolicy:
 
     def test_factory_creates_valid_network(self):
         """Verify factory creates working network."""
+        from track_mjx.agent.observation_utils import init_dict_normalizer
+
+        obs_sizes = {"imitation_target": 50, "proprioception": 50}
         policy = make_vq_intention_policy(
             action_param_size=32,
             latent_dim=64,
-            total_obs_size=100,
-            reference_obs_size=50,
+            obs_sizes=obs_sizes,
             encoder_hidden_layer_sizes=(256, 128),
             decoder_hidden_layer_sizes=(256, 128),
             num_codes=512,
@@ -537,13 +542,20 @@ class TestMakeVQIntentionPolicy:
         # Verify init creates params
         assert "params" in params
 
-        # Verify apply works
-        obs = jnp.ones((4, 100))
-        action, z_e, indices = policy.apply(None, params, obs, key)
+        # Create normalizer for dict obs
+        dummy_obs = {
+            "imitation_target": jnp.ones((4, 50)),
+            "proprioception": jnp.ones((4, 50)),
+        }
+        normalizer = init_dict_normalizer(dummy_obs)
+
+        # Verify apply works with dict obs
+        action, z_e, all_indices = policy.apply(normalizer, params, dummy_obs, key)
 
         assert action.shape == (4, 32)
         assert z_e.shape == (4, 64)
-        assert indices.shape == (4,)
+        assert isinstance(all_indices, tuple)
+        assert all_indices[0].shape == (4,)
 
 
 class TestMakeVQIntentionPPONetworks:
@@ -551,9 +563,9 @@ class TestMakeVQIntentionPPONetworks:
 
     def test_factory_creates_all_components(self):
         """Verify factory creates policy, value, and distribution."""
+        obs_sizes = {"imitation_target": 50, "proprioception": 50}
         networks = make_vq_intention_ppo_networks(
-            observation_size=100,
-            reference_obs_size=50,
+            obs_sizes=obs_sizes,
             action_size=8,
             latent_dim=64,
             num_codes=512,
@@ -570,9 +582,11 @@ class TestMakeVQIntentionPPONetworks:
 
     def test_inference_fn_works(self):
         """Verify inference function produces valid outputs."""
+        from track_mjx.agent.observation_utils import init_dict_normalizer
+
+        obs_sizes = {"imitation_target": 50, "proprioception": 50}
         networks = make_vq_intention_ppo_networks(
-            observation_size=100,
-            reference_obs_size=50,
+            obs_sizes=obs_sizes,
             action_size=8,
             latent_dim=64,
             num_codes=512,
@@ -584,15 +598,22 @@ class TestMakeVQIntentionPPONetworks:
         key = jax.random.PRNGKey(0)
         policy_params = networks.policy_network.init(key)
 
-        make_policy = make_vq_inference_fn(networks)
-        policy_fn = make_policy((None, policy_params), deterministic=False)
+        # Create normalizer for dict obs
+        dummy_obs = {
+            "imitation_target": jnp.ones((4, 50)),
+            "proprioception": jnp.ones((4, 50)),
+        }
+        normalizer = init_dict_normalizer(dummy_obs)
 
-        obs = jnp.ones((4, 100))
-        action, extras = policy_fn(obs, key)
+        make_policy = make_vq_inference_fn(networks)
+        policy_fn = make_policy((normalizer, policy_params), deterministic=False)
+
+        action, extras = policy_fn(dummy_obs, key)
 
         assert action.shape == (4, 8)
         assert "z_e" in extras
         assert "indices" in extras
+        assert "all_indices" in extras
         assert "log_prob" in extras
 
 
@@ -603,7 +624,7 @@ def run_tests():
 
     test_classes = [
         TestVQEncoder,
-        TestVectorQuantizer,
+        TestResidualVectorQuantizer,
         TestDecoder,
         TestVQIntentionNetwork,
         TestVQLoss,

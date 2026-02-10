@@ -55,6 +55,7 @@ from analysis.checkpoint_utils import (
     load_vq_inference_fn,
     load_vq_inference_fn_with_stickiness,
     get_codebook,
+    get_all_codebooks,
 )
 
 
@@ -66,6 +67,7 @@ def run_inference(
     seed: int,
     store_z_e: bool = False,
     use_stickiness: bool = False,
+    rvq_depth: int = 1,
 ) -> list[RolloutData]:
     """Run VQ-VAE inference on multiple clips.
 
@@ -80,6 +82,7 @@ def run_inference(
         store_z_e: Whether to store encoder outputs (z_e) before quantization.
         use_stickiness: If True, track previous code indices and pass to
             inference_fn for stickiness bias.
+        rvq_depth: Number of RVQ depth levels for index tracking.
 
     Returns:
         List of RolloutData objects.
@@ -97,6 +100,7 @@ def run_inference(
         state = jit_reset(reset_rng)
 
         code_indices = []
+        rvq_indices_per_depth = [[] for _ in range(rvq_depth)]
         qpos_list = []
         qvel_list = []
         rewards = []
@@ -115,10 +119,23 @@ def run_inference(
             else:
                 action, extras = inference_fn(flat_obs, action_rng)
 
-            # Extract code index and update prev_indices for next step
+            # Extract primary (L0) code index
             code_idx = int(extras["indices"])
             code_indices.append(code_idx)
-            prev_indices = jnp.array(code_idx)  # For next iteration
+
+            # Extract and track per-depth indices for RVQ
+            if "all_indices" in extras:
+                all_indices = extras["all_indices"]
+                # Update prev_indices with full tuple for multi-level stickiness
+                prev_indices = all_indices
+                for d in range(rvq_depth):
+                    if isinstance(all_indices, tuple) and d < len(all_indices):
+                        rvq_indices_per_depth[d].append(int(all_indices[d]))
+                    elif d == 0:
+                        rvq_indices_per_depth[d].append(code_idx)
+            else:
+                prev_indices = jnp.array(code_idx)
+                rvq_indices_per_depth[0].append(code_idx)
 
             # Store z_e if requested
             if store_z_e and "z_e" in extras:
@@ -142,6 +159,13 @@ def run_inference(
 
             state = next_state
 
+        # Build rvq_indices tuple (None for depth=1 to save space)
+        rvq_indices = None
+        if rvq_depth > 1 and rvq_indices_per_depth[0]:
+            rvq_indices = tuple(
+                np.array(rvq_indices_per_depth[d]) for d in range(rvq_depth)
+            )
+
         # Create result
         z_e = np.stack(z_e_list) if z_e_list else None
         result = RolloutData(
@@ -151,6 +175,7 @@ def run_inference(
             qvel=np.stack(qvel_list) if qvel_list else np.zeros((0, 0)),
             rewards=np.array(rewards),
             z_e=z_e,
+            rvq_indices=rvq_indices,
         )
         results.append(result)
 
@@ -186,15 +211,21 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
     policy_params = ckpt["policy"]
     step = ckpt["step"]
 
-    codebook = get_codebook(policy_params)
-    num_codes = codebook.shape[0]
-    latent_dim = codebook.shape[1]
-    logging.info(f"  Codebook: {num_codes} codes, {latent_dim} dims")
+    codebooks = get_all_codebooks(policy_params)
+    num_codes = codebooks[0].shape[0]
+    latent_dim = codebooks[0].shape[1]
+    rvq_depth = len(codebooks)
+    logging.info(
+        f"  Codebook: {num_codes} codes, {latent_dim} dims, {rvq_depth} depth(s)"
+    )
     logging.info(f"  Checkpoint step: {step}")
 
     # Create stickiness-aware inference function if needed
     stickiness_bias = vq_cfg.network_config.get("stickiness_bias", 0.0)
-    use_stickiness = stickiness_bias > 0
+    try:
+        use_stickiness = any(float(b) > 0 for b in stickiness_bias)
+    except TypeError:
+        use_stickiness = float(stickiness_bias) > 0
 
     if use_stickiness:
         logging.info(f"  Stickiness bias: {stickiness_bias} (ENABLED)")
@@ -233,6 +264,7 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
         seed=cfg.inference.seed,
         store_z_e=cfg.inference.store_z_e,
         use_stickiness=use_stickiness,
+        rvq_depth=rvq_depth,
     )
 
     # Prepare metadata
@@ -244,9 +276,10 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
         "seed": cfg.inference.seed,
         "store_z_e": cfg.inference.store_z_e,
         "use_stickiness": use_stickiness,
-        "stickiness_bias": stickiness_bias,
+        "stickiness_bias": str(stickiness_bias),
         "num_codes": num_codes,
         "latent_dim": latent_dim,
+        "rvq_depth": rvq_depth,
         "timestamp": datetime.now().isoformat(),
     }
 

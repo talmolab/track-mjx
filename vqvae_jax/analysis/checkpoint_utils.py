@@ -18,7 +18,7 @@ from omegaconf import DictConfig, OmegaConf
 # Add parent directory to path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from vq_intention_network import VQEncoder, VectorQuantizer, Decoder
+from vq_intention_network import VQEncoder, ResidualVectorQuantizer, Decoder
 from vq_ppo_networks import (
     VQPPOImitationNetworks,
     make_vq_inference_fn,
@@ -110,6 +110,13 @@ def make_vq_ppo_network_from_cfg(
 
     obs_sizes = _get_obs_sizes_from_cfg(cfg)
 
+    # Handle stickiness_bias: OmegaConf ListConfig → tuple
+    stickiness_bias = cfg.network_config.get("stickiness_bias", 0.0)
+    try:
+        stickiness_bias = tuple(float(b) for b in stickiness_bias)
+    except TypeError:
+        stickiness_bias = float(stickiness_bias)
+
     return make_vq_intention_ppo_networks(
         obs_sizes=obs_sizes,
         action_size=cfg.network_config.action_size,
@@ -120,7 +127,12 @@ def make_vq_ppo_network_from_cfg(
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        stickiness_bias=cfg.network_config.get("stickiness_bias", 0.0),
+        stickiness_bias=stickiness_bias,
+        rvq_depth=int(cfg.network_config.get("rvq_depth", 1)),
+        use_rotation=bool(cfg.network_config.get("use_rotation", False)),
+        coupled_residual_grad=bool(
+            cfg.network_config.get("coupled_residual_grad", False)
+        ),
     )
 
 
@@ -360,24 +372,27 @@ def load_vq_inference_fn_with_stickiness(
     def inference_fn(
         observations: jnp.ndarray,
         key: jax.Array,
-        prev_indices: jnp.ndarray | None = None,
+        prev_indices: tuple[jnp.ndarray, ...] | jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, dict[str, Any]]:
         """Run inference with stickiness bias support.
 
         Args:
             observations: Observation (same format as original inference_fn).
             key: JAX random key.
-            prev_indices: Previous timestep's code indices, or None for first step.
+            prev_indices: Previous timestep's code indices, or None for first
+                step. Tuple of D arrays for multi-level RVQ, or single array
+                for depth=1 backward compat.
 
         Returns:
-            Tuple of (action, extras) where extras contains "z_e" and "indices".
+            Tuple of (action, extras) where extras contains "z_e", "indices",
+            and "all_indices".
         """
         key, key_network = jax.random.split(key)
 
         # Apply policy with prev_indices for stickiness
         # Pass observations in same format as original - let policy_network handle it
         if get_activation:
-            logits, z_e, indices, activations = policy_network.apply(
+            logits, z_e, all_indices, activations = policy_network.apply(
                 *policy_params,
                 observations,
                 key_network,
@@ -386,7 +401,7 @@ def load_vq_inference_fn_with_stickiness(
                 prev_indices=prev_indices,
             )
         else:
-            logits, z_e, indices = policy_network.apply(
+            logits, z_e, all_indices = policy_network.apply(
                 *policy_params,
                 observations,
                 key_network,
@@ -394,12 +409,15 @@ def load_vq_inference_fn_with_stickiness(
                 prev_indices=prev_indices,
             )
 
+        # Primary level for backward compat
+        indices = all_indices[0] if isinstance(all_indices, tuple) else all_indices
+
         if deterministic:
             action = jnp.array(parametric_action_distribution.mode(logits))
         else:
             action = parametric_action_distribution.sample(logits, key)
 
-        extras = {"z_e": z_e, "indices": indices}
+        extras = {"z_e": z_e, "indices": indices, "all_indices": all_indices}
         if get_activation:
             extras["activations"] = activations
 

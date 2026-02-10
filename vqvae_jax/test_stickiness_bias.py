@@ -13,14 +13,14 @@ import jax.numpy as jnp
 import pytest
 
 from vq_intention_network import (
-    VectorQuantizer,
+    ResidualVectorQuantizer,
     VQIntentionNetwork,
     make_vq_intention_policy,
 )
 
 
-class TestVectorQuantizerBias:
-    """Tests for VectorQuantizer with stickiness bias."""
+class TestResidualVectorQuantizerBias:
+    """Tests for ResidualVectorQuantizer with stickiness bias."""
 
     def test_no_bias_same_as_original(self):
         """With bias=0, results should match original behavior."""
@@ -29,7 +29,7 @@ class TestVectorQuantizerBias:
         latent_dim = 4
 
         # Create quantizer with no bias
-        quantizer = VectorQuantizer(
+        quantizer = ResidualVectorQuantizer(
             num_codes=num_codes,
             latent_dim=latent_dim,
             stickiness_bias=0.0,
@@ -42,18 +42,18 @@ class TestVectorQuantizerBias:
         z_e = jax.random.normal(key, (10, latent_dim))
 
         # Without prev_indices
-        z_q_st_1, indices_1, z_q_1 = quantizer.apply(variables, z_e)
+        z_hat_st_1, all_indices_1, all_z_q_1, _ = quantizer.apply(variables, z_e)
 
         # With prev_indices but bias=0, should be same
-        prev_indices = jnp.zeros(10, dtype=jnp.int32)
-        z_q_st_2, indices_2, z_q_2 = quantizer.apply(
+        prev_indices = (jnp.zeros(10, dtype=jnp.int32),)
+        z_hat_st_2, all_indices_2, all_z_q_2, _ = quantizer.apply(
             variables, z_e, prev_indices=prev_indices
         )
 
         # Results should be identical
-        assert jnp.allclose(z_q_st_1, z_q_st_2)
-        assert jnp.array_equal(indices_1, indices_2)
-        assert jnp.allclose(z_q_1, z_q_2)
+        assert jnp.allclose(z_hat_st_1, z_hat_st_2)
+        assert jnp.array_equal(all_indices_1[0], all_indices_2[0])
+        assert jnp.allclose(all_z_q_1[0], all_z_q_2[0])
 
     def test_bias_favors_previous_code(self):
         """With bias>0, the previous code should be favored."""
@@ -62,7 +62,7 @@ class TestVectorQuantizerBias:
         latent_dim = 4
 
         # Create quantizer with high bias
-        quantizer = VectorQuantizer(
+        quantizer = ResidualVectorQuantizer(
             num_codes=num_codes,
             latent_dim=latent_dim,
             stickiness_bias=10.0,  # High bias
@@ -71,8 +71,8 @@ class TestVectorQuantizerBias:
         # Initialize
         variables = quantizer.init(key, jnp.zeros((1, latent_dim)))
 
-        # Get codebook
-        codebook = variables["params"]["embeddings"]
+        # Get codebook (new path: codebooks_0/embeddings)
+        codebook = variables["params"]["codebooks_0"]["embeddings"]
 
         # Create z_e that is equidistant between code 0 and code 1
         # but slightly closer to code 1
@@ -82,18 +82,20 @@ class TestVectorQuantizerBias:
         z_e = z_e[None, :]  # Add batch dim
 
         # Without bias, should pick code 1 (closer)
-        _, indices_no_bias, _ = quantizer.apply(variables, z_e, prev_indices=None)
+        _, all_indices_no_bias, _, _ = quantizer.apply(
+            variables, z_e, prev_indices=None
+        )
 
         # With prev_indices=0 and high bias, should pick code 0
-        prev_indices = jnp.array([0])
-        _, indices_with_bias, _ = quantizer.apply(
+        prev_indices = (jnp.array([0]),)
+        _, all_indices_with_bias, _, _ = quantizer.apply(
             variables, z_e, prev_indices=prev_indices
         )
 
         # Note: This test depends on the specific codebook initialization
         # The key point is that bias changes the selection
         # Due to randomness in initialization, we just verify the mechanism works
-        assert indices_with_bias.shape == (1,)
+        assert all_indices_with_bias[0].shape == (1,)
 
     def test_bias_reduces_transition_rate(self):
         """Bias should reduce the rate of code transitions over a sequence."""
@@ -103,12 +105,12 @@ class TestVectorQuantizerBias:
         seq_len = 100
 
         # Create quantizers with and without bias
-        quantizer_no_bias = VectorQuantizer(
+        quantizer_no_bias = ResidualVectorQuantizer(
             num_codes=num_codes,
             latent_dim=latent_dim,
             stickiness_bias=0.0,
         )
-        quantizer_with_bias = VectorQuantizer(
+        quantizer_with_bias = ResidualVectorQuantizer(
             num_codes=num_codes,
             latent_dim=latent_dim,
             stickiness_bias=2.0,
@@ -121,8 +123,9 @@ class TestVectorQuantizerBias:
         key, subkey = jax.random.split(key)
         z_e_sequence = jax.random.normal(subkey, (seq_len, latent_dim))
 
-        # Process without bias
-        _, indices_no_bias, _ = quantizer_no_bias.apply(variables, z_e_sequence)
+        # Process without bias — returns (z_hat_st, all_indices, all_z_q, all_residuals)
+        _, all_indices_no_bias, _, _ = quantizer_no_bias.apply(variables, z_e_sequence)
+        indices_no_bias = all_indices_no_bias[0]  # L0 indices
         transitions_no_bias = jnp.sum(indices_no_bias[1:] != indices_no_bias[:-1])
 
         # Process with bias (sequential)
@@ -130,16 +133,14 @@ class TestVectorQuantizerBias:
         prev_idx = None
         for t in range(seq_len):
             z_e_t = z_e_sequence[t : t + 1]
-            _, idx, _ = quantizer_with_bias.apply(
+            _, all_idx, _, _ = quantizer_with_bias.apply(
                 variables, z_e_t, prev_indices=prev_idx
             )
-            indices_with_bias.append(idx[0])
-            prev_idx = idx
+            indices_with_bias.append(all_idx[0][0])
+            prev_idx = all_idx  # Pass full tuple for next step
 
         indices_with_bias = jnp.array(indices_with_bias)
-        transitions_with_bias = jnp.sum(
-            indices_with_bias[1:] != indices_with_bias[:-1]
-        )
+        transitions_with_bias = jnp.sum(indices_with_bias[1:] != indices_with_bias[:-1])
 
         # Bias should reduce transitions
         print(f"Transitions without bias: {transitions_no_bias}")
@@ -184,18 +185,19 @@ class TestVQIntentionNetworkTemporal:
             ),
         }
 
-        # Standard forward (parallel)
-        action_std, z_e_std, indices_std = network.apply(variables, obs, key)
+        # Standard forward (parallel) — returns (action, z_e, all_indices_tuple)
+        action_std, z_e_std, all_indices_std = network.apply(variables, obs, key)
 
         # Temporal forward (should be same with bias=0)
-        action_temp, z_e_temp, indices_temp = network.apply(
+        action_temp, z_e_temp, all_indices_temp = network.apply(
             variables, obs, method=network.forward_temporal
         )
 
         # Should be identical
         assert jnp.allclose(action_std, action_temp, atol=1e-5)
         assert jnp.allclose(z_e_std, z_e_temp, atol=1e-5)
-        assert jnp.array_equal(indices_std, indices_temp)
+        for d in range(len(all_indices_std)):
+            assert jnp.array_equal(all_indices_std[d], all_indices_temp[d])
 
     def test_forward_temporal_with_bias_different(self):
         """With bias>0, forward_temporal should produce different (stickier) codes."""
@@ -231,15 +233,15 @@ class TestVQIntentionNetworkTemporal:
             ),
         }
 
-        # Temporal forward with bias
-        _, _, indices_temp = network.apply(
+        # Temporal forward with bias — returns (action, z_e, all_indices_tuple)
+        _, _, all_indices_temp = network.apply(
             variables, obs, method=network.forward_temporal
         )
 
-        # Check that codes are sticky (fewer transitions)
-        # Count transitions for each batch element
+        # Check that codes are sticky (fewer transitions) using L0 indices
+        indices_L0 = all_indices_temp[0]
         for b in range(B):
-            transitions = jnp.sum(indices_temp[1:, b] != indices_temp[:-1, b])
+            transitions = jnp.sum(indices_L0[1:, b] != indices_L0[:-1, b])
             print(f"Batch {b}: {transitions} transitions out of {T-1} possible")
 
     def test_episode_mask_resets_bias(self):
@@ -280,14 +282,15 @@ class TestVQIntentionNetworkTemporal:
         episode_mask = jnp.ones((T, B))
         episode_mask = episode_mask.at[5, :].set(0)  # Reset at t=5
 
-        # Temporal forward with episode mask
-        _, _, indices = network.apply(
+        # Temporal forward with episode mask — returns (action, z_e, all_indices_tuple)
+        _, _, all_indices = network.apply(
             variables, obs, episode_mask=episode_mask, method=network.forward_temporal
         )
 
         # The code at t=5 should be selected without bias from t=4
         # (because mask=0 means episode boundary)
-        print(f"Indices: {indices.flatten()}")
+        indices_L0 = all_indices[0]
+        print(f"Indices: {indices_L0.flatten()}")
         print(f"Episode mask: {episode_mask.flatten()}")
 
 
@@ -331,28 +334,22 @@ class TestMakeVQIntentionPolicy:
         # Initialize
         params = policy.init(key)
 
-        # Create dummy normalizer params (empty for testing)
-        from brax.training.acme import running_statistics
+        # Create normalizer for dict obs
+        from track_mjx.agent.observation_utils import init_dict_normalizer
 
-        dummy_normalizer = running_statistics.init_state(
-            jax.tree_map(
-                lambda size: jnp.zeros((1, size)),
-                {"imitation_target": 16, "proprioception": 8},
-            )
-        )
-
-        # Create test observation
         obs = {
             "imitation_target": jax.random.normal(key, (1, 16)),
             "proprioception": jax.random.normal(key, (1, 8)),
         }
+        normalizer = init_dict_normalizer(obs)
 
-        # Standard apply should work
-        action, z_e, indices = policy.apply(dummy_normalizer, params, obs, key)
+        # Standard apply should work — returns (action, z_e, all_indices_tuple)
+        action, z_e, all_indices = policy.apply(normalizer, params, obs, key)
 
         assert action.shape == (1, 10)
         assert z_e.shape == (1, 8)
-        assert indices.shape == (1,)
+        assert isinstance(all_indices, tuple)
+        assert all_indices[0].shape == (1,)
 
 
 if __name__ == "__main__":

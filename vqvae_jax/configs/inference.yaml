@@ -8,7 +8,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260206_063100_814357/ #model_checkpoints/260206_062957_881128/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260209_232426_939844/
   step: null  # Checkpoint step (null = latest)
 
 # =============================================================================
@@ -25,7 +25,7 @@ inference:
 # Output Configuration
 # =============================================================================
 output:
-  path: ./outputs/rollout_32.h5  # Path to save H5 output file
+  path: ./outputs/rollout_rvq_32.h5  # Path to save H5 output file
 
 # =============================================================================
 # Environment Configuration (inherited from training config)

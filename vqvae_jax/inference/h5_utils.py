@@ -19,11 +19,13 @@ class RolloutData:
 
     Attributes:
         clip_idx: Index of the reference clip.
-        code_indices: Discrete code indices per frame, shape [T].
+        code_indices: Discrete code indices per frame, shape [T] (primary L0).
         qpos: Generalized positions per frame, shape [T, nq].
         qvel: Generalized velocities per frame, shape [T, nv].
         rewards: Reward values per frame, shape [T].
         z_e: Optional encoder outputs before quantization, shape [T, latent_dim].
+        rvq_indices: Optional per-depth indices for RVQ, tuple of D arrays
+            each shape [T]. None for depth=1 models.
     """
 
     clip_idx: int
@@ -32,6 +34,7 @@ class RolloutData:
     qvel: np.ndarray
     rewards: np.ndarray
     z_e: np.ndarray | None = None
+    rvq_indices: tuple[np.ndarray, ...] | None = None
 
 
 def save_rollout_h5(
@@ -48,6 +51,8 @@ def save_rollout_h5(
         /clip_0/qvel: [T, nv]
         /clip_0/rewards: [T]
         /clip_0/z_e: [T, latent_dim] (optional)
+        /clip_0/rvq_indices/depth_0: [T] (optional, for RVQ depth>1)
+        /clip_0/rvq_indices/depth_1: [T] (optional)
         /clip_1/...
         ...
 
@@ -111,6 +116,16 @@ def save_rollout_h5(
                     compression_opts=4,
                 )
 
+            if rollout.rvq_indices is not None:
+                rvq_group = group.create_group("rvq_indices")
+                for d, idx_d in enumerate(rollout.rvq_indices):
+                    rvq_group.create_dataset(
+                        f"depth_{d}",
+                        data=idx_d,
+                        compression="gzip",
+                        compression_opts=4,
+                    )
+
 
 def load_rollout_h5(
     path: str | Path,
@@ -161,6 +176,17 @@ def load_rollout_h5(
             if "z_e" in group:
                 z_e = np.array(group["z_e"])
 
+            rvq_indices = None
+            if "rvq_indices" in group:
+                rvq_group = group["rvq_indices"]
+                depth_arrays = []
+                d = 0
+                while f"depth_{d}" in rvq_group:
+                    depth_arrays.append(np.array(rvq_group[f"depth_{d}"]))
+                    d += 1
+                if depth_arrays:
+                    rvq_indices = tuple(depth_arrays)
+
             rollout = RolloutData(
                 clip_idx=int(clip_idx),
                 code_indices=np.array(group["code_indices"]),
@@ -168,6 +194,7 @@ def load_rollout_h5(
                 qvel=np.array(group["qvel"]),
                 rewards=np.array(group["rewards"]),
                 z_e=z_e,
+                rvq_indices=rvq_indices,
             )
             rollouts.append(rollout)
 

@@ -54,6 +54,7 @@ def _get_package_commit(package_name: str) -> str:
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
+from vnl_playground.tasks.stick import consts as stick_consts
 
 # Project root directory (track-mjx/)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -95,18 +96,21 @@ def prepare_config(
     """
     walker_name = cfg.walker_config.walker_name
 
+    # Check if reference_data_path is already specified in config
+    config_has_reference_path = cfg.env_config.get("reference_data_path") is not None
+
     if walker_name == "rodent":
         logging.info("Using rodent walker")
         walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
         arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path(
+        default_reference_path = _resolve_data_path(
             "data/rodent/rodent_reference_clips.h5"
         )
     elif walker_name == "fruitfly":
         logging.info("Using fruitfly walker")
         walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
         arena_xml_path = str(fruitfly_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path("data/fruitfly/fly_reference_clip.h5")
+        default_reference_path = _resolve_data_path("data/fruitfly/fly_reference_clip.h5")
     elif walker_name == "celegans":
         logging.info("Using celegans walker")
         raise NotImplementedError("Celegans walker not implemented yet.")
@@ -118,9 +122,19 @@ def prepare_config(
         )
     elif walker_name == "stickbug":
         logging.info("Using stickbug walker")
-        raise NotImplementedError("Stickbug walker not implemented yet.")
+        walker_xml_path = str(stick_consts.STICK_XML_PATH)
+        arena_xml_path = str(stick_consts.ARENA_XML_PATH)
+        default_reference_path = str(stick_consts.IMITATION_REFERENCE_PATH)
     else:
         raise ValueError(f"Unknown walker name: {walker_name}")
+
+    # Use config-specified path if provided, otherwise use default
+    if config_has_reference_path:
+        reference_data_path = cfg.env_config.reference_data_path
+        logging.info(f"Using config-specified reference_data_path: {reference_data_path}")
+    else:
+        reference_data_path = default_reference_path
+        logging.info(f"Using default reference_data_path: {reference_data_path}")
 
     # Update env_config with resolved paths and walker settings
     OmegaConf.set_struct(cfg.env_config, False)

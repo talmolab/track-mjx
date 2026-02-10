@@ -1,0 +1,350 @@
+# =============================================================================
+# Stick Bug (Sungaya inexpectata) Imitation VNL Configuration
+# =============================================================================
+# Configuration for training a Virtual Neuroscience Lab (VNL) stick bug tracking
+# agent using PPO. This config trains on the full set of motion capture clips.
+#
+# Exp scale conversion note:
+# The old formula (track-mjx reward.py) used: weight * exp(-exp_scale * ||error||^2)
+#   where higher exp_scale = sharper penalty (multiplier on squared error).
+# The new formula (vnl-playground) uses: weight * exp(-(||error|| / exp_scale)^2 / 2)
+#   where exp_scale acts as a tolerance/std (higher = more lenient).
+# Conversion: new_scale = 1 / sqrt(2 * old_scale)
+#
+# Values below use the new (inverse) formula, converted from the old rodent
+# defaults which were validated on the stick bug scale.
+# =============================================================================
+
+# =============================================================================
+# VNL Environment Configuration
+# =============================================================================
+# Settings for the MuJoCo simulation environment and imitation learning task.
+env_config:
+  # Environment name for registry lookup
+  env_name: "StickImitation"
+
+  # MuJoCo backend: "warp" for Warp-accelerated simulation
+  mujoco_impl: "warp"
+
+  # ---------------------------------------------------------------------------
+  # Physics Solver Settings
+  # ---------------------------------------------------------------------------
+  # Newton solver provides better accuracy for contact-rich scenarios
+  solver: "newton"
+  iterations: 5           # Max solver iterations per step
+  ls_iterations: 5        # Line search iterations for Newton solver
+  naconmax: 15000           # Max contacts
+  njmax: 400              # Max constraint rows (stick needs ~148 at contact)
+  noslip_iterations: 0    # No-slip solver iterations (0 = disabled)
+
+  # ---------------------------------------------------------------------------
+  # Timing Configuration
+  # ---------------------------------------------------------------------------
+  sim_dt: 0.002           # Simulation timestep (500 Hz physics)
+  ctrl_dt: 0.01           # Control timestep (100 Hz policy, = sim_dt * 5)
+  mocap_hz: 50            # Motion capture data frequency
+
+  # ---------------------------------------------------------------------------
+  # Reference Clip Settings
+  # ---------------------------------------------------------------------------
+  # Controls how motion capture reference clips are sampled during training
+  # 16875 total frames / 225 frames per clip = 75 clips
+  clip_length: 225                # Frames per clip
+  clip_set: "all"                 # Which clips to use: "all", "train", or "test"
+  reference_length: 5             # Future reference frames provided to policy
+  start_frame_range: [0, 44]      # Random episode start within [min, max] frames
+  qvel_init: "zeros"              # Initial velocity: "zeros" or "reference"
+  keep_clips_idx: null            # Specific clip indices to use (null = all)
+  reference_data_path: null       # Resolved by config/utils.py from walker_name
+
+  # ---------------------------------------------------------------------------
+  # Domain Randomization Settings
+  # ---------------------------------------------------------------------------
+  domain_randomization:
+    use_domain_randomization: false     # Start without DR, enable after baseline
+    floor_friction: [0.4, 1.0]
+    static_friction_scale: [0.9, 1.1]
+    armature_scale: [1.0, 1.05]
+    com_jitter: [-0.05, 0.05]
+    link_mass_scale: [0.9, 1.1]
+    torso_mass_jitter: [-0.02, 0.02]
+    qpos0_jitter: [-0.05, 0.05]
+
+  # ---------------------------------------------------------------------------
+  # Reward Terms
+  # ---------------------------------------------------------------------------
+  # Imitation rewards use the new formula: weight * exp(-(error / exp_scale)^2 / 2)
+  # exp_scale is a tolerance parameter: larger = more lenient, smaller = sharper
+  #
+  # Conversion from old track-mjx values (old_s → new_s = 1/sqrt(2*old_s)):
+  #   pos:     400   → 0.035
+  #   quat:    4.0   → 20.0  (also converts rad → deg in new formula)
+  #   joints:  0.25  → 1.41
+  #   angvel:  0.5   → 1.0
+  #   bodies:  8.0   → 0.25
+  #   endeff:  500   → 0.032
+  reward_terms:
+    # Root (reference_base) position tracking
+    root_pos:
+      exp_scale: 0.035
+      weight: 1.0
+
+    # Root orientation tracking (quaternion distance, exp_scale in degrees)
+    root_quat:
+      exp_scale: 20.0
+      weight: 1.0
+
+    # Joint angle tracking
+    joints:
+      exp_scale: 1.41
+      weight: 1.0
+
+    # Joint velocity tracking
+    joints_vel:
+      exp_scale: 1.0
+      weight: 0.0             # Disabled by default, enable for finer tracking
+
+    # Body position tracking
+    bodies_pos:
+      exp_scale: 0.25
+      weight: 0.0             # Disabled by default, enable for full-body tracking
+
+    # End effector (6 claw tips) position tracking
+    end_eff:
+      exp_scale: 0.032
+      weight: 1.0
+
+    # -------------------------------------------------------------------------
+    # Regularization Costs
+    # -------------------------------------------------------------------------
+    # Healthy torso height range (stick bug is mm-scale after rescaling)
+    torso_z_range:
+      healthy_z_range: [0.0, 0.1]
+      weight: 1.0
+
+    # Penalize large control signals
+    control_cost:
+      weight: 0.02
+
+    # Penalize jerky control changes between steps
+    control_diff_cost:
+      weight: 0.02
+
+    # Penalize energy consumption (capped at max_value)
+    energy_cost:
+      max_value: 50.0
+      weight: 0.01
+
+  # ---------------------------------------------------------------------------
+  # Termination Criteria
+  # ---------------------------------------------------------------------------
+  # Episode ends early if any of these conditions are met
+  termination_criteria:
+    # Root position deviates too far from reference
+    root_too_far:
+      max_distance: 0.05       # meters (tight for mm-scale insect)
+
+    # Root orientation deviates too much from reference
+    root_too_rotated:
+      max_degrees: 60.0
+
+    # Overall pose error exceeds threshold
+    pose_error:
+      max_l2_error: 4.5
+
+    # Terminate on NaN detection (numerical instability)
+    nan_termination: {}
+
+# =============================================================================
+# Rendering Configuration
+# =============================================================================
+# Settings for video rendering during evaluation
+render_config:
+  render_camera_name: close_profile
+  render_fps: 50                     # Output video framerate
+  render_interval: 1                 # Render every N eval episodes
+
+# =============================================================================
+# Network Architecture
+# =============================================================================
+# Intention-based architecture with VAE-style latent encoding
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [512, 512, 256, 256]    # Reference trajectory encoder
+  decoder_layer_sizes: [512, 512, 256, 256]    # Policy decoder
+  critic_layer_sizes: [512, 512, 512, 512]     # Value function
+  intention_size: 32                  # Latent intention vector dimension
+  kl_schedule: true                   # Anneal KL divergence weight over training
+  latent_kl_weight: 1e-1              # Weight for KL divergence loss
+  latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss
+
+# =============================================================================
+# Training Setup
+# =============================================================================
+train_setup:
+  agent_name: stickbug
+  run_name: stick_imitation
+
+  # Checkpointing and restoration
+  checkpoint_to_restore: null         # Path to restore model weights
+  restore_from_run_state: null        # Path to restore full training state
+
+  # Data splitting
+  train_test_split_info: null         # Pre-computed split (null = random)
+  train_subset_ratio: 0.8             # Fraction of clips for training
+
+  # Evaluation and resets
+  eval_every: 10_000_000              # Eval frequency (env steps)
+  episode_length: 350                 # Max steps per episode (~clip_length * ctrl_dt/mocap_dt)
+  reset_every: 20_000_000             # JIT recompilation frequency (memory mgmt)
+
+  # ---------------------------------------------------------------------------
+  # PPO Training Hyperparameters
+  # ---------------------------------------------------------------------------
+  train_config:
+    num_envs: 1024                    # Parallel environments
+    num_timesteps: 2_000_000_000      # Total training steps
+    batch_size: 1024                  # Samples per gradient update
+    num_minibatches: 16               # Minibatches per epoch
+    num_updates_per_batch: 4          # Epochs per PPO update
+    learning_rate: 1e-4               # Adam learning rate
+    grad_clip_threshold: 20.0         # Gradient clipping threshold
+    clipping_epsilon: 0.2             # PPO clip range
+    discounting: 0.95                 # Discount factor (gamma)
+    action_repeat: 1                  # Actions repeated per step
+    entropy_cost: 1e-2                # Entropy bonus coefficient
+    vf_loss_coefficient: 0.25         # Value function loss coefficient
+    reward_scaling: 1                 # Reward multiplier
+    normalize_observations: true      # Running mean/std normalization
+    unroll_length: 20                 # Rollout length before update
+    seed: 0                           # Random seed
+    get_activation: false             # Store network activations (debugging)
+    deterministic_eval: true          # Use mean action during eval
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+# Weights & Biases logging settings
+logging_config:
+  project_name: mimic-mjx
+  group_name: stickbug
+  exp_name: stick-imitation-v1
+  clip_id: -1                         # Clip ID for single-clip runs (-1 = all)
+  model_path: model_checkpoints/
+
+# =============================================================================
+# Walker Configuration
+# =============================================================================
+# Stick bug morphology and actuator settings
+walker_config:
+  walker_name: "stickbug"
+  torque_actuators: false             # Position control (stick bug default)
+  rescale_factor: 1.5                 # Must match H5 SCALE_FACTOR
+
+  # 38 joint names for tracking (8 thorax + 30 leg, order matches reference data)
+  joint_names:
+    # Thorax/abdomen
+    - 07-a2-l
+    - 08-a3-l
+    - 09-a4-l
+    - 10-a5-l
+    - 11-a6-l
+    - 12-a7-l
+    - 13-a8-l
+    - 14-a9-l
+    # Hind left leg
+    - 26-h-l-coxa-l
+    - 27-h-l-femur-l
+    - 28-h-l-tibia-l
+    - 29-h-l-tarsus-l
+    - 30-h-l-claws-l
+    # Hind right leg
+    - 42-h-r-coxa-l
+    - 43-h-r-femur-l
+    - 44-h-r-tibia-l
+    - 45-h-r-tarsus-l
+    - 46-h-r-claws-l
+    # Middle left leg
+    - 21-m-l-coxa-l
+    - 22-m-l-femur-l
+    - 23-m-l-tibia-l
+    - 24-m-l-tarsus-l
+    - 25-m-l-claws-l
+    # Middle right leg
+    - 37-m-r-coxa-l
+    - 38-m-r-femur-l
+    - 39-m-r-tibia-l
+    - 40-m-r-tarsus-l
+    - 41-m-r-claws-l
+    # Front left leg
+    - 16-f-l-coxa-l
+    - 17-f-l-femur-l
+    - 18-f-l-tibia-l
+    - 19-f-l-tarsus-l
+    - 20-f-l-claws-l
+    # Front right leg
+    - 31-f-r-coxa-l
+    - 32-f-r-femur-l
+    - 33-f-r-tibia-l
+    - 35-f-r-tarsus-l
+    - 36-f-r-claws-l
+
+  # Body segment names for tracking (42 bodies)
+  body_names:
+    - reference_base
+    - 04-t1-l
+    - 05-t2-l
+    - 06-t3-l
+    - 07-a2-l
+    - 08-a3-l
+    - 09-a4-l
+    - 10-a5-l
+    - 11-a6-l
+    - 12-a7-l
+    - 13-a8-l
+    - 14-a9-l
+    # Hind left leg
+    - 26-h-l-coxa-l
+    - 27-h-l-femur-l
+    - 28-h-l-tibia-l
+    - 29-h-l-tarsus-l
+    - 30-h-l-claws-l
+    # Hind right leg
+    - 42-h-r-coxa-l
+    - 43-h-r-femur-l
+    - 44-h-r-tibia-l
+    - 45-h-r-tarsus-l
+    - 46-h-r-claws-l
+    # Middle left leg
+    - 21-m-l-coxa-l
+    - 22-m-l-femur-l
+    - 23-m-l-tibia-l
+    - 24-m-l-tarsus-l
+    - 25-m-l-claws-l
+    # Middle right leg
+    - 37-m-r-coxa-l
+    - 38-m-r-femur-l
+    - 39-m-r-tibia-l
+    - 40-m-r-tarsus-l
+    - 41-m-r-claws-l
+    # Front left leg
+    - 16-f-l-coxa-l
+    - 17-f-l-femur-l
+    - 18-f-l-tibia-l
+    - 19-f-l-tarsus-l
+    - 20-f-l-claws-l
+    # Front right leg
+    - 31-f-r-coxa-l
+    - 32-f-r-femur-l
+    - 33-f-r-tibia-l
+    - 35-f-r-tarsus-l
+    - 36-f-r-claws-l
+
+  # End effector names for tracking (6 claw tips, one per leg)
+  end_eff_names:
+    - 20-f-l-claws-l
+    - 36-f-r-claws-l
+    - 25-m-l-claws-l
+    - 41-m-r-claws-l
+    - 30-h-l-claws-l
+    - 46-h-r-claws-l

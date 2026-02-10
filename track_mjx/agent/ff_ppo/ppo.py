@@ -16,7 +16,7 @@
 
 This module implements PPO training with support for:
 - Intention-based policy networks (VAE-style latent encoding)
-- Observation normalization with optional frozen proprioceptive components
+- Observation normalization
 - Checkpoint saving/restoration with preemption recovery
 - Train/test split evaluation
 - KL divergence scheduling for VAE training stability
@@ -41,14 +41,11 @@ from brax.training import acting, pmap, types
 from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
-from optax.transforms import freeze
-
-from track_mjx.agent import checkpointing, gradients, network_masks
+from track_mjx.agent import checkpointing, gradients
 from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
     get_obs_sizes,
     get_obs_shape,
-    normalizer_select,
 )
 
 # Type aliases
@@ -218,7 +215,6 @@ def train(
     get_activation: bool = True,
     use_kl_schedule: bool = True,
     kl_ramp_up_frac: float = 0.25,
-    freeze_decoder: bool = False,
     checkpoint_callback: Callable[[int], None] | None = None,
     grad_clip_threshold: float = 20.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
@@ -424,34 +420,6 @@ def train(
         else:
             normalizer_params = training_state.normalizer_params
 
-        # If decoder is frozen, preserve the proprioceptive normalizer params
-        # The normalizer has pytree structure: mean['state']['proprioception'], etc.
-        if frozen_proprioceptive_normalizer_params is not None:
-            # Update the 'state' proprioception stats with frozen values
-            new_mean = normalizer_params.mean.copy()
-            new_mean["state"] = normalizer_params.mean["state"].copy()
-            new_mean["state"][
-                "proprioception"
-            ] = frozen_proprioceptive_normalizer_params.mean
-            new_std = normalizer_params.std.copy()
-            new_std["state"] = normalizer_params.std["state"].copy()
-            new_std["state"][
-                "proprioception"
-            ] = frozen_proprioceptive_normalizer_params.std
-            new_summed_var = normalizer_params.summed_variance.copy()
-            new_summed_var["state"] = normalizer_params.summed_variance["state"].copy()
-            new_summed_var["state"][
-                "proprioception"
-            ] = frozen_proprioceptive_normalizer_params.summed_variance
-            normalizer_params = running_statistics.RunningStatisticsState(
-                count=normalizer_params.count,
-                mean=new_mean,
-                summed_variance=new_summed_var,
-                std=new_std,
-                std_eps=normalizer_params.std_eps,
-                mode=normalizer_params.mode,
-            )
-
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
             (training_state.optimizer_state, training_state.params, key_sgd, it),
@@ -538,12 +506,6 @@ def train(
         # all devices gets the same randomization rng
         randomization_rng = jax.random.split(key_env, randomization_batch_size)
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
-
-    # Extract observation sizes from environment - observations are now dicts
-    # We'll extract the sizes after the first reset
-    # Legacy size extraction for compatibility (used in frozen decoder logic)
-    proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
-    logging.info(f"Proprioceptive observation size: {proprioceptive_obs_size}")
 
     env = wrap_for_training(
         environment,
@@ -643,77 +605,12 @@ def train(
         env_steps=0,
     )
 
-    frozen_proprioceptive_normalizer_params = None
-
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        if not freeze_decoder:
-            # we are recovering the full training state
-            training_state = checkpointing.load_training_state(
-                checkpoint_to_restore, training_state
-            )
-            logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
-        if freeze_decoder:
-            # first is normalizer
-            loaded_checkpoint = checkpointing.load_policy(checkpoint_to_restore)
-            loaded_normalizer_params = loaded_checkpoint[0]
-            loaded_policy = loaded_checkpoint[1]
-            decoder_params = loaded_policy["params"]["decoder"]
-            training_state.params.policy["params"]["decoder"] = decoder_params
-            logging.info(
-                f"Restored decoder parameters from checkpoint at {checkpoint_to_restore}"
-            )
-            mask = network_masks.create_decoder_mask(init_params)
-            optimizer = optax.chain(optimizer, freeze(mask))
-            # overwrite the optimizer state with the new optimizer
-            training_state = training_state.replace(
-                optimizer_state=optimizer.init(init_params)
-            )
-            logging.info("Freezing decoder parameters")
-
-            # Extract proprioceptive normalizer params from loaded checkpoint
-            # New pytree-based format: normalizer has nested structure
-            # mean['state']['proprioception'], etc.
-            state_normalizer = normalizer_select(loaded_normalizer_params, "state")
-            frozen_proprioceptive_normalizer_params = (
-                running_statistics.RunningStatisticsState(
-                    count=state_normalizer.count,
-                    mean=state_normalizer.mean["proprioception"],
-                    summed_variance=state_normalizer.summed_variance["proprioception"],
-                    std=state_normalizer.std["proprioception"],
-                    std_eps=state_normalizer.std_eps,
-                    mode=state_normalizer.mode,
-                )
-            )
-
-            # Update training state with frozen proprioception normalizer
-            new_mean = training_state.normalizer_params.mean.copy()
-            new_mean["state"] = training_state.normalizer_params.mean["state"].copy()
-            new_mean["state"][
-                "proprioception"
-            ] = frozen_proprioceptive_normalizer_params.mean
-            new_std = training_state.normalizer_params.std.copy()
-            new_std["state"] = training_state.normalizer_params.std["state"].copy()
-            new_std["state"][
-                "proprioception"
-            ] = frozen_proprioceptive_normalizer_params.std
-            new_summed_var = training_state.normalizer_params.summed_variance.copy()
-            new_summed_var["state"] = training_state.normalizer_params.summed_variance[
-                "state"
-            ].copy()
-            new_summed_var["state"][
-                "proprioception"
-            ] = frozen_proprioceptive_normalizer_params.summed_variance
-            training_state = training_state.replace(
-                normalizer_params=running_statistics.RunningStatisticsState(
-                    count=training_state.normalizer_params.count,
-                    mean=new_mean,
-                    summed_variance=new_summed_var,
-                    std=new_std,
-                    std_eps=training_state.normalizer_params.std_eps,
-                    mode=training_state.normalizer_params.mode,
-                )
-            )
+        training_state = checkpointing.load_training_state(
+            checkpoint_to_restore, training_state
+        )
+        logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
 
     # gradient update function with the new optimizer and loss function
     gradient_update_fn = gradients.gradient_update_fn(

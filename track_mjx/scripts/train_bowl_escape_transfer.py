@@ -137,7 +137,7 @@ def main(bowl_cfg: DictConfig):
         latent_ar1_weight=bowl_cfg.network_config.latent_ar1_weight,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=checkpoint_to_restore,
-        freeze_decoder=True,
+        freeze_decoder=True,  # BROKEN: freeze_decoder was removed from ff_ppo.train(). Use train_highlvl.py instead.
         config_dict=OmegaConf.to_container(
             bowl_cfg, resolve=True
         ),  # finalize config here

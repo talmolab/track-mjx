@@ -211,9 +211,8 @@ def main(cfg: DictConfig) -> None:
         ),
     )
 
-    # Add freeze_decoder only for feedforward PPO (not supported for recurrent)
+    # Add get_activation only for feedforward PPO (not supported for recurrent)
     if arch_name != "recurrent_intention":
-        train_kwargs["freeze_decoder"] = cfg.train_setup.get("freeze_decoder", False)
         train_kwargs["get_activation"] = cfg.train_setup.train_config.get(
             "get_activation", False
         )

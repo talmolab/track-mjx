@@ -65,20 +65,25 @@ def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
 
 def get_obs_shape(
     obs: Mapping[str, Mapping[str, Any]],
-) -> dict[str, dict[str, specs.Array]]:
+) -> Mapping[str, Mapping[str, specs.Array]]:
     """Extract observation shapes as a pytree for running_statistics.init_state.
+
+    Preserves the container types (e.g. OrderedDict) of the input so that the
+    resulting normalizer pytree is compatible with environment observations in
+    ``jax.tree_util.tree_map`` calls.
 
     Args:
         obs: Example observation dict with flat leaf arrays.
 
     Returns:
-        Nested dict matching obs structure, with specs.Array for each leaf.
+        Nested mapping matching obs structure, with specs.Array for each leaf.
     """
 
-    def get_specs(inner_obs: Mapping[str, Any]) -> dict[str, specs.Array]:
-        return {
+    def get_specs(inner_obs: Mapping[str, Any]) -> Mapping[str, specs.Array]:
+        specs_dict = {
             key: specs.Array((val.shape[-1],), jnp.dtype("float32"))
             for key, val in inner_obs.items()
         }
+        return type(inner_obs)(specs_dict)
 
-    return {key: get_specs(inner) for key, inner in obs.items()}
+    return type(obs)({key: get_specs(inner) for key, inner in obs.items()})

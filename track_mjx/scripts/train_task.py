@@ -24,8 +24,7 @@ Usage:
 
     # Warp backend (full-collision rodent model)
     python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp"
-    python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp" \\
-        --naconmax_per_env 90 --njmax 1200
+    python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp naconmax=92160 njmax=1200"
 """
 
 import os
@@ -94,21 +93,6 @@ Examples:
         """,
     )
 
-    # Warp-specific args
-    parser.add_argument(
-        "--naconmax_per_env",
-        type=int,
-        default=90,
-        help="Max active contacts per env for Warp backend (default: 90). "
-        "naconmax is computed as num_envs * naconmax_per_env.",
-    )
-    parser.add_argument(
-        "--njmax",
-        type=int,
-        default=1200,
-        help="Max constraint rows per env for Warp backend (default: 1200).",
-    )
-
     args = parser.parse_args()
     if args.checkpoint_dir is None:
         args.checkpoint_dir = "task_checkpoints"
@@ -123,17 +107,17 @@ def main():
     # Create configs
     cli_env_overrides = parse_env_overrides_str(args.env)
     env_cfg = registry.get_default_config(args.task)
-    apply_env_overrides(env_cfg, cli_env_overrides)
 
-    # Detect Warp backend and auto-configure
-    is_warp = getattr(env_cfg, "mujoco_impl", None) == "warp"
+    # Detect Warp from parsed overrides (before applying to env_cfg)
+    is_warp = cli_env_overrides.get("mujoco_impl") == "warp"
     default_num_envs = 1024 if is_warp else 4096
     ppo_params = create_ppo_params(args, default_num_envs=default_num_envs)
 
+    # Set Warp defaults first, then apply all user overrides (can override naconmax, njmax)
     if is_warp:
-        configure_warp_backend(
-            env_cfg, ppo_params.num_envs, args.naconmax_per_env, args.njmax
-        )
+        env_cfg.mujoco_impl = "warp"
+        configure_warp_backend(env_cfg, ppo_params.num_envs)
+    apply_env_overrides(env_cfg, cli_env_overrides)
 
     print(f"env_cfg:\n{env_cfg}")
     print(f"ppo_params:\n{ppo_params}")
@@ -160,8 +144,6 @@ def main():
     }
     if is_warp:
         config_to_save["backend"] = "warp"
-        config_to_save["naconmax_per_env"] = args.naconmax_per_env
-        config_to_save["njmax"] = args.njmax
     with open(ckpt_path / "config.json", "w") as fp:
         json.dump(config_to_save, fp, indent=4, default=lambda o: str(o))
 

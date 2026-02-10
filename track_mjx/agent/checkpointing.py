@@ -7,6 +7,7 @@ using Orbax, including support for:
 - Cross-job checkpoint resumption with config validation
 """
 
+import collections
 import fcntl
 import hashlib
 import json
@@ -222,18 +223,16 @@ def make_abstract_policy(
         )
 
     obs_sizes = network_config["obs_sizes"]
-    # Create nested dummy observation structure matching expected format
-    # get_obs_shape expects: {'state': {'imitation_target': ..., 'proprioception': ...}, ...}
-    dummy_obs = {
-        "state": {
-            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
-            "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
-        },
-        "privileged_state": {
-            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
-            "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
-        },
-    }
+    # Create nested dummy observation structure matching the environment's
+    # OrderedDict format so the normalizer pytree is compatible with env obs.
+    inner = collections.OrderedDict(
+        imitation_target=jnp.zeros((1, obs_sizes["imitation_target"])),
+        proprioception=jnp.zeros((1, obs_sizes["proprioception"])),
+    )
+    dummy_obs = collections.OrderedDict(
+        state=inner,
+        privileged_state=inner,
+    )
     normalizer_state = running_statistics.init_state(get_obs_shape(dummy_obs))
 
     return (normalizer_state, init_params.policy)

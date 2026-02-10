@@ -145,7 +145,12 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
 
 
 def _flatten_inner_obs(obs):
-    """Flatten nested dict obs values to flat arrays, keeping top-level keys."""
+    """Flatten nested dict obs values to flat arrays, keeping top-level keys.
+
+    Note: For nested dict values, concatenation order follows JAX's tree leaf
+    ordering, which is alphabetical by dict key. E.g., {'proprioception': ...,
+    'imitation_target': ...} concatenates as imitation_target || proprioception.
+    """
     result = {}
     for key, value in obs.items():
         if isinstance(value, Mapping):

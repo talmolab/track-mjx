@@ -86,11 +86,10 @@ def load_mimic_checkpoint(checkpoint_path: str) -> tuple:
     return mimic_cfg, decoder_policy_fn
 
 
-def create_env_config(task_name: str, mimic_cfg: Any, cli_env_overrides: dict):
-    """Create environment config with overrides applied."""
+def create_env_config(task_name: str, mimic_cfg: Any):
+    """Create environment config inheriting ctrl_dt from mimic."""
     env_cfg = registry.get_default_config(task_name)
     env_cfg.ctrl_dt = mimic_cfg.env_config.ctrl_dt
-    apply_env_overrides(env_cfg, cli_env_overrides)
     return env_cfg
 
 
@@ -172,12 +171,18 @@ def main():
 
     # Create configs
     cli_env_overrides = parse_env_overrides_str(args.env)
-    env_cfg = create_env_config(args.task, mimic_cfg, cli_env_overrides)
-    ppo_params = create_ppo_params(args)
+    env_cfg = create_env_config(args.task, mimic_cfg)
 
-    # Auto-configure Warp backend settings
-    if getattr(env_cfg, "mujoco_impl", None) == "warp":
+    # Detect Warp from parsed overrides (before applying to env_cfg)
+    is_warp = cli_env_overrides.get("mujoco_impl") == "warp"
+    default_num_envs = 1024 if is_warp else 4096
+    ppo_params = create_ppo_params(args, default_num_envs=default_num_envs)
+
+    # Set Warp defaults first, then apply all user overrides (can override naconmax, njmax)
+    if is_warp:
+        env_cfg.mujoco_impl = "warp"
         configure_warp_backend(env_cfg, ppo_params.num_envs)
+    apply_env_overrides(env_cfg, cli_env_overrides)
 
     print(f"env_cfg:\n{env_cfg}")
     print(f"ppo_params:\n{ppo_params}")

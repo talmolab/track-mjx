@@ -371,16 +371,14 @@ def make_decoder_policy_fn(
     cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step=step)
     network_config = cfg["network_config"]
 
-    # Handle both new (dict-based) and legacy (flat) config formats
-    if "obs_sizes" in network_config:
-        # New dict-based format
-        obs_sizes = network_config["obs_sizes"]
-        reference_obs_size = obs_sizes["imitation_target"]
-        observation_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
-    else:
-        # Legacy flat format
-        observation_size = network_config["observation_size"]
-        reference_obs_size = network_config["reference_obs_size"]
+    if "obs_sizes" not in network_config:
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Config must have network_config.obs_sizes."
+        )
+    obs_sizes = network_config["obs_sizes"]
+    reference_obs_size = obs_sizes["imitation_target"]
+    observation_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
 
     action_size = network_config["action_size"]
     intention_latent_size = network_config["intention_size"]
@@ -403,32 +401,16 @@ def make_decoder_policy_fn(
     # Extract decoder normalizer params (proprioceptive portion only)
     normalizer_state = intention_policy_params[0]
 
-    if "obs_sizes" in network_config:
-        # New pytree-based format: normalizer has nested structure
-        # Extract proprioception stats from the 'state' key
-        decoder_normalizer_params = normalizer_select(normalizer_state, "state")
-        # Further extract just the proprioception portion
-        decoder_normalizer_params = running_statistics.RunningStatisticsState(
-            count=decoder_normalizer_params.count,
-            mean=decoder_normalizer_params.mean["proprioception"],
-            summed_variance=decoder_normalizer_params.summed_variance["proprioception"],
-            std=decoder_normalizer_params.std["proprioception"],
-            std_eps=decoder_normalizer_params.std_eps,
-            mode=decoder_normalizer_params.mode,
-        )
-    else:
-        # Legacy flat format: slice the arrays to get proprioception portion
-        decoder_normalizer_params_dict = jax.tree.map(
-            lambda x: (
-                x[reference_obs_size:]
-                if isinstance(x, jnp.ndarray) and x.ndim >= 1
-                else x
-            ),
-            normalizer_state.__dict__,
-        )
-        decoder_normalizer_params = running_statistics.RunningStatisticsState(
-            **decoder_normalizer_params_dict
-        )
+    # Extract proprioception stats from the 'state' key
+    decoder_normalizer_params = normalizer_select(normalizer_state, "state")
+    decoder_normalizer_params = running_statistics.RunningStatisticsState(
+        count=decoder_normalizer_params.count,
+        mean=decoder_normalizer_params.mean["proprioception"],
+        summed_variance=decoder_normalizer_params.summed_variance["proprioception"],
+        std=decoder_normalizer_params.std["proprioception"],
+        std_eps=decoder_normalizer_params.std_eps,
+        mode=decoder_normalizer_params.mode,
+    )
 
     decoder_params = (
         decoder_normalizer_params,

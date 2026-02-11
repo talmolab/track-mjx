@@ -102,6 +102,7 @@ def generate_unroll_with_vision(
     renderer: Any,
     grayscale: bool = True,
     extra_fields: Sequence[str] = (),
+    step_fn: Callable | None = None,
 ) -> Tuple[envs.State, types.Transition]:
     """Collect a trajectory of ``unroll_length`` steps with vision rendering.
 
@@ -132,6 +133,9 @@ def generate_unroll_with_vision(
         grayscale: If True, convert rendered RGB to single-channel grayscale.
         extra_fields: Additional fields to extract from ``env_state.info``
             (e.g., ``("truncation",)``).
+        step_fn: Optional pre-jitted step function.  When provided, this
+            is used instead of ``env.step`` to avoid re-tracing the
+            ``lax.scan`` inside the brax wrappers on every call.
 
     Returns:
         A tuple ``(final_state, data)`` where:
@@ -169,7 +173,8 @@ def generate_unroll_with_vision(
         actions, policy_extras = policy(obs_with_vision, step_key)
 
         # --- 5. Step the environment ---------------------------------------
-        next_state = env.step(current_state, actions)
+        _step = step_fn if step_fn is not None else env.step
+        next_state = _step(current_state, actions)
 
         # --- 6. Record the transition (same format as acting.actor_step) ---
         state_extras = {x: next_state.info[x] for x in extra_fields}
@@ -388,8 +393,19 @@ def train(
     )
 
     # Reset: shape (num_envs, ...) — no device dimension
+    # wrap_for_training already adds VmapWrapper, so env.reset expects (num_envs, 2)
     key_envs = jax.random.split(key_env, num_envs)
-    reset_fn = jax.jit(jax.vmap(env.reset))
+    reset_fn = jax.jit(env.reset)
+    env_state = reset_fn(key_envs)
+
+    # Warm up env.step JIT to force warp kernel compilation before other
+    # GPU allocations (VisionRenderer, render context, etc.) fragment memory.
+    step_fn = jax.jit(env.step)
+    _warmup_actions = jnp.zeros((num_envs, env.action_size))
+    _warmup_state = step_fn(env_state, _warmup_actions)
+    jax.tree_util.tree_map(lambda x: x.block_until_ready(), _warmup_state.obs)
+    logging.info("Warm-up env.step complete")
+    # Re-reset to clean state after warmup
     env_state = reset_fn(key_envs)
 
     # ------------------------------------------------------------------
@@ -546,6 +562,8 @@ def train(
     # ------------------------------------------------------------------
     # Vision renderer
     # ------------------------------------------------------------------
+    # VisionRenderer patches mujoco_warp BLEEDING_EDGE_MUJOCO at import time
+    # (see vnl_playground/tasks/rodent/vision.py).
     from vnl_playground.tasks.rodent.vision import VisionRenderer
 
     renderer = VisionRenderer(
@@ -711,19 +729,10 @@ def train(
         progress_fn(start_it, metrics)
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:
-            ckpt_mgr.save(
-                step=0,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardSave(policy_param),
-                    train_state=ocp.args.StandardSave(training_state),
-                    config=ocp.args.JsonSave(config_dict),
-                ),
+            checkpointing.save(
+                ckpt_mgr, 0, policy_param, training_state,
+                config_dict, checkpoint_callback,
             )
-            if checkpoint_callback is not None:
-                try:
-                    checkpoint_callback(0)
-                except Exception as e:
-                    logging.warning("Initial checkpoint callback failed: %s", e)
         else:
             logging.info("Skipping checkpoint save as ckpt_mgr is None")
 
@@ -774,6 +783,7 @@ def train(
                         renderer=renderer,
                         grayscale=grayscale,
                         extra_fields=("truncation",),
+                        step_fn=step_fn,
                     )
                     all_data.append(data)
 

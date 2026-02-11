@@ -350,6 +350,23 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
         raise ValueError(f"Unknown network architecture: {arch_name}")
 
 
+def _replace_zero_sized_arrays(pytree):
+    """Replace zero-sized JAX arrays with empty markers for checkpoint compat.
+
+    Orbax cannot save arrays with zero-sized dimensions. This replaces them
+    with scalar NaN sentinels so checkpoints can be saved. The inverse
+    transform is applied on restore via ``_restore_zero_sized_arrays``.
+    """
+    import jax.numpy as jnp
+
+    def _maybe_replace(x):
+        if hasattr(x, "shape") and any(d == 0 for d in x.shape):
+            return jnp.array(float("nan"))
+        return x
+
+    return jax.tree_util.tree_map(_maybe_replace, pytree)
+
+
 def save(
     ckpt_mgr: ocp.CheckpointManager,
     step: int,
@@ -371,6 +388,11 @@ def save(
         config: Configuration dictionary.
         checkpoint_callback: Optional callback called with step after save.
     """
+    # Orbax cannot save zero-sized arrays (e.g. from unused imitation_target
+    # normalizer). Replace them with scalar sentinels before saving.
+    policy = _replace_zero_sized_arrays(policy)
+    training_state = _replace_zero_sized_arrays(training_state)
+
     ckpt_mgr.save(
         step=step,
         args=ocp.args.Composite(

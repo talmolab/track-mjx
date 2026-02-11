@@ -220,9 +220,12 @@ def make_abstract_policy(
         # New dict-based format
         obs_sizes = network_config["obs_sizes"]
         dummy_obs = {
-            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
             "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
         }
+        if "imitation_target" in obs_sizes:
+            dummy_obs["imitation_target"] = jnp.zeros(
+                (1, obs_sizes["imitation_target"])
+            )
         normalizer_state = init_dict_normalizer(dummy_obs)
     else:
         # Legacy flat format

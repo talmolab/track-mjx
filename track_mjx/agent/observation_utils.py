@@ -21,27 +21,23 @@ from jax import flatten_util
 def _flatten_nested_obs(nested: Any) -> jnp.ndarray:
     """Flatten a potentially nested observation, preserving batch dimensions.
 
-    Handles both flat arrays and nested dicts/pytrees. Preserves the first
-    dimension (batch) and flattens all trailing dimensions.
+    Handles both flat arrays and nested dicts/pytrees. For plain arrays,
+    all dimensions are preserved since the last dim is the observation dim
+    and preceding dims are batch dims (supports pmap + vmap stacking).
 
     Args:
         nested: Either a flat array or a nested dict of arrays.
-            - 1D array (obs_size,): returned as-is (unbatched)
-            - 2D array (batch, obs_size): returned as-is (already flat)
-            - 3D+ array (batch, d1, d2, ...): flattened to (batch, d1*d2*...)
+            - Plain array: returned as-is (last dim = obs, rest = batch)
             - Nested dict: leaves are concatenated along last axis
 
     Returns:
-        Flattened array with shape (obs_size,) or (batch, obs_size).
+        Flattened array with shape (..., obs_size).
     """
     if isinstance(nested, jnp.ndarray):
-        if nested.ndim <= 2:
-            # 1D (unbatched) or 2D (batched, already flat) - return as-is
-            return nested
-        else:
-            # 3D+ array: preserve batch dim (first), flatten the rest
-            # (batch, d1, d2, ...) -> (batch, d1*d2*...)
-            return nested.reshape(nested.shape[0], -1)
+        # Plain arrays: last dim is the observation dim, all preceding
+        # dims are batch dims (e.g., device, env, unroll_length).
+        # running_statistics.update handles multiple batch dims natively.
+        return nested
 
     # For nested dicts/pytrees, flatten the observation structure
     leaves = jax.tree_util.tree_leaves(nested)
@@ -84,9 +80,19 @@ def flatten_obs_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
         Dict with the same keys but flattened array values. Shape is
         (obs_size,) for unbatched input or (batch_size, obs_size) for batched.
     """
+    flat_proprio = _flatten_nested_obs(obs["proprioception"])
+
+    if "imitation_target" in obs:
+        flat_imit = _flatten_nested_obs(obs["imitation_target"])
+    else:
+        # Zero-sized sentinel: preserves batch dims with obs_size=0.
+        # Downstream ops (normalize, concat, update) are no-ops on size-0 arrays.
+        batch_shape = flat_proprio.shape[:-1]
+        flat_imit = jnp.zeros((*batch_shape, 0))
+
     result = {
-        "imitation_target": _flatten_nested_obs(obs["imitation_target"]),
-        "proprioception": _flatten_nested_obs(obs["proprioception"]),
+        "imitation_target": flat_imit,
+        "proprioception": flat_proprio,
     }
     if "vision" in obs:
         # Keep H,W,C shape for CNN - don't flatten
@@ -227,10 +233,11 @@ def get_obs_sizes(obs: Mapping[str, Any]) -> dict[str, int]:
         Dict mapping observation keys to their flattened sizes.
     """
     flat_obs = flatten_obs_dict(obs)
-    result = {
-        "imitation_target": flat_obs["imitation_target"].shape[-1],
-        "proprioception": flat_obs["proprioception"].shape[-1],
-    }
+    result = {}
+    imit_size = flat_obs["imitation_target"].shape[-1]
+    if imit_size > 0:
+        result["imitation_target"] = imit_size
+    result["proprioception"] = flat_obs["proprioception"].shape[-1]
     if "vision" in flat_obs:
         # Vision size is the product of H*W*C
         vision_shape = flat_obs["vision"].shape

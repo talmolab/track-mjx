@@ -474,6 +474,137 @@ class VisionIntentionNetwork(nn.Module):
             return action, latent_mean, latent_logvar
 
 
+class VisionOnlyNetwork(nn.Module):
+    """Vision-based policy network without imitation target.
+
+    The encoder is a CNN that maps raw pixels to a fixed-size latent feature
+    vector. This latent is concatenated with proprioception and decoded into
+    action distribution parameters.
+
+    Observations dict must include:
+    - "proprioception": Proprioceptive state observations (flat array)
+    - "vision": Egocentric camera image (H, W, 3) normalized to [0, 1]
+
+    Attributes:
+        decoder_layers: Layer sizes for decoder (including action output).
+        latent_size: Dimension of the CNN output / latent feature vector.
+        vision_channels: Channel sizes for each conv layer in the vision encoder.
+    """
+
+    decoder_layers: Sequence[int]
+    latent_size: int = 32
+    vision_channels: Sequence[int] = (32, 64, 64)
+
+    def setup(self):
+        """Initialize vision encoder and decoder submodules."""
+        from track_mjx.agent.ff_ppo.vision_encoder import VisionEncoder
+
+        self.vision_encoder = VisionEncoder(
+            feature_size=self.latent_size,
+            channels=self.vision_channels,
+        )
+        self.decoder = Decoder(layer_sizes=self.decoder_layers)
+
+    def __call__(
+        self,
+        obs: Mapping[str, jnp.ndarray],
+        key: jax.Array,
+        deterministic: bool = False,
+        get_activation: bool = False,
+    ):
+        egocentric_obs = obs["proprioception"]
+        vision = obs["vision"]
+
+        # CNN encode vision → latent features (deterministic encoding)
+        z = self.vision_encoder(vision)
+        latent_mean = z
+        latent_logvar = jnp.full_like(z, -20.0)  # ~deterministic
+
+        # Decode: [latent, proprioception] → action
+        concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
+
+        if get_activation:
+            action, decoder_activations = self.decoder(
+                concatenated, get_activation=True
+            )
+            return (
+                action,
+                latent_mean,
+                latent_logvar,
+                {
+                    "decoder": decoder_activations,
+                    "vision_features": z,
+                    "egocentric_obs": egocentric_obs,
+                    "intention": z,
+                },
+            )
+        else:
+            action, _ = self.decoder(concatenated)
+            return action, latent_mean, latent_logvar
+
+
+def make_vision_only_policy(
+    action_param_size: int,
+    latent_size: int,
+    obs_sizes: Mapping[str, int],
+    vision_shape: tuple[int, int, int],
+    decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
+    vision_channels: Sequence[int] = (32, 64, 64),
+) -> networks.FeedForwardNetwork:
+    """Create a vision-only policy network (CNN encoder + MLP decoder).
+
+    The CNN encodes raw pixels to a fixed-size latent, which is concatenated
+    with proprioception and decoded into action parameters. No imitation
+    target / VAE encoder is used.
+
+    Args:
+        action_param_size: Output dimension (typically 2x action_size).
+        latent_size: Dimension of the CNN output feature vector.
+        obs_sizes: Dict mapping observation keys to their sizes.
+        vision_shape: Shape of the vision input (H, W, C).
+        decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
+        vision_channels: Channel sizes for each conv layer.
+
+    Returns:
+        FeedForwardNetwork with init and apply methods.
+    """
+    policy_module = VisionOnlyNetwork(
+        decoder_layers=list(decoder_hidden_layer_sizes) + [action_param_size],
+        latent_size=latent_size,
+        vision_channels=vision_channels,
+    )
+
+    def apply(
+        processor_params: DictRunningStatisticsState,
+        policy_params,
+        obs: Mapping[str, jnp.ndarray],
+        key,
+        deterministic: bool = False,
+        get_activation: bool = False,
+    ):
+        """Apply policy with observation normalization."""
+        obs = normalize_dict_obs(obs, processor_params)
+        return policy_module.apply(
+            policy_params,
+            obs=obs,
+            key=key,
+            deterministic=deterministic,
+            get_activation=get_activation,
+        )
+
+    dummy_obs = {
+        "imitation_target": jnp.zeros((1, obs_sizes.get("imitation_target", 0))),
+        "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+        "vision": jnp.zeros((1,) + vision_shape),
+    }
+    dummy_key = jax.random.PRNGKey(0)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: policy_module.init(key, dummy_obs, dummy_key),
+        apply=apply,
+    )
+
+
 def make_vision_intention_policy(
     action_param_size: int,
     latent_size: int,

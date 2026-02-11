@@ -36,10 +36,8 @@ from flax import linen as nn
 from brax.training.acme import running_statistics
 
 from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
-from track_mjx.agent.observation_utils import (
-    make_dict_value_network,
-    normalizer_select,
-)
+from track_mjx.agent.networks import make_dict_value_network
+from track_mjx.agent.observation_utils import normalizer_select
 
 # Type aliases
 RNNCellType = Literal["simple", "gru", "lstm"]

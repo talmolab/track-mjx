@@ -30,10 +30,8 @@ from jax import numpy as jnp
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import intention_network
-from track_mjx.agent.observation_utils import (
-    make_dict_value_network,
-    normalizer_select,
-)
+from track_mjx.agent.networks import make_dict_value_network
+from track_mjx.agent.observation_utils import normalizer_select
 
 
 @flax.struct.dataclass

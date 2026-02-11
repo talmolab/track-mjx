@@ -99,6 +99,8 @@ def create_environments(
     decoder_policy_fn,
     intention_size: int,
     highlvl_obs_key: str,
+    policy_obs_key: str = "state",
+    value_obs_key: str = "state",
 ):
     """Create training and eval environments with HighLevelWrapper."""
     base_env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
@@ -110,15 +112,19 @@ def create_environments(
         base_env,
         decoder_policy_fn,
         intention_size,
+        policy_obs_key=policy_obs_key,
+        value_obs_key=value_obs_key,
         highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key="proprioception",
+        lowlvl_obs_key="proprioception",
     )
     eval_env = rodent_wrappers.HighLevelWrapper(
         eval_base_env,
         decoder_policy_fn,
         intention_size,
+        policy_obs_key=policy_obs_key,
+        value_obs_key=value_obs_key,
         highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key="proprioception",
+        lowlvl_obs_key="proprioception",
     )
 
     return env, eval_env
@@ -229,6 +235,8 @@ def main():
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
         args.highlvl_obs_key,
+        policy_obs_key=args.policy_obs_key,
+        value_obs_key=args.value_obs_key,
     )
 
     # Setup training
@@ -263,8 +271,8 @@ def main():
     rng = jax.random.PRNGKey(args.seed)
     start_state = jit_reset(rng)
 
-    # Get observation size from dict structure (policy obs key)
-    obs_size = start_state.obs[args.policy_obs_key].shape[-1]
+    # Get observation size as nested dict (Brax handles per-key extraction)
+    obs_size = jax.tree.map(lambda x: x.shape[-1], start_state.obs)
 
     ppo_network = network_factory(
         obs_size,

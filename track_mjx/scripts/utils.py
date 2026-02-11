@@ -2,7 +2,6 @@
 
 import argparse
 import functools
-from collections.abc import Mapping
 from typing import Any, Optional
 
 import imageio
@@ -137,50 +136,6 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
         params["batch_size"] = args.batch_size
 
     return config_dict.create(**params)
-
-
-# ---------------------------------------------------------------------------
-# Observation flattening wrapper
-# ---------------------------------------------------------------------------
-
-
-def _flatten_inner_obs(obs):
-    """Flatten nested dict obs values to flat arrays, keeping top-level keys.
-
-    Note: For nested dict values, concatenation order follows JAX's tree leaf
-    ordering, which is alphabetical by dict key. E.g., {'proprioception': ...,
-    'task_obs': ...} concatenates as proprioception || task_obs.
-    """
-    result = {}
-    for key, value in obs.items():
-        if isinstance(value, Mapping):
-            leaves = jax.tree.leaves(value)
-            result[key] = jp.concatenate(leaves, axis=-1)
-        else:
-            result[key] = value
-    return result
-
-
-class FlattenInnerObsWrapper:
-    """Wraps an env to flatten inner observation dicts to flat arrays.
-
-    Converts obs like {'state': {'a': arr1, 'b': arr2}, ...}
-    to {'state': concat(arr1, arr2), ...} so Brax's MLP networks work.
-    """
-
-    def __init__(self, env):
-        self._env = env
-
-    def __getattr__(self, name):
-        return getattr(self._env, name)
-
-    def reset(self, rng):
-        state = self._env.reset(rng)
-        return state.replace(obs=_flatten_inner_obs(state.obs))
-
-    def step(self, state, action):
-        state = self._env.step(state, action)
-        return state.replace(obs=_flatten_inner_obs(state.obs))
 
 
 # ---------------------------------------------------------------------------
@@ -351,8 +306,8 @@ def create_base_parser(
     parser.add_argument(
         "--value_obs_key",
         type=str,
-        default="privileged_state",
-        help="Observation key for value network (default: privileged_state)",
+        default="state",
+        help="Observation key for value network (default: state)",
     )
 
     # Output options

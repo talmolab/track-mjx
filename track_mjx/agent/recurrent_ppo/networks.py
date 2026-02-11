@@ -497,7 +497,7 @@ def make_recurrent_intention_ppo_networks(
     rnn_hidden_sizes: Sequence[int] = (256,),
     value_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     policy_obs_key: str = "state",
-    value_obs_key: str = "privileged_state",
+    value_obs_key: str = "state",
 ) -> RecurrentPPONetworks:
     """Create recurrent intention-based PPO networks.
 

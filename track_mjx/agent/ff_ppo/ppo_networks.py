@@ -235,7 +235,7 @@ def make_intention_ppo_networks(
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     policy_obs_key: str = "state",
-    value_obs_key: str = "privileged_state",
+    value_obs_key: str = "state",
 ) -> PPOImitationNetworks:
     """Create intention-based PPO networks for imitation learning.
 

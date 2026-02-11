@@ -49,8 +49,8 @@ from etils import epath
 from mujoco_playground import wrapper
 
 from vnl_playground import registry
+from vnl_playground.tasks import wrappers as rodent_wrappers
 from track_mjx.scripts.utils import (
-    FlattenInnerObsWrapper,
     apply_env_overrides,
     configure_warp_backend,
     create_base_parser,
@@ -66,10 +66,10 @@ setup_jax_cache()
 
 def create_environments(task_name, env_cfg):
     """Create training and eval environments."""
-    env = FlattenInnerObsWrapper(
+    env = rodent_wrappers.BraxObsWrapper(
         registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
     )
-    eval_env = FlattenInnerObsWrapper(
+    eval_env = rodent_wrappers.BraxObsWrapper(
         registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
     )
     return env, eval_env

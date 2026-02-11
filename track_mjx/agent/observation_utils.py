@@ -84,10 +84,14 @@ def flatten_obs_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
         Dict with the same keys but flattened array values. Shape is
         (obs_size,) for unbatched input or (batch_size, obs_size) for batched.
     """
-    return {
+    result = {
         "imitation_target": _flatten_nested_obs(obs["imitation_target"]),
         "proprioception": _flatten_nested_obs(obs["proprioception"]),
     }
+    if "vision" in obs:
+        # Keep H,W,C shape for CNN - don't flatten
+        result["vision"] = obs["vision"]
+    return result
 
 
 @flax.struct.dataclass
@@ -175,7 +179,7 @@ def normalize_dict_obs(
     """
     # Flatten nested observations first
     flat_obs = flatten_obs_dict(obs)
-    return {
+    result = {
         "imitation_target": running_statistics.normalize(
             flat_obs["imitation_target"], state.imitation_target
         ),
@@ -183,6 +187,14 @@ def normalize_dict_obs(
             flat_obs["proprioception"], state.proprioception
         ),
     }
+    if "vision" in flat_obs:
+        vision = flat_obs["vision"]
+        # Normalize to [0, 1]: divide by 255 if uint8, pass through if already float
+        if vision.dtype == jnp.uint8:
+            result["vision"] = vision.astype(jnp.float32) / 255.0
+        else:
+            result["vision"] = vision
+    return result
 
 
 def concat_flat_dict_obs(obs: Mapping[str, jnp.ndarray]) -> jnp.ndarray:
@@ -215,10 +227,16 @@ def get_obs_sizes(obs: Mapping[str, Any]) -> dict[str, int]:
         Dict mapping observation keys to their flattened sizes.
     """
     flat_obs = flatten_obs_dict(obs)
-    return {
+    result = {
         "imitation_target": flat_obs["imitation_target"].shape[-1],
         "proprioception": flat_obs["proprioception"].shape[-1],
     }
+    if "vision" in flat_obs:
+        # Vision size is the product of H*W*C
+        vision_shape = flat_obs["vision"].shape
+        # Skip batch dims: vision shape is (..., H, W, C)
+        result["vision"] = int(jnp.prod(jnp.array(vision_shape[-3:])))
+    return result
 
 
 def convert_flat_to_dict_normalizer(

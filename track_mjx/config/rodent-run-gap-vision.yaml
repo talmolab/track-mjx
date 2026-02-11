@@ -37,8 +37,10 @@ env_config:
   # Vision Settings
   # ---------------------------------------------------------------------------
   vision: true
-  vision_width: 64        # Egocentric camera width in pixels
-  vision_height: 64       # Egocentric camera height in pixels
+  vision_width: 32         # Was 64 — reduced for memory
+  vision_height: 32        # Was 64 — reduced for memory
+  grayscale: true          # NEW — convert to single channel
+  vision_camera_name: "egocentric-rodent"
 
   # ---------------------------------------------------------------------------
   # Corridor Settings
@@ -143,3 +145,9 @@ logging_config:
   group_name: run-gap
   exp_name: vision-v1
   model_path: model_checkpoints/
+
+# =============================================================================
+# Render Configuration
+# =============================================================================
+render_config:
+  render_interval: 10      # Render video every N eval iterations

@@ -1,8 +1,8 @@
 """CNN vision encoder for processing egocentric camera images.
 
-Provides a compact convolutional encoder that maps raw RGB images to
-a fixed-size feature vector, compatible with the intention network's
-latent space.
+Provides a compact convolutional encoder that maps raw camera images (RGB
+or grayscale) to a fixed-size feature vector, compatible with the intention
+network's latent space.
 """
 
 from collections.abc import Sequence
@@ -33,7 +33,7 @@ class VisionEncoder(nn.Module):
         """Encode images to feature vectors.
 
         Args:
-            images: Input images, shape [..., H, W, 3] with values in [0, 1].
+            images: Input images, shape [..., H, W, C] with values in [0, 1].
 
         Returns:
             Feature vectors, shape [..., feature_size].

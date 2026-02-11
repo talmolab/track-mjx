@@ -166,7 +166,7 @@ def main(cfg: DictConfig) -> None:
         vision_width=vision_width,
         vision_height=vision_height,
         grayscale=grayscale,
-        camera_name=cfg.env_config.get("camera_name", "egocentric-rodent"),
+        camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
         # Domain randomization
         randomization_fn=(
             domain_randomization_maker(

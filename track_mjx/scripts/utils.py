@@ -126,8 +126,14 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
 
     # Apply CLI overrides (None means "use default")
     override_keys = [
-        "entropy_cost", "episode_length", "eval_every", "learning_rate",
-        "num_envs", "unroll_length", "discounting", "batch_size",
+        "entropy_cost",
+        "episode_length",
+        "eval_every",
+        "learning_rate",
+        "num_envs",
+        "unroll_length",
+        "discounting",
+        "batch_size",
     ]
     for key in override_keys:
         value = getattr(args, key, None)

@@ -39,7 +39,9 @@ def require_obs_sizes(network_config) -> dict:
 
     Raises ValueError if the legacy flat observation format is detected.
     """
-    has_obs_sizes = hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
+    has_obs_sizes = (
+        hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
+    )
     if not has_obs_sizes:
         raise ValueError(
             "Legacy flat observation format is no longer supported. "

@@ -382,16 +382,23 @@ def extract_k_transitions_for_clip(
     result: InferenceResult,
     k: int,
     codebook: np.ndarray,
+    all_codebooks: list[np.ndarray] | None = None,
 ) -> list[KTransition]:
     """Extract k-transition points from a single clip.
 
     Slides a window of size k+1 over the code runs and creates a feature
     vector by concatenating the codebook vectors for each code in the window.
 
+    When ``all_codebooks`` is provided and the result has multi-depth
+    ``rvq_indices``, the embedding for each code in the window concatenates
+    vectors from all depth levels, doubling (or more) the per-code dimension.
+
     Args:
         result: InferenceResult for one clip.
         k: Number of transitions (window will contain k+1 codes).
-        codebook: Codebook array of shape [num_codes, latent_dim].
+        codebook: L0 codebook array of shape [num_codes, latent_dim].
+        all_codebooks: Optional list of codebook arrays, one per RVQ depth.
+            When provided with rvq_indices, enriches the embedding.
 
     Returns:
         List of KTransition objects.
@@ -402,6 +409,14 @@ def extract_k_transitions_for_clip(
     if len(runs) < window_size:
         return []
 
+    # Check if we can use multi-depth embeddings
+    use_multi_depth = (
+        all_codebooks is not None
+        and len(all_codebooks) >= 2
+        and result.rvq_indices is not None
+        and len(result.rvq_indices) >= 2
+    )
+
     transitions = []
     for i in range(len(runs) - window_size + 1):
         sub_runs = runs[i : i + window_size]
@@ -410,8 +425,19 @@ def extract_k_transitions_for_clip(
         end_frame = sub_runs[-1].end_frame
         midpoint_frame = (start_frame + end_frame) // 2
 
-        # Concatenate codebook vectors for each code in the window
-        embedding = np.concatenate([codebook[c] for c in code_seq])
+        if use_multi_depth:
+            # Concatenate codebook vectors from all depths for each code
+            parts = []
+            for run in sub_runs:
+                frame = run.start_frame
+                parts.append(all_codebooks[0][run.code])
+                for d in range(1, len(all_codebooks)):
+                    l_d = int(result.rvq_indices[d][frame])
+                    parts.append(all_codebooks[d][l_d])
+            embedding = np.concatenate(parts)
+        else:
+            # Original: L0 codebook only
+            embedding = np.concatenate([codebook[c] for c in code_seq])
 
         transitions.append(
             KTransition(
@@ -2767,6 +2793,7 @@ def run_tsne_trajectory_analysis(
     width: int = 640,
     height: int = 480,
     fps: int = 50,
+    all_codebooks: list[np.ndarray] | None = None,
 ) -> dict[str, Any]:
     """Run the full t-SNE skill-space trajectory analysis.
 
@@ -2785,6 +2812,8 @@ def run_tsne_trajectory_analysis(
         width: Video width.
         height: Video height.
         fps: Frames per second.
+        all_codebooks: Optional list of codebook arrays for multi-depth RVQ.
+            When provided, enriches t-SNE embeddings with all depth levels.
 
     Returns:
         Dict with output paths and summary data.
@@ -2825,7 +2854,9 @@ def run_tsne_trajectory_analysis(
     clip_data_by_idx: dict[int, ClipTrajectoryData] = {}
 
     for clip_idx, result in unique_results.items():
-        transitions = extract_k_transitions_for_clip(result, k, codebook)
+        transitions = extract_k_transitions_for_clip(
+            result, k, codebook, all_codebooks=all_codebooks
+        )
         movement = compute_clip_movement(result)
 
         if not transitions:

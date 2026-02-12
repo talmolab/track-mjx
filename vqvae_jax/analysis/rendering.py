@@ -119,6 +119,48 @@ def get_nature_colormap(num_codes: int) -> np.ndarray:
     )
 
 
+def get_hierarchical_colormap(
+    num_codes: int,
+    rvq_depth: int = 2,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate a hierarchical colormap for multi-depth RVQ visualization.
+
+    L0 codes get distinct hues. L1 codes get lightness variations within
+    the parent's hue family. This makes it visually clear which L1 codes
+    belong to the same L0 parent.
+
+    Args:
+        num_codes: Number of codes per depth level.
+        rvq_depth: Number of RVQ depth levels (currently supports 2).
+
+    Returns:
+        Tuple of (l0_colors, l1_colors) where:
+        - l0_colors: shape [num_codes, 3], values 0-255
+        - l1_colors: shape [num_codes, num_codes, 3], values 0-255,
+          indexed as l1_colors[parent, child]
+    """
+    import colorsys
+
+    # L0: distinct hues evenly spaced
+    l0_colors = np.zeros((num_codes, 3), dtype=np.uint8)
+    for i in range(num_codes):
+        hue = i / max(num_codes, 1)
+        r, g, b = colorsys.hls_to_rgb(hue, 0.5, 0.7)
+        l0_colors[i] = [int(r * 255), int(g * 255), int(b * 255)]
+
+    # L1: lightness variations within parent's hue
+    l1_colors = np.zeros((num_codes, num_codes, 3), dtype=np.uint8)
+    for parent in range(num_codes):
+        hue = parent / max(num_codes, 1)
+        for child in range(num_codes):
+            # Vary lightness from 0.3 (dark) to 0.8 (light)
+            lightness = 0.3 + 0.5 * child / max(num_codes - 1, 1)
+            r, g, b = colorsys.hls_to_rgb(hue, lightness, 0.7)
+            l1_colors[parent, child] = [int(r * 255), int(g * 255), int(b * 255)]
+
+    return l0_colors, l1_colors
+
+
 # =============================================================================
 # TEXT OVERLAYS
 # =============================================================================
@@ -364,6 +406,7 @@ def _build_stacked_bars(
     bar_height: int = 30,
     separator_height: int = 2,
     playhead_width: int = 3,
+    hierarchical_colors: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> np.ndarray:
     """Build a stacked bar image for multi-depth RVQ timelines.
 
@@ -378,6 +421,9 @@ def _build_stacked_bars(
         bar_height: Height of each individual bar in pixels.
         separator_height: Height of separator between bars.
         playhead_width: Width of the playhead marker.
+        hierarchical_colors: Optional tuple of (l0_colors, l1_colors) from
+            :func:`get_hierarchical_colormap`. When provided, depth-0 uses
+            l0_colors and depth-1 uses l1_colors[parent, child].
 
     Returns:
         Stacked bar image, shape [total_height, width, 3].
@@ -397,7 +443,19 @@ def _build_stacked_bars(
         for j, code_idx in enumerate(depth_indices):
             x_start = int(j * width / num_frames)
             x_end = int((j + 1) * width / num_frames)
-            color = code_colors[int(code_idx) % len(code_colors)]
+
+            if hierarchical_colors is not None and d == 0:
+                l0_colors, _ = hierarchical_colors
+                color = l0_colors[int(code_idx) % len(l0_colors)]
+            elif hierarchical_colors is not None and d == 1:
+                _, l1_colors = hierarchical_colors
+                parent = int(indices_per_depth[0][j])
+                color = l1_colors[
+                    parent % l1_colors.shape[0],
+                    int(code_idx) % l1_colors.shape[1],
+                ]
+            else:
+                color = code_colors[int(code_idx) % len(code_colors)]
             bar_img[y_start : y_start + bar_height, x_start:x_end] = color
 
         # Draw playhead

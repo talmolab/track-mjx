@@ -8,6 +8,7 @@ rollouts/
 patch.ipynb
 jax_cache/
 results/
+tmp/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

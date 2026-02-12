@@ -18,6 +18,11 @@ This package provides analysis of trained VQ-VAE models:
   - Extended feature extraction (limb activities, posture PCA, heading)
   - MI ranking, feature-code heatmap, and code-feature scatter plots
 
+- **rvq_analysis.py**: Multi-depth RVQ analysis
+  - Parent-child heatmap (L0 x L1 joint distribution)
+  - Intra-parent diversity (L1 entropy conditioned on L0)
+  - Hierarchical transition rates (L1 transitions within L0 segments)
+
 - **compositional_transition_analysis.py**: Compositional code transition analysis
   - Determinism testing (same pose + same codes → similar trajectories?)
   - Compositional decomposition of k-transition sequences
@@ -56,6 +61,7 @@ __all__ = [
     "mutual_information",
     "per_clip_analysis",
     "rendering",
+    "rvq_analysis",
     "transition_context_analysis",
     "tsne_trajectory_analysis",
 ]

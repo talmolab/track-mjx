@@ -58,7 +58,7 @@ from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from track_mjx.config import utils as config_utils
 
-from .checkpoint_utils import load_vq_checkpoint, get_codebook
+from .checkpoint_utils import load_vq_checkpoint, get_codebook, get_all_codebooks
 from .compositional_transition_analysis import (
     run_compositional_transition_analysis,
     run_qpos_code_determinism_analysis,
@@ -66,6 +66,7 @@ from .compositional_transition_analysis import (
 from .tsne_trajectory_analysis import run_tsne_trajectory_analysis
 from .inference_cache import InferenceResult
 from .mutual_information import run_mutual_information_analysis
+from .rvq_analysis import run_rvq_analysis
 from .per_clip_analysis import run_per_clip_analysis
 from .transition_context_analysis import (
     run_transition_context_analysis,
@@ -100,6 +101,7 @@ def load_rollouts_from_h5(h5_path: str | Path) -> tuple[list[InferenceResult], d
             qvel=rollout.qvel,
             rewards=rollout.rewards,
             states=None,
+            rvq_indices=rollout.rvq_indices,
         )
         results.append(result)
 
@@ -435,6 +437,37 @@ def main(cfg: DictConfig):
 
         all_paths["mutual_information"] = mi_paths
 
+    # === Section 1d: RVQ Analysis ===
+    rvq_cfg = cfg.get("rvq_analysis", {})
+    if rvq_cfg.get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Running RVQ analysis...")
+
+        rvq_dir = output_dir / "rvq_analysis"
+        rvq_paths = run_rvq_analysis(
+            results=results,
+            num_codes=num_codes,
+            output_dir=rvq_dir,
+            cfg=(
+                OmegaConf.to_container(rvq_cfg, resolve=True)
+                if hasattr(rvq_cfg, "_metadata")
+                else dict(rvq_cfg)
+            ),
+        )
+
+        if wandb_enabled and rvq_paths:
+            import wandb
+
+            for key, fig_path in rvq_paths.items():
+                log_to_wandb_immediately(
+                    f"rvq_analysis/{key}",
+                    wandb.Image(fig_path),
+                    wandb_enabled,
+                )
+            logging.info("  Logged RVQ analysis figures to WandB")
+
+        all_paths["rvq_analysis"] = rvq_paths
+
     # === Section 1f: Qpos+Code Determinism Analysis ===
     determinism_cfg = cfg.get("qpos_code_determinism", {})
     if determinism_cfg.get("enabled", False):
@@ -517,6 +550,13 @@ def main(cfg: DictConfig):
         logging.info("Running t-SNE trajectory analysis...")
 
         tsne_dir = output_dir / "tsne_trajectory"
+
+        # Use multi-depth codebooks for t-SNE when available
+        tsne_all_codebooks = None
+        all_cbs = get_all_codebooks(ckpt["policy"])
+        if len(all_cbs) >= 2:
+            tsne_all_codebooks = [np.array(cb) for cb in all_cbs]
+
         tsne_results = run_tsne_trajectory_analysis(
             results=results,
             codebook=np.array(codebook),
@@ -531,6 +571,7 @@ def main(cfg: DictConfig):
             width=cfg.render.get("width", 640),
             height=cfg.render.get("height", 480),
             fps=cfg.render.get("fps", 50),
+            all_codebooks=tsne_all_codebooks,
         )
 
         if wandb_enabled:

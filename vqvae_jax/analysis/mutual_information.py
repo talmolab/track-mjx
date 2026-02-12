@@ -197,6 +197,153 @@ def compute_mutual_information(
     )
 
 
+# ── Cross-depth MI ────────────────────────────────────────────────────────────
+
+
+def _extract_leaf_codes(
+    results: Sequence[InferenceResult],
+    num_codes: int,
+) -> np.ndarray | None:
+    """Extract composite leaf codes (L0 * K + L1) for each frame.
+
+    Args:
+        results: Inference results with ``rvq_indices``.
+        num_codes: Number of codes per depth level.
+
+    Returns:
+        Array of composite leaf codes, shape [N], or None if no RVQ data.
+    """
+    leaf_codes: list[int] = []
+    for r in results:
+        if r.rvq_indices is None or len(r.rvq_indices) < 2:
+            return None
+        l0 = r.rvq_indices[0]
+        l1 = r.rvq_indices[1]
+        T = min(len(l0), len(l1))
+        for t in range(T):
+            leaf_codes.append(int(l0[t]) * num_codes + int(l1[t]))
+    return np.array(leaf_codes, dtype=int) if leaf_codes else None
+
+
+def _make_null_leaf_codes(
+    l0_codes: np.ndarray,
+    num_codes: int,
+    seed: int = 0,
+) -> np.ndarray:
+    """Create null-baseline leaf codes by randomly assigning L1 within each L0.
+
+    Preserves L0 structure and cardinality (K^2 labels) but destroys any
+    real L1 structure, providing a baseline for the MI cardinality effect.
+
+    Args:
+        l0_codes: L0 code assignments, shape [N].
+        num_codes: Number of codes per depth level.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        Null leaf codes, shape [N].
+    """
+    rng = np.random.RandomState(seed)
+    random_l1 = rng.randint(0, num_codes, size=len(l0_codes))
+    return l0_codes * num_codes + random_l1
+
+
+def compute_cross_depth_mi(
+    features: np.ndarray,
+    l0_codes: np.ndarray,
+    leaf_codes: np.ndarray,
+    feature_names: list[str],
+    output_path: Path,
+    n_neighbors: int = 5,
+    num_codes: int = 32,
+    n_null_shuffles: int = 3,
+) -> str:
+    """Compute MI(L0; features) vs MI(leaf; features) with null baseline.
+
+    Compares three quantities per feature:
+    - MI(L0; feature): information from L0 alone
+    - MI(null_leaf; feature): null baseline with random L1 within each L0
+      (same K^2 cardinality, no real L1 structure)
+    - MI(leaf; feature): real composite label
+
+    The gain above null = MI(leaf) - MI(null_leaf) isolates the true
+    contribution of L1, controlling for the cardinality inflation.
+
+    Args:
+        features: Feature matrix, shape [N, F].
+        l0_codes: L0 code assignments, shape [N].
+        leaf_codes: Composite (L0*K + L1) code assignments, shape [N].
+        feature_names: Names of each feature dimension.
+        output_path: Path to save the figure.
+        n_neighbors: KSG estimator neighbours.
+        num_codes: Number of codes per depth level (for null baseline).
+        n_null_shuffles: Number of random shuffles to average for null.
+
+    Returns:
+        Path to the saved figure.
+    """
+    logging.info("    Computing MI(L0; features)...")
+    mi_l0 = compute_mutual_information(features, l0_codes, n_neighbors) / np.log(2)
+
+    logging.info("    Computing MI(leaf; features)...")
+    mi_leaf = compute_mutual_information(features, leaf_codes, n_neighbors) / np.log(2)
+
+    # Null baseline: average over multiple random L1 shuffles
+    logging.info(f"    Computing null baseline ({n_null_shuffles} shuffles)...")
+    mi_null_runs = []
+    for s in range(n_null_shuffles):
+        null_codes = _make_null_leaf_codes(l0_codes, num_codes, seed=s)
+        mi_null_s = compute_mutual_information(
+            features, null_codes, n_neighbors
+        ) / np.log(2)
+        mi_null_runs.append(mi_null_s)
+    mi_null = np.mean(mi_null_runs, axis=0)
+
+    # Sort by gain above null
+    gain_above_null = mi_leaf - mi_null
+    order = np.argsort(gain_above_null)[::-1]
+
+    fig, ax = plt.subplots(figsize=(10, max(5, 0.6 * len(feature_names))))
+    y_pos = np.arange(len(feature_names))
+    bar_height = 0.25
+
+    sorted_names = [feature_names[i] for i in order]
+    ax.barh(
+        y_pos + bar_height,
+        mi_l0[order],
+        bar_height,
+        label="MI(L0; feature)",
+        color="#2196F3",
+        alpha=0.8,
+    )
+    ax.barh(
+        y_pos,
+        mi_null[order],
+        bar_height,
+        label="MI(null leaf; feature)",
+        color="#9E9E9E",
+        alpha=0.7,
+    )
+    ax.barh(
+        y_pos - bar_height,
+        mi_leaf[order],
+        bar_height,
+        label="MI(real leaf; feature)",
+        color="#FF9800",
+        alpha=0.8,
+    )
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(sorted_names)
+    ax.set_xlabel("Mutual Information (bits)")
+    ax.set_title("Cross-Depth MI: L0 vs Null Leaf vs Real Leaf")
+    ax.legend(loc="lower right")
+    ax.grid(True, axis="x", alpha=0.3)
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)
+
+
 # ── Plotting ─────────────────────────────────────────────────────────────────
 
 
@@ -445,6 +592,21 @@ def run_mutual_information_analysis(
     )
     if scatter_path:
         paths["code_feature_scatter"] = scatter_path
+
+    # Cross-depth MI (only if RVQ depth >= 2)
+    leaf_codes = _extract_leaf_codes(results, num_codes)
+    if leaf_codes is not None and len(leaf_codes) == len(codes):
+        logging.info("  Computing cross-depth MI (L0 vs leaf)...")
+        cross_path = compute_cross_depth_mi(
+            features,
+            codes,
+            leaf_codes,
+            feature_names,
+            output_dir / "cross_depth_mi.png",
+            n_neighbors=n_neighbors,
+            num_codes=num_codes,
+        )
+        paths["cross_depth_mi"] = cross_path
 
     logging.info(f"  MI analysis complete: {len(paths)} figures saved")
     return paths

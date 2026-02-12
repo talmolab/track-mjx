@@ -11,7 +11,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260206_063100_814357/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260209_232426_939844/
   step: null  # null = latest step
 
 # =============================================================================
@@ -28,7 +28,7 @@ wandb:
 # Analysis loads pre-computed rollout data from H5 files.
 # Use `python -m inference.run_inference` to generate H5 files.
 data:
-  h5_path: ./outputs/rollout_16.h5  # Path to H5 file with rollout data (required)
+  h5_path: ./outputs/rollout_rvq_32.h5  # Path to H5 file with rollout data (required)
   clip_length: 500               # Frames per clip (for environment setup)
 
 # =============================================================================
@@ -79,6 +79,17 @@ mutual_information:
   min_mi_threshold: 0.05        # Minimum MI (nats) to include in heatmap
   top_k_features: 8             # Max features to show in heatmap
   posture_pcs: 3                # Number of posture PCA components
+
+# =============================================================================
+# RVQ Analysis Configuration
+# =============================================================================
+# Multi-depth RVQ analyses: parent-child heatmap, intra-parent diversity,
+# hierarchical transition rates. Skipped automatically for depth=1 models.
+rvq_analysis:
+  enabled: true
+  parent_child_heatmap: true
+  intra_parent_diversity: true
+  hierarchical_transitions: true
 
 # =============================================================================
 # Qpos+Code Determinism Analysis Configuration

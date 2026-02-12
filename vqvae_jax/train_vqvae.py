@@ -86,7 +86,7 @@ def vq_rollout_logging_fn(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from vq_losses import compute_codebook_metrics
+    from vq_losses import compute_codebook_metrics, compute_codebook_metrics_per_depth
 
     # Get network config for num_codes
     num_codes = cfg.network_config.get("num_codes", 512)
@@ -232,17 +232,30 @@ def vq_rollout_logging_fn(
 
         # Log per-depth metrics for RVQ (using first rollout)
         if rvq_depth > 1 and first_rollout_per_depth:
+            # Per-depth codebook metrics (perplexity, utilization, codes_used)
+            valid_depths = [
+                np.array(first_rollout_per_depth[d])
+                for d in range(rvq_depth)
+                if first_rollout_per_depth[d]
+            ]
+            if valid_depths:
+                depth_indices = tuple(jnp.array(a) for a in valid_depths)
+                depth_metrics = compute_codebook_metrics_per_depth(
+                    depth_indices, num_codes
+                )
+                wandb.log(
+                    {f"vq/{k}": float(v) for k, v in depth_metrics.items()},
+                    commit=False,
+                )
+
+            # Per-depth transition rates
             for d in range(rvq_depth):
                 if first_rollout_per_depth[d]:
                     d_arr = np.array(first_rollout_per_depth[d])
                     d_trans = np.sum(d_arr[1:] != d_arr[:-1])
                     d_rate = d_trans / max(len(d_arr) - 1, 1)
-                    d_unique = len(np.unique(d_arr))
                     wandb.log(
-                        {
-                            f"vq/eval_transition_rate_d{d}": float(d_rate),
-                            f"vq/eval_codes_used_d{d}": d_unique,
-                        },
+                        {f"vq/eval_transition_rate_d{d}": float(d_rate)},
                         commit=False,
                     )
 

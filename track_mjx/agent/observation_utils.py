@@ -59,7 +59,13 @@ def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
     Returns:
         Dict mapping each inner key to its feature dimension size.
     """
-    state_obs = obs.get("state", next(iter(obs.values())))
+    if "state" not in obs:
+        raise KeyError(
+            f"Expected 'state' key in observation dict, got keys: {list(obs.keys())}. "
+            f"Ensure the environment produces nested observations with 'state' and "
+            f"'privileged_state' keys."
+        )
+    state_obs = obs["state"]
     return {key: val.shape[-1] for key, val in state_obs.items()}
 
 

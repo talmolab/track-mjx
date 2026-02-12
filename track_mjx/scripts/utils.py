@@ -39,9 +39,15 @@ def apply_env_overrides(env_cfg: Any, overrides: dict) -> None:
     for key, value in overrides.items():
         parts = key.split(".")
         obj = env_cfg
-        for part in parts[:-1]:
-            obj = getattr(obj, part)
-        setattr(obj, parts[-1], value)
+        try:
+            for part in parts[:-1]:
+                obj = getattr(obj, part)
+            setattr(obj, parts[-1], value)
+        except AttributeError as e:
+            raise ValueError(
+                f"Invalid env config override '{key}={value}': {e}. "
+                f"Check that the config path exists."
+            ) from e
 
 
 def parse_env_overrides_str(overrides_str: Optional[str]) -> dict:
@@ -51,7 +57,10 @@ def parse_env_overrides_str(overrides_str: Optional[str]) -> dict:
     result = {}
     for kv in overrides_str.split():
         if "=" not in kv:
-            continue
+            raise ValueError(
+                f"Invalid env override token '{kv}': expected 'key=value' format. "
+                f"Full override string: '{overrides_str}'"
+            )
         key, value = kv.split("=", 1)
         result[key] = parse_value(value)
     return result
@@ -116,24 +125,16 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
     )
 
     # Apply CLI overrides (None means "use default")
+    override_keys = [
+        "entropy_cost", "episode_length", "eval_every", "learning_rate",
+        "num_envs", "unroll_length", "discounting", "batch_size",
+    ]
+    for key in override_keys:
+        value = getattr(args, key, None)
+        if value is not None:
+            params[key] = value
     if args.num_timesteps is not None:
         params["num_timesteps"] = int(float(args.num_timesteps))
-    if args.entropy_cost is not None:
-        params["entropy_cost"] = args.entropy_cost
-    if args.episode_length is not None:
-        params["episode_length"] = args.episode_length
-    if args.eval_every is not None:
-        params["eval_every"] = args.eval_every
-    if args.learning_rate is not None:
-        params["learning_rate"] = args.learning_rate
-    if args.num_envs is not None:
-        params["num_envs"] = args.num_envs
-    if args.unroll_length is not None:
-        params["unroll_length"] = args.unroll_length
-    if args.discounting is not None:
-        params["discounting"] = args.discounting
-    if args.batch_size is not None:
-        params["batch_size"] = args.batch_size
 
     return config_dict.create(**params)
 
@@ -141,6 +142,14 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
 # ---------------------------------------------------------------------------
 # Logging / evaluation helpers
 # ---------------------------------------------------------------------------
+
+
+def get_training_params(ppo_params):
+    """Extract Brax PPO training params by removing non-training keys."""
+    training_params = dict(ppo_params)
+    del training_params["network_factory"]
+    del training_params["eval_every"]
+    return training_params
 
 
 def make_logging_inference_fn(ppo_networks):

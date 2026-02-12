@@ -15,7 +15,7 @@ Observations are expected as nested dictionaries:
     }
 
 The policy uses 'state' for both encoder and decoder.
-The value network uses 'privileged_state'.
+The value network uses 'state' by default (configurable via value_obs_key).
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -253,7 +253,7 @@ def make_intention_ppo_networks(
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
         value_hidden_layer_sizes: MLP layer sizes for value network.
         policy_obs_key: Top-level observation key for policy (default: 'state').
-        value_obs_key: Top-level observation key for value network (default: 'privileged_state').
+        value_obs_key: Top-level observation key for value network (default: 'state').
 
     Returns:
         PPOImitationNetworks containing policy, value, and action distribution.
@@ -319,13 +319,7 @@ def make_decoder_policy_fn(
     # Load config and policy from checkpoint
     cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step=step)
     network_config = cfg["network_config"]
-
-    if "obs_sizes" not in network_config:
-        raise ValueError(
-            "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes."
-        )
-    obs_sizes = network_config["obs_sizes"]
+    obs_sizes = checkpointing.require_obs_sizes(network_config)
     reference_obs_size = obs_sizes["task_obs"]
     observation_size = obs_sizes["task_obs"] + obs_sizes["proprioception"]
 
@@ -350,16 +344,9 @@ def make_decoder_policy_fn(
     # Extract decoder normalizer params (proprioceptive portion only)
     normalizer_state = intention_policy_params[0]
 
-    # Extract proprioception stats from the 'state' key
-    decoder_normalizer_params = normalizer_select(normalizer_state, "state")
-    decoder_normalizer_params = running_statistics.RunningStatisticsState(
-        count=decoder_normalizer_params.count,
-        mean=decoder_normalizer_params.mean["proprioception"],
-        summed_variance=decoder_normalizer_params.summed_variance["proprioception"],
-        std=decoder_normalizer_params.std["proprioception"],
-        std_eps=decoder_normalizer_params.std_eps,
-        mode=decoder_normalizer_params.mode,
-    )
+    # Extract proprioception stats from state -> proprioception
+    state_normalizer = normalizer_select(normalizer_state, "state")
+    decoder_normalizer_params = normalizer_select(state_normalizer, "proprioception")
 
     decoder_params = (
         decoder_normalizer_params,

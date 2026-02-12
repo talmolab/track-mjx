@@ -10,13 +10,10 @@ The key components are:
 The architecture enables learning from motion capture data by encoding trajectory
 information into a compact latent space that conditions the policy.
 
-Observations are expected as nested dictionaries:
-    {
-        'state': {'task_obs': ..., 'proprioception': ...},
-        'privileged_state': {'task_obs': ..., 'proprioception': ...}
-    }
-
-The encoder uses 'state'['task_obs'] and decoder uses 'state'['proprioception'].
+The outer policy API (make_intention_policy) accepts nested observations
+{'state': {...}, 'privileged_state': {...}} and handles key selection and
+normalization. The IntentionNetwork module itself receives the already-selected
+inner dict {'task_obs': ..., 'proprioception': ...}.
 """
 
 from collections.abc import Mapping, Sequence
@@ -180,10 +177,10 @@ def reparameterize(
 class IntentionNetwork(nn.Module):
     """Full VAE model combining encoder and decoder for intention-based policy.
 
-    The network receives nested observations. The encoder processes
-    obs['state']['task_obs'] to produce latent intentions, which are
-    then concatenated with obs['state']['proprioception'] and decoded into
-    action distribution parameters.
+    The network receives inner observation dicts (already selected and normalized
+    by the outer apply function). The encoder processes obs['task_obs'] to produce
+    latent intentions, which are then concatenated with obs['proprioception'] and
+    decoded into action distribution parameters.
 
     Attributes:
         encoder_layers: Hidden layer sizes for the encoder MLP.

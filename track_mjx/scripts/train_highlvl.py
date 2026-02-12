@@ -5,23 +5,23 @@ mimic decoder. Supports any task environment registered in vnl-playground.
 
 Usage:
     # Basic usage (any registered task)
-    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260115_005843_966729
-    python train_highlvl.py --task RodentRearing --mimic_checkpoint 260115_005843_966729
-    python train_highlvl.py --task MyCustomTask --mimic_checkpoint 260115_005843_966729
+    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260210_013247_285744
+    python train_highlvl.py --task RodentRearing --mimic_checkpoint 260210_013247_285744
+    python train_highlvl.py --task MyCustomTask --mimic_checkpoint 260210_013247_285744
 
     # With PPO overrides
     python train_highlvl.py --task RodentRearing \\
-        --mimic_checkpoint 260115_005843_966729 \\
+        --mimic_checkpoint 260210_013247_285744 \\
         --num_timesteps 1e8 --entropy_cost 0.1
 
     # With env config overrides (dot notation for nested)
     python train_highlvl.py --task RodentBowlEscape \\
-        --mimic_checkpoint 260115_005843_966729 \\
+        --mimic_checkpoint 260210_013247_285744 \\
         --env "target_speed=1.5 ctrl_dt=0.02"
 
     # With custom observation keys for policy/value networks
     python train_highlvl.py --task RodentBowlEscape \\
-        --mimic_checkpoint 260115_005843_966729 \\
+        --mimic_checkpoint 260210_013247_285744 \\
         --policy_obs_key state --value_obs_key privileged_state
 
     # Warp backend (full-collision rodent model)
@@ -64,6 +64,7 @@ from track_mjx.scripts.utils import (
     create_base_parser,
     create_policy_params_fn,
     create_ppo_params,
+    get_training_params,
     make_logging_inference_fn,
     parse_env_overrides_str,
     setup_jax_cache,
@@ -103,30 +104,22 @@ def create_environments(
     value_obs_key: str = "state",
 ):
     """Create training and eval environments with HighLevelWrapper."""
-    base_env = registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
-    eval_base_env = registry.load(
-        task_name, config=env_cfg, clips=None, flatten_obs=False
-    )
-
-    env = rodent_wrappers.HighLevelWrapper(
-        base_env,
-        decoder_policy_fn,
-        intention_size,
+    wrapper_kwargs = dict(
+        decoder_inference_fn=decoder_policy_fn,
+        latent_size=intention_size,
         policy_obs_key=policy_obs_key,
         value_obs_key=value_obs_key,
         highlvl_obs_key=highlvl_obs_key,
         lowlvl_obs_key="proprioception",
+    )
+    env = rodent_wrappers.HighLevelWrapper(
+        registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False),
+        **wrapper_kwargs,
     )
     eval_env = rodent_wrappers.HighLevelWrapper(
-        eval_base_env,
-        decoder_policy_fn,
-        intention_size,
-        policy_obs_key=policy_obs_key,
-        value_obs_key=value_obs_key,
-        highlvl_obs_key=highlvl_obs_key,
-        lowlvl_obs_key="proprioception",
+        registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False),
+        **wrapper_kwargs,
     )
-
     return env, eval_env
 
 
@@ -136,12 +129,12 @@ def parse_args():
         description="Unified high-level decoder transfer training.",
         epilog="""
 Examples:
-    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260115_005843_966729
+    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260210_013247_285744
 
-    python train_highlvl.py --task RodentRearing --mimic_checkpoint 260115_005843_966729 \\
+    python train_highlvl.py --task RodentRearing --mimic_checkpoint 260210_013247_285744 \\
         --num_timesteps 1e8 --entropy_cost 0.1
 
-    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260115_005843_966729 \\
+    python train_highlvl.py --task RodentBowlEscape --mimic_checkpoint 260210_013247_285744 \\
         --env "target_speed=1.5 reward_terms.head_height_dense.weight=0.0"
         """,
     )
@@ -150,8 +143,8 @@ Examples:
     parser.add_argument(
         "--mimic_checkpoint",
         type=str,
-        required=True,
-        help="Mimic checkpoint path or run ID",
+        default="260210_013247_285744",
+        help="Mimic checkpoint path or run ID (default: 260210_013247_285744)",
     )
     parser.add_argument(
         "--highlvl_obs_key",
@@ -240,9 +233,7 @@ def main():
     )
 
     # Setup training
-    training_params = dict(ppo_params)
-    del training_params["network_factory"]
-    del training_params["eval_every"]
+    training_params = get_training_params(ppo_params)
 
     network_factory = functools.partial(
         ppo_networks.make_ppo_networks,

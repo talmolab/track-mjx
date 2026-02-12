@@ -19,7 +19,7 @@ Observations are expected as nested dictionaries:
     }
 
 The policy uses 'state' for both encoder and decoder.
-The value network uses 'privileged_state'.
+The value network uses 'state' by default (configurable via value_obs_key).
 """
 
 import dataclasses
@@ -213,9 +213,10 @@ class RecurrentDecoder(nn.Module):
 class RecurrentIntentionNetwork(nn.Module):
     """VAE-style policy with MLP encoder and RNN decoder.
 
-    The encoder processes obs['state']['task_obs'] to produce latent
-    intention distribution parameters (mean, logvar). The decoder uses an RNN
-    to process the sampled latent along with obs['state']['proprioception'].
+    The network receives inner observation dicts (already selected and normalized
+    by the outer apply function). The encoder processes obs['task_obs'] to produce
+    latent intention distribution parameters (mean, logvar). The decoder uses an
+    RNN to process the sampled latent along with obs['proprioception'].
 
     Attributes:
         output_size: Output dimension (action distribution param size).
@@ -516,7 +517,7 @@ def make_recurrent_intention_ppo_networks(
         rnn_hidden_sizes: Hidden sizes for each RNN layer, e.g. (512, 256).
         value_hidden_layer_sizes: MLP layer sizes for value network.
         policy_obs_key: Top-level observation key for policy (default: 'state').
-        value_obs_key: Top-level observation key for value network (default: 'privileged_state').
+        value_obs_key: Top-level observation key for value network (default: 'state').
 
     Returns:
         RecurrentPPONetworks containing policy, value, and action distribution.

@@ -34,6 +34,21 @@ from brax.training.acme import running_statistics
 from track_mjx.agent.observation_utils import get_obs_shape
 
 
+def require_obs_sizes(network_config) -> dict:
+    """Validate that network_config has obs_sizes and return it as a dict.
+
+    Raises ValueError if the legacy flat observation format is detected.
+    """
+    has_obs_sizes = hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
+    if not has_obs_sizes:
+        raise ValueError(
+            "Legacy flat observation format is no longer supported. "
+            "Config must have network_config.obs_sizes with 'task_obs' "
+            "and 'proprioception' keys."
+        )
+    return dict(network_config["obs_sizes"])
+
+
 def load_config_from_checkpoint(
     checkpoint_path: str,
     step_prefix: str = "PPONetwork",
@@ -213,16 +228,7 @@ def make_abstract_policy(
             value=ppo_network.value_network.init(key_value),
         )
 
-    # Require new dict-based config format (legacy flat format no longer supported)
-    network_config = cfg["network_config"]
-    if "obs_sizes" not in network_config:
-        raise ValueError(
-            "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes with 'task_obs' "
-            "and 'proprioception' keys."
-        )
-
-    obs_sizes = network_config["obs_sizes"]
+    obs_sizes = require_obs_sizes(cfg["network_config"])
     # Create nested dummy observation structure matching the environment's
     # OrderedDict format so the normalizer pytree is compatible with env obs.
     inner = collections.OrderedDict(
@@ -271,14 +277,7 @@ def load_inference_fn(
     else:
         make_policy = ff_ppo_networks.make_inference_fn(ppo_network)
 
-    # Require new dict-based config format (legacy flat format no longer supported)
-    network_config = cfg.network_config
-    if not (hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config):
-        raise ValueError(
-            "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes with 'task_obs' "
-            "and 'proprioception' keys."
-        )
+    require_obs_sizes(cfg.network_config)
 
     if arch_name == "recurrent_intention":
         return make_policy(policy_params, deterministic=deterministic)
@@ -308,15 +307,7 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
         )
         arch_name = "intention"
     network_config = cfg.network_config
-
-    # Require new dict-based config format (legacy flat format no longer supported)
-    if not (hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config):
-        raise ValueError(
-            "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes with 'task_obs' "
-            "and 'proprioception' keys."
-        )
-    obs_sizes = dict(network_config.obs_sizes)
+    obs_sizes = require_obs_sizes(network_config)
 
     if arch_name == "intention":
         return ff_ppo_networks.make_intention_ppo_networks(

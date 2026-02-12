@@ -56,6 +56,7 @@ from track_mjx.scripts.utils import (
     create_base_parser,
     create_policy_params_fn,
     create_ppo_params,
+    get_training_params,
     make_logging_inference_fn,
     parse_env_overrides_str,
     setup_jax_cache,
@@ -165,9 +166,7 @@ def main():
     env, eval_env = create_environments(args.task, env_cfg)
 
     # Setup training
-    training_params = dict(ppo_params)
-    del training_params["network_factory"]
-    del training_params["eval_every"]
+    training_params = get_training_params(ppo_params)
 
     network_factory = functools.partial(
         ppo_networks.make_ppo_networks,

@@ -237,7 +237,10 @@ def make_dict_value_network(
     Returns:
         FeedForwardNetwork that accepts dict observations.
     """
-    total_obs_size = sum(obs_sizes.values())
+    # Only count obs keys that concat_flat_dict_obs uses (excludes vision)
+    total_obs_size = obs_sizes.get("imitation_target", 0) + obs_sizes.get(
+        "proprioception", 0
+    )
 
     # Create underlying value network with flat observations
     base_value_network = networks.make_value_network(
@@ -299,6 +302,58 @@ def make_intention_ppo_networks(
         obs_sizes=obs_sizes,
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+    )
+
+    value_network = make_dict_value_network(
+        obs_sizes=obs_sizes,
+        hidden_layer_sizes=value_hidden_layer_sizes,
+    )
+
+    return PPOImitationNetworks(
+        policy_network=policy_network,
+        value_network=value_network,
+        parametric_action_distribution=parametric_action_distribution,
+    )
+
+
+def make_vision_ppo_networks(
+    obs_sizes: Mapping[str, int],
+    action_size: int,
+    vision_shape: tuple[int, int, int] = (64, 64, 3),
+    vision_latent_size: int = 32,
+    decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
+    value_hidden_layer_sizes: Sequence[int] = (512, 512),
+    vision_channels: Sequence[int] = (32, 64, 64),
+) -> PPOImitationNetworks:
+    """Create vision-based PPO networks (CNN encoder + MLP decoder).
+
+    The policy uses a CNN to encode raw pixels into a latent feature vector,
+    which is concatenated with proprioception and decoded into actions.
+    No imitation target is used. The value network uses only proprioception.
+
+    Args:
+        obs_sizes: Dict mapping observation keys to their sizes.
+        action_size: Action dimension.
+        vision_shape: Shape of the vision input (H, W, C).
+        vision_latent_size: Dimension of the CNN latent output.
+        decoder_hidden_layer_sizes: MLP layer sizes for policy decoder.
+        value_hidden_layer_sizes: MLP layer sizes for value network.
+        vision_channels: Channel sizes for CNN conv layers.
+
+    Returns:
+        PPOImitationNetworks containing policy, value, and action distribution.
+    """
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+
+    policy_network = intention_network.make_vision_only_policy(
+        parametric_action_distribution.param_size,
+        latent_size=vision_latent_size,
+        obs_sizes=obs_sizes,
+        vision_shape=vision_shape,
+        decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        vision_channels=vision_channels,
     )
 
     value_network = make_dict_value_network(

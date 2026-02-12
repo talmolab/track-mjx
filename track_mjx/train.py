@@ -100,9 +100,15 @@ def main(cfg: DictConfig) -> None:
     logging.info(f"Environment config: {cfg.env_config}")
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
+    # If clip_length is None (auto-detected), get it from the loaded reference clips
+    clip_length = cfg.env_config.clip_length
+    if clip_length is None:
+        # Get the padded clip length from the reference clips shape
+        clip_length = reference_clips.qpos.shape[1]
+        logging.info(f"Auto-detected clip_length: {clip_length}")
     steps_per_frame = (1 / cfg.env_config.mocap_hz) / (cfg.env_config.ctrl_dt)
     episode_length = (
-        cfg.env_config.clip_length
+        clip_length
         - cfg.env_config.start_frame_range[-1]
         - cfg.env_config.reference_length
     ) * steps_per_frame

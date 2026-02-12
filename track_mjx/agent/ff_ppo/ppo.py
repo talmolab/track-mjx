@@ -25,6 +25,7 @@ Based on Brax's PPO implementation with modifications for VNL tracking tasks.
 """
 
 import functools
+import gc
 import time
 from typing import Any, Callable, Tuple
 
@@ -866,6 +867,9 @@ def train(
                     config_dict,
                     checkpoint_callback,
                 )
+
+            # Force garbage collection to free deferred JAX arrays
+            gc.collect()
 
     total_steps = current_step
     # TODO: this assert will fail

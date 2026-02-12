@@ -346,6 +346,34 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             rnn_hidden_sizes=tuple(network_config.rnn_hidden_sizes),
             value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
         )
+    elif arch_name == "vision":
+        vision_size = obs_sizes.get("vision", 1024)
+        # Infer vision shape from config or default square grayscale
+        vision_width = network_config.get("vision_width", 32)
+        vision_height = network_config.get("vision_height", 32)
+        grayscale = network_config.get("grayscale", True)
+        channels = 1 if grayscale else 3
+        # If vision_width/height not in network_config, infer from vision_size
+        if "vision_width" not in network_config:
+            import math
+            pixels = vision_size // channels
+            side = int(math.sqrt(pixels))
+            vision_width = vision_height = side
+        return ff_ppo_networks.make_vision_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            vision_shape=(vision_height, vision_width, channels),
+            vision_latent_size=network_config.get("vision_latent_size", 32),
+            decoder_hidden_layer_sizes=tuple(
+                network_config.get("decoder_layer_sizes", [512, 512])
+            ),
+            value_hidden_layer_sizes=tuple(
+                network_config.get("critic_layer_sizes", [512, 512])
+            ),
+            vision_channels=tuple(
+                network_config.get("vision_channels", [32, 64, 64])
+            ),
+        )
     else:
         raise ValueError(f"Unknown network architecture: {arch_name}")
 

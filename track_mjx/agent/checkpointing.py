@@ -47,9 +47,7 @@ class _LegacyDictNormalizerState:
     proprioception: running_statistics.RunningStatisticsState
 
 
-def _probe_normalizer_obs_keys(
-    ckpt_mgr: ocp.CheckpointManager, step: int
-) -> set[str]:
+def _probe_normalizer_obs_keys(ckpt_mgr: ocp.CheckpointManager, step: int) -> set[str]:
     """Probe a checkpoint to determine which observation keys its normalizer has.
 
     Does a raw (untyped) restore to inspect the normalizer's mean dict keys,

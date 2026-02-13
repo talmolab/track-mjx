@@ -138,7 +138,7 @@ Expected output:
 
 ### Rodent
 
-The main training entrypoint is defined in [`track_mjx/train.py`](track_mjx/train.py) and relies on the config in [`track_mjx/config/rodent-full-clips.yaml`](track_mjx/config/rodent-full-clips.yaml).
+The main training entrypoint is defined in [`scripts/train.py`](scripts/train.py) and relies on the config in [`track_mjx/config/rodent-full-clips.yaml`](track_mjx/config/rodent-full-clips.yaml).
 
 #### Download the data
 

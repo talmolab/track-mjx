@@ -242,16 +242,40 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
     logging.info("\nCreating environment...")
     (_, cfg_dict, env_cfg_ml) = config_utils.prepare_config(cfg)
 
-    reference_clips = ReferenceClips(
-        data_path=vq_cfg.env_config.reference_data_path,
-        n_frames_per_clip=cfg.inference.get("clip_length", 250),
-        keep_clips_idx=None,  # Load all clips
-    )
-    env = imitation.Imitation(config=env_cfg_ml, clips=reference_clips)
+    # Split-aware clip selection
+    data_split = cfg.inference.get("data_split", "all")
+    train_ratio = None
+    if data_split in ("train", "test"):
+        # Must use training config's clip_length and keep_clips_idx so split
+        # indices map to the same physical clips as during training.
+        reference_clips = ReferenceClips(
+            data_path=vq_cfg.env_config.reference_data_path,
+            n_frames_per_clip=vq_cfg.env_config.clip_length,
+            keep_clips_idx=vq_cfg.env_config.get("keep_clips_idx", None),
+        )
+        train_ratio = float(vq_cfg.train_setup.get("train_subset_ratio", 1.0))
+        train_seed = int(vq_cfg.train_setup.train_config.get("seed", 0))
+        key_split, _ = jax.random.split(jax.random.PRNGKey(train_seed))
+        train_clips, test_clips = reference_clips.split(
+            train_ratio=train_ratio, seed=key_split
+        )
+        clips = train_clips if data_split == "train" else test_clips
+        num_clips = clips.qpos.shape[0]
+        logging.info(f"  Data split: {data_split} ({num_clips} clips)")
+    else:
+        reference_clips = ReferenceClips(
+            data_path=vq_cfg.env_config.reference_data_path,
+            n_frames_per_clip=cfg.inference.get("clip_length", 250),
+            keep_clips_idx=None,
+        )
+        clips = reference_clips
+        num_clips = cfg.inference.num_clips
+
+    env = imitation.Imitation(config=env_cfg_ml, clips=clips)
 
     # Run inference
     logging.info("\nRunning inference...")
-    logging.info(f"  Num clips: {cfg.inference.num_clips}")
+    logging.info(f"  Num clips: {num_clips}")
     logging.info(f"  Max steps: {cfg.inference.max_steps}")
     logging.info(f"  Seed: {cfg.inference.seed}")
     logging.info(f"  Store z_e: {cfg.inference.store_z_e}")
@@ -259,7 +283,7 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
     results = run_inference(
         env=env,
         inference_fn=inference_fn,
-        num_clips=cfg.inference.num_clips,
+        num_clips=num_clips,
         max_steps=cfg.inference.max_steps,
         seed=cfg.inference.seed,
         store_z_e=cfg.inference.store_z_e,
@@ -271,7 +295,7 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
     metadata = {
         "checkpoint_path": str(cfg.checkpoint.path),
         "checkpoint_step": step,
-        "num_clips": cfg.inference.num_clips,
+        "num_clips": num_clips,
         "max_steps": cfg.inference.max_steps,
         "seed": cfg.inference.seed,
         "store_z_e": cfg.inference.store_z_e,
@@ -281,10 +305,14 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
         "latent_dim": latent_dim,
         "rvq_depth": rvq_depth,
         "timestamp": datetime.now().isoformat(),
+        "data_split": data_split,
+        "train_subset_ratio": train_ratio,
     }
 
-    # Save to H5
+    # Save to H5 (auto-suffix path for train/test splits)
     output_path = Path(cfg.output.path)
+    if data_split != "all":
+        output_path = output_path.with_stem(f"{output_path.stem}_{data_split}")
     logging.info(f"\nSaving results to {output_path}...")
     save_rollout_h5(output_path, results, metadata)
 

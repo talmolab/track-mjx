@@ -322,79 +322,95 @@ def vq_rollout_logging_fn(
                 commit=False,
             )
 
-    # Render video with code overlay (runs every render_interval evals)
+    # Render video(s) with code overlay (runs every render_interval evals)
     if render_video:
         import mujoco
 
         render_fps = cfg.render_config.render_fps
-        video_path = f"{model_path}/{current_step}.mp4"
+        num_videos = min(
+            int(cfg.render_config.get("num_eval_rollout_videos", 1)),
+            n_rollouts,
+        )
 
-        try:
-            # Build per-depth index arrays for multi-depth bar rendering
-            video_indices_per_depth = None
-            if rvq_depth > 1 and first_rollout_per_depth and first_rollout_per_depth[0]:
-                video_indices_per_depth = [
-                    np.array(first_rollout_per_depth[d]) for d in range(rvq_depth)
-                ]
-
-            # Use custom rendering with code transition bar(s)
-            render_rollout_to_video(
-                env=env,
-                rollout_states=rollout_states,
-                output_path=video_path,
-                camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
-                width=640,
-                height=480,
-                fps=render_fps,
-                indices=indices_array,
-                num_codes=num_codes,
-                code_bar_height=30,
-                indices_per_depth=video_indices_per_depth,
+        for vid_i in range(num_videos):
+            vid_indices = (
+                all_rollout_indices[vid_i] if vid_i < len(all_rollout_indices) else None
+            )
+            vid_states = (
+                all_rollout_states[vid_i] if vid_i < len(all_rollout_states) else []
+            )
+            vid_per_depth = (
+                per_rollout_depth_indices[vid_i]
+                if vid_i < len(per_rollout_depth_indices)
+                else None
             )
 
-            wandb.log(
-                {"videos/rollout": wandb.Video(video_path, format="mp4")},
-                commit=False,
-            )
+            video_path = f"{model_path}/{current_step}_vid{vid_i}.mp4"
 
-            # Render per-code videos showing frames grouped by code (if enabled)
-            render_per_code = cfg.render_config.get("render_per_code_videos", False)
-            if render_per_code and indices_array is not None and len(indices_array) > 0:
-                per_code_dir = f"{model_path}/per_code_videos/{current_step}"
-                try:
-                    per_code_paths = render_per_code_videos(
-                        env=env,
-                        rollout_states=rollout_states,
-                        indices=indices_array,
-                        output_dir=per_code_dir,
-                        num_codes=num_codes,
-                        camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
-                        width=640,
-                        height=480,
-                        fps=render_fps,
-                        min_frames_per_code=5,
+            try:
+                # Build per-depth index arrays for multi-depth bar rendering
+                video_indices_per_depth = None
+                if rvq_depth > 1 and vid_per_depth and vid_per_depth[0]:
+                    video_indices_per_depth = [
+                        np.array(vid_per_depth[d]) for d in range(rvq_depth)
+                    ]
+
+                render_rollout_to_video(
+                    env=env,
+                    rollout_states=vid_states,
+                    output_path=video_path,
+                    camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
+                    width=640,
+                    height=480,
+                    fps=render_fps,
+                    indices=vid_indices,
+                    num_codes=num_codes,
+                    code_bar_height=30,
+                    indices_per_depth=video_indices_per_depth,
+                )
+
+                wandb.log(
+                    {f"videos/rollout_{vid_i}": wandb.Video(video_path, format="mp4")},
+                    commit=False,
+                )
+
+            except mujoco.FatalError as e:
+                logging.warning(
+                    f"Rendering video {vid_i} failed with MuJoCo error: {e}"
+                )
+            except Exception as e:
+                logging.warning(f"Failed to render video {vid_i}: {e}")
+
+        # Render per-code videos from first rollout (if enabled)
+        render_per_code = cfg.render_config.get("render_per_code_videos", False)
+        if render_per_code and indices_array is not None and len(indices_array) > 0:
+            per_code_dir = f"{model_path}/per_code_videos/{current_step}"
+            try:
+                per_code_paths = render_per_code_videos(
+                    env=env,
+                    rollout_states=rollout_states,
+                    indices=indices_array,
+                    output_dir=per_code_dir,
+                    num_codes=num_codes,
+                    camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
+                    width=640,
+                    height=480,
+                    fps=render_fps,
+                    min_frames_per_code=5,
+                )
+
+                for code_idx, vpath in per_code_paths.items():
+                    wandb.log(
+                        {
+                            f"videos/per_code/code_{code_idx}": wandb.Video(
+                                vpath, format="mp4"
+                            )
+                        },
+                        commit=False,
                     )
-
-                    # Log each per-code video to wandb
-                    for code_idx, vpath in per_code_paths.items():
-                        wandb.log(
-                            {
-                                f"videos/per_code/code_{code_idx}": wandb.Video(
-                                    vpath, format="mp4"
-                                )
-                            },
-                            commit=False,
-                        )
-                    logging.info(
-                        f"Logged {len(per_code_paths)} per-code videos to wandb"
-                    )
-                except Exception as e:
-                    logging.warning(f"Failed to render per-code videos: {e}")
-
-        except mujoco.FatalError as e:
-            logging.warning(f"Rendering video failed with MuJoCo error: {e}")
-        except Exception as e:
-            logging.warning(f"Failed to render video: {e}")
+                logging.info(f"Logged {len(per_code_paths)} per-code videos to wandb")
+            except Exception as e:
+                logging.warning(f"Failed to render per-code videos: {e}")
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="vqvae_minimal")
@@ -606,7 +622,7 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = imitation.Imitation(config=rollout_cfg)
+    rollout_env = imitation.Imitation(config=rollout_cfg, clips=test_clips)
 
     # Define jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

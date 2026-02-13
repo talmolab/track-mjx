@@ -29,6 +29,9 @@ wandb:
 # Use `python -m inference.run_inference` to generate H5 files.
 data:
   h5_path: ./outputs/rollout_rvq_32.h5  # Path to H5 file with rollout data (required)
+  h5_path_train: null            # Path to train-split H5 (optional)
+  h5_path_test: null             # Path to test-split H5 (optional)
+  analysis_split: "combined"     # "train", "test", or "combined"
   clip_length: 500               # Frames per clip (for environment setup)
 
 # =============================================================================

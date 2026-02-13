@@ -20,6 +20,7 @@ inference:
   seed: 42              # Random seed for reproducibility
   clip_length: 500      # Frames per reference clip
   store_z_e: false      # Whether to store encoder outputs (increases file size)
+  data_split: "all"     # "all", "train", or "test" — uses training config's split
 
 # =============================================================================
 # Output Configuration

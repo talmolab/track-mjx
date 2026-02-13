@@ -287,8 +287,15 @@ def main(cfg: DictConfig):
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.info(f"Output directory: {output_dir}")
 
-    # Load rollouts from H5 file
-    h5_path = cfg.data.h5_path
+    # Select H5 file based on analysis_split config
+    analysis_split = cfg.data.get("analysis_split", "combined")
+    if analysis_split == "train" and cfg.data.get("h5_path_train"):
+        h5_path = cfg.data.h5_path_train
+    elif analysis_split == "test" and cfg.data.get("h5_path_test"):
+        h5_path = cfg.data.h5_path_test
+    else:
+        h5_path = cfg.data.h5_path
+
     if not Path(h5_path).exists():
         raise FileNotFoundError(
             f"H5 file not found: {h5_path}\n"

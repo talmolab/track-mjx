@@ -32,16 +32,16 @@ env_config:
   qvel_init: "zeros"
   keep_clips_idx: null          # Use all clips (null = no filtering)
 
-  # Domain Randomization - DISABLED for minimal testing
+  # Domain Randomization - prevents decoder from memorizing dynamics
   domain_randomization:
-    use_domain_randomization: false
-    floor_friction: [0.7, 0.7]
-    static_friction_scale: [1.0, 1.0]
-    armature_scale: [1.0, 1.0]
-    com_jitter: [0.0, 0.0]
-    link_mass_scale: [1.0, 1.0]
-    torso_mass_jitter: [0.0, 0.0]
-    qpos0_jitter: [0.0, 0.0]
+    use_domain_randomization: true
+    floor_friction: [0.5, 1.0]
+    static_friction_scale: [0.8, 1.2]
+    armature_scale: [0.8, 1.2]
+    com_jitter: [0.0, 0.005]
+    link_mass_scale: [0.9, 1.1]
+    torso_mass_jitter: [0.0, 0.05]
+    qpos0_jitter: [0.0, 0.01]
 
   # Reward Terms - Same as production
   reward_terms:
@@ -93,6 +93,7 @@ render_config:
   render_interval: 5            # Render video every N evals
   render_per_code_videos: false # Disabled - too expensive with large codebooks
   eval_rollouts_for_transition: 16  # Number of rollouts to aggregate for transition matrix
+  num_eval_rollout_videos: 3        # Number of rollout videos to render per eval
 
 # =============================================================================
 # Network Architecture - VQ-VAE
@@ -118,7 +119,7 @@ network_config:
   codebook_init_scale: 1.0       # Initialization scale
   ce_stickiness_cost: 0.0        # Weight for cross-entropy stickiness loss (disabled, use bias instead)
   ce_stickiness_temperature: 1.0 # Temperature for CE stickiness softmax
-  stickiness_bias: [0.0, 0.0]   # No stickiness bias (was causing lock-in)
+  stickiness_bias: [0.5, 0.0]
 
   # Dead code reinitialization
   dead_code_reinit: true          # Reinitialize dead codebook entries from z_e
@@ -149,7 +150,7 @@ train_setup:
   restore_from_run_state: null
 
   train_test_split_info: null
-  train_subset_ratio: 1.0       # Use all available clips
+  train_subset_ratio: 0.7       # 80% train, 20% test (~674 train, ~168 test)
 
   # Evaluation and resets - FREQUENT for debugging
   eval_every: 20_000_000           # Eval more frequently
@@ -159,7 +160,7 @@ train_setup:
   # PPO Training Hyperparameters - MINIMAL
   train_config:
     num_envs: 2048               # Reduced for larger codebook (128 codes)
-    num_timesteps: 8_000_000_000
+    num_timesteps: 5_000_000_000
     batch_size: 512              # Smaller batch for memory
     num_minibatches: 16          # Fewer minibatches
     num_updates_per_batch: 4    # Fewer updates

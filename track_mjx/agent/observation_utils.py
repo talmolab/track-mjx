@@ -71,19 +71,31 @@ def flatten_obs_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
     to flat arrays at each key, suitable for normalization and network input.
     Preserves the batch dimension if present.
 
+    Handles observations wrapped in state/privileged_state hierarchy
+    (as returned by vnl_playground environments) by unwrapping to the
+    inner "state" dict. Also handles both "imitation_target" and "task_obs"
+    as the reference observation key.
+
     Args:
         obs: Observation dict where values may be nested dicts or flat arrays.
             Can be unbatched (each value is 1D) or batched (each value has
-            leading batch dimension).
+            leading batch dimension). May optionally be wrapped in
+            state/privileged_state hierarchy.
 
     Returns:
         Dict with the same keys but flattened array values. Shape is
         (obs_size,) for unbatched input or (batch_size, obs_size) for batched.
     """
+    # Unwrap state/privileged_state hierarchy if present
+    if "state" in obs and "proprioception" not in obs:
+        obs = obs["state"]
+
     flat_proprio = _flatten_nested_obs(obs["proprioception"])
 
     if "imitation_target" in obs:
         flat_imit = _flatten_nested_obs(obs["imitation_target"])
+    elif "task_obs" in obs:
+        flat_imit = _flatten_nested_obs(obs["task_obs"])
     else:
         # Zero-sized sentinel: preserves batch dims with obs_size=0.
         # Downstream ops (normalize, concat, update) are no-ops on size-0 arrays.

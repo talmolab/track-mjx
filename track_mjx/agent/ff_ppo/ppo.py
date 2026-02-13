@@ -16,7 +16,7 @@
 
 This module implements PPO training with support for:
 - Intention-based policy networks (VAE-style latent encoding)
-- Observation normalization with optional frozen proprioceptive components
+- Observation normalization
 - Checkpoint saving/restoration with preemption recovery
 - Train/test split evaluation
 - KL divergence scheduling for VAE training stability
@@ -41,19 +41,15 @@ from brax.training import acting, pmap, types
 from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
-from optax.transforms import freeze
-
-from track_mjx.agent import checkpointing, gradients, network_masks
+from track_mjx.agent import checkpointing, gradients
 from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
     get_obs_sizes,
-    init_dict_normalizer,
-    update_dict_normalizer,
+    get_obs_shape,
 )
 
 # Type aliases
-InferenceParams = tuple[DictRunningStatisticsState, Params]
+InferenceParams = tuple[running_statistics.RunningStatisticsState, Params]
 Metrics = types.Metrics
 
 # Constants
@@ -68,14 +64,14 @@ class TrainingState:
     Attributes:
         optimizer_state: Optax optimizer state.
         params: PPO network parameters (policy and value).
-        normalizer_params: Running statistics for observation normalization
-            (per observation key).
+        normalizer_params: Running statistics for observation normalization.
+            Has pytree structure matching observation dict.
         env_steps: Total environment steps taken (in thousands).
     """
 
     optimizer_state: optax.OptState
     params: losses.PPONetworkParams
-    normalizer_params: DictRunningStatisticsState
+    normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
 
 
@@ -219,7 +215,6 @@ def train(
     get_activation: bool = True,
     use_kl_schedule: bool = True,
     kl_ramp_up_frac: float = 0.25,
-    freeze_decoder: bool = False,
     checkpoint_callback: Callable[[int], None] | None = None,
     grad_clip_threshold: float = 20.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
@@ -417,19 +412,13 @@ def train(
         # Update normalization params (only if normalization is enabled).
         # When disabled, normalizer stays at identity (mean=0, std=1).
         if normalize_observations:
-            normalizer_params = update_dict_normalizer(
+            normalizer_params = running_statistics.update(
                 training_state.normalizer_params,
                 data.observation,
                 pmap_axis_name=_PMAP_AXIS_NAME,
             )
         else:
             normalizer_params = training_state.normalizer_params
-
-        # If decoder is frozen, preserve the proprioceptive normalizer params
-        if frozen_proprioceptive_normalizer_params is not None:
-            normalizer_params = normalizer_params.replace(
-                proprioception=frozen_proprioceptive_normalizer_params
-            )
 
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
@@ -517,12 +506,6 @@ def train(
         # all devices gets the same randomization rng
         randomization_rng = jax.random.split(key_env, randomization_batch_size)
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
-
-    # Extract observation sizes from environment - observations are now dicts
-    # We'll extract the sizes after the first reset
-    # Legacy size extraction for compatibility (used in frozen decoder logic)
-    proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
-    logging.info(f"Proprioceptive observation size: {proprioceptive_obs_size}")
 
     env = wrap_for_training(
         environment,
@@ -612,75 +595,22 @@ def train(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
     )
+
+    # Initialize normalizer with pytree structure matching observations
+    obs_shape = get_obs_shape(env_state.obs)
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=init_dict_normalizer(env_state.obs),
+        normalizer_params=running_statistics.init_state(obs_shape),
         env_steps=0,
     )
 
-    frozen_proprioceptive_normalizer_params = None
-
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        if not freeze_decoder:
-            # we are recovering the full training state
-            training_state = checkpointing.load_training_state(
-                checkpoint_to_restore, training_state
-            )
-            logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
-        if freeze_decoder:
-            # first is normalizer
-            loaded_checkpoint = checkpointing.load_policy(checkpoint_to_restore)
-            loaded_normalizer_params = loaded_checkpoint[0]
-            loaded_policy = loaded_checkpoint[1]
-            decoder_params = loaded_policy["params"]["decoder"]
-            training_state.params.policy["params"]["decoder"] = decoder_params
-            logging.info(
-                f"Restored decoder parameters from checkpoint at {checkpoint_to_restore}"
-            )
-            mask = network_masks.create_decoder_mask(init_params)
-            optimizer = optax.chain(optimizer, freeze(mask))
-            # overwrite the optimizer state with the new optimizer
-            training_state = training_state.replace(
-                optimizer_state=optimizer.init(init_params)
-            )
-            logging.info("Freezing decoder parameters")
-
-            # Extract proprioceptive normalizer params from loaded checkpoint
-            # Handle both dict-based (new) and flat-array (legacy) normalizer formats
-            if isinstance(loaded_normalizer_params, DictRunningStatisticsState):
-                # New dict-based format
-                frozen_proprioceptive_normalizer_params = (
-                    loaded_normalizer_params.proprioception
-                )
-            else:
-                # Legacy flat-array format - extract proprioceptive portion
-                if proprioceptive_obs_size == 0:
-                    raise ValueError(
-                        "Proprioceptive observation size is 0, "
-                        "but decoder parameters are being frozen."
-                    )
-                mean = loaded_normalizer_params.mean[-proprioceptive_obs_size:]
-                std = loaded_normalizer_params.std[-proprioceptive_obs_size:]
-                summed_variance = loaded_normalizer_params.summed_variance[
-                    -proprioceptive_obs_size:
-                ]
-                frozen_proprioceptive_normalizer_params = (
-                    running_statistics.RunningStatisticsState(
-                        count=jnp.zeros(()),
-                        mean=mean,
-                        summed_variance=summed_variance,
-                        std=std,
-                    )
-                )
-
-            # Set the proprioceptive normalizer in training state
-            training_state = training_state.replace(
-                normalizer_params=training_state.normalizer_params.replace(
-                    proprioception=frozen_proprioceptive_normalizer_params
-                )
-            )
+        training_state = checkpointing.load_training_state(
+            checkpoint_to_restore, training_state
+        )
+        logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
 
     # gradient update function with the new optimizer and loss function
     gradient_update_fn = gradients.gradient_update_fn(

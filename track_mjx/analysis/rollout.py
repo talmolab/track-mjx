@@ -14,27 +14,32 @@ from mujoco_playground._src import mjx_env
 from jax import numpy as jnp
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
-from vnl_playground.tasks.rodent import imitation
+from vnl_playground import registry
 
 
 def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
     """Create a VNL imitation learning environment from a configuration.
 
-    Creates the VNL Imitation environment directly, returning dictionary
-    observations with keys "imitation_target" and "proprioception".
+    Uses the vnl-playground registry to create the environment with reference
+    clips, returning nested dictionary observations:
+        {'state': {'task_obs': ..., 'proprioception': ...},
+         'privileged_state': {'task_obs': ..., 'proprioception': ...}}
 
     Args:
         cfg_dict: Configuration dictionary. Can be either:
             - Full config with "walker_config" key: extracts "env_config" section
             - Direct env_config dict: used as-is
+            Must contain env_name, reference_data_path, clip_length, and
+            optionally keep_clips_idx.
 
     Returns:
-        A Brax-compatible environment with dictionary observations.
+        A Brax-compatible environment with nested dictionary observations.
 
     Example:
+        >>> cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
         >>> env = create_environment(cfg)
         >>> state = env.reset(jax.random.PRNGKey(0))
-        >>> print(state.obs.keys())  # dict_keys(['imitation_target', 'proprioception'])
+        >>> print(state.obs.keys())  # dict_keys(['state', 'privileged_state'])
     """
     if "walker_config" in cfg_dict:
         env_cfg = cfg_dict["env_config"]
@@ -44,7 +49,16 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
     else:
         env_cfg_ml = config_dict.ConfigDict(cfg_dict)
 
-    return imitation.Imitation(config=env_cfg_ml)
+    env_name = env_cfg_ml.env_name
+    reference_clips = registry.load_reference_clips(
+        env_name,
+        data_path=env_cfg_ml.reference_data_path,
+        n_frames_per_clip=env_cfg_ml.clip_length,
+        keep_clips_idx=env_cfg_ml.get("keep_clips_idx", None),
+    )
+    return registry.load(
+        env_name, config=env_cfg_ml, clips=reference_clips, flatten_obs=False
+    )
 
 
 def create_rollout_generator(

@@ -17,6 +17,7 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground import registry
+from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
@@ -60,9 +61,6 @@ def main(cfg: DictConfig) -> None:
     # between discovery and saving (prepare_config modifies cfg by adding paths)
     cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
 
-    # Get environment name from config
-    env_name = cfg.env_config.env_name
-
     # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
 
@@ -73,8 +71,9 @@ def main(cfg: DictConfig) -> None:
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
-    # Create the reference clips using registry
+    # Create the reference clips using registry, get environment name from config
     logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
+    env_name = cfg.env_config.env_name
     reference_clips = registry.load_reference_clips(
         env_name,
         data_path=cfg.env_config.reference_data_path,
@@ -90,11 +89,11 @@ def main(cfg: DictConfig) -> None:
         seed=key_split,
     )
     # Create environments using registry
-    env = registry.load(
-        env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False
+    env = rodent_wrappers.TrackMjxObsWrapper(
+        registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
     )
-    test_env = registry.load(
-        env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False
+    test_env = rodent_wrappers.TrackMjxObsWrapper(
+        registry.load(env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False)
     )
 
     logging.info(f"Environment config: {cfg.env_config}")
@@ -213,9 +212,8 @@ def main(cfg: DictConfig) -> None:
         ),
     )
 
-    # Add freeze_decoder only for feedforward PPO (not supported for recurrent)
+    # Add get_activation only for feedforward PPO (not supported for recurrent)
     if arch_name != "recurrent_intention":
-        train_kwargs["freeze_decoder"] = cfg.train_setup.get("freeze_decoder", False)
         train_kwargs["get_activation"] = cfg.train_setup.train_config.get(
             "get_activation", False
         )
@@ -225,8 +223,8 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = registry.load(
-        env_name, config=rollout_cfg, clips=None, flatten_obs=False
+    rollout_env = rodent_wrappers.TrackMjxObsWrapper(
+        registry.load(env_name, config=rollout_cfg, clips=None, flatten_obs=False)
     )
 
     # define the jit reset/step functions

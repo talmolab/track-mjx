@@ -165,6 +165,44 @@ python -m track_mjx.train --config-name rodent-full-clips.yaml
 ```
 
 
+## Task Training
+
+We provide generic scripts to train policies on any task registered in [vnl-playground](https://github.com/talmolab/vnl-playground).
+
+### Standard PPO (`train_task.py`)
+
+Trains an end-to-end MLP policy using Brax PPO. Supports both the default JAX/MJX backend and the Warp backend (for full-collision body models).
+
+```bash
+# Any registered task
+python track_mjx/scripts/train_task.py --task RodentBowlEscape
+
+# With PPO overrides
+python track_mjx/scripts/train_task.py --task RodentRearing --num_timesteps 1e8 --entropy_cost 0.1
+
+# With env config overrides
+python track_mjx/scripts/train_task.py --task RodentBowlEscape --env "target_speed=1.5"
+
+# Warp backend (full-collision body model)
+python track_mjx/scripts/train_task.py --task RodentBowlEscape --env "mujoco_impl=warp"
+```
+
+### High-Level Transfer (`train_highlvl.py`)
+
+Trains a high-level policy that outputs latent intentions to a frozen pretrained mimic decoder. The decoder converts intentions into naturalistic motor commands.
+
+```bash
+# Any registered task
+python track_mjx/scripts/train_highlvl.py --task RodentBowlEscape --mimic_checkpoint <checkpoint_id>
+
+# With PPO overrides
+python track_mjx/scripts/train_highlvl.py --task RodentRearing \
+    --mimic_checkpoint <checkpoint_id> --num_timesteps 1e8 --entropy_cost 0.1
+```
+
+Both scripts support `--policy_hidden_sizes`, `--value_hidden_sizes`, `--env` (for env config overrides), and standard PPO hyperparameter flags. Run with `--help` for full usage.
+
+
 ## Citation
 
 If you use track-mjx in your research, please cite our paper:

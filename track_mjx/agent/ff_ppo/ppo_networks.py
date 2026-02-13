@@ -320,10 +320,10 @@ def make_vision_ppo_networks(
     obs_sizes: Mapping[str, int],
     action_size: int,
     vision_shape: tuple[int, int, int] = (64, 64, 3),
-    vision_latent_size: int = 32,
+    vision_latent_size: int = 8,
     decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
     value_hidden_layer_sizes: Sequence[int] = (512, 512),
-    vision_channels: Sequence[int] = (32, 64, 64),
+    vision_channels: Sequence[int] = (2, 4, 8, 16),
 ) -> PPOImitationNetworks:
     """Create vision-based PPO networks (CNN encoder + MLP decoder).
 
@@ -359,6 +359,276 @@ def make_vision_ppo_networks(
     value_network = make_dict_value_network(
         obs_sizes=obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
+    )
+
+    return PPOImitationNetworks(
+        policy_network=policy_network,
+        value_network=value_network,
+        parametric_action_distribution=parametric_action_distribution,
+    )
+
+
+def make_vision_value_network(
+    vision_shape: tuple[int, int, int],
+    hidden_layer_sizes: Sequence[int] = (512, 512),
+    vision_latent_size: int = 8,
+    vision_channels: Sequence[int] = (2, 4, 8, 16),
+) -> networks.FeedForwardNetwork:
+    """Create a value network that processes vision through a CNN.
+
+    Used when proprioception/imitation_target are not available to the value
+    network (e.g. vision-only high-level transfer). The CNN encodes pixels
+    to a feature vector which feeds into a standard value MLP.
+
+    Args:
+        vision_shape: Shape of the vision input (H, W, C).
+        hidden_layer_sizes: MLP layer sizes for value head.
+        vision_latent_size: Output dimension of the CNN encoder.
+        vision_channels: Channel sizes for each CNN conv layer.
+
+    Returns:
+        FeedForwardNetwork that accepts dict observations with a "vision" key.
+    """
+    from track_mjx.agent.ff_ppo.vision_encoder import VisionEncoder
+
+    class VisionValueNetwork(intention_network.nn.Module):
+        """Value network with CNN vision encoder."""
+
+        value_layers: Sequence[int]
+        latent_size: int
+        channels: Sequence[int]
+
+        def setup(self):
+            self.vision_encoder = VisionEncoder(
+                feature_size=self.latent_size,
+                channels=self.channels,
+            )
+            self.value_head = intention_network.Decoder(
+                layer_sizes=list(self.value_layers) + [1],
+            )
+
+        def __call__(self, vision: jnp.ndarray) -> jnp.ndarray:
+            z = self.vision_encoder(vision)
+            value, _ = self.value_head(z)
+            return jnp.squeeze(value, axis=-1)
+
+    value_module = VisionValueNetwork(
+        value_layers=list(hidden_layer_sizes),
+        latent_size=vision_latent_size,
+        channels=list(vision_channels),
+    )
+
+    def apply(
+        processor_params: DictRunningStatisticsState,
+        value_params,
+        obs: Mapping[str, jnp.ndarray],
+    ):
+        """Apply vision value network."""
+        normalized_obs = normalize_dict_obs(obs, processor_params)
+        vision = normalized_obs["vision"]
+        return value_module.apply(value_params, vision)
+
+    dummy_vision = jnp.zeros((1,) + vision_shape)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: value_module.init(key, dummy_vision),
+        apply=apply,
+    )
+
+
+def make_vision_highlvl_ppo_networks(
+    obs_sizes: Mapping[str, int],
+    action_size: int,
+    vision_shape: tuple[int, int, int] = (32, 32, 1),
+    vision_latent_size: int = 8,
+    decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
+    value_hidden_layer_sizes: Sequence[int] = (512, 512),
+    vision_channels: Sequence[int] = (2, 4, 8, 16),
+) -> PPOImitationNetworks:
+    """Create vision-only PPO networks for high-level transfer training.
+
+    Unlike ``make_vision_ppo_networks``, the value network also uses a CNN to
+    process vision instead of relying on proprioception. This is needed when
+    the high-level policy receives only vision (proprioception is 0-dim),
+    as in vision-based transfer learning with a frozen decoder.
+
+    Policy: CNN(pixels) -> z -> MLP -> latent intentions
+    Value:  CNN(pixels) -> z -> MLP -> scalar value
+
+    Args:
+        obs_sizes: Dict mapping observation keys to their sizes.
+        action_size: Action dimension (latent intention size).
+        vision_shape: Shape of the vision input (H, W, C).
+        vision_latent_size: Dimension of the CNN latent output.
+        decoder_hidden_layer_sizes: MLP layer sizes for policy head.
+        value_hidden_layer_sizes: MLP layer sizes for value head.
+        vision_channels: Channel sizes for CNN conv layers.
+
+    Returns:
+        PPOImitationNetworks containing policy, value, and action distribution.
+    """
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+
+    policy_network = intention_network.make_vision_only_policy(
+        parametric_action_distribution.param_size,
+        latent_size=vision_latent_size,
+        obs_sizes=obs_sizes,
+        vision_shape=vision_shape,
+        decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        vision_channels=vision_channels,
+    )
+
+    value_network = make_vision_value_network(
+        vision_shape=vision_shape,
+        hidden_layer_sizes=value_hidden_layer_sizes,
+        vision_latent_size=vision_latent_size,
+        vision_channels=vision_channels,
+    )
+
+    return PPOImitationNetworks(
+        policy_network=policy_network,
+        value_network=value_network,
+        parametric_action_distribution=parametric_action_distribution,
+    )
+
+
+def make_vision_task_obs_value_network(
+    vision_shape: tuple[int, int, int],
+    task_obs_size: int,
+    hidden_layer_sizes: Sequence[int] = (512, 512),
+    vision_latent_size: int = 8,
+    vision_channels: Sequence[int] = (2, 4, 8, 16),
+) -> networks.FeedForwardNetwork:
+    """Create a value network that processes both vision and task observations.
+
+    Used for vision + task_obs high-level transfer where the value network
+    needs access to both visual input and task-relevant body signals. The CNN
+    encodes pixels to a feature vector which is concatenated with task_obs
+    and fed into a standard value MLP.
+
+    Args:
+        vision_shape: Shape of the vision input (H, W, C).
+        task_obs_size: Dimension of the task observation vector.
+        hidden_layer_sizes: MLP layer sizes for value head.
+        vision_latent_size: Output dimension of the CNN encoder.
+        vision_channels: Channel sizes for each CNN conv layer.
+
+    Returns:
+        FeedForwardNetwork that accepts dict observations with "vision" and
+        "imitation_target" keys.
+    """
+    from track_mjx.agent.ff_ppo.vision_encoder import VisionEncoder
+
+    class VisionTaskObsValueNetwork(intention_network.nn.Module):
+        """Value network with CNN vision encoder and task observation input."""
+
+        value_layers: Sequence[int]
+        latent_size: int
+        channels: Sequence[int]
+
+        def setup(self):
+            self.vision_encoder = VisionEncoder(
+                feature_size=self.latent_size,
+                channels=self.channels,
+            )
+            self.value_head = intention_network.Decoder(
+                layer_sizes=list(self.value_layers) + [1],
+            )
+
+        def __call__(
+            self, vision: jnp.ndarray, task_obs: jnp.ndarray
+        ) -> jnp.ndarray:
+            z = self.vision_encoder(vision)
+            combined = jnp.concatenate([z, task_obs], axis=-1)
+            value, _ = self.value_head(combined)
+            return jnp.squeeze(value, axis=-1)
+
+    value_module = VisionTaskObsValueNetwork(
+        value_layers=list(hidden_layer_sizes),
+        latent_size=vision_latent_size,
+        channels=list(vision_channels),
+    )
+
+    def apply(
+        processor_params: DictRunningStatisticsState,
+        value_params,
+        obs: Mapping[str, jnp.ndarray],
+    ):
+        """Apply vision + task_obs value network."""
+        normalized_obs = normalize_dict_obs(obs, processor_params)
+        vision = normalized_obs["vision"]
+        task_obs = normalized_obs["imitation_target"]
+        return value_module.apply(value_params, vision, task_obs)
+
+    dummy_vision = jnp.zeros((1,) + vision_shape)
+    dummy_task_obs = jnp.zeros((1, task_obs_size))
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: value_module.init(key, dummy_vision, dummy_task_obs),
+        apply=apply,
+    )
+
+
+def make_vision_task_obs_highlvl_ppo_networks(
+    obs_sizes: Mapping[str, int],
+    action_size: int,
+    vision_shape: tuple[int, int, int] = (32, 32, 1),
+    vision_latent_size: int = 16,
+    vision_feature_size: int = 8,
+    decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
+    value_hidden_layer_sizes: Sequence[int] = (512, 512),
+    vision_channels: Sequence[int] = (2, 4, 8, 16),
+    fusion_hidden_layer_sizes: Sequence[int] = (256,),
+) -> PPOImitationNetworks:
+    """Create vision + task_obs PPO networks for high-level transfer training.
+
+    Unlike ``make_vision_highlvl_ppo_networks`` which uses vision only, this
+    factory provides the value network with both visual input and task-relevant
+    body signals (imitation_target). The policy uses a VisionTaskObsNetwork
+    that fuses CNN vision features with task observations through a fusion MLP.
+
+    Policy: CNN(pixels) + task_obs -> fusion MLP -> z -> MLP -> latent intentions
+    Value:  CNN(pixels) + task_obs -> MLP -> scalar value
+
+    Args:
+        obs_sizes: Dict mapping observation keys to their sizes.
+        action_size: Action dimension (latent intention size).
+        vision_shape: Shape of the vision input (H, W, C).
+        vision_latent_size: Dimension of the fusion MLP output / latent vector.
+        vision_feature_size: Output dimension of the vision encoder CNN.
+        decoder_hidden_layer_sizes: MLP layer sizes for policy decoder.
+        value_hidden_layer_sizes: MLP layer sizes for value head.
+        vision_channels: Channel sizes for CNN conv layers.
+        fusion_hidden_layer_sizes: Hidden layer sizes for the fusion MLP.
+
+    Returns:
+        PPOImitationNetworks containing policy, value, and action distribution.
+    """
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+
+    policy_network = intention_network.make_vision_task_obs_policy(
+        parametric_action_distribution.param_size,
+        latent_size=vision_latent_size,
+        obs_sizes=obs_sizes,
+        vision_shape=vision_shape,
+        decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        vision_feature_size=vision_feature_size,
+        vision_channels=vision_channels,
+        fusion_hidden_layer_sizes=fusion_hidden_layer_sizes,
+    )
+
+    task_obs_size = obs_sizes.get("imitation_target", 0)
+
+    value_network = make_vision_task_obs_value_network(
+        vision_shape=vision_shape,
+        task_obs_size=task_obs_size,
+        hidden_layer_sizes=value_hidden_layer_sizes,
+        vision_latent_size=vision_latent_size,
+        vision_channels=vision_channels,
     )
 
     return PPOImitationNetworks(

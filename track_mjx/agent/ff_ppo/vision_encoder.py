@@ -15,18 +15,24 @@ from flax import linen as nn
 class VisionEncoder(nn.Module):
     """Convolutional encoder for egocentric camera images.
 
-    Architecture: 3 conv layers with stride-2 downsampling, followed by
-    a flatten and dense projection to a fixed feature size.
+    Architecture matches the reference VisNetRodent (vis_net.py): N conv layers
+    with per-layer strides and VALID padding, followed by flatten and dense
+    projection to a fixed feature size.
 
-    For 64x64 input: 64 -> 32 -> 16 -> 8, then flatten (8*8*64=4096) -> feature_size.
+    For 32x32 input with defaults: 32->30->28->13->6, flatten (6*6*16=576)->8.
 
     Attributes:
         feature_size: Output feature vector dimension.
         channels: Channel sizes for each conv layer.
+        strides: Stride for each conv layer (one int per layer, applied to both
+            spatial dimensions). Must have same length as channels.
+        padding: Padding mode for conv layers ("VALID" or "SAME").
     """
 
-    feature_size: int = 128
-    channels: Sequence[int] = (32, 64, 64)
+    feature_size: int = 8
+    channels: Sequence[int] = (2, 4, 8, 16)
+    strides: Sequence[int] = (1, 1, 2, 2)
+    padding: str = "VALID"
 
     @nn.compact
     def __call__(self, images: jnp.ndarray) -> jnp.ndarray:
@@ -43,12 +49,12 @@ class VisionEncoder(nn.Module):
         h, w, c = images.shape[-3], images.shape[-2], images.shape[-1]
         x = images.reshape(-1, h, w, c)  # Flatten to (batch, H, W, C)
 
-        for i, ch in enumerate(self.channels):
+        for i, (ch, stride) in enumerate(zip(self.channels, self.strides)):
             x = nn.Conv(
                 features=ch,
                 kernel_size=(3, 3),
-                strides=(2, 2),
-                padding="SAME",
+                strides=(stride, stride),
+                padding=self.padding,
                 name=f"conv_{i}",
             )(x)
             x = nn.relu(x)

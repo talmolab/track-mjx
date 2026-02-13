@@ -366,6 +366,8 @@ def train(
         key, key_perm, key_grad = jax.random.split(key, 3)
 
         def convert_data(x: jnp.ndarray):
+            if 0 in x.shape:
+                return x
             x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
             return x
@@ -411,7 +413,8 @@ def train(
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
+            lambda x: x if 0 in x.shape else jnp.reshape(x, (-1,) + x.shape[2:]),
+            data,
         )
         assert data.discount.shape[1:] == (unroll_length,)
 
@@ -771,21 +774,14 @@ def train(
         # Save checkpoints
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:
-            # new orbax API
-            ckpt_mgr.save(
-                step=0,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardSave(policy_param),
-                    train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                    config=ocp.args.JsonSave(config_dict),
-                ),
+            checkpointing.save(
+                ckpt_mgr,
+                0,
+                policy_param,
+                _unpmap(training_state),
+                config_dict,
+                checkpoint_callback,
             )
-            # Call checkpoint callback for initial save
-            if checkpoint_callback is not None:
-                try:
-                    checkpoint_callback(0)
-                except Exception as e:
-                    logging.warning(f"Initial checkpoint callback failed: {e}")
         else:
             logging.info("Skipping checkpoint save as ckpt_mgr is None")
 

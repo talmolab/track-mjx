@@ -397,8 +397,8 @@ class VisionIntentionNetwork(nn.Module):
     encoder_layers: Sequence[int]
     decoder_layers: Sequence[int]
     latents: int = 60
-    vision_feature_size: int = 128
-    vision_channels: Sequence[int] = (32, 64, 64)
+    vision_feature_size: int = 8
+    vision_channels: Sequence[int] = (2, 4, 8, 16)
 
     def setup(self):
         """Initialize vision encoder, encoder, and decoder submodules."""
@@ -492,8 +492,8 @@ class VisionOnlyNetwork(nn.Module):
     """
 
     decoder_layers: Sequence[int]
-    latent_size: int = 32
-    vision_channels: Sequence[int] = (32, 64, 64)
+    latent_size: int = 8
+    vision_channels: Sequence[int] = (2, 4, 8, 16)
 
     def setup(self):
         """Initialize vision encoder and decoder submodules."""
@@ -549,7 +549,7 @@ def make_vision_only_policy(
     obs_sizes: Mapping[str, int],
     vision_shape: tuple[int, int, int],
     decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
-    vision_channels: Sequence[int] = (32, 64, 64),
+    vision_channels: Sequence[int] = (2, 4, 8, 16),
 ) -> networks.FeedForwardNetwork:
     """Create a vision-only policy network (CNN encoder + MLP decoder).
 
@@ -612,8 +612,8 @@ def make_vision_intention_policy(
     vision_shape: tuple[int, int, int],
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
-    vision_feature_size: int = 128,
-    vision_channels: Sequence[int] = (32, 64, 64),
+    vision_feature_size: int = 8,
+    vision_channels: Sequence[int] = (2, 4, 8, 16),
 ) -> networks.FeedForwardNetwork:
     """Create a vision-enabled intention-based policy network.
 
@@ -669,6 +669,175 @@ def make_vision_intention_policy(
     dummy_obs = {
         "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+        "vision": jnp.zeros((1,) + vision_shape),
+    }
+    dummy_key = jax.random.PRNGKey(0)
+
+    return networks.FeedForwardNetwork(
+        init=lambda key: policy_module.init(key, dummy_obs, dummy_key),
+        apply=apply,
+    )
+
+
+class VisionTaskObsNetwork(nn.Module):
+    """Vision + task observation network for transfer learning.
+
+    Combines CNN-encoded vision features with task-relevant body signals
+    (prev_action, kinematic sensors, touch, origin) through a fusion MLP
+    to produce a deterministic latent intention.
+
+    Observations dict must include:
+    - "imitation_target": Task observations (flat array) — mapped from "task_obs"
+      by observation_utils
+    - "proprioception": Proprioceptive state (flat array, can be empty for transfer)
+    - "vision": Egocentric camera image (H, W, C) normalized to [0, 1]
+
+    Attributes:
+        decoder_layers: Layer sizes for decoder (including action output).
+        latent_size: Dimension of the fusion MLP output / latent vector.
+        vision_feature_size: Output dimension of the vision encoder CNN.
+        vision_channels: Channel sizes for each conv layer.
+        fusion_layers: Hidden layer sizes for the fusion MLP.
+    """
+
+    decoder_layers: Sequence[int]
+    latent_size: int = 16
+    vision_feature_size: int = 8
+    vision_channels: Sequence[int] = (2, 4, 8, 16)
+    fusion_layers: Sequence[int] = (256,)
+
+    def setup(self):
+        """Initialize vision encoder, fusion MLP, and decoder submodules."""
+        from track_mjx.agent.ff_ppo.vision_encoder import VisionEncoder
+
+        self.vision_encoder = VisionEncoder(
+            feature_size=self.vision_feature_size,
+            channels=self.vision_channels,
+        )
+        # Fusion MLP: hidden layers with LayerNorm + output projection
+        fusion_dense = []
+        fusion_norms = []
+        for h in self.fusion_layers:
+            fusion_dense.append(nn.Dense(h))
+            fusion_norms.append(nn.LayerNorm())
+        self.fusion_dense = fusion_dense
+        self.fusion_norms = fusion_norms
+        self.fusion_out = nn.Dense(self.latent_size)
+        self.decoder = Decoder(layer_sizes=self.decoder_layers)
+
+    def __call__(
+        self,
+        obs: Mapping[str, jnp.ndarray],
+        key: jax.Array,
+        deterministic: bool = False,
+        get_activation: bool = False,
+    ):
+        task_obs = obs["imitation_target"]
+        egocentric_obs = obs["proprioception"]
+        vision = obs["vision"]
+
+        # CNN encode vision
+        vision_features = self.vision_encoder(vision)
+
+        # Fuse: [vision_features, task_obs] → MLP → latent
+        combined = jnp.concatenate([vision_features, task_obs], axis=-1)
+        z = combined
+        for dense, norm in zip(self.fusion_dense, self.fusion_norms):
+            z = nn.silu(dense(z))
+            z = norm(z)
+        z = self.fusion_out(z)
+
+        latent_mean = z
+        latent_logvar = jnp.full_like(z, -20.0)  # ~deterministic
+
+        # Decode: [latent, proprioception] → action params
+        concatenated = jnp.concatenate([z, egocentric_obs], axis=-1)
+
+        if get_activation:
+            action, decoder_activations = self.decoder(
+                concatenated, get_activation=True
+            )
+            return (
+                action,
+                latent_mean,
+                latent_logvar,
+                {
+                    "decoder": decoder_activations,
+                    "vision_features": vision_features,
+                    "egocentric_obs": egocentric_obs,
+                    "task_obs": task_obs,
+                    "intention": z,
+                },
+            )
+        else:
+            action, _ = self.decoder(concatenated)
+            return action, latent_mean, latent_logvar
+
+
+def make_vision_task_obs_policy(
+    action_param_size: int,
+    latent_size: int,
+    obs_sizes: Mapping[str, int],
+    vision_shape: tuple[int, int, int],
+    decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
+    vision_feature_size: int = 8,
+    vision_channels: Sequence[int] = (2, 4, 8, 16),
+    fusion_hidden_layer_sizes: Sequence[int] = (256,),
+) -> networks.FeedForwardNetwork:
+    """Create a vision + task observation policy network.
+
+    Constructs a deterministic fusion policy where the CNN encodes raw pixels,
+    which are concatenated with task-relevant body signals and passed through
+    a fusion MLP to produce a latent intention. The decoder generates action
+    parameters conditioned on the latent intention and proprioceptive state.
+
+    Args:
+        action_param_size: Output dimension (typically 2x action_size for
+            Gaussian mean and variance).
+        latent_size: Dimension of the fusion MLP output / latent vector.
+        obs_sizes: Dict mapping observation keys to their sizes, e.g.
+            {"imitation_target": 100, "proprioception": 60}.
+        vision_shape: Shape of the vision input (H, W, C), e.g. (64, 64, 3).
+        decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
+        vision_feature_size: Output dimension of the vision encoder CNN.
+        vision_channels: Channel sizes for each conv layer in the vision encoder.
+        fusion_hidden_layer_sizes: Hidden layer sizes for the fusion MLP.
+
+    Returns:
+        FeedForwardNetwork with init and apply methods. The apply function
+        returns (action_params, latent_mean, latent_logvar).
+    """
+
+    policy_module = VisionTaskObsNetwork(
+        decoder_layers=list(decoder_hidden_layer_sizes) + [action_param_size],
+        latent_size=latent_size,
+        vision_feature_size=vision_feature_size,
+        vision_channels=vision_channels,
+        fusion_layers=list(fusion_hidden_layer_sizes),
+    )
+
+    def apply(
+        processor_params: DictRunningStatisticsState,
+        policy_params,
+        obs: Mapping[str, jnp.ndarray],
+        key,
+        deterministic: bool = False,
+        get_activation: bool = False,
+    ):
+        """Apply policy with observation normalization."""
+        obs = normalize_dict_obs(obs, processor_params)
+        return policy_module.apply(
+            policy_params,
+            obs=obs,
+            key=key,
+            deterministic=deterministic,
+            get_activation=get_activation,
+        )
+
+    # Create dummy dict observation for initialization
+    dummy_obs = {
+        "imitation_target": jnp.zeros((1, obs_sizes.get("imitation_target", 0))),
+        "proprioception": jnp.zeros((1, obs_sizes.get("proprioception", 0))),
         "vision": jnp.zeros((1,) + vision_shape),
     }
     dummy_key = jax.random.PRNGKey(0)

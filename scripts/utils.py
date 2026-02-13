@@ -204,7 +204,7 @@ def create_policy_params_fn(
         del make_policy
 
         steps_k = current_step * ppo_params.eval_every / 1000
-        wandb.log({"train/steps_k": steps_k}, commit=False)
+        wandb.log({"training/steps_k": steps_k}, commit=False)
 
         # Generate rollout with randomized initial state based on current_step
         rng = jax.random.PRNGKey(current_step)
@@ -219,7 +219,8 @@ def create_policy_params_fn(
 
         # Render and save video
         video_path = f"{ckpt_path}/{current_step}.mp4"
-        frames = env.render(rollout, camera="close_profile-rodent")
+        camera = getattr(env, "_default_render_camera", -1)
+        frames = env.render(rollout, camera=camera)
         imageio.mimsave(video_path, frames, fps=int(1.0 / float(env.dt)))
         wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")}, commit=False)
 

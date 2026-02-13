@@ -180,7 +180,7 @@ def main():
     # Set Warp defaults first, then apply all user overrides (can override naconmax, njmax)
     if is_warp:
         env_cfg.mujoco_impl = "warp"
-        configure_warp_backend(env_cfg, ppo_params.num_envs)
+        configure_warp_backend(env_cfg, ppo_params.num_envs, task_name=args.task)
     apply_env_overrides(env_cfg, cli_env_overrides)
 
     print(f"env_cfg:\n{env_cfg}")

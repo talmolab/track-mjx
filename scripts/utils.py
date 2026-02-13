@@ -351,19 +351,15 @@ def create_base_parser(
 def configure_warp_backend(
     env_cfg: Any,
     num_envs: int,
-    naconmax_per_env: int = 90,
-    njmax: int = 1200,
+    task_name: str = "",
 ) -> Any:
-    """Configure env_cfg for the Warp backend with full-collision rodent model.
+    """Configure env_cfg for the Warp backend.
 
-    Sets walker_xml_path, naconmax, and njmax. Returns the (mutated) env_cfg.
+    For rodent tasks, sets walker_xml_path to the full-collision model.
     """
-    env_cfg.walker_xml_path = consts.RODENT_NO_TAIL_COLLISION_XML
-    env_cfg.naconmax = num_envs * naconmax_per_env
-    env_cfg.njmax = njmax
-    print(
-        f"Warp backend: walker=rodent_no_tail_collisions.xml, "
-        f"naconmax={env_cfg.naconmax} ({num_envs}*{naconmax_per_env}), "
-        f"njmax={njmax}"
-    )
+    is_rodent = task_name.lower().startswith("rodent")
+    if is_rodent:
+        env_cfg.walker_xml_path = consts.RODENT_NO_TAIL_COLLISION_XML
+    walker_info = "rodent_no_tail_collisions.xml" if is_rodent else "default (env)"
+    print(f"Warp backend: walker={walker_info}")
     return env_cfg

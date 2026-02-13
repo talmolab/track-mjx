@@ -37,7 +37,7 @@ def _setup_environment() -> None:
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(version_base=None, config_path="../track_mjx/config", config_name="rodent-full-clips")
 def main(cfg: DictConfig) -> None:
     """Main training entry point using Hydra configs.
 

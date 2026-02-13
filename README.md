@@ -175,16 +175,16 @@ Trains an end-to-end MLP policy using Brax PPO. Supports both the default JAX/MJ
 
 ```bash
 # Any registered task
-python track_mjx/scripts/train_task.py --task RodentBowlEscape
+python scripts/train_task.py --task RodentBowlEscape
 
 # With PPO overrides
-python track_mjx/scripts/train_task.py --task RodentRearing --num_timesteps 1e8 --entropy_cost 0.1
+python scripts/train_task.py --task RodentRearing --num_timesteps 1e8 --entropy_cost 0.1
 
 # With env config overrides
-python track_mjx/scripts/train_task.py --task RodentBowlEscape --env "target_speed=1.5"
+python scripts/train_task.py --task RodentBowlEscape --env "target_speed=1.5"
 
 # Warp backend (full-collision body model)
-python track_mjx/scripts/train_task.py --task RodentBowlEscape --env "mujoco_impl=warp"
+python scripts/train_task.py --task RodentBowlEscape --env "mujoco_impl=warp"
 ```
 
 ### High-Level Transfer (`train_highlvl.py`)
@@ -193,10 +193,10 @@ Trains a high-level policy that outputs latent intentions to a frozen pretrained
 
 ```bash
 # Any registered task
-python track_mjx/scripts/train_highlvl.py --task RodentBowlEscape --mimic_checkpoint <checkpoint_id>
+python scripts/train_highlvl.py --task RodentBowlEscape --mimic_checkpoint <checkpoint_id>
 
 # With PPO overrides
-python track_mjx/scripts/train_highlvl.py --task RodentRearing \
+python scripts/train_highlvl.py --task RodentRearing \
     --mimic_checkpoint <checkpoint_id> --num_timesteps 1e8 --entropy_cost 0.1
 ```
 

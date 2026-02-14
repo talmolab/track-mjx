@@ -374,6 +374,55 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
                 network_config.get("vision_channels", [32, 64, 64])
             ),
         )
+    elif arch_name == "vision_task_obs":
+        vision_width = network_config.get("vision_width", 32)
+        vision_height = network_config.get("vision_height", 32)
+        grayscale = network_config.get("grayscale", True)
+        channels = 1 if grayscale else 3
+        return ff_ppo_networks.make_vision_task_obs_highlvl_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            vision_shape=(vision_height, vision_width, channels),
+            vision_latent_size=network_config.get("vision_latent_size", 16),
+            vision_feature_size=network_config.get("vision_feature_size", 8),
+            decoder_hidden_layer_sizes=tuple(
+                network_config.get("decoder_layer_sizes", [512, 512])
+            ),
+            value_hidden_layer_sizes=tuple(
+                network_config.get("critic_layer_sizes", [512, 512])
+            ),
+            vision_channels=tuple(
+                network_config.get("vision_channels", [2, 4, 8, 16])
+            ),
+            fusion_hidden_layer_sizes=tuple(
+                network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
+        )
+    elif arch_name == "shared_vision_task_obs":
+        vision_width = network_config.get("vision_width", 32)
+        vision_height = network_config.get("vision_height", 32)
+        grayscale = network_config.get("grayscale", True)
+        channels = 1 if grayscale else 3
+        ppo_network, _shared_module = ff_ppo_networks.make_shared_vision_task_obs_highlvl_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            vision_shape=(vision_height, vision_width, channels),
+            vision_latent_size=network_config.get("vision_latent_size", 16),
+            vision_feature_size=network_config.get("vision_feature_size", 32),
+            decoder_hidden_layer_sizes=tuple(
+                network_config.get("decoder_layer_sizes", [512, 512])
+            ),
+            value_hidden_layer_sizes=tuple(
+                network_config.get("critic_layer_sizes", [512, 512])
+            ),
+            vision_channels=tuple(
+                network_config.get("vision_channels", [4, 8, 16, 32])
+            ),
+            fusion_hidden_layer_sizes=tuple(
+                network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
+        )
+        return ppo_network
     else:
         raise ValueError(f"Unknown network architecture: {arch_name}")
 

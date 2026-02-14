@@ -232,6 +232,8 @@ def train(
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
+    custom_loss_fn: Callable | None = None,
+    vision_lr_multiplier: float = 1.0,
 ) -> tuple[Callable, InferenceParams, Metrics]:
     """Train a PPO agent on the given environment.
 
@@ -586,11 +588,11 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    grad_clip_threshold = 20.0
-    optimizer = optax.chain(
+    base_optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
+    optimizer = base_optimizer
 
     latent_kl_schedule = None
     latent_ar1_schedule = None
@@ -606,26 +608,57 @@ def train(
             schedule="linear",
         )
 
-    loss_fn = functools.partial(
-        losses.compute_ppo_loss,
-        ppo_network=ppo_network,
-        entropy_cost=entropy_cost,
-        latent_kl_weight=latent_kl_weight,
-        latent_ar1_weight=latent_ar1_weight,
-        discounting=discounting,
-        reward_scaling=reward_scaling,
-        gae_lambda=gae_lambda,
-        clipping_epsilon=clipping_epsilon,
-        normalize_advantage=normalize_advantage,
-        vf_coefficient=vf_loss_coefficient,
-        latent_kl_schedule=latent_kl_schedule,
-        latent_ar1_schedule=latent_ar1_schedule,
-    )
+    if custom_loss_fn is not None:
+        loss_fn = custom_loss_fn
+    else:
+        loss_fn = functools.partial(
+            losses.compute_ppo_loss,
+            ppo_network=ppo_network,
+            entropy_cost=entropy_cost,
+            latent_kl_weight=latent_kl_weight,
+            latent_ar1_weight=latent_ar1_weight,
+            discounting=discounting,
+            reward_scaling=reward_scaling,
+            gae_lambda=gae_lambda,
+            clipping_epsilon=clipping_epsilon,
+            normalize_advantage=normalize_advantage,
+            vf_coefficient=vf_loss_coefficient,
+            latent_kl_schedule=latent_kl_schedule,
+            latent_ar1_schedule=latent_ar1_schedule,
+        )
 
     init_params = losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
     )
+
+    # Apply multi-rate optimizer for vision CNN if requested
+    if vision_lr_multiplier != 1.0:
+        vision_optimizer = optax.chain(
+            optax.clip_by_global_norm(grad_clip_threshold),
+            optax.adamw(
+                learning_rate=learning_rate * vision_lr_multiplier,
+                weight_decay=0.0,
+                eps=1e-5,
+            ),
+        )
+
+        def _label_fn(path, _leaf):
+            path_str = "/".join(str(p) for p in path)
+            if "vision_encoder" in path_str:
+                return "vision"
+            return "base"
+
+        partition = jax.tree_util.tree_map_with_path(_label_fn, init_params)
+        optimizer = optax.multi_transform(
+            {"vision": vision_optimizer, "base": base_optimizer},
+            partition,
+        )
+        logging.info(
+            f"Using multi-rate optimizer: vision CNN lr={learning_rate * vision_lr_multiplier:.1e}, "
+            f"base lr={learning_rate:.1e} (multiplier={vision_lr_multiplier}x)"
+        )
+
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
@@ -634,6 +667,12 @@ def train(
     )
 
     frozen_proprioceptive_normalizer_params = None
+
+    if freeze_decoder and custom_loss_fn is not None:
+        raise ValueError(
+            "freeze_decoder is not supported with custom_loss_fn "
+            "(e.g. shared-CNN architecture)"
+        )
 
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:

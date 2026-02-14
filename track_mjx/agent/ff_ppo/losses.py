@@ -398,3 +398,155 @@ def create_ramp_schedule(
             )
 
     return schedule_fn
+
+
+# ====================================================================== #
+#  Shared-CNN loss function                                                #
+# ====================================================================== #
+
+
+def compute_shared_vision_ppo_loss(
+    params: PPONetworkParams,
+    normalizer_params,
+    data: types.Transition,
+    rng: jnp.ndarray,
+    step: int,
+    ppo_network,
+    shared_module,
+    entropy_cost: float = 1e-4,
+    latent_kl_weight: float = 1e-3,
+    latent_ar1_weight: float = 1e-3,
+    discounting: float = 0.9,
+    reward_scaling: float = 1.0,
+    gae_lambda: float = 0.95,
+    clipping_epsilon: float = 0.3,
+    normalize_advantage: bool = True,
+    vf_coefficient: float = 0.5,
+    latent_kl_schedule: Callable[[int], float] | None = None,
+    latent_ar1_schedule: Callable[[int], float] | None = None,
+) -> tuple[jnp.ndarray, types.Metrics]:
+    """PPO loss with shared CNN between policy and value heads.
+
+    Unlike ``compute_ppo_loss`` which uses separate policy/value networks,
+    this runs a single ``SharedVisionPolicyValueModule`` that shares the CNN.
+    All params live in ``params.policy``; ``params.value`` is empty.
+
+    Both ``policy_loss`` and ``v_loss`` gradients flow through the shared CNN,
+    mirroring the vnl-ray pattern where the critic trains the CNN.
+    """
+    from track_mjx.agent.observation_utils import normalize_dict_obs
+
+    _, policy_key, entropy_key = jax.random.split(rng, 3)
+    parametric_action_distribution = ppo_network.parametric_action_distribution
+
+    # Put the time dimension first: [B, T, ...] -> [T, B, ...]
+    data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+
+    # Normalize observations here (not via policy_network.apply) because we
+    # call shared_module.apply directly to get both policy and value outputs
+    # in a single forward pass.  The inference-time apply wrapper handles its
+    # own normalization separately.
+    normalized_obs = normalize_dict_obs(data.observation, normalizer_params)
+
+    # ── Forward through shared module (CNN + policy head + value head) ──
+    policy_rng = data.extras["policy_extras"].get("policy_rng")
+
+    if policy_rng is None:
+        policy_logits, latent_mean, latent_logvar, baseline = shared_module.apply(
+            params.policy, normalized_obs, policy_key
+        )
+    else:
+        # Deterministic replay: flatten [T, B] -> [T*B] for batched forward
+        obs_leaf = jax.tree_util.tree_leaves(normalized_obs)[0]
+        T, B = obs_leaf.shape[:2]
+
+        flat_obs = jax.tree_util.tree_map(
+            lambda x: x.reshape((T * B,) + x.shape[2:]),
+            normalized_obs,
+        )
+        flat_rng = policy_rng.reshape((T * B, 2))
+
+        flat_logits, flat_mean, flat_logvar, flat_baseline = shared_module.apply(
+            params.policy, flat_obs, flat_rng
+        )
+
+        policy_logits = flat_logits.reshape((T, B) + flat_logits.shape[1:])
+        latent_mean = flat_mean.reshape((T, B) + flat_mean.shape[1:])
+        latent_logvar = flat_logvar.reshape((T, B) + flat_logvar.shape[1:])
+        baseline = flat_baseline.reshape((T, B))
+
+    # ── Bootstrap value for GAE ───────────────────────────────────
+    last_next_obs = jax.tree_util.tree_map(
+        lambda x: x[-1], data.next_observation
+    )
+    last_next_obs_normalized = normalize_dict_obs(last_next_obs, normalizer_params)
+    _, _, _, bootstrap_value = shared_module.apply(
+        params.policy, last_next_obs_normalized, policy_key
+    )
+
+    # ── Standard PPO loss computation ─────────────────────────────
+    rewards = data.reward * reward_scaling
+    truncation = data.extras["state_extras"]["truncation"]
+    termination = (1 - data.discount) * (1 - truncation)
+
+    target_action_log_probs = parametric_action_distribution.log_prob(
+        policy_logits, data.extras["policy_extras"]["raw_action"]
+    )
+    behaviour_action_log_probs = data.extras["policy_extras"]["log_prob"]
+
+    vs, advantages = compute_gae(
+        truncation=truncation,
+        termination=termination,
+        rewards=rewards,
+        values=baseline,
+        bootstrap_value=bootstrap_value,
+        lambda_=gae_lambda,
+        discount=discounting,
+    )
+    if normalize_advantage:
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    rho_s = jnp.exp(target_action_log_probs - behaviour_action_log_probs)
+
+    surrogate_loss1 = rho_s * advantages
+    surrogate_loss2 = (
+        jnp.clip(rho_s, 1 - clipping_epsilon, 1 + clipping_epsilon) * advantages
+    )
+    policy_loss = -jnp.mean(jnp.minimum(surrogate_loss1, surrogate_loss2))
+
+    # Value function loss
+    v_error = vs - baseline
+    v_loss = jnp.mean(v_error * v_error) * 0.5 * vf_coefficient
+
+    # Entropy reward
+    entropy = jnp.mean(
+        parametric_action_distribution.entropy(policy_logits, entropy_key)
+    )
+    entropy_loss = entropy_cost * -entropy
+
+    # KL Divergence for latent layer
+    current_kl_weight = latent_kl_weight
+    current_ar1_weight = latent_ar1_weight
+    if latent_kl_schedule is not None:
+        current_kl_weight = latent_kl_schedule(step)
+    if latent_ar1_schedule is not None:
+        current_ar1_weight = latent_ar1_schedule(step)
+
+    kl_gaussian = compute_kl_to_gaussian_prior(latent_mean, latent_logvar)
+    ar1_loss = compute_ar1_temporal_loss(latent_mean, data.discount, truncation)
+    kl_gaussian_weighted = current_kl_weight * kl_gaussian
+    ar1_loss_weighted = current_ar1_weight * ar1_loss
+    latent_loss = kl_gaussian_weighted + ar1_loss_weighted
+
+    total_loss = policy_loss + v_loss + entropy_loss + latent_loss
+
+    return total_loss, {
+        "total_loss": total_loss,
+        "policy_loss": policy_loss,
+        "v_loss": v_loss,
+        "total_latent_loss": latent_loss,
+        "latent_ar1_loss": ar1_loss_weighted,
+        "latent_kl_loss": kl_gaussian_weighted,
+        "entropy_loss": entropy_loss,
+        "latent_kl_weight": current_kl_weight,
+        "latent_ar1_weight": current_ar1_weight,
+    }

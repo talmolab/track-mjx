@@ -8,7 +8,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260209_232426_939844/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260212_180855_952368/
   step: null  # Checkpoint step (null = latest)
 
 # =============================================================================
@@ -20,7 +20,7 @@ inference:
   seed: 42              # Random seed for reproducibility
   clip_length: 500      # Frames per reference clip
   store_z_e: false      # Whether to store encoder outputs (increases file size)
-  data_split: "all"     # "all", "train", or "test" — uses training config's split
+  data_split: "test"     # "all", "train", or "test" — uses training config's split
 
 # =============================================================================
 # Output Configuration

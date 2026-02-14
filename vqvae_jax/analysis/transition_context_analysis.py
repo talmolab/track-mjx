@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from .inference_cache import InferenceResult
-from .rendering import get_nature_colormap
+from .rendering import get_hierarchical_colormap, get_nature_colormap
 
 
 @dataclass
@@ -147,6 +147,31 @@ def get_top_k_codes(
     """Get top K codes by frame count."""
     sorted_codes = sorted(frame_counts.items(), key=lambda x: x[1], reverse=True)
     return sorted_codes[:k]
+
+
+def compute_pair_popularity(
+    results: Sequence[InferenceResult],
+    num_codes: int,
+) -> dict[tuple[int, int], int]:
+    """Compute total frame count for each (L0, L1) code pair across all clips.
+
+    Args:
+        results: List of InferenceResult from rollouts.
+        num_codes: Number of codes per depth level.
+
+    Returns:
+        Dict mapping (l0_code, l1_code) to total frame count.
+    """
+    pair_counts: dict[tuple[int, int], int] = {}
+    for result in results:
+        if result.rvq_indices is None or len(result.rvq_indices) < 2:
+            continue
+        l0_codes = result.rvq_indices[0]
+        l1_codes = result.rvq_indices[1]
+        for t in range(len(l0_codes)):
+            pair = (int(l0_codes[t]), int(l1_codes[t]))
+            pair_counts[pair] = pair_counts.get(pair, 0) + 1
+    return pair_counts
 
 
 def compute_transition_context(
@@ -1086,6 +1111,7 @@ def render_code_pose_gallery(
     width: int = 640,
     height: int = 480,
     fps: int = 50,
+    l1_code: int | None = None,
 ) -> str:
     """Render a grid video showing where a code starts across different clips.
 
@@ -1094,8 +1120,8 @@ def render_code_pose_gallery(
 
     Args:
         results: List of InferenceResult from rollouts.
-        code_idx: The code to find first occurrences of.
-        num_codes: Total number of codes.
+        code_idx: The L0 code to find first occurrences of.
+        num_codes: Total number of codes per depth level.
         env: Environment with mj_model attribute.
         output_path: Path to save video.
         n_clips: Number of clips to sample and show in grid.
@@ -1104,6 +1130,8 @@ def render_code_pose_gallery(
         width: Total video width.
         height: Total video height.
         fps: Frames per second.
+        l1_code: Optional L1 code. When provided, frames are matched on the
+            exact (L0, L1) pair and the timeline uses hierarchical coloring.
 
     Returns:
         Path to rendered video, or empty string on failure.
@@ -1114,12 +1142,21 @@ def render_code_pose_gallery(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Find clips where this code appears and get first occurrence
+    # Find clips where this code (or pair) appears and get first occurrence
     clips_with_code = []
     for result in results:
         if result.qpos is None or len(result.qpos) == 0:
             continue
-        frames = np.where(result.code_indices == code_idx)[0]
+        l0_mask = result.code_indices == code_idx
+        if (
+            l1_code is not None
+            and result.rvq_indices is not None
+            and len(result.rvq_indices) >= 2
+        ):
+            l1_mask = result.rvq_indices[1] == l1_code
+            frames = np.where(l0_mask & l1_mask)[0]
+        else:
+            frames = np.where(l0_mask)[0]
         if len(frames) > 0:
             first_frame = int(frames[0])
             clips_with_code.append((result, first_frame))
@@ -1147,6 +1184,10 @@ def render_code_pose_gallery(
     bar_height = 30
     render_height = cell_height - bar_height
 
+    # Choose colormap: hierarchical when rendering (L0, L1) pairs
+    use_hierarchical = l1_code is not None
+    if use_hierarchical:
+        l0_colors, l1_colors_map = get_hierarchical_colormap(num_codes)
     code_colors = get_nature_colormap(num_codes)
 
     # Setup MuJoCo renderer
@@ -1216,9 +1257,29 @@ def render_code_pose_gallery(
                 idx = start + j
                 if idx < len(result.code_indices):
                     c_idx = int(result.code_indices[idx])
-                    color = code_colors[c_idx]
-                    if c_idx == code_idx:
-                        # Highlight target code with border
+                    # Get color: hierarchical (L0,L1) or flat L0
+                    if (
+                        use_hierarchical
+                        and result.rvq_indices is not None
+                        and len(result.rvq_indices) >= 2
+                        and idx < len(result.rvq_indices[1])
+                    ):
+                        c1_idx = int(result.rvq_indices[1][idx])
+                        color = l1_colors_map[c_idx, c1_idx]
+                    else:
+                        color = code_colors[c_idx]
+                    # Highlight: exact (L0, L1) pair match (or just L0 if no L1)
+                    is_target = c_idx == code_idx
+                    if (
+                        is_target
+                        and use_hierarchical
+                        and result.rvq_indices is not None
+                        and len(result.rvq_indices) >= 2
+                        and idx < len(result.rvq_indices[1])
+                    ):
+                        is_target = int(result.rvq_indices[1][idx]) == l1_code
+                    if is_target:
+                        # Highlight target with white border
                         grid_frame[bar_y : bar_y + 2, bx_start:bx_end] = [255, 255, 255]
                         grid_frame[
                             bar_y + bar_height - 2 : bar_y + bar_height, bx_start:bx_end
@@ -2529,5 +2590,3 @@ def run_transition_context_analysis(
         "json_path": str(json_path),
         "code_analyses": code_analyses,
     }
-
-

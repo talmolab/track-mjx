@@ -11,7 +11,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260209_232426_939844/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260212_180855_952368/
   step: null  # null = latest step
 
 # =============================================================================
@@ -31,19 +31,8 @@ data:
   h5_path: ./outputs/rollout_rvq_32.h5  # Path to H5 file with rollout data (required)
   h5_path_train: null            # Path to train-split H5 (optional)
   h5_path_test: null             # Path to test-split H5 (optional)
-  analysis_split: "combined"     # "train", "test", or "combined"
+  analysis_split: "test"     # "train", "test", or "combined"
   clip_length: 500               # Frames per clip (for environment setup)
-
-# =============================================================================
-# Per-Clip Analysis Configuration
-# =============================================================================
-# All analysis is done per-clip: transition matrices,
-# transition graphs, and video rendering with code overlays.
-per_clip:
-  enabled: false                  # Enable per-clip analysis
-  num_clips: 5                 # Number of clips to analyze
-  n_communities: null           # Communities per clip (null = auto-detect)
-  render_videos: false           # Render videos with code bars
 
 # =============================================================================
 # Transition Context Analysis Configuration
@@ -51,7 +40,7 @@ per_clip:
 # Analyze whether top K codes serve the same function across different clips
 # by comparing their transition contexts (predecessor/successor distributions).
 transition_context:
-  enabled: true                 # Enable transition context analysis
+  enabled: false                 # Enable transition context analysis
   top_k: 5                     # Number of top codes to analyze
   min_clips: 3                  # Minimum clips a code must appear in
   render_videos: true           # Render transition videos (pred → code → succ)
@@ -66,22 +55,10 @@ transition_context:
 
   # Popular code pose gallery - render where each popular code starts across clips
   pose_gallery:
-    enabled: false               # Enable pose gallery rendering
+    enabled: true               # Enable pose gallery rendering
     top_k_codes: 5              # Number of popular codes to visualize
     videos_per_code: 4          # Clips to sample per code
     context_frames: 15          # Frames before/after code start
-
-# =============================================================================
-# Mutual Information Analysis Configuration
-# =============================================================================
-# Quantifies which behavioral features are most encoded by the codebook.
-# Uses the KSG estimator (Kraskov-Stögbauer-Grassberger) for MI computation.
-mutual_information:
-  enabled: true
-  n_neighbors: 5                # KSG estimator k-neighbors
-  min_mi_threshold: 0.05        # Minimum MI (nats) to include in heatmap
-  top_k_features: 8             # Max features to show in heatmap
-  posture_pcs: 3                # Number of posture PCA components
 
 # =============================================================================
 # RVQ Analysis Configuration
@@ -95,13 +72,27 @@ rvq_analysis:
   hierarchical_transitions: true
 
 # =============================================================================
+# Correction Analysis Configuration
+# =============================================================================
+# Characterizes the codebook as a sparse correction signal:
+# - Burst detection (contiguous non-null code runs)
+# - Kinematic deltas (joint angle/velocity changes during correction bursts)
+# - Burst statistics (duration, inter-burst intervals, code co-occurrence)
+# - Correction PCA (latent-space correction vectors z_q - z_null)
+correction_analysis:
+  enabled: true
+  kinematic_deltas: true
+  burst_statistics: true
+  correction_pca: true
+
+# =============================================================================
 # Qpos+Code Determinism Analysis Configuration
 # =============================================================================
 # Test whether the same starting pose + same code progression produces similar
 # qpos trajectories. Computes Wasserstein-2 distance between trajectory pairs
 # that share code sequences and similar starting poses.
 qpos_code_determinism:
-  enabled: true
+  enabled: false
   num_clips: 842               # Number of clips to analyze
   min_k: 2                     # Minimum number of transitions
   max_k: 8                     # Maximum number of transitions
@@ -115,7 +106,7 @@ qpos_code_determinism:
 # observed shorter ones. Builds decomposition trees showing how k-transitions
 # break down into sub-sequences, with determinism scores at each level.
 compositional_transition:
-  enabled: true                 # ON for initial testing
+  enabled: false                 # ON for initial testing
   num_clips: 842               # Number of clips to analyze
   min_k: 2                     # Minimum number of transitions
   max_k: 8                     # Maximum number of transitions
@@ -135,9 +126,9 @@ compositional_transition:
 # synchronized HTML viewer with animated canvas + video playback.
 tsne_trajectory:
   enabled: true                 # Enable t-SNE trajectory visualization
-  n_clips: 3                    # Number of high-movement clips to compare
-  k_transitions: 3              # Number of code transitions per t-SNE point
-  tsne_perplexity: 30           # t-SNE perplexity parameter
+  n_clips: 2                    # Number of high-movement clips to compare
+  k_transitions: 2              # Number of code transitions per t-SNE point
+  tsne_perplexity: 50           # t-SNE perplexity parameter
   render_videos: true           # Render clip videos for synchronized viewer
   umap_n_neighbors: 15          # UMAP n_neighbors (larger = more global)
   umap_min_dist: 0.1            # UMAP min_dist (smaller = tighter clusters)

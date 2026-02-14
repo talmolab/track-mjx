@@ -2,15 +2,12 @@
 
 Main entry point for analyzing VQ-VAE code semantics:
 
-1. Per-clip analysis:
-   - Transition matrices per clip
-   - Interactive HTML viewer with slider navigation
-   - Video rendering with code timeline overlays
-
-2. Transition context analysis:
-   - Compare predecessor/successor patterns for top K codes across clips
-   - Measure consistency of code function across different contexts
-   - Render transition videos (predecessor → code → successor)
+1. Global transition matrix and stationary distribution
+2. RVQ analysis (parent-child heatmap, intra-parent diversity)
+3. Correction analysis (burst statistics, kinematic deltas, PCA)
+4. Transition context analysis (predecessor/successor patterns)
+5. Compositional transition analysis (decomposition trees)
+6. t-SNE/UMAP trajectory visualization
 
 Analysis requires pre-computed H5 rollout data. Use the inference module to
 generate H5 files:
@@ -59,20 +56,20 @@ from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 from track_mjx.config import utils as config_utils
 
 from .checkpoint_utils import load_vq_checkpoint, get_codebook, get_all_codebooks
+from .correction_analysis import run_correction_analysis
 from .compositional_transition_analysis import (
     run_compositional_transition_analysis,
     run_qpos_code_determinism_analysis,
 )
 from .tsne_trajectory_analysis import run_tsne_trajectory_analysis
 from .inference_cache import InferenceResult
-from .mutual_information import run_mutual_information_analysis
 from .rvq_analysis import run_rvq_analysis
-from .per_clip_analysis import run_per_clip_analysis
 from .transition_context_analysis import (
     run_transition_context_analysis,
     compute_global_transition_matrix,
     compute_stationary_distribution,
     compute_code_popularity,
+    compute_pair_popularity,
     get_top_k_codes,
     render_code_pose_gallery,
 )
@@ -132,7 +129,6 @@ def initialize_wandb_analysis(
                 "num_rollouts": h5_metadata.get("num_rollouts"),
                 "num_codes": num_codes,
                 "h5_path": cfg.data.h5_path,
-                "per_clip": OmegaConf.to_container(cfg.per_clip, resolve=True),
             },
         )
         logging.info("WandB initialized for analysis session")
@@ -178,7 +174,6 @@ def generate_summary_report(
     checkpoint_step = h5_metadata.get("checkpoint_step", cfg.checkpoint.step)
     num_rollouts = h5_metadata.get("num_rollouts", "unknown")
 
-    per_clip_paths = all_paths.get("per_clip", {})
     tc_paths = all_paths.get("per_clip_context", {})
 
     lines = [
@@ -193,15 +188,6 @@ def generate_summary_report(
         f"- Step: {checkpoint_step or 'latest'}",
         f"- Num rollouts: {num_rollouts}",
         f"- Num codes: {num_codes}",
-        "",
-        "## Per-Clip Analysis",
-        "",
-        f"- Analyzed {cfg.per_clip.get('num_clips', 10)} individual clips",
-        f"- Video rendering: {cfg.per_clip.get('render_videos', True)}",
-        "",
-        "Each clip includes:",
-        "- Transition matrix and probability heatmap",
-        "- Video with code overlay bars",
         "",
     ]
 
@@ -226,11 +212,6 @@ def generate_summary_report(
     lines.extend(
         [
             "## Output Files",
-            "",
-            "### Per-Clip Analysis",
-            f"- Interactive HTML viewer: `{per_clip_paths.get('html', 'N/A')}`",
-            f"- Per-clip stats JSON: `{per_clip_paths.get('json', 'N/A')}`",
-            f"- Clip videos: `{output_dir}/per_clip/videos/`",
             "",
         ]
     )
@@ -260,7 +241,6 @@ def generate_summary_report(
             "num_rollouts": num_rollouts,
             "num_codes": num_codes,
         },
-        "per_clip": OmegaConf.to_container(cfg.per_clip, resolve=True),
         "transition_context": OmegaConf.to_container(
             cfg.get("transition_context", {}), resolve=True
         ),
@@ -410,41 +390,7 @@ def main(cfg: DictConfig):
         f"  Top stationary codes: {[c['code'] for c in top_stationary_codes[:3]]}"
     )
 
-    # === Section 1c: Mutual Information Analysis ===
-    mi_cfg = cfg.get("mutual_information", {})
-    if mi_cfg.get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running mutual information analysis...")
-
-        mi_dir = output_dir / "mutual_information"
-        joint_names = list(cfg.get("walker_config", {}).get("joint_names", []))
-
-        mi_paths = run_mutual_information_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=mi_dir,
-            joint_names=joint_names,
-            cfg=(
-                OmegaConf.to_container(mi_cfg, resolve=True)
-                if hasattr(mi_cfg, "_metadata")
-                else dict(mi_cfg)
-            ),
-        )
-
-        if wandb_enabled:
-            import wandb
-
-            for key, fig_path in mi_paths.items():
-                log_to_wandb_immediately(
-                    f"mutual_information/{key}",
-                    wandb.Image(fig_path),
-                    wandb_enabled,
-                )
-            logging.info("  Logged MI analysis figures to WandB")
-
-        all_paths["mutual_information"] = mi_paths
-
-    # === Section 1d: RVQ Analysis ===
+    # === Section 1c: RVQ Analysis ===
     rvq_cfg = cfg.get("rvq_analysis", {})
     if rvq_cfg.get("enabled", False):
         logging.info("\n" + "=" * 40)
@@ -475,7 +421,48 @@ def main(cfg: DictConfig):
 
         all_paths["rvq_analysis"] = rvq_paths
 
-    # === Section 1f: Qpos+Code Determinism Analysis ===
+    # === Section 1d: Correction Analysis ===
+    corr_cfg = cfg.get("correction_analysis", {})
+    if corr_cfg.get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Running correction analysis...")
+
+        corr_dir = output_dir / "correction_analysis"
+        corr_codebooks = None
+        all_cbs = get_all_codebooks(ckpt["policy"])
+        if all_cbs:
+            corr_codebooks = [np.array(cb) for cb in all_cbs]
+
+        joint_names = list(cfg.get("walker_config", {}).get("joint_names", []))
+
+        corr_paths = run_correction_analysis(
+            results=results,
+            num_codes=num_codes,
+            output_dir=corr_dir,
+            codebooks=corr_codebooks,
+            joint_names=joint_names,
+            cfg=(
+                OmegaConf.to_container(corr_cfg, resolve=True)
+                if hasattr(corr_cfg, "_metadata")
+                else dict(corr_cfg)
+            ),
+        )
+
+        if wandb_enabled and corr_paths:
+            import wandb
+
+            for key, fig_path in corr_paths.items():
+                if fig_path.endswith(".png"):
+                    log_to_wandb_immediately(
+                        f"correction_analysis/{key}",
+                        wandb.Image(fig_path),
+                        wandb_enabled,
+                    )
+            logging.info("  Logged correction analysis figures to WandB")
+
+        all_paths["correction_analysis"] = corr_paths
+
+    # === Section 1e: Qpos+Code Determinism Analysis ===
     determinism_cfg = cfg.get("qpos_code_determinism", {})
     if determinism_cfg.get("enabled", False):
         logging.info("\n" + "=" * 40)
@@ -625,55 +612,7 @@ def main(cfg: DictConfig):
             "json": tsne_results.get("json_path"),
         }
 
-    # === Section 2: Per-Clip Analysis ===
-    if cfg.per_clip.get("enabled", True):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running per-clip analysis...")
-
-        per_clip_cfg = cfg.per_clip
-        per_clip_results = run_per_clip_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=output_dir / "per_clip",
-            num_clips=per_clip_cfg.get("num_clips", 10),
-            n_communities=per_clip_cfg.get("n_communities", None),
-            render_videos=per_clip_cfg.get("render_videos", True),
-            env=env,
-            camera=camera_name,
-            width=cfg.render.get("width", 640),
-            height=cfg.render.get("height", 480),
-            fps=cfg.render.get("fps", 50),
-        )
-
-        all_paths["per_clip"] = {
-            "html": per_clip_results["html_path"],
-            "json": per_clip_results["json_path"],
-            "videos": per_clip_results.get("video_paths", {}),
-        }
-
-        # Log per-clip results to WandB immediately
-        if wandb_enabled:
-            import wandb
-
-            html_path = per_clip_results["html_path"]
-            if html_path and Path(html_path).exists():
-                log_to_wandb_immediately(
-                    "per_clip/interactive_viewer",
-                    wandb.Html(open(html_path).read()),
-                    wandb_enabled,
-                )
-            # Log per-clip videos
-            video_paths = per_clip_results.get("video_paths", {})
-            for name, path in video_paths.items():
-                if path and Path(path).exists():
-                    log_to_wandb_immediately(
-                        f"per_clip/videos/{name}",
-                        wandb.Video(path, format="mp4"),
-                        wandb_enabled,
-                    )
-            logging.info("  Logged per-clip analysis to WandB")
-
-    # === Section 3: Per-Clip Context Analysis ===
+    # === Section 2: Per-Clip Context Analysis ===
     if cfg.get("transition_context", {}).get("enabled", False):
         logging.info("\n" + "=" * 40)
         logging.info("Running per-clip context analysis...")
@@ -727,46 +666,101 @@ def main(cfg: DictConfig):
         videos_per_code = pose_gallery_cfg.get("videos_per_code", 6)
         context_frames = pose_gallery_cfg.get("context_frames", 15)
 
-        # Get top K codes
-        frame_counts = compute_code_popularity(results, num_codes)
-        top_codes = get_top_k_codes(frame_counts, top_k_gallery)
+        # Detect RVQ depth >= 2
+        has_rvq = any(
+            r.rvq_indices is not None and len(r.rvq_indices) >= 2 for r in results
+        )
 
         pose_gallery_paths = {}
-        for code_idx, count in top_codes:
-            logging.info(
-                f"  Rendering pose gallery for code {code_idx} ({count} frames)..."
-            )
-            video_path = gallery_dir / f"code_{code_idx:03d}_gallery.mp4"
+        if has_rvq:
+            # Top K L0 codes, each with top K L1 children
+            pair_counts = compute_pair_popularity(results, num_codes)
+            frame_counts = compute_code_popularity(results, num_codes)
+            top_l0 = get_top_k_codes(frame_counts, top_k_gallery)
 
-            try:
-                path = render_code_pose_gallery(
-                    results=results,
-                    code_idx=code_idx,
-                    num_codes=num_codes,
-                    env=env,
-                    output_path=video_path,
-                    n_clips=videos_per_code,
-                    context_frames=context_frames,
-                    camera=camera_name,
-                    width=cfg.render.get("width", 640),
-                    height=cfg.render.get("height", 480),
-                    fps=cfg.render.get("fps", 50),
-                )
-                if path:
-                    pose_gallery_paths[code_idx] = path
-                    # Log each gallery video to WandB immediately
-                    if wandb_enabled:
-                        import wandb
+            for l0, l0_count in top_l0:
+                # Gather L1 counts for this L0 parent
+                l1_counts = {l1: cnt for (p, l1), cnt in pair_counts.items() if p == l0}
+                top_l1 = sorted(l1_counts.items(), key=lambda x: x[1], reverse=True)[
+                    :top_k_gallery
+                ]
 
-                        log_to_wandb_immediately(
-                            f"pose_gallery/code_{code_idx}",
-                            wandb.Video(path, format="mp4"),
-                            wandb_enabled,
+                for l1, count in top_l1:
+                    logging.info(
+                        f"  Rendering pose gallery for pair L0={l0} L1={l1} "
+                        f"({count} frames)..."
+                    )
+                    video_path = gallery_dir / f"code_L0{l0:03d}_L1{l1:03d}_gallery.mp4"
+                    try:
+                        path = render_code_pose_gallery(
+                            results=results,
+                            code_idx=l0,
+                            num_codes=num_codes,
+                            env=env,
+                            output_path=video_path,
+                            n_clips=videos_per_code,
+                            context_frames=context_frames,
+                            camera=camera_name,
+                            width=cfg.render.get("width", 640),
+                            height=cfg.render.get("height", 480),
+                            fps=cfg.render.get("fps", 50),
+                            l1_code=l1,
                         )
-            except Exception as e:
-                logging.warning(
-                    f"    Failed to render pose gallery for code {code_idx}: {e}"
+                        if path:
+                            pose_gallery_paths[f"L0{l0}_L1{l1}"] = path
+                            if wandb_enabled:
+                                import wandb
+
+                                log_to_wandb_immediately(
+                                    f"pose_gallery/code_L0{l0}_L1{l1}",
+                                    wandb.Video(path, format="mp4"),
+                                    wandb_enabled,
+                                )
+                    except Exception as e:
+                        logging.warning(
+                            f"    Failed to render pose gallery for pair "
+                            f"L0={l0} L1={l1}: {e}"
+                        )
+        else:
+            # Fallback: rank by L0 code popularity
+            frame_counts = compute_code_popularity(results, num_codes)
+            top_codes = get_top_k_codes(frame_counts, top_k_gallery)
+
+            for code_idx, count in top_codes:
+                logging.info(
+                    f"  Rendering pose gallery for code {code_idx} "
+                    f"({count} frames)..."
                 )
+                video_path = gallery_dir / f"code_{code_idx:03d}_gallery.mp4"
+                try:
+                    path = render_code_pose_gallery(
+                        results=results,
+                        code_idx=code_idx,
+                        num_codes=num_codes,
+                        env=env,
+                        output_path=video_path,
+                        n_clips=videos_per_code,
+                        context_frames=context_frames,
+                        camera=camera_name,
+                        width=cfg.render.get("width", 640),
+                        height=cfg.render.get("height", 480),
+                        fps=cfg.render.get("fps", 50),
+                    )
+                    if path:
+                        pose_gallery_paths[code_idx] = path
+                        if wandb_enabled:
+                            import wandb
+
+                            log_to_wandb_immediately(
+                                f"pose_gallery/code_{code_idx}",
+                                wandb.Video(path, format="mp4"),
+                                wandb_enabled,
+                            )
+                except Exception as e:
+                    logging.warning(
+                        f"    Failed to render pose gallery for code "
+                        f"{code_idx}: {e}"
+                    )
 
         all_paths["pose_gallery"] = pose_gallery_paths
         logging.info(f"  Rendered {len(pose_gallery_paths)} pose gallery videos")
@@ -796,8 +790,9 @@ def main(cfg: DictConfig):
             print(
                 f"Stationary distribution: {all_paths['global']['stationary_distribution']}"
             )
-    if "per_clip" in all_paths:
-        print(f"Per-clip viewer: {all_paths['per_clip']['html']}")
+    if "correction_analysis" in all_paths:
+        n_corr = len(all_paths["correction_analysis"])
+        print(f"Correction analysis: {n_corr} outputs")
     if "compositional_transition" in all_paths and all_paths[
         "compositional_transition"
     ].get("html"):
@@ -822,7 +817,8 @@ def main(cfg: DictConfig):
         if tp.get("umap_static_html"):
             print(f"UMAP static viewer: {tp['umap_static_html']}")
     if "pose_gallery" in all_paths:
-        print(f"Pose gallery videos: {len(all_paths['pose_gallery'])} codes")
+        n_gallery = len(all_paths["pose_gallery"])
+        print(f"Pose gallery videos: {n_gallery} entries")
     print(f"Summary report: {report_path}")
 
 

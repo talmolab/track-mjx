@@ -98,16 +98,22 @@ def _strip_weak_type(tree: Any) -> Any:
     Brax user code is sometimes ambiguous about weak_type, which can cause
     unnecessary JIT recompilations.
 
+    Only creates a new array when the leaf actually has a weak type;
+    otherwise returns the original array to avoid unnecessary copies
+    that defeat donate_argnums buffer reuse.
+
     Args:
         tree: Input pytree potentially containing weak-typed arrays.
 
     Returns:
-        Pytree with all arrays converted to their canonical dtype.
+        Pytree with weak-typed arrays converted to their canonical dtype.
     """
 
     def f(leaf):
         leaf = jnp.asarray(leaf)
-        return leaf.astype(leaf.dtype)
+        if hasattr(leaf, "weak_type") and leaf.weak_type:
+            return leaf.astype(leaf.dtype)
+        return leaf
 
     return jax.tree_util.tree_map(f, tree)
 
@@ -479,8 +485,12 @@ def train(
         t = time.time()
         training_state, env_state = _strip_weak_type((training_state, env_state))
         step = jnp.ones_like(training_state.env_steps) * it
-        result = training_epoch(training_state, env_state, key, step)
-        training_state, env_state, metrics = _strip_weak_type(result)
+        training_state, env_state, metrics = training_epoch(
+            training_state, env_state, key, step
+        )
+        training_state, env_state, metrics = _strip_weak_type(
+            (training_state, env_state, metrics)
+        )
 
         metrics = jax.tree_util.tree_map(jnp.mean, metrics)
         jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
@@ -799,6 +809,8 @@ def train(
                 training_state, env_state, epoch_keys, it
             )
             current_step = int(_unpmap(training_state.env_steps))
+            # Free deferred JAX arrays between training epochs
+            gc.collect()
 
             key_envs = jax.vmap(
                 lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)

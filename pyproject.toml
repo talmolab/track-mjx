@@ -28,7 +28,7 @@ dependencies = [
     # Rendering (EGL/osmesa support)
     "PyOpenGL==3.1.9",
     # Data & ML utilities
-    "numpy==2.0.0",
+    "numpy>=2.0.0",
     "h5py==3.12.1",
     "numba==0.61.0",
     "scikit-learn==1.7.2",
@@ -86,7 +86,7 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 line-length = 88
 
 [tool.uv.sources]
-vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.11" }
+vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.13" }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
 
 [pydocstyle]

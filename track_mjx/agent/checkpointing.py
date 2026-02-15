@@ -91,12 +91,16 @@ def load_training_state(
 
         logging.info(f"Loading training state from {checkpoint_path} at step {step}")
 
-        return ckpt_mgr.restore(
+        restored = ckpt_mgr.restore(
             step,
             args=ocp.args.Composite(
-                train_state=ocp.args.StandardRestore(abstract_training_state),
+                train_state=ocp.args.StandardRestore(
+                    _replace_zero_sized_arrays(abstract_training_state)
+                ),
             ),
         )["train_state"]
+
+        return _restore_zero_sized_arrays(restored, abstract_training_state)
 
 
 def load_policy(
@@ -442,6 +446,29 @@ def _replace_zero_sized_arrays(pytree):
         return x
 
     return jax.tree_util.tree_map(_maybe_replace, pytree)
+
+
+def _restore_zero_sized_arrays(restored, reference):
+    """Restore zero-sized arrays that were replaced with NaN sentinels on save.
+
+    Compares the restored pytree against a reference pytree (the abstract
+    training state). Where the reference has a zero-sized array and the
+    restored has a scalar NaN, replaces the scalar with a properly-shaped
+    zero-sized array.
+    """
+    import jax.numpy as jnp
+
+    def _maybe_restore(restored_leaf, ref_leaf):
+        if (
+            hasattr(ref_leaf, "shape")
+            and any(d == 0 for d in ref_leaf.shape)
+            and hasattr(restored_leaf, "shape")
+            and restored_leaf.shape == ()
+        ):
+            return jnp.zeros(ref_leaf.shape, dtype=ref_leaf.dtype)
+        return restored_leaf
+
+    return jax.tree_util.tree_map(_maybe_restore, restored, reference)
 
 
 def save(

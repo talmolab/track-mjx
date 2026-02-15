@@ -1,0 +1,70 @@
+# walker-imitation-online.yaml
+# Step 2: Train encoder-latent-decoder with online reference generation
+
+env_config:
+  env_name: "WalkerImitation"
+  sim_dt: 0.0025
+  ctrl_dt: 0.025
+  episode_length: 195  # trajectory_length - reference_length (200 - 5)
+  mujoco_impl: "jax"
+  nconmax: 50000
+  njmax: 100
+  reference_length: 5
+  trajectory_length: 200
+  mocap_hz: 40
+  n_transitions: 1
+  reward_terms:
+    root_pos: {exp_scale: 0.1, weight: 1.0}
+    root_angle: {exp_scale: 20.0, weight: 1.0}
+    joints: {exp_scale: 1.4, weight: 1.0}
+    joints_vel: {exp_scale: 1.0, weight: 1.0}
+    bodies_pos: {exp_scale: 0.25, weight: 1.0}
+    control_cost: {weight: 0.02}
+    energy_cost: {max_value: 50.0, weight: 0.01}
+  termination_criteria:
+    root_too_far: {max_distance: 0.3}
+    pose_error: {max_l2_error: 4.5}
+    nan_termination: {}
+
+# Step 1 checkpoint to load for reference generation
+step1_checkpoint:
+  path: "checkpoints/walker_multi_behavior"
+  step: null  # null = latest
+
+network_config:
+  arch_name: "intention"
+  intention_size: 16
+  encoder_layer_sizes: [512, 256, 256]
+  decoder_layer_sizes: [256, 256, 128]
+  critic_layer_sizes: [512, 256, 256]
+  latent_kl_weight: 0.1
+  latent_ar1_weight: 0.0
+  kl_schedule: true
+
+train_setup:
+  eval_every: 5_000_000
+  reset_every: 5_000_000
+  train_subset_ratio: 1.0
+  checkpoint_to_restore: null
+  train_config:
+    num_timesteps: 200_000_000
+    num_envs: 1024
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 1.0e-4
+    entropy_cost: 1.0e-2
+    discounting: 0.95
+    clipping_epsilon: 0.2
+    unroll_length: 20
+    normalize_observations: true
+    seed: 0
+
+logging_config:
+  project_name: "walker-topo"
+  group_name: "step2-imitation"
+  exp_name: "intention-kl01"
+  log_to_wandb: true
+
+checkpoint:
+  save_dir: "checkpoints/walker_imitation"

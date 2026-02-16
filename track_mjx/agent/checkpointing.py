@@ -417,7 +417,6 @@ def load_inference_fn(
         policy_params: Tuple of (normalizer_state, policy_params).
         deterministic: If True, use mean action (no sampling).
         get_activation: If True, return network activations in extras.
-            Only used for feedforward networks.
 
     Returns:
         For feedforward: Inference function (obs, rng) -> (action, extras).
@@ -440,11 +439,33 @@ def load_inference_fn(
     require_obs_sizes(cfg.network_config)
 
     if arch_name == "recurrent_intention":
-        return make_policy(policy_params, deterministic=deterministic)
+        return make_policy(
+            policy_params, deterministic=deterministic, get_activation=get_activation
+        )
     else:
         return make_policy(
             policy_params, deterministic=deterministic, get_activation=get_activation
         )
+
+
+def load_init_hidden_fn(cfg: DictConfig) -> Callable[[int], Any] | None:
+    """Create a hidden state initializer from config, if recurrent.
+
+    Args:
+        cfg: Configuration with network_config section.
+
+    Returns:
+        For recurrent: function (batch_size) -> initial hidden state.
+        For feedforward: None.
+    """
+    arch_name = cfg.network_config.get("arch_name")
+    if arch_name is None:
+        arch_name = "intention"
+    if arch_name != "recurrent_intention":
+        return None
+
+    ppo_network = make_ppo_network_from_cfg(cfg)
+    return ppo_network.policy_network.init_hidden
 
 
 def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:

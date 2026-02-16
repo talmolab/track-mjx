@@ -15,15 +15,16 @@ from jax import numpy as jnp
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
+from vnl_playground.tasks import wrappers as rodent_wrappers
 
 
 def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
     """Create a VNL imitation learning environment from a configuration.
 
     Uses the vnl-playground registry to create the environment with reference
-    clips, returning nested dictionary observations:
-        {'state': {'task_obs': ..., 'proprioception': ...},
-         'privileged_state': {'task_obs': ..., 'proprioception': ...}}
+    clips. Wraps with TrackMjxObsWrapper to flatten nested observations into
+    flat arrays matching training format:
+        {'state': {'task_obs': flat_array, 'proprioception': flat_array}}
 
     Args:
         cfg_dict: Configuration dictionary. Can be either:
@@ -33,13 +34,13 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
             optionally keep_clips_idx.
 
     Returns:
-        A Brax-compatible environment with nested dictionary observations.
+        A Brax-compatible environment with flattened dictionary observations.
 
     Example:
         >>> cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
         >>> env = create_environment(cfg)
         >>> state = env.reset(jax.random.PRNGKey(0))
-        >>> print(state.obs.keys())  # dict_keys(['state', 'privileged_state'])
+        >>> print(state.obs.keys())  # dict_keys(['state'])
     """
     if "walker_config" in cfg_dict:
         env_cfg = cfg_dict["env_config"]
@@ -56,15 +57,17 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
         n_frames_per_clip=env_cfg_ml.clip_length,
         keep_clips_idx=env_cfg_ml.get("keep_clips_idx", None),
     )
-    return registry.load(
+    raw_env = registry.load(
         env_name, config=env_cfg_ml, clips=reference_clips, flatten_obs=False
     )
+    return rodent_wrappers.TrackMjxObsWrapper(raw_env)
 
 
 def create_rollout_generator(
     cfg: dict[str, Any] | DictConfig,
     env: mjx_env.MjxEnv,
-    inference_fn: Callable[[jnp.ndarray, jax.Array], tuple[jnp.ndarray, dict]],
+    inference_fn: Callable,
+    init_hidden_fn: Callable[[int], Any] | None = None,
     log_full_states: bool = False,
     log_activations: bool = False,
     log_metrics: bool = False,
@@ -82,6 +85,8 @@ def create_rollout_generator(
         inference_fn: Policy function. For feedforward: (obs, rng) -> (action, extras).
             For recurrent: (obs, hidden, rng) -> (action, extras, new_hidden).
             The extras dict should contain "activations" if log_activations=True.
+        init_hidden_fn: Function (batch_size) -> initial hidden state for recurrent
+            policies. If None, assumes feedforward policy.
         log_full_states: If True, include full State objects in the rollout output.
             WARNING: This uses significant memory when batched.
         log_activations: If True, collect neural network activations at each step.
@@ -102,6 +107,7 @@ def create_rollout_generator(
             - rollout_metrics: (if log_metrics) Dict of metric arrays
             - joint_forces: (if log_sensor_data) Contact forces per step
             - sensor_readings: (if log_sensor_data) Sensor data per step
+            - final_hidden: (if recurrent) Final hidden state after rollout
 
     Example:
         >>> generate_rollout = create_rollout_generator(cfg, env, policy_fn)
@@ -111,6 +117,8 @@ def create_rollout_generator(
         >>> jit_vmap_rollout = jax.jit(jax.vmap(generate_rollout))
         >>> batch_data = jit_vmap_rollout(jnp.arange(100))
     """
+    from track_mjx.agent.recurrent_ppo.networks import reset_hidden_on_done
+
     # Calculate total steps
     mocap_dt = 1.0 / cfg.env_config.mocap_hz
     steps_per_frame = int(mocap_dt / cfg.env_config.ctrl_dt)
@@ -123,23 +131,19 @@ def create_rollout_generator(
         unwrapped_env = unwrapped_env._env
     reference_clips = unwrapped_env.reference_clips
 
-    def step_fn(carry, _):
-        """Single step function for jax.lax.scan."""
-        state, act_rng = carry
+    is_recurrent = init_hidden_fn is not None
 
-        # Split RNG for this step
-        act_rng, next_rng = jax.random.split(act_rng)
+    # Determine cell_type for hidden state reset (only needed for recurrent)
+    if is_recurrent:
+        cell_type = cfg.network_config.get("rnn_type", "gru")
 
-        # Get action from policy
-        ctrl, extras = inference_fn(state.obs, act_rng)
-
-        # Extract reference pose for current state
+    def _build_step_output(state, ctrl, extras):
+        """Build the per-step output dict."""
         time_in_frames = state.data.time * mocap_hz
         frame = jnp.floor(time_in_frames + state.info["start_frame"]).astype(int)
         clip = state.info["reference_clip"]
         ref = reference_clips.at(clip=clip, frame=frame)
 
-        # Build step output dict - always include core fields
         step_output = {
             "qpos": state.data.qpos,
             "qpos_ref": ref.qpos,
@@ -147,7 +151,6 @@ def create_rollout_generator(
             "reward": state.reward,
         }
 
-        # Conditionally add optional fields
         if log_activations:
             step_output["activations"] = extras["activations"]
 
@@ -158,14 +161,46 @@ def create_rollout_generator(
             step_output["joint_forces"] = state.data.cfrc_ext
             step_output["sensor_readings"] = state.data.sensordata
 
-        # Step environment
-        next_state = env.step(state, ctrl)
+        return step_output
 
-        # Conditionally return full state
-        if log_full_states:
-            return (next_state, next_rng), (step_output, state)
-        else:
-            return (next_state, next_rng), step_output
+    if is_recurrent:
+
+        def step_fn(carry, _):
+            """Single step function for recurrent policy."""
+            state, hidden, act_rng = carry
+
+            act_rng, next_rng = jax.random.split(act_rng)
+
+            ctrl, extras, new_hidden = inference_fn(state.obs, hidden, act_rng)
+
+            step_output = _build_step_output(state, ctrl, extras)
+
+            next_state = env.step(state, ctrl)
+            new_hidden = reset_hidden_on_done(new_hidden, next_state.done, cell_type)
+
+            if log_full_states:
+                return (next_state, new_hidden, next_rng), (step_output, state)
+            else:
+                return (next_state, new_hidden, next_rng), step_output
+
+    else:
+
+        def step_fn(carry, _):
+            """Single step function for feedforward policy."""
+            state, act_rng = carry
+
+            act_rng, next_rng = jax.random.split(act_rng)
+
+            ctrl, extras = inference_fn(state.obs, act_rng)
+
+            step_output = _build_step_output(state, ctrl, extras)
+
+            next_state = env.step(state, ctrl)
+
+            if log_full_states:
+                return (next_state, next_rng), (step_output, state)
+            else:
+                return (next_state, next_rng), step_output
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
         """Generate a single episode rollout.
@@ -183,17 +218,30 @@ def create_rollout_generator(
         # Reset environment (clip_idx=None lets the environment sample randomly)
         initial_state = env.reset(reset_rng, clip_idx=clip_idx, start_frame=0)
 
-        # Run rollout using scan
-        initial_carry = (initial_state, act_rng)
+        # Build initial carry
+        if is_recurrent:
+            # init_hidden_fn(1) returns hidden with batch_size=1: [1, hidden_dim]
+            # Squeeze to unbatched [hidden_dim] to match single-env observations
+            initial_hidden = jax.tree.map(lambda x: x[0], init_hidden_fn(1))
+            initial_carry = (initial_state, initial_hidden, act_rng)
+        else:
+            initial_carry = (initial_state, act_rng)
 
+        # Run rollout using scan
         if log_full_states:
-            (final_state, _), (outputs, states) = jax.lax.scan(
+            final_carry, (outputs, states) = jax.lax.scan(
                 step_fn, initial_carry, None, length=num_steps
             )
         else:
-            (final_state, _), outputs = jax.lax.scan(
+            final_carry, outputs = jax.lax.scan(
                 step_fn, initial_carry, None, length=num_steps
             )
+
+        # Unpack final carry
+        if is_recurrent:
+            final_state, final_hidden, _ = final_carry
+        else:
+            final_state, _ = final_carry
 
         # Get final step outputs
         final_time_in_frames = final_state.data.time * mocap_hz
@@ -230,6 +278,9 @@ def create_rollout_generator(
         if log_sensor_data:
             result["joint_forces"] = outputs["joint_forces"]
             result["sensor_readings"] = outputs["sensor_readings"]
+
+        if is_recurrent:
+            result["final_hidden"] = final_hidden
 
         return result
 

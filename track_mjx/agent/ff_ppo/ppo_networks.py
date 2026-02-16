@@ -233,6 +233,7 @@ def make_intention_ppo_networks(
     intention_latent_size: int = 60,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    proprioception_noise_std: float = 0.0,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     policy_obs_key: str = "state",
     value_obs_key: str = "state",
@@ -251,6 +252,8 @@ def make_intention_ppo_networks(
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            decoder proprioception input during stochastic training passes.
         value_hidden_layer_sizes: MLP layer sizes for value network.
         policy_obs_key: Top-level observation key for policy (default: 'state').
         value_obs_key: Top-level observation key for value network (default: 'state').
@@ -268,6 +271,7 @@ def make_intention_ppo_networks(
         obs_sizes=obs_sizes,
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        proprioception_noise_std=proprioception_noise_std,
         policy_obs_key=policy_obs_key,
     )
 

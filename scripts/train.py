@@ -142,6 +142,9 @@ def main(cfg: DictConfig) -> None:
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             rnn_type=cfg.network_config.rnn_type,
             rnn_hidden_sizes=tuple(cfg.network_config.rnn_hidden_sizes),
+            proprioception_noise_std=cfg.network_config.get(
+                "proprioception_noise_std", 0.0
+            ),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
         ppo_module = recurrent_ppo
@@ -152,6 +155,9 @@ def main(cfg: DictConfig) -> None:
             intention_latent_size=cfg.network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            proprioception_noise_std=cfg.network_config.get(
+                "proprioception_noise_std", 0.0
+            ),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
         ppo_module = ff_ppo

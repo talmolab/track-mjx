@@ -241,6 +241,7 @@ class RecurrentIntentionNetwork(nn.Module):
     latents: int = 60
     rnn_hidden_sizes: Sequence[int] = (256,)
     cell_type: RNNCellType = "gru"
+    proprioception_noise_std: float = 0.0
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
@@ -286,13 +287,26 @@ class RecurrentIntentionNetwork(nn.Module):
         # Handle key splitting based on both key shape AND observation shape
         if key.ndim == 1:
             # Single key - split for encoder
-            _, encoder_rng = jax.random.split(key)
+            encoder_rng, noise_rng = jax.random.split(key)
         elif not obs_is_batched:
             # Per-sample keys but unbatched observation - use first key
-            _, encoder_rng = jax.random.split(key[0])
+            encoder_rng, noise_rng = jax.random.split(key[0])
         else:
             # Per-sample keys [batch_size, 2] - vmap split over batch
-            _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+
+        if not deterministic and self.proprioception_noise_std > 0.0:
+            if noise_rng.ndim == 1:
+                noise = jax.random.normal(noise_rng, egocentric_obs.shape)
+            elif not obs_is_batched:
+                noise = jax.random.normal(noise_rng[0], egocentric_obs.shape)
+            else:
+                noise = jax.vmap(
+                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
+                )(noise_rng, egocentric_obs)
+            egocentric_obs = egocentric_obs * (
+                1.0 + self.proprioception_noise_std * noise
+            )
 
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
@@ -548,6 +562,7 @@ def make_recurrent_intention_ppo_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     rnn_type: RNNCellType = "gru",
     rnn_hidden_sizes: Sequence[int] = (256,),
+    proprioception_noise_std: float = 0.0,
     value_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     policy_obs_key: str = "state",
     value_obs_key: str = "state",
@@ -567,6 +582,8 @@ def make_recurrent_intention_ppo_networks(
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         rnn_type: Type of RNN cell ('simple', 'gru', 'lstm').
         rnn_hidden_sizes: Hidden sizes for each RNN layer, e.g. (512, 256).
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            decoder proprioception input during stochastic training passes.
         value_hidden_layer_sizes: MLP layer sizes for value network.
         policy_obs_key: Top-level observation key for policy (default: 'state').
         value_obs_key: Top-level observation key for value network (default: 'state').
@@ -586,6 +603,7 @@ def make_recurrent_intention_ppo_networks(
         latents=intention_latent_size,
         rnn_hidden_sizes=rnn_hidden_sizes,
         cell_type=rnn_type,
+        proprioception_noise_std=proprioception_noise_std,
     )
 
     def policy_apply(

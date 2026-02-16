@@ -440,11 +440,27 @@ def load_inference_fn(
     require_obs_sizes(cfg.network_config)
 
     if arch_name == "recurrent_intention":
-        return make_policy(policy_params, deterministic=deterministic)
+        return make_policy(
+            policy_params, deterministic=deterministic, get_activation=get_activation
+        )
     else:
         return make_policy(
             policy_params, deterministic=deterministic, get_activation=get_activation
         )
+
+
+def load_recurrent_extras(cfg: DictConfig) -> tuple[Callable, str]:
+    """Return hidden state initializer and cell type for recurrent checkpoints.
+
+    Args:
+        cfg: Configuration with network_config section.
+
+    Returns:
+        Tuple of (init_hidden_fn, cell_type) where init_hidden_fn has signature
+        (batch_size: int) -> list[HiddenState].
+    """
+    ppo_network = make_ppo_network_from_cfg(cfg)
+    return ppo_network.policy_network.init_hidden, ppo_network.cell_type
 
 
 def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:

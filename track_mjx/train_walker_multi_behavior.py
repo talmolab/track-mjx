@@ -163,7 +163,8 @@ def main(cfg: DictConfig) -> None:
     env_cfg = walker_default_config()
     for key in [
         "sim_dt", "ctrl_dt", "episode_length", "mujoco_impl",
-        "nconmax", "njmax", "mode_switch_prob", "fixed_mode",
+        "nconmax", "njmax", "mode_duration_mean", "mode_duration_min",
+        "fixed_mode", "transition_steps",
     ]:
         if key in cfg.env_config:
             val = cfg.env_config[key]

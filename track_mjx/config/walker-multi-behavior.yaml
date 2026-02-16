@@ -5,19 +5,20 @@ env_config:
   env_name: "WalkerMultiBehavior"
   sim_dt: 0.0025
   ctrl_dt: 0.025
-  episode_length: 1000
+  episode_length: 2000
   mujoco_impl: "warp"
   nconmax: 50000
   njmax: 100
-  mode_switch_prob: 0.005
-  fixed_mode: null  # null = random switching, 0-3 = fixed mode
+  mode_duration_mean: 150  # Average steps per mode before switching
+  mode_duration_min: 60    # Minimum steps before switching
+  fixed_mode: null  # null = random switching, 0-7 = fixed mode
 
 network_config:
   policy_hidden_layer_sizes: [256, 256, 256]
   value_hidden_layer_sizes: [256, 256, 256]
 
 train_config:
-  num_timesteps: 100_000_000
+  num_timesteps: 1_000_000_000
   num_envs: 8192
   batch_size: 1024
   num_minibatches: 32
@@ -42,4 +43,4 @@ render_config:
 
 checkpoint:
   save_dir: "checkpoints/walker_multi_behavior"
-  save_every: 10_000_000  # Save every 10M steps
+  save_every: 40_000_000  # Save every 40M steps

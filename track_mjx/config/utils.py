@@ -95,18 +95,29 @@ def prepare_config(
     """
     walker_name = cfg.walker_config.walker_name
 
+    # Use explicitly provided data_path if available, otherwise resolve from
+    # project root. This ensures the path is correct for non-editable installs
+    # where _PROJECT_ROOT would point into site-packages/.
+    explicit_data_path = OmegaConf.select(cfg, "data_path", default=None)
+
     if walker_name == "rodent":
         logging.info("Using rodent walker")
         walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
         arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path(
-            "data/rodent/rodent_reference_clips.h5"
+        reference_data_path = (
+            str(explicit_data_path)
+            if explicit_data_path is not None
+            else _resolve_data_path("data/rodent/rodent_reference_clips.h5")
         )
     elif walker_name == "fruitfly":
         logging.info("Using fruitfly walker")
         walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
         arena_xml_path = str(fruitfly_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path("data/fruitfly/fly_reference_clip.h5")
+        reference_data_path = (
+            str(explicit_data_path)
+            if explicit_data_path is not None
+            else _resolve_data_path("data/fruitfly/fly_reference_clip.h5")
+        )
     elif walker_name == "celegans":
         logging.info("Using celegans walker")
         raise NotImplementedError("Celegans walker not implemented yet.")

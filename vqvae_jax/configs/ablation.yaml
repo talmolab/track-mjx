@@ -2,9 +2,8 @@
 # VQ-VAE Code Ablation Experiments
 # =============================================================================
 # Empirically test what each D0 code does via:
-# 1. Null ablation — force z_q=0 to confirm model stops moving
+# 1. Null ablation — force z_q=0 (disable correction channel)
 # 2. Code injection — force one D0 code at every step
-# 3. Burst truncation — cap D0 burst duration
 #
 # Each experiment runs from two starting poses (lowest/highest torso z).
 # =============================================================================
@@ -20,13 +19,30 @@ checkpoint:
 # Ablation Configuration
 # =============================================================================
 ablation:
-  experiments: [null_ablation, code_injection, burst_truncation]
+  experiments: [null_ablation, code_injection]
   num_clips: 10              # Clips per condition per starting pose
   max_steps: 500             # Steps per clip
   seed: 42
   data_split: "test"
-  top_k: 5                   # Top K non-null D0 codes for injection + truncation
-  burst_truncation_lengths: [1, 3, 5, 10]  # Max D0 burst frames before forcing null
+  top_k: 5                   # Top K non-null D0 codes for injection
+
+  # --- Null long-run config (STEP 4) ---
+  # NOT enabled by default — add "null_long_run" to experiments list above.
+  null_long_run:
+    max_steps: 2500
+    num_starting_positions: 3
+    num_render: 1
+
+  # --- Code sequence injection config (STEP 5) ---
+  # NOT enabled by default — add "code_sequence_injection" to experiments list above.
+  code_sequence_injection:
+    max_steps: 2500
+    num_starting_positions: 3
+    window_size: 50
+    null_prefix_steps: 0
+    modes: [null_ablation, code_injection, null_long_run, code_sequence_injection]
+    num_sequences: 3
+    num_render: 3
 
   # Starting pose selection
   starting_poses:

@@ -1,12 +1,11 @@
 """VQ-VAE Code Ablation Experiments.
 
 Empirically test what each D0 code does via codebook mutation:
-1. Null ablation — force z_q=0 everywhere to confirm model stops moving
+1. Null ablation — force z_q=0 everywhere (disable correction channel)
 2. Code injection — force one D0 code at every timestep
-3. Burst truncation — cap D0 burst duration to test impulse timing
 
 Each experiment runs from two starting poses (lowest/highest torso z-height).
-Results logged to WandB.
+Results logged to WandB with one panel per condition (code × pose grouped).
 
 Usage:
     cd vqvae_jax
@@ -45,6 +44,7 @@ from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
+from ml_collections import config_dict as mlc_config
 from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.config import utils as config_utils
 
@@ -56,6 +56,40 @@ from analysis.checkpoint_utils import (
 from analysis.correction_analysis import identify_null_code
 from analysis.inference_cache import InferenceResult
 from analysis.rendering import render_rollout_to_video
+
+
+# =============================================================================
+# WRAPPING ENVIRONMENT FOR LONG ROLLOUTS
+# =============================================================================
+
+
+class WrappingImitation(imitation.Imitation):
+    """Imitation env with wrapping reference and no root_too_far termination.
+
+    The standard Imitation env hard-truncates at ~244 steps because the frame
+    counter (derived from sim time) exceeds the usable clip length. This
+    subclass wraps the frame index modulo the usable length so episodes can
+    run indefinitely. ``root_too_far`` termination is also removed so the
+    agent can drift from the reference trajectory.
+
+    Other termination criteria (``pose_error``, ``root_too_rotated``,
+    ``nan_termination``) remain active for safety.
+    """
+
+    def __init__(self, config, clips=None, **kwargs):
+        cfg_dict = config.to_dict() if hasattr(config, "to_dict") else dict(config)
+        tc = cfg_dict.get("termination_criteria", {})
+        tc.pop("root_too_far", None)
+        cfg_dict["termination_criteria"] = tc
+        new_config = mlc_config.ConfigDict(cfg_dict)
+        super().__init__(config=new_config, clips=clips, **kwargs)
+
+    def _get_cur_frame(self, data, info):
+        """Wrap frame index so the reference trajectory cycles indefinitely."""
+        time_in_frames = data.time * self._config.mocap_hz
+        frame = jnp.floor(time_in_frames + info["start_frame"]).astype(int)
+        usable_length = self._clip_length() - self._config.reference_length
+        return frame % usable_length
 
 
 # =============================================================================
@@ -142,6 +176,36 @@ def select_starting_clips(clips: ReferenceClips) -> dict[str, int]:
     logging.info(f"  Low-height clip: {low_idx} (z={initial_z[low_idx]:.4f})")
     logging.info(f"  High-height clip: {high_idx} (z={initial_z[high_idx]:.4f})")
     return {"low_height": low_idx, "high_height": high_idx}
+
+
+def select_diverse_starting_clips(
+    clips: ReferenceClips,
+    num_positions: int,
+) -> dict[str, int]:
+    """Pick clips at evenly-spaced torso z-height percentiles.
+
+    Args:
+        clips: Reference clips with qpos shape [num_clips, T, nq].
+        num_positions: Number of starting positions to select.
+
+    Returns:
+        Dict mapping ``"pos_0"`` … ``"pos_{N-1}"`` to clip indices,
+        ordered from lowest to highest initial torso z.
+    """
+    initial_z = np.array(clips.qpos[:, 0, 2])
+    sorted_indices = np.argsort(initial_z)
+    # Pick N clips at evenly-spaced percentiles
+    percentiles = np.linspace(0, 1, num_positions)
+    picks = np.round(percentiles * (len(sorted_indices) - 1)).astype(int)
+    result: dict[str, int] = {}
+    for i, p in enumerate(picks):
+        clip_idx = int(sorted_indices[p])
+        result[f"pos_{i}"] = clip_idx
+        logging.info(
+            f"  pos_{i}: clip {clip_idx} (z={initial_z[clip_idx]:.4f}, "
+            f"percentile={percentiles[i]:.0%})"
+        )
+    return result
 
 
 def subset_clips(clips: ReferenceClips, idx: int) -> ReferenceClips:
@@ -266,134 +330,149 @@ def run_ablation_rollout(
     return results
 
 
-def run_burst_truncation_rollout(
+def build_inference_fn_map(
+    vq_cfg: Any,
+    policy_params: tuple[Any, Any],
+    d0_codebook: np.ndarray,
+    top_k_code_indices: list[int],
+) -> dict[int | None, Any]:
+    """Precompute inference functions for null D0 and each top-K code.
+
+    Returns a dict mapping ``None`` (null D0) and each code index to a
+    ready-to-call inference function. Each function has the same signature
+    as :func:`load_vq_inference_fn_with_stickiness` output:
+    ``(obs, rng, prev_indices) -> (action, extras)``.
+
+    Args:
+        vq_cfg: VQ-VAE config from checkpoint.
+        policy_params: Original policy parameters.
+        d0_codebook: D0 codebook embeddings [num_codes, dim].
+        top_k_code_indices: Code indices to build injection fns for.
+
+    Returns:
+        Dict mapping code index (or None for null) to inference function.
+    """
+    fn_map: dict[int | None, Any] = {}
+
+    # Null D0
+    null_params = make_null_d0_params(policy_params)
+    null_fn, _ = load_vq_inference_fn_with_stickiness(
+        vq_cfg, null_params, deterministic=True
+    )
+    fn_map[None] = null_fn
+
+    # Per-code injection
+    for code_idx in top_k_code_indices:
+        target = jnp.array(d0_codebook[code_idx])
+        inj_params = make_injection_d0_params(policy_params, target)
+        inj_fn, _ = load_vq_inference_fn_with_stickiness(
+            vq_cfg, inj_params, deterministic=True
+        )
+        fn_map[code_idx] = inj_fn
+
+    logging.info(
+        f"  Built {len(fn_map)} inference fns "
+        f"(null + {len(top_k_code_indices)} codes)"
+    )
+    return fn_map
+
+
+def run_code_sequence_rollout(
     env: Any,
-    normal_fn: Any,
-    null_d0_fn: Any,
-    num_repeats: int,
+    schedule: list[int | None],
+    inference_fn_map: dict[int | None, Any],
     max_steps: int,
     seed: int,
     rvq_depth: int,
-    max_burst_length: int,
-    null_code: int,
-    num_render: int = 0,
-) -> list[InferenceResult]:
-    """Run burst truncation rollout with dual inference functions.
+    store_states: bool = False,
+) -> InferenceResult:
+    """Run a single rollout with time-varying D0 code forcing.
 
-    Tracks D0 burst length (consecutive non-null frames). When the burst
-    reaches ``max_burst_length``, switches to the null D0 inference function
-    for that timestep.
+    At each step *t*, the inference function is selected from
+    ``inference_fn_map[schedule[t]]`` — either null (``None``) or a
+    specific code index. The schedule is clamped to ``max_steps``.
 
     Args:
-        env: Imitation environment (single clip).
-        normal_fn: Normal VQ-VAE inference function.
-        null_d0_fn: Inference function with zeroed D0 codebook.
-        num_repeats: Number of rollout repeats.
-        max_steps: Maximum steps per rollout.
-        seed: Base random seed.
+        env: Environment (should be a WrappingImitation for long runs).
+        schedule: Per-step code index (or None for null D0).
+        inference_fn_map: Precomputed inference functions from
+            :func:`build_inference_fn_map`.
+        max_steps: Maximum number of steps.
+        seed: Random seed.
         rvq_depth: Number of RVQ depth levels.
-        max_burst_length: Maximum consecutive non-null D0 frames.
-        null_code: Index of the null (most frequent) D0 code.
-        num_render: Number of rollouts to store states for.
+        store_states: Whether to store env states for video rendering.
 
     Returns:
-        List of InferenceResult objects.
+        Single InferenceResult for the rollout.
     """
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
 
-    results = []
     rng = jax.random.PRNGKey(seed)
+    rng, reset_rng = jax.random.split(rng)
+    state = jit_reset(reset_rng)
 
-    for i in range(num_repeats):
-        rng, reset_rng = jax.random.split(rng)
-        state = jit_reset(reset_rng)
+    code_indices: list[int] = []
+    rvq_per_depth: list[list[int]] = [[] for _ in range(rvq_depth)]
+    qpos_list: list[np.ndarray] = []
+    qvel_list: list[np.ndarray] = []
+    rewards: list[float] = []
+    states: list[Any] | None = [] if store_states else None
+    prev_indices = None
 
-        code_indices: list[int] = []
-        rvq_per_depth: list[list[int]] = [[] for _ in range(rvq_depth)]
-        qpos_list: list[np.ndarray] = []
-        qvel_list: list[np.ndarray] = []
-        rewards: list[float] = []
-        store_states = i < num_render
-        states: list[Any] | None = [] if store_states else None
-        prev_indices = None
-        burst_counter = 0
+    for step in range(min(max_steps, len(schedule))):
+        scheduled_code = schedule[step]
+        inference_fn = inference_fn_map[scheduled_code]
 
-        for step in range(max_steps):
-            obs = flatten_obs_dict(state.obs)
-            rng, action_rng = jax.random.split(rng)
+        obs = flatten_obs_dict(state.obs)
+        rng, action_rng = jax.random.split(rng)
+        action, extras = inference_fn(obs, action_rng, prev_indices)
 
-            # Switch to null D0 when burst exceeds limit
-            if burst_counter >= max_burst_length:
-                action, extras = null_d0_fn(obs, action_rng, prev_indices)
-                forced_null = True
-            else:
-                action, extras = normal_fn(obs, action_rng, prev_indices)
-                forced_null = False
+        code_idx = int(extras["indices"])
+        code_indices.append(code_idx)
 
-            code_idx = int(extras["indices"])
+        all_idx = extras.get("all_indices")
+        if all_idx is not None:
+            prev_indices = all_idx
+            for d in range(rvq_depth):
+                if isinstance(all_idx, tuple) and d < len(all_idx):
+                    rvq_per_depth[d].append(int(all_idx[d]))
+                elif d == 0:
+                    rvq_per_depth[d].append(code_idx)
+        else:
+            prev_indices = jnp.array(code_idx)
+            rvq_per_depth[0].append(code_idx)
 
-            # Record actual D0 code and update burst counter
-            if forced_null:
-                actual_d0 = null_code
-                burst_counter = 0
-            else:
-                actual_d0 = code_idx
-                if actual_d0 != null_code:
-                    burst_counter += 1
-                else:
-                    burst_counter = 0
+        if hasattr(state, "data"):
+            qpos_list.append(np.array(state.data.qpos))
+            qvel_list.append(np.array(state.data.qvel))
+        elif hasattr(state, "pipeline_state"):
+            qpos_list.append(np.array(state.pipeline_state.q))
+            qvel_list.append(np.array(state.pipeline_state.qd))
 
-            code_indices.append(actual_d0)
+        if store_states:
+            states.append(state)
 
-            # Track per-depth indices
-            all_idx = extras.get("all_indices")
-            if all_idx is not None:
-                prev_indices = all_idx
-                for d in range(rvq_depth):
-                    if d == 0:
-                        # Override D0 with actual_d0 for burst tracking accuracy
-                        rvq_per_depth[d].append(actual_d0)
-                    elif isinstance(all_idx, tuple) and d < len(all_idx):
-                        rvq_per_depth[d].append(int(all_idx[d]))
-            else:
-                prev_indices = jnp.array(actual_d0)
-                rvq_per_depth[0].append(actual_d0)
+        next_state = jit_step(state, action)
+        rewards.append(float(next_state.reward))
 
-            if hasattr(state, "data"):
-                qpos_list.append(np.array(state.data.qpos))
-                qvel_list.append(np.array(state.data.qvel))
-            elif hasattr(state, "pipeline_state"):
-                qpos_list.append(np.array(state.pipeline_state.q))
-                qvel_list.append(np.array(state.pipeline_state.qd))
+        if next_state.done:
+            break
+        state = next_state
 
-            if store_states:
-                states.append(state)
+    rvq_indices = None
+    if rvq_depth > 1 and rvq_per_depth[0]:
+        rvq_indices = tuple(np.array(rvq_per_depth[d]) for d in range(rvq_depth))
 
-            next_state = jit_step(state, action)
-            rewards.append(float(next_state.reward))
-
-            if next_state.done:
-                break
-            state = next_state
-
-        rvq_indices = None
-        if rvq_depth > 1 and rvq_per_depth[0]:
-            rvq_indices = tuple(np.array(rvq_per_depth[d]) for d in range(rvq_depth))
-
-        results.append(
-            InferenceResult(
-                clip_idx=i,
-                code_indices=np.array(code_indices),
-                qpos=np.stack(qpos_list) if qpos_list else np.zeros((0, 0)),
-                qvel=np.stack(qvel_list) if qvel_list else np.zeros((0, 0)),
-                rewards=np.array(rewards),
-                states=states,
-                rvq_indices=rvq_indices,
-            )
-        )
-
-    return results
+    return InferenceResult(
+        clip_idx=0,
+        code_indices=np.array(code_indices),
+        qpos=np.stack(qpos_list) if qpos_list else np.zeros((0, 0)),
+        qvel=np.stack(qvel_list) if qvel_list else np.zeros((0, 0)),
+        rewards=np.array(rewards),
+        states=states,
+        rvq_indices=rvq_indices,
+    )
 
 
 # =============================================================================
@@ -442,6 +521,166 @@ def compute_condition_metrics(
         metrics["null_d0_fraction"] = float(np.mean(null_fracs))
 
     return metrics
+
+
+# =============================================================================
+# TRANSITION MATRIX & SCHEDULE GENERATION
+# =============================================================================
+
+
+def build_top_k_transition_matrix(
+    results: list[InferenceResult],
+    top_k_indices: list[int],
+    num_codes: int,
+) -> np.ndarray:
+    """Build a K x K row-normalized transition probability matrix.
+
+    Uses the full-size transition counts from baseline rollouts, then
+    extracts the submatrix for the top-K codes and row-normalizes.
+
+    Args:
+        results: Baseline rollout results.
+        top_k_indices: Top-K code indices (sorted by popularity).
+        num_codes: Total number of D0 codes.
+
+    Returns:
+        Row-normalized transition probabilities [K, K]. Rows that sum
+        to zero are set to uniform 1/K.
+    """
+    from analysis.transition_context_analysis import compute_global_transition_matrix
+
+    full_counts, _ = compute_global_transition_matrix(results, num_codes)
+    plt.close("all")  # close the figure created by compute_global_transition_matrix
+
+    k = len(top_k_indices)
+    sub = np.zeros((k, k), dtype=np.float64)
+    for i, fi in enumerate(top_k_indices):
+        for j, fj in enumerate(top_k_indices):
+            sub[i, j] = full_counts[fi, fj]
+
+    # Row-normalize
+    row_sums = sub.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0  # avoid division by zero
+    probs = sub / row_sums
+    # Rows with no transitions → uniform
+    zero_rows = probs.sum(axis=1) == 0
+    if zero_rows.any():
+        probs[zero_rows] = 1.0 / k
+    return probs
+
+
+def plot_transition_matrix(
+    probs: np.ndarray,
+    indices: list[int],
+    output_dir: Path,
+) -> str:
+    """Create a heatmap of the K x K transition probability matrix.
+
+    Args:
+        probs: Row-normalized transition probabilities [K, K].
+        indices: Code indices corresponding to rows/columns.
+        output_dir: Directory to save the plot.
+
+    Returns:
+        File path of the saved plot.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    k = len(indices)
+    fig, ax = plt.subplots(figsize=(max(6, k * 1.2), max(5, k)))
+    im = ax.imshow(probs, cmap="Blues", aspect="auto", vmin=0, vmax=1)
+    ax.set_xticks(range(k))
+    ax.set_yticks(range(k))
+    ax.set_xticklabels([str(i) for i in indices])
+    ax.set_yticklabels([str(i) for i in indices])
+    ax.set_xlabel("To Code")
+    ax.set_ylabel("From Code")
+    ax.set_title("Top-K Transition Probabilities")
+
+    # Annotate cells
+    for i in range(k):
+        for j in range(k):
+            ax.text(
+                j,
+                i,
+                f"{probs[i, j]:.2f}",
+                ha="center",
+                va="center",
+                fontsize=8,
+                color="white" if probs[i, j] > 0.5 else "black",
+            )
+
+    plt.colorbar(im, ax=ax, label="P(to | from)", shrink=0.8)
+    plt.tight_layout()
+    fig_path = output_dir / "transition_matrix_topk.png"
+    fig.savefig(fig_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(fig_path)
+
+
+def generate_uniform_schedule(
+    top_k_indices: list[int],
+    total_steps: int,
+    window_size: int,
+    null_prefix_steps: int = 0,
+) -> list[int | None]:
+    """Generate a schedule that cycles top-K codes in popularity order.
+
+    Args:
+        top_k_indices: Code indices sorted by descending popularity.
+        total_steps: Total number of steps in the schedule.
+        window_size: Number of steps per code window.
+        null_prefix_steps: Steps of null D0 at the start.
+
+    Returns:
+        List of length ``total_steps`` with code index or None per step.
+    """
+    schedule: list[int | None] = [None] * null_prefix_steps
+    k = len(top_k_indices)
+    while len(schedule) < total_steps:
+        for code_idx in top_k_indices:
+            schedule.extend([code_idx] * window_size)
+            if len(schedule) >= total_steps:
+                break
+    return schedule[:total_steps]
+
+
+def generate_transition_schedule(
+    top_k_indices: list[int],
+    probs: np.ndarray,
+    total_steps: int,
+    window_size: int,
+    null_prefix_steps: int = 0,
+    seed: int = 0,
+) -> list[int | None]:
+    """Generate a schedule by sampling from the transition matrix.
+
+    Starts with the most popular code (index 0 in top_k_indices) after
+    the optional null prefix, then samples the next code from the
+    transition matrix row of the current code.
+
+    Args:
+        top_k_indices: Code indices sorted by descending popularity.
+        probs: Row-normalized transition probabilities [K, K].
+        total_steps: Total number of steps in the schedule.
+        window_size: Number of steps per code window.
+        null_prefix_steps: Steps of null D0 at the start.
+        seed: Random seed for sampling.
+
+    Returns:
+        List of length ``total_steps`` with code index or None per step.
+    """
+    rng = np.random.default_rng(seed)
+    schedule: list[int | None] = [None] * null_prefix_steps
+    k = len(top_k_indices)
+    current_k_idx = 0  # start with most popular
+    while len(schedule) < total_steps:
+        code_idx = top_k_indices[current_k_idx]
+        schedule.extend([code_idx] * window_size)
+        # Sample next code from transition row
+        current_k_idx = int(rng.choice(k, p=probs[current_k_idx]))
+    return schedule[:total_steps]
 
 
 # =============================================================================
@@ -581,35 +820,45 @@ def render_condition_videos(
     results: list[InferenceResult],
     env: Any,
     condition_key: str,
+    pose_name: str,
     output_dir: Path,
     camera: str,
     num_codes: int,
     cfg: DictConfig,
     wandb_enabled: bool,
     num_videos: int = 3,
-) -> None:
-    """Render and log videos for a set of rollout results.
+) -> list[str]:
+    """Render videos for a set of rollout results.
+
+    Videos are saved locally. WandB logging is NOT done here — the caller
+    should batch all poses for a condition into a single ``wandb.log()``
+    call so they appear in the same panel.
 
     Args:
         results: Rollout results (must have states stored).
         env: Environment for rendering.
-        condition_key: WandB/file prefix, e.g. "null_ablation/low_height".
+        condition_key: File prefix, e.g. "null_ablation".
+        pose_name: Starting pose, e.g. "low_height".
         output_dir: Directory for video files.
         camera: Camera name.
         num_codes: Number of codes for colormap.
         cfg: Config with render section.
         wandb_enabled: Whether WandB is active.
         num_videos: Max videos to render.
+
+    Returns:
+        List of video file paths rendered.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     safe_key = condition_key.replace("/", "_")
+    paths: list[str] = []
 
     for vi in range(min(num_videos, len(results))):
         r = results[vi]
         if not r.states:
             continue
 
-        video_path = output_dir / f"{safe_key}_{vi}.mp4"
+        video_path = output_dir / f"{safe_key}_{pose_name}_{vi}.mp4"
         indices_per_depth = None
         if r.rvq_indices is not None and len(r.rvq_indices) > 1:
             indices_per_depth = [np.array(a) for a in r.rvq_indices]
@@ -624,19 +873,48 @@ def render_condition_videos(
             fps=cfg.render.fps,
             indices=r.code_indices,
             num_codes=num_codes,
-            rewards=r.rewards,
             clip_idx=r.clip_idx,
             indices_per_depth=indices_per_depth,
         )
+        paths.append(str(video_path))
 
-        if wandb_enabled:
-            import wandb
+    return paths
 
-            log_wandb(
-                f"ablation/{condition_key}/video_{vi}",
-                wandb.Video(str(video_path), format="mp4"),
-                wandb_enabled,
-            )
+
+def log_condition_panel(
+    condition_key: str,
+    video_paths_by_pose: dict[str, list[str]],
+    wandb_enabled: bool,
+) -> None:
+    """Log all videos for one condition as a single WandB panel.
+
+    Groups both poses (low/high) under one key prefix so they appear
+    in the same WandB panel.
+
+    Args:
+        condition_key: Panel name, e.g. "null_ablation" or "inject_code_3".
+        video_paths_by_pose: Mapping from pose name to list of video paths.
+        wandb_enabled: Whether WandB is active.
+    """
+    if not wandb_enabled:
+        return
+    try:
+        import wandb
+
+        if wandb.run is None:
+            return
+
+        log_dict = {}
+        for pose_name, paths in video_paths_by_pose.items():
+            for vi, path in enumerate(paths):
+                log_dict[f"{condition_key}/{pose_name}_{vi}"] = wandb.Video(
+                    path, format="mp4"
+                )
+
+        if log_dict:
+            wandb.log(log_dict)
+    except Exception as e:
+        logging.warning(f"Failed to log {condition_key} panel: {e}")
 
 
 # =============================================================================
@@ -765,6 +1043,7 @@ def main(cfg: DictConfig):
     logging.info(f"  Top-{top_k} non-null D0 codes: {[c[0] for c in top_k_codes]}")
 
     # Log baseline metrics + videos
+    baseline_videos: dict[str, list[str]] = {}
     for pose_name, results in baseline_results.items():
         key = f"baseline/{pose_name}"
         metrics = compute_condition_metrics(results, null_code)
@@ -774,15 +1053,12 @@ def main(cfg: DictConfig):
             f"length={metrics['mean_episode_length']:.0f}, "
             f"displacement={metrics['mean_root_displacement']:.3f}"
         )
-        if wandb_enabled:
-            for mk, mv in metrics.items():
-                log_wandb(f"ablation/{key}/{mk}", mv, wandb_enabled)
-
         if render_enabled:
-            render_condition_videos(
+            baseline_videos[pose_name] = render_condition_videos(
                 results,
                 pose_envs[pose_name],
-                key,
+                "baseline",
+                pose_name,
                 output_dir,
                 camera_name,
                 num_codes,
@@ -790,6 +1066,7 @@ def main(cfg: DictConfig):
                 wandb_enabled,
                 num_render,
             )
+    log_condition_panel("baseline", baseline_videos, wandb_enabled)
 
     # ================================================================
     # STEP 2: Null ablation
@@ -803,6 +1080,7 @@ def main(cfg: DictConfig):
             vq_cfg, null_params, deterministic=True
         )
 
+        null_videos: dict[str, list[str]] = {}
         for pose_name, env in pose_envs.items():
             logging.info(f"  Null ablation on {pose_name}...")
             results = run_ablation_rollout(
@@ -823,15 +1101,12 @@ def main(cfg: DictConfig):
                 f"length={metrics['mean_episode_length']:.0f}, "
                 f"displacement={metrics['mean_root_displacement']:.3f}"
             )
-            if wandb_enabled:
-                for mk, mv in metrics.items():
-                    log_wandb(f"ablation/{key}/{mk}", mv, wandb_enabled)
-
             if render_enabled:
-                render_condition_videos(
+                null_videos[pose_name] = render_condition_videos(
                     results,
                     env,
-                    key,
+                    "null_ablation",
+                    pose_name,
                     output_dir,
                     camera_name,
                     num_codes,
@@ -839,6 +1114,7 @@ def main(cfg: DictConfig):
                     wandb_enabled,
                     num_render,
                 )
+        log_condition_panel("null_ablation", null_videos, wandb_enabled)
 
     # ================================================================
     # STEP 3: Code injection (top-K non-null D0 codes)
@@ -857,6 +1133,7 @@ def main(cfg: DictConfig):
                 vq_cfg, inj_params, deterministic=True
             )
 
+            inj_videos: dict[str, list[str]] = {}
             for pose_name, env in pose_envs.items():
                 logging.info(f"    Code {code_idx} on {pose_name}...")
                 results = run_ablation_rollout(
@@ -876,15 +1153,12 @@ def main(cfg: DictConfig):
                     f"    {key}: reward={metrics['mean_reward']:.1f}, "
                     f"displacement={metrics['mean_root_displacement']:.3f}"
                 )
-                if wandb_enabled:
-                    for mk, mv in metrics.items():
-                        log_wandb(f"ablation/{key}/{mk}", mv, wandb_enabled)
-
                 if render_enabled:
-                    render_condition_videos(
+                    inj_videos[pose_name] = render_condition_videos(
                         results,
                         env,
-                        key,
+                        f"inject_code_{code_idx}",
+                        pose_name,
                         output_dir,
                         camera_name,
                         num_codes,
@@ -892,64 +1166,194 @@ def main(cfg: DictConfig):
                         wandb_enabled,
                         num_render,
                     )
+            log_condition_panel(f"inject_code_{code_idx}", inj_videos, wandb_enabled)
 
     # ================================================================
-    # STEP 4: Burst truncation
+    # STEP 4: Null long runs (extended rollouts with null D0)
     # ================================================================
-    if "burst_truncation" in experiments:
+    if "null_long_run" in experiments:
         logging.info("\n" + "=" * 40)
-        logging.info("Running burst truncation experiments...")
+        logging.info("Running null long-run experiments...")
 
+        nlr_cfg = cfg.ablation.null_long_run
+        nlr_max_steps = nlr_cfg.max_steps
+        nlr_num_positions = nlr_cfg.num_starting_positions
+        nlr_num_render = nlr_cfg.get("num_render", 1)
+
+        # Select diverse starting positions
+        diverse_clips = select_diverse_starting_clips(clips, nlr_num_positions)
+
+        # Build null D0 inference fn
         null_params = make_null_d0_params(policy_params)
         null_fn, _ = load_vq_inference_fn_with_stickiness(
             vq_cfg, null_params, deterministic=True
         )
 
-        burst_lengths = list(cfg.ablation.burst_truncation_lengths)
-        for max_burst in burst_lengths:
-            logging.info(f"  Burst truncation L={max_burst}...")
+        for pos_name, clip_idx in diverse_clips.items():
+            logging.info(
+                f"  Null long run on {pos_name} (clip {clip_idx}), "
+                f"{nlr_max_steps} steps..."
+            )
+            single = subset_clips(clips, clip_idx)
+            wrap_env = WrappingImitation(config=env_cfg_ml, clips=single)
 
-            for pose_name, env in pose_envs.items():
-                logging.info(f"    L={max_burst} on {pose_name}...")
-                results = run_burst_truncation_rollout(
-                    env=env,
-                    normal_fn=inference_fn,
-                    null_d0_fn=null_fn,
-                    num_repeats=num_clips,
-                    max_steps=max_steps,
-                    seed=seed,
-                    rvq_depth=rvq_depth,
-                    max_burst_length=max_burst,
-                    null_code=null_code,
-                    num_render=num_render if render_enabled else 0,
+            results = run_ablation_rollout(
+                env=wrap_env,
+                inference_fn=null_fn,
+                num_repeats=num_clips,
+                max_steps=nlr_max_steps,
+                seed=seed,
+                rvq_depth=rvq_depth,
+                num_render=nlr_num_render if render_enabled else 0,
+            )
+
+            key = f"null_long_run/{pos_name}_clip{clip_idx}"
+            metrics = compute_condition_metrics(results, null_code)
+            all_metrics[key] = metrics
+            logging.info(
+                f"  {key}: reward={metrics['mean_reward']:.1f}, "
+                f"length={metrics['mean_episode_length']:.0f}, "
+                f"displacement={metrics['mean_root_displacement']:.3f}"
+            )
+            if render_enabled:
+                vid_paths = render_condition_videos(
+                    results,
+                    wrap_env,
+                    f"null_long_run_{pos_name}_clip{clip_idx}",
+                    pos_name,
+                    output_dir,
+                    camera_name,
+                    num_codes,
+                    cfg,
+                    wandb_enabled,
+                    nlr_num_render,
                 )
-
-                key = f"burst_trunc_L{max_burst}/{pose_name}"
-                metrics = compute_condition_metrics(results, null_code)
-                all_metrics[key] = metrics
-                logging.info(
-                    f"    {key}: reward={metrics['mean_reward']:.1f}, "
-                    f"null_frac={metrics.get('null_d0_fraction', 0):.2f}"
+                log_condition_panel(
+                    f"null_long_run/{pos_name}_clip{clip_idx}",
+                    {pos_name: vid_paths},
+                    wandb_enabled,
                 )
-                if wandb_enabled:
-                    for mk, mv in metrics.items():
-                        log_wandb(f"ablation/{key}/{mk}", mv, wandb_enabled)
-
-                if render_enabled:
-                    render_condition_videos(
-                        results,
-                        env,
-                        key,
-                        output_dir,
-                        camera_name,
-                        num_codes,
-                        cfg,
-                        wandb_enabled,
-                        num_render,
-                    )
 
     # ================================================================
-    # STEP 5: Comparison plots and summary
+    # STEP 5: Code sequence injection (time-varying D0 forcing)
+    # ================================================================
+    if "code_sequence_injection" in experiments:
+        logging.info("\n" + "=" * 40)
+        logging.info("Running code sequence injection experiments...")
+
+        csi_cfg = cfg.ablation.code_sequence_injection
+        csi_max_steps = csi_cfg.max_steps
+        csi_num_positions = csi_cfg.num_starting_positions
+        csi_window_size = csi_cfg.window_size
+        csi_null_prefix = csi_cfg.get("null_prefix_steps", 0)
+        csi_modes = list(csi_cfg.modes)
+        csi_num_sequences = csi_cfg.num_sequences
+        csi_num_render = csi_cfg.get("num_render", 1)
+
+        # Select diverse starting positions
+        diverse_clips = select_diverse_starting_clips(clips, csi_num_positions)
+
+        # Build inference fn map (null + top-K codes)
+        top_k_idx_list = [int(idx) for idx in top_k_indices]
+        fn_map = build_inference_fn_map(
+            vq_cfg, policy_params, d0_codebook, top_k_idx_list
+        )
+
+        # Build transition matrix from pooled baseline if needed
+        trans_probs = None
+        if "transition_matrix" in csi_modes:
+            logging.info("  Building transition matrix from baseline data...")
+            trans_probs = build_top_k_transition_matrix(
+                all_baseline, top_k_idx_list, num_codes
+            )
+            tm_path = plot_transition_matrix(
+                trans_probs, top_k_idx_list, output_dir / "transition"
+            )
+            logging.info(f"  Transition matrix plot: {tm_path}")
+            if wandb_enabled:
+                import wandb
+
+                log_wandb(
+                    "ablation/code_sequence/transition_matrix",
+                    wandb.Image(tm_path),
+                    wandb_enabled,
+                )
+
+        for mode in csi_modes:
+            logging.info(f"\n  Mode: {mode}")
+
+            for pos_name, clip_idx in diverse_clips.items():
+                single = subset_clips(clips, clip_idx)
+                wrap_env = WrappingImitation(config=env_cfg_ml, clips=single)
+
+                for seq_i in range(csi_num_sequences):
+                    # Generate schedule
+                    if mode == "uniform":
+                        schedule = generate_uniform_schedule(
+                            top_k_idx_list,
+                            csi_max_steps,
+                            csi_window_size,
+                            csi_null_prefix,
+                        )
+                    elif mode == "transition_matrix":
+                        schedule = generate_transition_schedule(
+                            top_k_idx_list,
+                            trans_probs,
+                            csi_max_steps,
+                            csi_window_size,
+                            csi_null_prefix,
+                            seed=seed + seq_i,
+                        )
+                    else:
+                        logging.warning(f"  Unknown mode: {mode}, skipping")
+                        continue
+
+                    store = render_enabled and seq_i < csi_num_render
+                    logging.info(
+                        f"    {mode}/{pos_name}_clip{clip_idx}/seq_{seq_i} "
+                        f"({csi_max_steps} steps, window={csi_window_size})"
+                    )
+
+                    result = run_code_sequence_rollout(
+                        env=wrap_env,
+                        schedule=schedule,
+                        inference_fn_map=fn_map,
+                        max_steps=csi_max_steps,
+                        seed=seed + seq_i,
+                        rvq_depth=rvq_depth,
+                        store_states=store,
+                    )
+
+                    key = f"{mode}_injection/" f"{pos_name}_clip{clip_idx}/seq_{seq_i}"
+                    metrics = compute_condition_metrics([result], null_code)
+                    all_metrics[key] = metrics
+                    logging.info(
+                        f"    {key}: reward={metrics['mean_reward']:.1f}, "
+                        f"length={metrics['mean_episode_length']:.0f}, "
+                        f"displacement="
+                        f"{metrics['mean_root_displacement']:.3f}"
+                    )
+                    if store:
+                        vid_paths = render_condition_videos(
+                            [result],
+                            wrap_env,
+                            f"{mode}_inj_{pos_name}_clip{clip_idx}_seq{seq_i}",
+                            pos_name,
+                            output_dir,
+                            camera_name,
+                            num_codes,
+                            cfg,
+                            wandb_enabled,
+                            1,
+                        )
+                        log_condition_panel(
+                            f"{mode}_injection/{pos_name}_clip{clip_idx}",
+                            {f"seq_{seq_i}": vid_paths},
+                            wandb_enabled,
+                        )
+
+    # ================================================================
+    # STEP 6: Comparison plots and summary
     # ================================================================
     logging.info("\n" + "=" * 40)
     logging.info("Generating comparison plots...")

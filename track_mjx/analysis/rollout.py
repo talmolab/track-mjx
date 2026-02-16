@@ -135,19 +135,19 @@ def create_rollout_generator(
     while hasattr(unwrapped_env, "_env"):
         unwrapped_env = unwrapped_env._env
     reference_clips = unwrapped_env.reference_clips
+    reference_qpos = reference_clips.qpos
 
     def _build_step_output(state, ctrl, extras):
         """Build the per-step output dict."""
         time_in_frames = state.data.time * mocap_hz
         frame = jnp.floor(time_in_frames + state.info["start_frame"]).astype(int)
-        clip = state.info["reference_clip"]
-        ref = reference_clips.at(clip=clip, frame=frame)
-
+        clip = jnp.asarray(state.info["reference_clip"]).astype(int)
         step_output = {
             "qpos": state.data.qpos,
-            "qpos_ref": ref.qpos,
             "ctrl": ctrl,
             "reward": state.reward,
+            "frame": frame,
+            "clip": clip,
         }
 
         if log_activations:
@@ -235,14 +235,14 @@ def create_rollout_generator(
         final_frame = jnp.floor(
             final_time_in_frames + final_state.info["start_frame"]
         ).astype(int)
-        final_clip = final_state.info["reference_clip"]
-        final_ref = reference_clips.at(clip=final_clip, frame=final_frame)
+        final_clip = jnp.asarray(final_state.info["reference_clip"]).astype(int)
+        rollout_frames = jnp.concatenate([outputs["frame"], final_frame[None]], axis=0)
+        rollout_clips = jnp.concatenate([outputs["clip"], final_clip[None]], axis=0)
+        qposes_ref = reference_qpos[rollout_clips, rollout_frames]
 
         # Build result dict with core fields
         result = {
-            "qposes_ref": jnp.concatenate(
-                [outputs["qpos_ref"], final_ref.qpos[None]], axis=0
-            ),
+            "qposes_ref": qposes_ref,
             "qposes_rollout": jnp.concatenate(
                 [outputs["qpos"], final_state.data.qpos[None]], axis=0
             ),

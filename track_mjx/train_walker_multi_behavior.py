@@ -31,7 +31,7 @@ import jax.numpy as jp
 import mujoco
 import numpy as np
 import orbax.checkpoint as ocp
-from brax.training.agents.ppo import train as brax_ppo_train
+from brax.training.agents.ppo.train import train as brax_ppo_train
 from brax.training.agents.ppo import networks as brax_ppo_networks
 from brax.training.acme import running_statistics
 from mujoco_playground import wrapper as playground_wrappers
@@ -174,19 +174,9 @@ def main(cfg: DictConfig) -> None:
     env = MultiBehaviorWalker(config=env_cfg)
     eval_env = MultiBehaviorWalker(config=env_cfg)
 
-    # Wrap for Brax training
-    wrapped_env = playground_wrappers.wrap_for_brax_training(
-        env,
-        episode_length=cfg.env_config.episode_length,
-    )
-    wrapped_eval_env = playground_wrappers.wrap_for_brax_training(
-        eval_env,
-        episode_length=cfg.env_config.episode_length,
-    )
-
-    # Generate run ID and checkpoint path
+    # Generate run ID and checkpoint path (absolute for Orbax)
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    checkpoint_path = Path(cfg.checkpoint.save_dir) / run_id
+    checkpoint_path = Path(cfg.checkpoint.save_dir).resolve() / run_id
     checkpoint_path.mkdir(parents=True, exist_ok=True)
 
     # Setup wandb
@@ -236,14 +226,14 @@ def main(cfg: DictConfig) -> None:
     render_fps = cfg.get("render_config", {}).get("render_fps", 50)
     episode_length = cfg.env_config.episode_length
 
-    # Build inference fn for eval rollouts
+    # Build inference fn for eval rollouts (uses unwrapped eval_env)
     normalize = lambda x, y: x
     if cfg.train_config.normalize_observations:
         normalize = running_statistics.normalize
 
     ppo_network = network_factory(
-        wrapped_eval_env.observation_size,
-        wrapped_eval_env.action_size,
+        eval_env.observation_size,
+        eval_env.action_size,
         preprocess_observations_fn=normalize,
     )
 
@@ -270,8 +260,8 @@ def main(cfg: DictConfig) -> None:
     jit_logging_inference_fn = jax.jit(
         _make_logging_inference_fn(ppo_network)(deterministic=True)
     )
-    jit_eval_reset = jax.jit(wrapped_eval_env.reset)
-    jit_eval_step = jax.jit(wrapped_eval_env.step)
+    jit_eval_reset = jax.jit(eval_env.reset)
+    jit_eval_step = jax.jit(eval_env.step)
 
     orbax_checkpointer = ocp.PyTreeCheckpointer()
 
@@ -339,8 +329,9 @@ def main(cfg: DictConfig) -> None:
 
     # Train
     make_inference_fn, params, metrics = brax_ppo_train(
-        environment=wrapped_env,
-        eval_env=wrapped_eval_env,
+        environment=env,
+        eval_env=eval_env,
+        episode_length=cfg.env_config.episode_length,
         num_timesteps=cfg.train_config.num_timesteps,
         num_envs=cfg.train_config.num_envs,
         batch_size=cfg.train_config.batch_size,
@@ -355,6 +346,7 @@ def main(cfg: DictConfig) -> None:
         network_factory=network_factory,
         progress_fn=progress_fn,
         policy_params_fn=policy_params_fn,
+        wrap_env_fn=functools.partial(playground_wrappers.wrap_for_brax_training),
         num_evals=int(
             cfg.train_config.num_timesteps / cfg.checkpoint.save_every
         ),

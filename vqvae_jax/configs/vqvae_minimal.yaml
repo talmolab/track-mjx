@@ -111,7 +111,7 @@ network_config:
   latent_dim: 32                # Same as intention_size
 
   # VQ-VAE specific settings
-  num_codes: 8                    # Codebook entries per RVQ level
+  num_codes: 16                    # Codebook entries per RVQ level
   commitment_cost: 0.1           # Low to avoid premature lock-in
   codebook_loss_weight: 1.0      # Weight for codebook loss
   codebook_entropy_weight: 0.1   # Weight for soft codebook entropy regularization

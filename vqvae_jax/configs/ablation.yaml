@@ -1,0 +1,213 @@
+# =============================================================================
+# VQ-VAE Code Ablation Experiments
+# =============================================================================
+# Empirically test what each D0 code does via:
+# 1. Null ablation — force z_q=0 to confirm model stops moving
+# 2. Code injection — force one D0 code at every step
+# 3. Burst truncation — cap D0 burst duration
+#
+# Each experiment runs from two starting poses (lowest/highest torso z).
+# =============================================================================
+
+# =============================================================================
+# Checkpoint Configuration
+# =============================================================================
+checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260212_180855_952368/
+  step: null  # null = latest step
+
+# =============================================================================
+# Ablation Configuration
+# =============================================================================
+ablation:
+  experiments: [null_ablation, code_injection, burst_truncation]
+  num_clips: 10              # Clips per condition per starting pose
+  max_steps: 500             # Steps per clip
+  seed: 42
+  data_split: "test"
+  top_k: 5                   # Top K non-null D0 codes for injection + truncation
+  burst_truncation_lengths: [1, 3, 5, 10]  # Max D0 burst frames before forcing null
+
+  # Starting pose selection
+  starting_poses:
+    low_height:
+      enabled: true
+      description: "Walking/grooming (lowest torso z)"
+    high_height:
+      enabled: true
+      description: "Rearing (highest torso z)"
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  wandb_enabled: true
+  project_name: vqvae_ablation
+  group_name: ablation_experiments
+  run_name: null              # Auto-generated if null
+
+# =============================================================================
+# Rendering Configuration
+# =============================================================================
+render:
+  enabled: true
+  num_videos: 3               # Videos per condition
+  camera: close_profile
+  fps: 50
+  width: 640
+  height: 480
+
+# =============================================================================
+# Output Configuration
+# =============================================================================
+output:
+  base_dir: ./outputs/ablation
+
+# =============================================================================
+# Environment Configuration
+# =============================================================================
+env_config:
+  mujoco_impl: "jax"
+
+  # Physics Solver Settings
+  solver: "newton"
+  iterations: 5
+  ls_iterations: 5
+  nconmax: 256
+  njmax: 128
+  noslip_iterations: 0
+
+  # Timing Configuration
+  sim_dt: 0.002
+  ctrl_dt: 0.01
+  mocap_hz: 50
+
+  # Reference Clip Settings
+  clip_length: 250
+  clip_set: "all"
+  reference_length: 5
+  start_frame_range: [0, 50]
+  qvel_init: "zeros"
+  keep_clips_idx: null
+
+  # Domain Randomization (disabled for ablation)
+  domain_randomization:
+    use_domain_randomization: false
+    floor_friction: [0.7, 0.7]
+    static_friction_scale: [1.0, 1.0]
+    armature_scale: [1.0, 1.0]
+    com_jitter: [0.0, 0.0]
+    link_mass_scale: [1.0, 1.0]
+    torso_mass_jitter: [0.0, 0.0]
+    qpos0_jitter: [0.0, 0.0]
+
+  # Reward Terms
+  reward_terms:
+    root_pos:
+      exp_scale: 0.035
+      weight: 1.0
+    root_quat:
+      exp_scale: 20.0
+      weight: 1.0
+    joints:
+      exp_scale: 1.41
+      weight: 1.0
+    joints_vel:
+      exp_scale: 1.0
+      weight: 0.0
+    bodies_pos:
+      exp_scale: 0.25
+      weight: 0.0
+    end_eff:
+      exp_scale: 0.03
+      weight: 1.0
+    torso_z_range:
+      healthy_z_range: [0.0325, 0.5]
+      weight: 1.0
+    control_cost:
+      weight: 0.02
+    control_diff_cost:
+      weight: 0.02
+    energy_cost:
+      max_value: 50.0
+      weight: 0.01
+
+  # Termination Criteria
+  termination_criteria:
+    root_too_far:
+      max_distance: 0.15
+    root_too_rotated:
+      max_degrees: 75.0
+    pose_error:
+      max_l2_error: 5.0
+    nan_termination: {}
+
+# =============================================================================
+# Walker Configuration
+# =============================================================================
+walker_config:
+  walker_name: "rodent"
+  torque_actuators: true
+  rescale_factor: 0.9
+
+  joint_names:
+    - vertebra_1_extend
+    - hip_L_supinate
+    - hip_L_abduct
+    - hip_L_extend
+    - knee_L
+    - ankle_L
+    - toe_L
+    - hip_R_supinate
+    - hip_R_abduct
+    - hip_R_extend
+    - knee_R
+    - ankle_R
+    - toe_R
+    - vertebra_C11_extend
+    - vertebra_cervical_1_bend
+    - vertebra_axis_twist
+    - atlas
+    - mandible
+    - scapula_L_supinate
+    - scapula_L_abduct
+    - scapula_L_extend
+    - shoulder_L
+    - shoulder_sup_L
+    - elbow_L
+    - wrist_L
+    - scapula_R_supinate
+    - scapula_R_abduct
+    - scapula_R_extend
+    - shoulder_R
+    - shoulder_sup_R
+    - elbow_R
+    - wrist_R
+    - finger_R
+
+  body_names:
+    - torso
+    - pelvis
+    - upper_leg_L
+    - lower_leg_L
+    - foot_L
+    - upper_leg_R
+    - lower_leg_R
+    - foot_R
+    - skull
+    - jaw
+    - scapula_L
+    - upper_arm_L
+    - lower_arm_L
+    - finger_L
+    - scapula_R
+    - upper_arm_R
+    - lower_arm_R
+    - finger_R
+
+  end_eff_names:
+    - foot_L
+    - foot_R
+    - hand_L
+    - hand_R
+    - skull

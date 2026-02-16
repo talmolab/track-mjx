@@ -15,6 +15,7 @@ from jax import numpy as jnp
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
+from vnl_playground.tasks import wrappers as vnl_wrappers
 
 
 def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
@@ -56,8 +57,10 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
         n_frames_per_clip=env_cfg_ml.clip_length,
         keep_clips_idx=env_cfg_ml.get("keep_clips_idx", None),
     )
-    return registry.load(
-        env_name, config=env_cfg_ml, clips=reference_clips, flatten_obs=False
+    return vnl_wrappers.TrackMjxObsWrapper(
+        registry.load(
+            env_name, config=env_cfg_ml, clips=reference_clips, flatten_obs=False
+        )
     )
 
 

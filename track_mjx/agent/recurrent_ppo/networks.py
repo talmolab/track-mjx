@@ -429,14 +429,12 @@ def make_inference_fn(
                     )
                 )
             else:
-                logits, latent_mean, latent_logvar, new_hidden = (
-                    policy_network.apply(
-                        *params,
-                        observations,
-                        hidden,
-                        per_sample_keys,
-                        deterministic=deterministic,
-                    )
+                logits, latent_mean, latent_logvar, new_hidden = policy_network.apply(
+                    *params,
+                    observations,
+                    hidden,
+                    per_sample_keys,
+                    deterministic=deterministic,
                 )
                 activations = None
 

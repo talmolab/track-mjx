@@ -6,7 +6,7 @@ env_config:
   sim_dt: 0.0025
   ctrl_dt: 0.025
   episode_length: 1000
-  mujoco_impl: "jax"
+  mujoco_impl: "warp"
   nconmax: 50000
   njmax: 100
   mode_switch_prob: 0.005
@@ -18,7 +18,7 @@ network_config:
 
 train_config:
   num_timesteps: 100_000_000
-  num_envs: 2048
+  num_envs: 8192
   batch_size: 1024
   num_minibatches: 32
   num_updates_per_batch: 4
@@ -34,6 +34,11 @@ logging_config:
   group_name: "step1-multi-behavior"
   exp_name: "baseline"
   log_to_wandb: true
+
+render_config:
+  render_height: 480
+  render_width: 640
+  render_fps: 50
 
 checkpoint:
   save_dir: "checkpoints/walker_multi_behavior"

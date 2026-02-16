@@ -40,7 +40,7 @@ ablation:
     num_starting_positions: 3
     window_size: 50
     null_prefix_steps: 0
-    modes: [null_ablation, code_injection, null_long_run, code_sequence_injection]
+    modes: [null_long_run, code_sequence_injection, null_ablation, code_injection]
     num_sequences: 3
     num_render: 3
 

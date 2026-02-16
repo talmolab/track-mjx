@@ -238,6 +238,7 @@ def run_ablation_rollout(
     seed: int,
     rvq_depth: int,
     num_render: int = 0,
+    override_d0_index: int | None = None,
 ) -> list[InferenceResult]:
     """Run ablation rollouts on a single-clip environment.
 
@@ -251,6 +252,10 @@ def run_ablation_rollout(
         num_render: Number of rollouts for which to store env states
             (for video rendering). States are only stored for the first
             ``num_render`` rollouts to save memory.
+        override_d0_index: If set, record this as the D0 code index
+            instead of the argmin result. Use when all D0 entries are
+            identical (e.g. code injection) so rendering shows the
+            correct injected code.
 
     Returns:
         List of InferenceResult objects.
@@ -279,7 +284,8 @@ def run_ablation_rollout(
             rng, action_rng = jax.random.split(rng)
             action, extras = inference_fn(obs, action_rng, prev_indices)
 
-            code_idx = int(extras["indices"])
+            raw_d0 = int(extras["indices"])
+            code_idx = override_d0_index if override_d0_index is not None else raw_d0
             code_indices.append(code_idx)
 
             all_idx = extras.get("all_indices")
@@ -287,11 +293,12 @@ def run_ablation_rollout(
                 prev_indices = all_idx
                 for d in range(rvq_depth):
                     if isinstance(all_idx, tuple) and d < len(all_idx):
-                        rvq_per_depth[d].append(int(all_idx[d]))
+                        idx_d = code_idx if d == 0 and override_d0_index is not None else int(all_idx[d])
+                        rvq_per_depth[d].append(idx_d)
                     elif d == 0:
                         rvq_per_depth[d].append(code_idx)
             else:
-                prev_indices = jnp.array(code_idx)
+                prev_indices = jnp.array(raw_d0)
                 rvq_per_depth[0].append(code_idx)
 
             if hasattr(state, "data"):
@@ -1144,6 +1151,7 @@ def main(cfg: DictConfig):
                     seed=seed,
                     rvq_depth=rvq_depth,
                     num_render=num_render if render_enabled else 0,
+                    override_d0_index=code_idx,
                 )
 
                 key = f"inject_code_{code_idx}/{pose_name}"

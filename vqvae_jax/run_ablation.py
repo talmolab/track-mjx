@@ -293,7 +293,11 @@ def run_ablation_rollout(
                 prev_indices = all_idx
                 for d in range(rvq_depth):
                     if isinstance(all_idx, tuple) and d < len(all_idx):
-                        idx_d = code_idx if d == 0 and override_d0_index is not None else int(all_idx[d])
+                        idx_d = (
+                            code_idx
+                            if d == 0 and override_d0_index is not None
+                            else int(all_idx[d])
+                        )
                         rvq_per_depth[d].append(idx_d)
                     elif d == 0:
                         rvq_per_depth[d].append(code_idx)
@@ -435,7 +439,10 @@ def run_code_sequence_rollout(
         rng, action_rng = jax.random.split(rng)
         action, extras = inference_fn(obs, action_rng, prev_indices)
 
-        code_idx = int(extras["indices"])
+        # Record the scheduled code as D0 index (not the argmin result,
+        # which is arbitrary when all D0 entries are identical).
+        raw_d0 = int(extras["indices"])
+        code_idx = scheduled_code if scheduled_code is not None else raw_d0
         code_indices.append(code_idx)
 
         all_idx = extras.get("all_indices")
@@ -443,11 +450,16 @@ def run_code_sequence_rollout(
             prev_indices = all_idx
             for d in range(rvq_depth):
                 if isinstance(all_idx, tuple) and d < len(all_idx):
-                    rvq_per_depth[d].append(int(all_idx[d]))
+                    idx_d = (
+                        code_idx
+                        if d == 0 and scheduled_code is not None
+                        else int(all_idx[d])
+                    )
+                    rvq_per_depth[d].append(idx_d)
                 elif d == 0:
                     rvq_per_depth[d].append(code_idx)
         else:
-            prev_indices = jnp.array(code_idx)
+            prev_indices = jnp.array(raw_d0)
             rvq_per_depth[0].append(code_idx)
 
         if hasattr(state, "data"):
@@ -543,7 +555,11 @@ def build_top_k_transition_matrix(
     """Build a K x K row-normalized transition probability matrix.
 
     Uses the full-size transition counts from baseline rollouts, then
-    extracts the submatrix for the top-K codes and row-normalizes.
+    extracts the submatrix for the top-K codes, zeros the diagonal
+    (self-transitions), and row-normalizes. Self-transitions are
+    excluded because codes persist for many consecutive frames and
+    would otherwise dominate the matrix, causing the schedule to
+    mostly repeat the same code.
 
     Args:
         results: Baseline rollout results.
@@ -564,6 +580,11 @@ def build_top_k_transition_matrix(
     for i, fi in enumerate(top_k_indices):
         for j, fj in enumerate(top_k_indices):
             sub[i, j] = full_counts[fi, fj]
+
+    # Remove self-transitions so we only capture actual code changes.
+    # Without this, the diagonal dominates (codes persist for many
+    # consecutive frames) and the schedule mostly repeats the same code.
+    np.fill_diagonal(sub, 0)
 
     # Row-normalize
     row_sums = sub.sum(axis=1, keepdims=True)
@@ -1132,9 +1153,7 @@ def main(cfg: DictConfig):
     # ================================================================
     if "null_code_injection" in experiments:
         logging.info("\n" + "=" * 40)
-        logging.info(
-            f"Running null code injection (force D0 = code {null_code})..."
-        )
+        logging.info(f"Running null code injection (force D0 = code {null_code})...")
 
         null_embedding = jnp.array(d0_codebook[null_code])
         nci_params = make_injection_d0_params(policy_params, null_embedding)

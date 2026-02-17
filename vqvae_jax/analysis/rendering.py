@@ -489,6 +489,7 @@ def _add_multi_depth_code_label(
     indices_per_depth: list[np.ndarray],
     code_colors: np.ndarray,
     font_size: int = 16,
+    d0_label: str | None = None,
 ) -> np.ndarray:
     """Add a multi-depth code label badge (e.g. 'L0:5 L1:12') to frame.
 
@@ -498,6 +499,8 @@ def _add_multi_depth_code_label(
         indices_per_depth: List of D index arrays.
         code_colors: Color for each code, shape [num_codes, 3].
         font_size: Font size for label.
+        d0_label: If set, use this string instead of ``"L0:{index}"``
+            for depth-0 (e.g. ``"zero input"``).
 
     Returns:
         Frame with code label overlay.
@@ -505,7 +508,10 @@ def _add_multi_depth_code_label(
     parts = []
     for d, depth_indices in enumerate(indices_per_depth):
         if current_frame_idx < len(depth_indices):
-            parts.append(f"L{d}:{int(depth_indices[current_frame_idx])}")
+            if d == 0 and d0_label is not None:
+                parts.append(d0_label)
+            else:
+                parts.append(f"L{d}:{int(depth_indices[current_frame_idx])}")
     if not parts:
         return frame
 
@@ -559,6 +565,7 @@ def render_rollout_to_video(
     clip_idx: int | None = None,
     show_clip_idx: bool = True,
     indices_per_depth: list[np.ndarray] | None = None,
+    d0_label: str | None = None,
 ) -> str:
     """Render rollout states to video with Nature-style overlays.
 
@@ -584,6 +591,8 @@ def render_rollout_to_video(
         indices_per_depth: Optional list of D index arrays for multi-depth
             RVQ. When provided, stacked bars are drawn and ``indices`` is
             ignored.
+        d0_label: If set, use this string instead of ``"L0:{index}"``
+            in the code badge overlay (e.g. ``"zero input"``).
 
     Returns:
         Path to saved video file.
@@ -631,6 +640,7 @@ def render_rollout_to_video(
                 current_frame_idx=i,
                 indices_per_depth=indices_per_depth,
                 code_colors=code_colors,
+                d0_label=d0_label,
             )
         elif indices is not None:
             # Single-depth: original behavior

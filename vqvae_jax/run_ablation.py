@@ -834,6 +834,7 @@ def render_condition_videos(
     cfg: DictConfig,
     wandb_enabled: bool,
     num_videos: int = 3,
+    d0_label: str | None = None,
 ) -> list[str]:
     """Render videos for a set of rollout results.
 
@@ -844,7 +845,7 @@ def render_condition_videos(
     Args:
         results: Rollout results (must have states stored).
         env: Environment for rendering.
-        condition_key: File prefix, e.g. "null_ablation".
+        condition_key: File prefix, e.g. "zero_d0".
         pose_name: Starting pose, e.g. "low_height".
         output_dir: Directory for video files.
         camera: Camera name.
@@ -852,6 +853,7 @@ def render_condition_videos(
         cfg: Config with render section.
         wandb_enabled: Whether WandB is active.
         num_videos: Max videos to render.
+        d0_label: If set, override D0 label in video overlay.
 
     Returns:
         List of video file paths rendered.
@@ -882,6 +884,7 @@ def render_condition_videos(
             num_codes=num_codes,
             clip_idx=r.clip_idx,
             indices_per_depth=indices_per_depth,
+            d0_label=d0_label,
         )
         paths.append(str(video_path))
 
@@ -899,7 +902,7 @@ def log_condition_panel(
     in the same WandB panel.
 
     Args:
-        condition_key: Panel name, e.g. "null_ablation" or "inject_code_3".
+        condition_key: Panel name, e.g. "zero_d0" or "inject_code_3".
         video_paths_by_pose: Mapping from pose name to list of video paths.
         wandb_enabled: Whether WandB is active.
     """
@@ -1076,23 +1079,23 @@ def main(cfg: DictConfig):
     log_condition_panel("baseline", baseline_videos, wandb_enabled)
 
     # ================================================================
-    # STEP 2: Null ablation
+    # STEP 2a: Zero D0 (all D0 codebook entries -> zero vector)
     # ================================================================
-    if "null_ablation" in experiments:
+    if "zero_d0" in experiments:
         logging.info("\n" + "=" * 40)
-        logging.info("Running null ablation (all D0 codes -> zero)...")
+        logging.info("Running zero D0 (all D0 codes -> zero vector)...")
 
-        null_params = make_null_d0_params(policy_params)
-        null_fn, _ = load_vq_inference_fn_with_stickiness(
-            vq_cfg, null_params, deterministic=True
+        zero_params = make_null_d0_params(policy_params)
+        zero_fn, _ = load_vq_inference_fn_with_stickiness(
+            vq_cfg, zero_params, deterministic=True
         )
 
-        null_videos: dict[str, list[str]] = {}
+        zero_videos: dict[str, list[str]] = {}
         for pose_name, env in pose_envs.items():
-            logging.info(f"  Null ablation on {pose_name}...")
+            logging.info(f"  Zero D0 on {pose_name}...")
             results = run_ablation_rollout(
                 env=env,
-                inference_fn=null_fn,
+                inference_fn=zero_fn,
                 num_repeats=num_clips,
                 max_steps=max_steps,
                 seed=seed,
@@ -1100,7 +1103,7 @@ def main(cfg: DictConfig):
                 num_render=num_render if render_enabled else 0,
             )
 
-            key = f"null_ablation/{pose_name}"
+            key = f"zero_d0/{pose_name}"
             metrics = compute_condition_metrics(results, null_code)
             all_metrics[key] = metrics
             logging.info(
@@ -1109,10 +1112,63 @@ def main(cfg: DictConfig):
                 f"displacement={metrics['mean_root_displacement']:.3f}"
             )
             if render_enabled:
-                null_videos[pose_name] = render_condition_videos(
+                zero_videos[pose_name] = render_condition_videos(
                     results,
                     env,
-                    "null_ablation",
+                    "zero_d0",
+                    pose_name,
+                    output_dir,
+                    camera_name,
+                    num_codes,
+                    cfg,
+                    wandb_enabled,
+                    num_render,
+                    d0_label="zero input",
+                )
+        log_condition_panel("zero_d0", zero_videos, wandb_enabled)
+
+    # ================================================================
+    # STEP 2b: Null code injection (force D0 = most frequent code)
+    # ================================================================
+    if "null_code_injection" in experiments:
+        logging.info("\n" + "=" * 40)
+        logging.info(
+            f"Running null code injection (force D0 = code {null_code})..."
+        )
+
+        null_embedding = jnp.array(d0_codebook[null_code])
+        nci_params = make_injection_d0_params(policy_params, null_embedding)
+        nci_fn, _ = load_vq_inference_fn_with_stickiness(
+            vq_cfg, nci_params, deterministic=True
+        )
+
+        nci_videos: dict[str, list[str]] = {}
+        for pose_name, env in pose_envs.items():
+            logging.info(f"  Null code injection on {pose_name}...")
+            results = run_ablation_rollout(
+                env=env,
+                inference_fn=nci_fn,
+                num_repeats=num_clips,
+                max_steps=max_steps,
+                seed=seed,
+                rvq_depth=rvq_depth,
+                num_render=num_render if render_enabled else 0,
+                override_d0_index=null_code,
+            )
+
+            key = f"null_code_injection/{pose_name}"
+            metrics = compute_condition_metrics(results, null_code)
+            all_metrics[key] = metrics
+            logging.info(
+                f"  {key}: reward={metrics['mean_reward']:.1f}, "
+                f"length={metrics['mean_episode_length']:.0f}, "
+                f"displacement={metrics['mean_root_displacement']:.3f}"
+            )
+            if render_enabled:
+                nci_videos[pose_name] = render_condition_videos(
+                    results,
+                    env,
+                    "null_code_injection",
                     pose_name,
                     output_dir,
                     camera_name,
@@ -1121,7 +1177,7 @@ def main(cfg: DictConfig):
                     wandb_enabled,
                     num_render,
                 )
-        log_condition_panel("null_ablation", null_videos, wandb_enabled)
+        log_condition_panel("null_code_injection", nci_videos, wandb_enabled)
 
     # ================================================================
     # STEP 3: Code injection (top-K non-null D0 codes)

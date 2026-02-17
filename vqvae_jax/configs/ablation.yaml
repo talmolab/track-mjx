@@ -2,8 +2,9 @@
 # VQ-VAE Code Ablation Experiments
 # =============================================================================
 # Empirically test what each D0 code does via:
-# 1. Null ablation — force z_q=0 (disable correction channel)
-# 2. Code injection — force one D0 code at every step
+# 1. Zero D0 — force z_q=0 (remove D0 channel entirely)
+# 2. Null code injection — force D0 = most frequent code (remove D0 variation)
+# 3. Code injection — force one D0 code at every step
 #
 # Each experiment runs from two starting poses (lowest/highest torso z).
 # =============================================================================
@@ -19,7 +20,7 @@ checkpoint:
 # Ablation Configuration
 # =============================================================================
 ablation:
-  experiments: [null_ablation, code_injection]
+  experiments: [null_long_run, code_sequence_injection, zero_d0, null_code_injection, code_injection]
   num_clips: 10              # Clips per condition per starting pose
   max_steps: 500             # Steps per clip
   seed: 42
@@ -40,7 +41,7 @@ ablation:
     num_starting_positions: 3
     window_size: 50
     null_prefix_steps: 0
-    modes: [null_long_run, code_sequence_injection, null_ablation, code_injection]
+    modes: [uniform, transition_matrix]
     num_sequences: 3
     num_render: 3
 

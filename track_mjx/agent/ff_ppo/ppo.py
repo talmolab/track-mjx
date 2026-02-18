@@ -374,8 +374,13 @@ def train(
         key, key_perm, key_grad = jax.random.split(key, 3)
 
         def convert_data(x: jnp.ndarray):
-            if 0 in x.shape:
-                return x
+            # Handle empty arrays (e.g., proprioception with size 0)
+            if x.size == 0:
+                # Compute the new shape explicitly to avoid division by zero
+                # Original shape: (batch_size * num_minibatches, ..., 0, ...)
+                # New shape: (num_minibatches, batch_size, ..., 0, ...)
+                new_shape = (num_minibatches, x.shape[0] // num_minibatches) + x.shape[1:]
+                return jnp.reshape(x, new_shape)
             x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
             return x
@@ -420,10 +425,16 @@ def train(
         )
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        data = jax.tree_util.tree_map(
-            lambda x: x if 0 in x.shape else jnp.reshape(x, (-1,) + x.shape[2:]),
-            data,
-        )
+
+        def flatten_batch_dims(x):
+            # Handle empty arrays (e.g., proprioception with size 0)
+            if x.size == 0:
+                # Explicitly compute shape to avoid -1 division issues
+                new_shape = (x.shape[0] * x.shape[1],) + x.shape[2:]
+                return jnp.reshape(x, new_shape)
+            return jnp.reshape(x, (-1,) + x.shape[2:])
+
+        data = jax.tree_util.tree_map(flatten_batch_dims, data)
         assert data.discount.shape[1:] == (unroll_length,)
 
         # Update normalization params (only if normalization is enabled).

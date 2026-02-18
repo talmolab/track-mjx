@@ -186,7 +186,11 @@ def make_vq_logging_inference_fn(
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
             logits, z_e, all_indices = policy_network.apply(
-                *params, observations, key_network, prev_indices=prev_indices
+                *params,
+                observations,
+                key_network,
+                deterministic=deterministic,
+                prev_indices=prev_indices,
             )
 
             # Primary level indices for backward compat
@@ -277,6 +281,7 @@ def make_vq_intention_ppo_networks(
     rvq_depth: int = 1,
     use_rotation: bool = False,
     coupled_residual_grad: bool = False,
+    proprio_noise_scale: float = 0.0,
 ) -> VQPPOImitationNetworks:
     """Create VQ-VAE intention-based PPO networks for imitation learning.
 
@@ -315,6 +320,7 @@ def make_vq_intention_ppo_networks(
         rvq_depth=rvq_depth,
         use_rotation=use_rotation,
         coupled_residual_grad=coupled_residual_grad,
+        proprio_noise_scale=proprio_noise_scale,
     )
 
     value_network = make_vq_dict_value_network(

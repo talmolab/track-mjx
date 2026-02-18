@@ -450,6 +450,7 @@ class VQIntentionNetwork(nn.Module):
     rvq_depth: int = 1
     use_rotation: bool = False
     coupled_residual_grad: bool = False
+    proprio_noise_scale: float = 0.0
 
     def setup(self):
         """Initialize encoder, quantizer, and decoder submodules."""
@@ -506,6 +507,15 @@ class VQIntentionNetwork(nn.Module):
         traj = obs["imitation_target"]
         egocentric_obs = obs["proprioception"]
 
+        if self.proprio_noise_scale > 0.0 and not deterministic:
+            # key may be batched [B, 2] during rollout or single [2] during loss
+            noise_key = key[0] if key.ndim > 1 else key
+            noise = (
+                jax.random.normal(noise_key, egocentric_obs.shape)
+                * self.proprio_noise_scale
+            )
+            egocentric_obs = egocentric_obs + noise
+
         if get_activation:
             z_e, encoder_activations = self.encoder(traj, get_activation=True)
             z_hat_st, all_indices, all_z_q, all_residuals = self.quantizer(
@@ -542,6 +552,7 @@ class VQIntentionNetwork(nn.Module):
         self,
         obs: Mapping[str, jnp.ndarray],
         episode_mask: jnp.ndarray | None = None,
+        key: jax.Array | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, tuple[jnp.ndarray, ...]]:
         """Forward pass with temporal stickiness bias using sequential processing.
 
@@ -563,6 +574,12 @@ class VQIntentionNetwork(nn.Module):
         """
         traj = obs["imitation_target"]  # [T, B, traj_dim]
         egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
+
+        if self.proprio_noise_scale > 0.0 and key is not None:
+            noise = (
+                jax.random.normal(key, egocentric_obs.shape) * self.proprio_noise_scale
+            )
+            egocentric_obs = egocentric_obs + noise
 
         # Encode all timesteps in parallel
         z_e = self.encoder(traj)  # [T, B, latent_dim]
@@ -736,6 +753,7 @@ def make_vq_intention_policy(
     rvq_depth: int = 1,
     use_rotation: bool = False,
     coupled_residual_grad: bool = False,
+    proprio_noise_scale: float = 0.0,
 ) -> VQPolicyNetwork:
     """Create a VQ-VAE intention-based policy network.
 
@@ -770,6 +788,7 @@ def make_vq_intention_policy(
         rvq_depth=rvq_depth,
         use_rotation=use_rotation,
         coupled_residual_grad=coupled_residual_grad,
+        proprio_noise_scale=proprio_noise_scale,
     )
 
     def apply(
@@ -804,6 +823,7 @@ def make_vq_intention_policy(
         policy_params,
         obs: Mapping[str, jnp.ndarray],
         episode_mask: jnp.ndarray | None = None,
+        proprio_noise_key: jax.Array | None = None,
     ):
         """Apply VQ policy with temporal stickiness bias.
 
@@ -817,6 +837,7 @@ def make_vq_intention_policy(
             policy_params,
             obs=obs,
             episode_mask=episode_mask,
+            key=proprio_noise_key,
             method=policy_module.forward_temporal,
         )
 

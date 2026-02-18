@@ -445,20 +445,45 @@ def main(cfg: DictConfig) -> None:
 
     # Create the reference clips
     logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
-    reference_clips = ReferenceClips(
-        data_path=cfg.env_config.reference_data_path,
-        n_frames_per_clip=cfg.env_config.clip_length,
-        keep_clips_idx=cfg.env_config.keep_clips_idx,
-    )
+    balanced_split_path = cfg.env_config.get("balanced_split_path", None)
+    if balanced_split_path:
+        import json
+        import numpy as np
 
-    # Create train/test split
-    key_split, _ = jax.random.split(
-        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
-    )
-    train_clips, test_clips = reference_clips.split(
-        train_ratio=cfg.train_setup.train_subset_ratio,
-        seed=key_split,
-    )
+        with open(balanced_split_path) as f:
+            splits = json.load(f)
+        train_indices = splits["balanced"]["train_indices"]
+        test_indices = splits["balanced"]["test_indices"]
+
+        train_clips = ReferenceClips(
+            data_path=cfg.env_config.reference_data_path,
+            n_frames_per_clip=cfg.env_config.clip_length,
+            keep_clips_idx=np.array(train_indices),
+        )
+        test_clips = ReferenceClips(
+            data_path=cfg.env_config.reference_data_path,
+            n_frames_per_clip=cfg.env_config.clip_length,
+            keep_clips_idx=np.array(test_indices),
+        )
+        logging.info(
+            f"Loaded balanced splits: {len(train_indices)} train, "
+            f"{len(test_indices)} test from {balanced_split_path}"
+        )
+    else:
+        reference_clips = ReferenceClips(
+            data_path=cfg.env_config.reference_data_path,
+            n_frames_per_clip=cfg.env_config.clip_length,
+            keep_clips_idx=cfg.env_config.keep_clips_idx,
+        )
+
+        # Create train/test split
+        key_split, _ = jax.random.split(
+            jax.random.PRNGKey(cfg.train_setup.train_config.seed)
+        )
+        train_clips, test_clips = reference_clips.split(
+            train_ratio=cfg.train_setup.train_subset_ratio,
+            seed=key_split,
+        )
 
     # Create environments (dict observations, no flattening)
     env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
@@ -498,6 +523,7 @@ def main(cfg: DictConfig) -> None:
     dead_code_reinit = bool(cfg.network_config.get("dead_code_reinit", False))
     dead_code_threshold = float(cfg.network_config.get("dead_code_threshold", 0.01))
     num_codes = int(cfg.network_config.get("num_codes", 32))
+    proprio_noise_scale = float(cfg.network_config.get("proprio_noise_scale", 0.0))
 
     # Shared mutable dict for dead code reinit data (populated by rollout callback)
     reinit_data = {} if dead_code_reinit else None
@@ -518,6 +544,7 @@ def main(cfg: DictConfig) -> None:
         rvq_depth=rvq_depth,
         use_rotation=use_rotation,
         coupled_residual_grad=coupled_residual_grad,
+        proprio_noise_scale=proprio_noise_scale,
     )
 
     # Initialize wandb
@@ -550,6 +577,7 @@ def main(cfg: DictConfig) -> None:
             "codebook_entropy_temperature": codebook_entropy_temperature,
             "dead_code_reinit": dead_code_reinit,
             "dead_code_threshold": dead_code_threshold,
+            "proprio_noise_scale": proprio_noise_scale,
         }
     )
 

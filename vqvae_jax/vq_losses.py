@@ -465,7 +465,11 @@ def compute_vq_ppo_loss(
             [jnp.zeros((1, continues.shape[1])), continues[:-1]], axis=0
         )
         policy_logits, z_e, all_indices = policy_network.apply_temporal(
-            normalizer_params, params.policy, data.observation, episode_mask
+            normalizer_params,
+            params.policy,
+            data.observation,
+            episode_mask,
+            proprio_noise_key=policy_key,
         )
     else:
         policy_logits, z_e, all_indices = policy_network.apply(

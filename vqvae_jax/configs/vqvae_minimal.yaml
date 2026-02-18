@@ -31,6 +31,7 @@ env_config:
   start_frame_range: [0, 20]    # Smaller range
   qvel_init: "zeros"
   keep_clips_idx: null          # Use all clips (null = no filtering)
+  balanced_split_path: null      # Path to balanced splits JSON (null = use random split)
 
   # Domain Randomization - prevents decoder from memorizing dynamics
   domain_randomization:
@@ -111,7 +112,7 @@ network_config:
   latent_dim: 32                # Same as intention_size
 
   # VQ-VAE specific settings
-  num_codes: 20                    # Codebook entries per RVQ level
+  num_codes: 32                    # Codebook entries per RVQ level
   commitment_cost: 0.1           # Low to avoid premature lock-in
   codebook_loss_weight: 1.0      # Weight for codebook loss
   codebook_entropy_weight: 0.1   # Weight for soft codebook entropy regularization
@@ -129,6 +130,7 @@ network_config:
   rvq_depth: 2                   # Number of RVQ levels (1 = vanilla VQ)
   use_rotation: true            # Householder rotation-augmented STE (STAR)
   coupled_residual_grad: true   # Couple depth gradients through rotation
+  proprio_noise_scale: 0.3      # Gaussian noise std on normalized proprio (decoder only)
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false

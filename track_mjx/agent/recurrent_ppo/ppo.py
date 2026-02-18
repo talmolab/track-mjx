@@ -615,6 +615,11 @@ def train(
 
         def convert_data(x: jnp.ndarray):
             x = jax.random.permutation(key_perm, x)
+            if any(d == 0 for d in x.shape):
+                return jnp.zeros(
+                    (num_minibatches, x.shape[0] // num_minibatches) + x.shape[1:],
+                    dtype=x.dtype,
+                )
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
             return x
 
@@ -665,12 +670,19 @@ def train(
 
         # Reshape: (num_unrolls, unroll_length, envs_per_device) -> (batch, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        data = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
-        )
+
+        def _merge_leading_dims(x):
+            """Reshape (A, B, ...) -> (A*B, ...), handling zero-size arrays."""
+            if any(d == 0 for d in x.shape):
+                return jnp.zeros(
+                    (x.shape[0] * x.shape[1],) + x.shape[2:], dtype=x.dtype
+                )
+            return jnp.reshape(x, (-1,) + x.shape[2:])
+
+        data = jax.tree_util.tree_map(_merge_leading_dims, data)
         # Reshape initial hidden states similarly
         initial_policy_hidden = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]),
+            _merge_leading_dims,
             initial_policy_hidden,
         )
         assert data.discount.shape[1:] == (unroll_length,)
@@ -855,22 +867,14 @@ def train(
 
         # Save initial checkpoint
         if ckpt_mgr is not None:
-            ckpt_mgr.save(
-                step=0,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardSave(policy_param),
-                    train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                    config=ocp.args.JsonSave(config_dict),
-                ),
+            checkpointing.save(
+                ckpt_mgr,
+                0,
+                policy_param,
+                _unpmap(training_state),
+                config_dict,
+                checkpoint_callback,
             )
-            if checkpoint_callback is not None:
-                try:
-                    checkpoint_callback(0)
-                except (OSError, IOError) as e:
-                    logging.error(
-                        f"Initial checkpoint callback failed with I/O error: {e}. "
-                        "Training will continue but checkpoint state may be incomplete."
-                    )
 
     training_metrics = {}
     start_it += 1

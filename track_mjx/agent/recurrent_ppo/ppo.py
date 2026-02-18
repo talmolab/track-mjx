@@ -340,6 +340,8 @@ def train(
     kl_ramp_up_frac: float = 0.25,
     checkpoint_callback: Callable[[int], None] | None = None,
     grad_clip_threshold: float = 20.0,
+    custom_loss_fn: Callable | None = None,
+    vision_lr_multiplier: float = 1.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
@@ -387,6 +389,11 @@ def train(
         kl_ramp_up_frac: Fraction of evals to ramp up KL.
         checkpoint_callback: Callback after checkpointing.
         grad_clip_threshold: Gradient clipping norm.
+        custom_loss_fn: Optional custom loss function to use instead of the
+            default compute_recurrent_ppo_loss. When None, uses the default.
+        vision_lr_multiplier: Multiplier for vision encoder learning rate.
+            When != 1.0, creates a multi-rate optimizer where vision_encoder
+            parameters use learning_rate * vision_lr_multiplier.
         wrap_for_training: Environment wrapper function.
 
     Returns:
@@ -492,10 +499,11 @@ def train(
     # Number of environments per device
     envs_per_device = num_envs // device_count
 
-    optimizer = optax.chain(
+    base_optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
+    optimizer = base_optimizer
 
     latent_kl_schedule = None
     latent_ar1_schedule = None
@@ -511,26 +519,51 @@ def train(
             schedule="linear",
         )
 
-    loss_fn = functools.partial(
-        losses.compute_recurrent_ppo_loss,
-        recurrent_ppo_network=recurrent_ppo_network,
-        entropy_cost=entropy_cost,
-        latent_kl_weight=latent_kl_weight,
-        latent_ar1_weight=latent_ar1_weight,
-        discounting=discounting,
-        reward_scaling=reward_scaling,
-        gae_lambda=gae_lambda,
-        clipping_epsilon=clipping_epsilon,
-        normalize_advantage=normalize_advantage,
-        vf_coefficient=vf_loss_coefficient,
-        latent_kl_schedule=latent_kl_schedule,
-        latent_ar1_schedule=latent_ar1_schedule,
-    )
+    if custom_loss_fn is not None:
+        loss_fn = custom_loss_fn
+    else:
+        loss_fn = functools.partial(
+            losses.compute_recurrent_ppo_loss,
+            recurrent_ppo_network=recurrent_ppo_network,
+            entropy_cost=entropy_cost,
+            latent_kl_weight=latent_kl_weight,
+            latent_ar1_weight=latent_ar1_weight,
+            discounting=discounting,
+            reward_scaling=reward_scaling,
+            gae_lambda=gae_lambda,
+            clipping_epsilon=clipping_epsilon,
+            normalize_advantage=normalize_advantage,
+            vf_coefficient=vf_loss_coefficient,
+            latent_kl_schedule=latent_kl_schedule,
+            latent_ar1_schedule=latent_ar1_schedule,
+        )
 
     init_params = losses.RecurrentPPONetworkParams(
         policy=recurrent_ppo_network.policy_network.init(key_policy),
         value=recurrent_ppo_network.value_network.init(key_value),
     )
+    if vision_lr_multiplier != 1.0:
+        vision_optimizer = optax.chain(
+            optax.clip_by_global_norm(grad_clip_threshold),
+            optax.adamw(
+                learning_rate=learning_rate * vision_lr_multiplier,
+                weight_decay=0.0, eps=1e-5,
+            ),
+        )
+        def _label_fn(path, _leaf):
+            path_str = "/".join(str(p) for p in path)
+            if "vision_encoder" in path_str:
+                return "vision"
+            return "base"
+        partition = jax.tree_util.tree_map_with_path(_label_fn, init_params)
+        optimizer = optax.multi_transform(
+            {"vision": vision_optimizer, "base": base_optimizer},
+            partition,
+        )
+        logging.info(
+            f"Using multi-rate optimizer: vision CNN lr={learning_rate * vision_lr_multiplier:.1e}, "
+            f"base lr={learning_rate:.1e} (multiplier={vision_lr_multiplier}x)"
+        )
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,

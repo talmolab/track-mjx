@@ -695,6 +695,71 @@ def make_shared_vision_task_obs_highlvl_ppo_networks(
     return ppo_networks, shared_module
 
 
+def make_binocular_shared_vision_task_obs_highlvl_ppo_networks(
+    obs_sizes: Mapping[str, int],
+    action_size: int,
+    vision_shape: tuple[int, int, int] = (32, 32, 2),
+    vision_latent_size: int = 16,
+    vision_feature_size: int = 32,
+    decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
+    value_hidden_layer_sizes: Sequence[int] = (512, 512),
+    vision_channels: Sequence[int] = (4, 8, 16, 32),
+    fusion_hidden_layer_sizes: Sequence[int] = (256,),
+    mono_channels: int = 1,
+    shared_weights: bool = True,
+) -> tuple["PPOImitationNetworks", "BinocularSharedVisionPolicyValueModule"]:
+    """Create shared binocular-CNN vision + task_obs PPO networks.
+
+    Mirrors ``make_shared_vision_task_obs_highlvl_ppo_networks`` but uses a
+    ``BinocularVisionEncoder`` instead of a monocular ``VisionEncoder``.
+    Both ``policy_loss`` and ``v_loss`` gradients flow through the shared
+    binocular CNN.
+
+    The binocular encoder supports two modes:
+    - ``shared_weights=True`` (Siamese): A single CNN processes both eyes.
+    - ``shared_weights=False`` (Independent): Two separate CNNs per eye.
+
+    All parameters (binocular CNN + policy head + value head) are stored in
+    ``params.policy``.  ``params.value`` is empty.
+
+    Returns:
+        Tuple of (ppo_networks, shared_module).  The shared_module is
+        needed by ``compute_shared_vision_ppo_loss``.
+    """
+    from track_mjx.agent.ff_ppo.binocular_shared_vision_network import (
+        make_binocular_shared_vision_policy,
+        make_binocular_shared_vision_value_stub,
+    )
+
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+
+    policy_network, shared_module = make_binocular_shared_vision_policy(
+        parametric_action_distribution.param_size,
+        latent_size=vision_latent_size,
+        obs_sizes=obs_sizes,
+        vision_shape=vision_shape,
+        decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        value_hidden_layer_sizes=value_hidden_layer_sizes,
+        vision_feature_size=vision_feature_size,
+        vision_channels=vision_channels,
+        fusion_hidden_layer_sizes=fusion_hidden_layer_sizes,
+        mono_channels=mono_channels,
+        shared_weights=shared_weights,
+    )
+
+    value_network = make_binocular_shared_vision_value_stub()
+
+    ppo_networks = PPOImitationNetworks(
+        policy_network=policy_network,
+        value_network=value_network,
+        parametric_action_distribution=parametric_action_distribution,
+    )
+
+    return ppo_networks, shared_module
+
+
 def make_decoder_policy_fn(
     ckpt_path: str | Path,
     step: int | None = None,

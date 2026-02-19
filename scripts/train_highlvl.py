@@ -194,9 +194,17 @@ def main():
     print(f"Checkpoint path: {ckpt_path}")
 
     # Save config
+    env_config_dict = env_cfg.to_dict()
+    # Patch env_config dict with CLI overrides (to_dict() may not reflect setattr changes)
+    for key, value in cli_env_overrides.items():
+        parts = key.split(".")
+        d = env_config_dict
+        for part in parts[:-1]:
+            d = d.setdefault(part, {})
+        d[parts[-1]] = value
     config_to_save = {
         "task": args.task,
-        "env_config": env_cfg.to_dict(),
+        "env_config": env_config_dict,
         "ppo_params": dict(ppo_params),
         "mimic_checkpoint": args.mimic_checkpoint,
         "cli_env_overrides": cli_env_overrides,

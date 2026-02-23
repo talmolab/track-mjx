@@ -31,7 +31,7 @@ env_config:
   start_frame_range: [0, 20]    # Smaller range
   qvel_init: "zeros"
   keep_clips_idx: null          # Use all clips (null = no filtering)
-  balanced_split_path: null      # Path to balanced splits JSON (null = use random split)
+  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
 
   # Domain Randomization - prevents decoder from memorizing dynamics
   domain_randomization:
@@ -120,7 +120,7 @@ network_config:
   codebook_init_scale: 1.0       # Initialization scale
   ce_stickiness_cost: 0.0        # Weight for cross-entropy stickiness loss (disabled, use bias instead)
   ce_stickiness_temperature: 1.0 # Temperature for CE stickiness softmax
-  stickiness_bias: [0.5, 0.0]
+  stickiness_bias: [1.0, 0.0]
 
   # Dead code reinitialization
   dead_code_reinit: true          # Reinitialize dead codebook entries from z_e
@@ -130,7 +130,7 @@ network_config:
   rvq_depth: 2                   # Number of RVQ levels (1 = vanilla VQ)
   use_rotation: true            # Householder rotation-augmented STE (STAR)
   coupled_residual_grad: true   # Couple depth gradients through rotation
-  proprio_noise_scale: 0.3      # Gaussian noise std on normalized proprio (decoder only)
+  proprio_noise_scale: 0.2      # Gaussian noise std on normalized proprio (decoder only)
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false

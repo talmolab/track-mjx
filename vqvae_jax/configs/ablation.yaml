@@ -13,7 +13,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260212_180855_952368/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260220_175449_831046/
   step: null  # null = latest step
 
 # =============================================================================
@@ -25,7 +25,7 @@ ablation:
   max_steps: 500             # Steps per clip
   seed: 42
   data_split: "test"
-  top_k: 5                   # Top K non-null D0 codes for injection
+  top_k: 8                   # Top K non-null D0 codes for injection
 
   # --- Null long-run config (STEP 4) ---
   # NOT enabled by default — add "null_long_run" to experiments list above.

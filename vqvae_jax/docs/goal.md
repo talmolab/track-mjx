@@ -1,4 +1,10 @@
-# Goal: Understanding and Composing Agent Decisions via Multi-Resolution Adjustment Patterns
+# Motor Decisions: Discrete Action Selection in a Virtual Rodent Predicts Neural Population Structure
+
+## Project Goal
+
+Understanding and composing agent decisions via multi-resolution adjustment patterns,
+and testing whether the resulting discrete decision structure predicts the organization
+of neural activity in motor cortex and striatum better than continuous alternatives.
 
 ## Core Idea
 
@@ -144,3 +150,134 @@ of D1 correction -- how far D1 can compensate for state-intention mismatch.
    The current stickiness bias encourages persistence, but the optimal window size
    for code switches (and how it relates to the underlying behavioral timescales)
    is not yet characterized.
+
+---
+
+## Neural Comparison: Discrete vs Continuous Motor Representations
+
+### Motivation
+
+Aldarondo et al. (2024), "A virtual rodent predicts the structure of neural activity
+across behaviours" (Nature 632, 594-602), demonstrated that a virtual rodent with a
+**continuous** Gaussian latent bottleneck (60-dim, KL-regularized) produces internal
+representations that predict real motor cortex (MC) and dorsolateral striatum (DLS)
+activity better than kinematic features alone. Their key claim: the virtual rodent
+implements an inverse dynamics model, and this is what MC and DLS also implement.
+
+Our framework uses the same inverse-dynamics structure -- encoder maps reference
+trajectory to latent, decoder maps latent + proprioception to actions -- but forces
+the latent through a **discrete** VQ-RVQ bottleneck. This creates a direct,
+controlled comparison: does discretizing the motor plan make the internal
+representations more or less brain-like?
+
+### The Hypothesis
+
+Real motor cortex activity shows a specific structure that is neither fully continuous
+nor fully discrete:
+
+- **Discrete preparatory states** before movement onset (Churchland & Shenoy):
+  neural activity jumps to cluster-like preparatory configurations.
+- **Smooth execution dynamics** during movement (Churchland et al. 2012):
+  rotational trajectories within a low-dimensional manifold.
+- **Categorical single-neuron tuning** (Aldarondo Fig 4): individual neurons
+  in DLS and MC preferentially fire during specific behavioral categories.
+
+A continuous latent model produces smooth representations everywhere -- no discrete
+transitions. Our VQ model produces **piecewise-smooth representations**: smooth
+trajectories within a code (proprioception varies continuously), sharp transitions
+at code switches. This piecewise structure should better match the discrete-then-
+smooth pattern observed in real neural data.
+
+### Experimental Design
+
+Four models isolate the effect of discretization from other architectural differences:
+
+```
+Model A: Continuous latent + MLP decoder   (ablation baseline)
+Model B: VQ-RVQ latent + MLP decoder       (our current model)
+Model C: Continuous latent + LSTM decoder   (Aldarondo's architecture)
+Model D: VQ-RVQ latent + LSTM decoder       (novel: discrete plans + smooth execution)
+```
+
+The clean comparison is A vs B (same decoder, different latent). Models C and D
+test whether adding temporal memory in the decoder interacts with discretization.
+All models must achieve comparable imitation reward for the comparison to be valid.
+
+### What to Measure
+
+**Representation structure (no neural data needed):**
+
+| Metric | What it tests | VQ prediction |
+|--------|--------------|---------------|
+| PCA dimensionality | Intrinsic complexity of hidden states | Lower (clustered) |
+| Silhouette score | Discrete cluster quality in hidden space | Stronger clusters |
+| HMM log-likelihood | Whether hidden dynamics have discrete states | Better fit |
+| Tangling (Russo 2018) | State → future predictability | Lower (more predictable) |
+| Transition sharpness | How abrupt are behavioral transitions | Sharper (step-like) |
+
+**Neural comparison (with MC/DLS recordings):**
+
+| Metric | What it tests |
+|--------|--------------|
+| GLM predictivity (CV-LLR) | Single-neuron prediction from network activations |
+| RSA (whitened cosine) | Population-level representational geometry match |
+| CKA | Layer-to-region alignment |
+| Linear decodability | Can real neural activity be decoded into VQ codes? |
+
+### Expected Findings
+
+**Where VQ should win:**
+- RSA structure: sharper block-diagonal RDMs matching categorical neural tuning.
+- Transition dynamics: discrete code switches matching sharp neural transitions
+  at movement onset (the "condition-independent signal," Kaufman et al. 2016).
+- Temporal prediction: lower tangling because within-code dynamics are predictable.
+
+**Where continuous should win:**
+- Raw GLM predictivity: 60 continuous dims give the GLM more graded features to
+  fit than 32 discrete codes. Continuous models likely score higher on single-neuron
+  R-squared.
+- Within-behavior variation: continuous latents capture graded vigor, speed, and
+  postural nuance that VQ's finite codes cannot represent.
+
+**The key finding** would be: despite lower raw predictivity, the VQ model's
+representations better capture the **categorical and temporal structure** of MC/DLS
+activity. This would provide computational evidence that the motor system organizes
+around discrete primitives -- not just continuous dynamics.
+
+### Relationship to Multi-Resolution Decisions
+
+The D0/D1 decomposition described above maps directly onto a neural hierarchy:
+
+```
+Framework              Neural analog
+---------              -------------
+D0 (coarse code)   →   Premotor cortex / basal ganglia (action selection)
+D1 (fine code)     →   Motor cortex / cerebellum (online correction)
+Decoder + proprio  →   Motor cortex + spinal cord (state-dependent execution)
+Stickiness bias    →   Commitment to motor plan (perseveration)
+Code switch        →   Decision boundary crossing
+```
+
+The RVQ structure makes a specific prediction: **D0 transitions should align with
+discrete state transitions in premotor/striatal recordings, while D1 variation should
+align with continuous modulation in motor cortex.** This is testable if neural
+recordings span both regions.
+
+### Open Questions (Neural)
+
+5. **Neural data access**: Aldarondo et al. recorded from DLS and MC in freely
+   moving rats performing the same behavioral repertoire we train on. Can we
+   access their data or collaborate for a direct comparison?
+
+6. **Code-to-neuron mapping**: If VQ codes can be linearly decoded from neural
+   population activity, that would be strong evidence that the brain uses a
+   discrete motor vocabulary. What decoding accuracy is needed to make this claim?
+
+7. **Timescale match**: Do D0 code dwell times (~200-800ms with stickiness)
+   match the timescale of discrete neural state transitions in MC/DLS? This is
+   a falsifiable prediction of the framework.
+
+8. **LSTM + VQ (Model D)**: Does adding temporal memory to the decoder help or
+   hurt neural predictivity? If it helps, the brain may use both discrete
+   planning and recurrent execution -- consistent with separate premotor and
+   motor cortex roles.

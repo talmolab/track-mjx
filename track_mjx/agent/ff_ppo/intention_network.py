@@ -191,6 +191,7 @@ class IntentionNetwork(nn.Module):
     encoder_layers: Sequence[int]
     decoder_layers: Sequence[int]
     latents: int = 60
+    proprioception_noise_std: float = 0.0
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
@@ -215,15 +216,28 @@ class IntentionNetwork(nn.Module):
         # Handle key splitting based on both key shape AND observation shape
         if key.ndim == 1:
             # Single key - split for encoder
-            _, encoder_rng = jax.random.split(key)
+            encoder_rng, noise_rng = jax.random.split(key)
         elif not obs_is_batched:
             # Per-sample keys but unbatched observation - use first key
             # This can happen when key batching was determined from nested obs structure
             # before normalization flattened it to unbatched
-            _, encoder_rng = jax.random.split(key[0])
+            encoder_rng, noise_rng = jax.random.split(key[0])
         else:
             # Per-sample keys [batch_size, 2] - vmap split over batch
-            _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+
+        if not deterministic and self.proprioception_noise_std > 0.0:
+            if noise_rng.ndim == 1:
+                noise = jax.random.normal(noise_rng, egocentric_obs.shape)
+            elif not obs_is_batched:
+                noise = jax.random.normal(noise_rng[0], egocentric_obs.shape)
+            else:
+                noise = jax.vmap(
+                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
+                )(noise_rng, egocentric_obs)
+            egocentric_obs = egocentric_obs * (
+                1.0 + self.proprioception_noise_std * noise
+            )
 
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
@@ -267,6 +281,7 @@ def make_intention_policy(
     obs_sizes: Mapping[str, int],
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    proprioception_noise_std: float = 0.0,
     policy_obs_key: str = "state",
 ) -> networks.FeedForwardNetwork:
     """Create an intention-based policy network.
@@ -282,6 +297,8 @@ def make_intention_policy(
         obs_sizes: Dict with 'task_obs' and 'proprioception' sizes.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            proprioception during stochastic training passes.
         policy_obs_key: Top-level observation key for policy (default: 'state').
 
     Returns:
@@ -294,6 +311,7 @@ def make_intention_policy(
         decoder_layers=list(decoder_hidden_layer_sizes)
         + [action_param_size],  # add action size to the last layer
         latents=latent_size,
+        proprioception_noise_std=proprioception_noise_std,
     )
 
     def apply(

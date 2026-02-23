@@ -492,6 +492,9 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             intention_latent_size=network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(network_config.decoder_layer_sizes),
+            proprioception_noise_std=network_config.get(
+                "proprioception_noise_std", 0.0
+            ),
             value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
         )
     elif arch_name == "recurrent_intention":
@@ -502,6 +505,9 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
             rnn_type=network_config.rnn_type,
             rnn_hidden_sizes=tuple(network_config.rnn_hidden_sizes),
+            proprioception_noise_std=network_config.get(
+                "proprioception_noise_std", 0.0
+            ),
             value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
         )
     else:

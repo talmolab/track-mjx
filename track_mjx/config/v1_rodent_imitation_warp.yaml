@@ -10,7 +10,13 @@
 # =============================================================================
 # Settings for the MuJoCo simulation environment and imitation learning task.
 env_config:
-  # MuJoCo backend: "jax" for GPU-accelerated simulation via MJX
+  # Environment name for registry lookup
+  env_name: "RodentImitation"
+  walker_name: "rodent"
+  torque_actuators: true              # Use torque (vs position) control
+  rescale_factor: 0.9                 # Model scale factor
+
+  # MuJoCo backend: "warp" for GPU-accelerated simulation via MJX
   mujoco_impl: "warp"
 
   # -----------------------------------------------------------------------------
@@ -58,8 +64,8 @@ env_config:
   # -----------------------------------------------------------------------------
   # Reward Terms
   # -----------------------------------------------------------------------------
-  # Imitation rewards computed as: weight * exp(-exp_scale * error)
-  # Higher exp_scale = sharper penalty for deviations
+  # Imitation rewards computed as: weight * exp(-((error / exp_scale)^2) / 2)
+  # Higher exp_scale = more lenient penalty for deviations
   reward_terms:
     # Root (pelvis) position tracking
     root_pos:
@@ -208,88 +214,3 @@ logging_config:
   exp_name: full_collision
   clip_id: -1                         # Clip ID for single-clip runs (-1 = all)
   model_path: model_checkpoints/
-
-# =============================================================================
-# Walker Configuration
-# =============================================================================
-# Rodent morphology and actuator settings
-walker_config:
-  walker_name: "rodent"
-  torque_actuators: true              # Use torque (vs position) control
-  rescale_factor: 0.9                 # Model scale factor
-
-  # Joint names for tracking (order must match reference data)
-  joint_names:
-    # Spine
-    - vertebra_1_extend
-    # Left hind leg
-    - hip_L_supinate
-    - hip_L_abduct
-    - hip_L_extend
-    - knee_L
-    - ankle_L
-    - toe_L
-    # Right hind leg
-    - hip_R_supinate
-    - hip_R_abduct
-    - hip_R_extend
-    - knee_R
-    - ankle_R
-    - toe_R
-    # Neck and head
-    - vertebra_C11_extend
-    - vertebra_cervical_1_bend
-    - vertebra_axis_twist
-    - atlas
-    - mandible
-    # Left front leg
-    - scapula_L_supinate
-    - scapula_L_abduct
-    - scapula_L_extend
-    - shoulder_L
-    - shoulder_sup_L
-    - elbow_L
-    - wrist_L
-    # Right front leg
-    - scapula_R_supinate
-    - scapula_R_abduct
-    - scapula_R_extend
-    - shoulder_R
-    - shoulder_sup_R
-    - elbow_R
-    - wrist_R
-    - finger_R
-
-  # Body segment names for tracking
-  body_names:
-    - torso
-    - pelvis
-    # Left hind leg
-    - upper_leg_L
-    - lower_leg_L
-    - foot_L
-    # Right hind leg
-    - upper_leg_R
-    - lower_leg_R
-    - foot_R
-    # Head
-    - skull
-    - jaw
-    # Left front leg
-    - scapula_L
-    - upper_arm_L
-    - lower_arm_L
-    - finger_L
-    # Right front leg
-    - scapula_R
-    - upper_arm_R
-    - lower_arm_R
-    - finger_R
-
-  # End effector names for tracking (extremities)
-  end_eff_names:
-    - foot_L
-    - foot_R
-    - hand_L
-    - hand_R
-    - skull

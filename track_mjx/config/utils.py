@@ -51,6 +51,7 @@ def _get_package_commit(package_name: str) -> str:
     return "unknown"
 
 
+from vnl_playground import registry as vnl_registry
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
@@ -71,14 +72,53 @@ def _resolve_data_path(relative_path: str) -> str:
     return str(_PROJECT_ROOT / relative_path)
 
 
+def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
+    """Merge cfg.env_config on top of vnl-playground task defaults.
+
+    Ensures omitted environment parameters inherit per-task defaults while still
+    allowing explicit YAML values to override them.
+
+    Args:
+        cfg: Root training config containing env_config.env_name.
+
+    Returns:
+        The input cfg with env_config replaced by the merged result.
+
+    Raises:
+        ValueError: If env_config.env_name is missing or unknown.
+    """
+    env_name = OmegaConf.select(cfg, "env_config.env_name", default=None)
+    if env_name is None:
+        raise ValueError("Missing required config key: env_config.env_name")
+
+    try:
+        default_env_cfg = vnl_registry.get_default_config(env_name)
+    except ValueError as exc:
+        raise ValueError(
+            f"Unknown env_name '{env_name}' in env_config. "
+            "Expected a registered vnl_playground task name."
+        ) from exc
+
+    merged_env_cfg = OmegaConf.merge(
+        OmegaConf.create(default_env_cfg.to_dict()),
+        cfg.env_config,
+    )
+
+    OmegaConf.set_struct(cfg, False)
+    cfg.env_config = merged_env_cfg
+    OmegaConf.set_struct(cfg, True)
+    return cfg
+
+
 def prepare_config(
     cfg: DictConfig,
 ) -> tuple[DictConfig, dict[str, Any], config_dict.ConfigDict]:
-    """Prepare configuration by resolving walker-specific paths and creating config variants.
+    """Prepare config by merging task defaults and resolving walker-specific paths.
 
-    Takes a Hydra/OmegaConf configuration and resolves walker-specific XML and
-    reference data paths based on the walker_name. Updates the env_config section
-    with these paths and walker settings, then returns multiple config formats.
+    Takes a Hydra/OmegaConf configuration, merges env_config with the
+    vnl-playground default config for env_name, then resolves walker-specific XML
+    and reference data paths based on walker_name. Updates env_config with these
+    resolved paths and walker settings, then returns multiple config formats.
 
     Args:
         cfg: The root OmegaConf configuration containing walker_config and env_config.
@@ -93,6 +133,7 @@ def prepare_config(
         ValueError: If walker_name is not recognized.
         NotImplementedError: If the specified walker is not yet fully implemented.
     """
+    cfg = _merge_env_config_with_defaults(cfg)
     walker_name = cfg.walker_config.walker_name
 
     # Use explicitly provided data_path if available, otherwise resolve from

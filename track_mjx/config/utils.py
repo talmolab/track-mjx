@@ -6,6 +6,7 @@ configurations, including walker-specific path resolution and config merging.
 
 import json
 import logging
+import os
 import subprocess
 from importlib.metadata import distribution
 from pathlib import Path
@@ -72,6 +73,17 @@ def _resolve_data_path(relative_path: str) -> str:
     return str(_PROJECT_ROOT / relative_path)
 
 
+def _to_omegaconf_compatible(value: Any) -> Any:
+    """Recursively coerce values to OmegaConf-compatible primitive containers."""
+    if isinstance(value, dict):
+        return {k: _to_omegaconf_compatible(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_omegaconf_compatible(v) for v in value]
+    if isinstance(value, os.PathLike):
+        return os.fspath(value)
+    return value
+
+
 def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
     """Merge cfg.env_config on top of vnl-playground task defaults.
 
@@ -100,7 +112,7 @@ def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
         ) from exc
 
     merged_env_cfg = OmegaConf.merge(
-        OmegaConf.create(default_env_cfg.to_dict()),
+        OmegaConf.create(_to_omegaconf_compatible(default_env_cfg.to_dict())),
         cfg.env_config,
     )
 

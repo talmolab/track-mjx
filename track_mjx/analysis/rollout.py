@@ -18,7 +18,7 @@ from vnl_playground import registry
 from vnl_playground.tasks import wrappers as vnl_wrappers
 
 
-def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
+def create_environment(env_config: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
     """Create a VNL imitation learning environment from a configuration.
 
     Uses the vnl-playground registry to create the environment with reference
@@ -27,28 +27,25 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
          'privileged_state': {'task_obs': ..., 'proprioception': ...}}
 
     Args:
-        cfg_dict: Configuration dictionary. Can be either:
-            - Full config with "env_config" key: extracts "env_config" section
-            - Direct env_config dict: used as-is
-            Must contain env_name, reference_data_path, clip_length, and
-            optionally keep_clips_idx.
+        env_config: Environment configuration only (not the full training
+            config). Must contain env_name, reference_data_path, clip_length,
+            and optionally keep_clips_idx.
 
     Returns:
         A Brax-compatible environment with nested dictionary observations.
 
     Example:
         >>> cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
-        >>> env = create_environment(cfg)
+        >>> env = create_environment(cfg.env_config)
         >>> state = env.reset(jax.random.PRNGKey(0))
         >>> print(state.obs.keys())  # dict_keys(['state', 'privileged_state'])
     """
-    if "env_config" in cfg_dict:
-        env_cfg = cfg_dict["env_config"]
-        env_cfg_ml = config_dict.ConfigDict(
-            OmegaConf.to_container(env_cfg, resolve=True)
-        )
+    if isinstance(env_config, DictConfig):
+        env_cfg_dict = OmegaConf.to_container(env_config, resolve=True)
     else:
-        env_cfg_ml = config_dict.ConfigDict(cfg_dict)
+        env_cfg_dict = dict(env_config)
+
+    env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
 
     env_name = env_cfg_ml.env_name
     reference_clips = registry.load_reference_clips(

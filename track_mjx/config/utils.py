@@ -72,6 +72,26 @@ def _resolve_data_path(relative_path: str) -> str:
     return str(_PROJECT_ROOT / relative_path)
 
 
+_TRACK_ENV_OVERRIDES_BY_ENV_NAME: dict[str, dict[str, Any]] = {
+    "RodentImitation": {
+        "walker_name": "rodent",
+        "walker_xml_path": str(rodent_consts.RODENT_XML_PATH),
+        "arena_xml_path": str(rodent_consts.ARENA_XML_PATH),
+        "reference_data_path": _resolve_data_path(
+            "data/rodent/rodent_reference_clips.h5"
+        ),
+    },
+    "FruitflyImitation": {
+        "walker_name": "fruitfly",
+        "walker_xml_path": str(fruitfly_consts.FRUITFLY_XML_PATH),
+        "arena_xml_path": str(fruitfly_consts.ARENA_XML_PATH),
+        "reference_data_path": _resolve_data_path(
+            "data/fruitfly/fly_reference_clip.h5"
+        ),
+    },
+}
+
+
 def _to_omegaconf_compatible(value: Any) -> Any:
     """Recursively coerce values to OmegaConf-compatible primitive containers."""
     if isinstance(value, dict):
@@ -90,24 +110,11 @@ def _to_omegaconf_compatible(value: Any) -> Any:
 
 def _get_track_env_overrides(env_name: str) -> dict[str, Any]:
     """Return track-mjx-specific env overrides for a given env_name."""
-    if env_name == "RodentImitation":
-        return {
-            "walker_name": "rodent",
-            "walker_xml_path": str(rodent_consts.RODENT_XML_PATH),
-            "arena_xml_path": str(rodent_consts.ARENA_XML_PATH),
-            "reference_data_path": _resolve_data_path(
-                "data/rodent/rodent_reference_clips.h5"
-            ),
-        }
-    if env_name == "FruitflyImitation":
-        return {
-            "walker_name": "fruitfly",
-            "walker_xml_path": str(fruitfly_consts.FRUITFLY_XML_PATH),
-            "arena_xml_path": str(fruitfly_consts.ARENA_XML_PATH),
-            "reference_data_path": _resolve_data_path(
-                "data/fruitfly/fly_reference_clip.h5"
-            ),
-        }
+    overrides = _TRACK_ENV_OVERRIDES_BY_ENV_NAME.get(env_name)
+    if overrides is not None:
+        # Return a copy so callers cannot mutate module-level defaults.
+        return dict(overrides)
+
     if env_name:
         logging.warning(
             "No track-mjx-specific env overrides found for env_name='%s'. "

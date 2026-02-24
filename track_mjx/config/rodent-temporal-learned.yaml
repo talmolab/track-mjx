@@ -1,0 +1,187 @@
+# =============================================================================
+# Rodent Temporal Learned PPO Configuration
+# =============================================================================
+# Configuration for training a rodent tracking agent using temporal learned PPO.
+# Uses an MLP encoder and RNN decoder with learned refresh boundaries.
+# =============================================================================
+
+# =============================================================================
+# VNL Environment Configuration
+# =============================================================================
+env_config:
+  env_name: "RodentImitation"
+  mujoco_impl: "jax"
+
+  # Physics Solver Settings
+  solver: "newton"
+  iterations: 5
+  ls_iterations: 5
+  nconmax: 256
+  naconmax: 131072
+  njmax: 128
+  noslip_iterations: 0
+
+  # Timing Configuration
+  sim_dt: 0.002
+  ctrl_dt: 0.01
+  mocap_hz: 50
+
+  # Reference Clip Settings
+  clip_length: 250
+  clip_set: "all"
+  reference_length: 32
+  start_frame_range: [0, 50]
+  qvel_init: "zeros"
+  keep_clips_idx: null
+
+  # Domain Randomization Settings
+  domain_randomization:
+    use_domain_randomization: true
+    floor_friction: [0.4, 1.0]
+    static_friction_scale: [0.9, 1.1]
+    armature_scale: [1.0, 1.05]
+    com_jitter: [-0.05, 0.05]
+    link_mass_scale: [0.9, 1.1]
+    torso_mass_jitter: [-0.02, 0.02]
+    qpos0_jitter: [-0.05, 0.05]
+
+  # Reward Terms
+  reward_terms:
+    root_pos:
+      exp_scale: 0.035
+      weight: 1.0
+    root_quat:
+      exp_scale: 20.0
+      weight: 1.0
+    joints:
+      exp_scale: 1.41
+      weight: 1.0
+    joints_vel:
+      exp_scale: 1.0
+      weight: 0.0
+    bodies_pos:
+      exp_scale: 0.25
+      weight: 0.0
+    end_eff:
+      exp_scale: 0.03
+      weight: 1.0
+    torso_z_range:
+      healthy_z_range: [0.0325, 0.5]
+      weight: 1.0
+    control_cost:
+      weight: 0.02
+    control_diff_cost:
+      weight: 0.02
+    energy_cost:
+      max_value: 50.0
+      weight: 0.01
+
+  # Termination Criteria
+  termination_criteria:
+    root_too_far:
+      max_distance: 0.1
+    root_too_rotated:
+      max_degrees: 60.0
+    pose_error:
+      max_l2_error: 4.5
+    nan_termination: {}
+
+# =============================================================================
+# Rendering Configuration
+# =============================================================================
+render_config:
+  render_camera_name: close_profile
+  render_fps: 50
+  render_interval: 1
+
+# =============================================================================
+# Network Architecture - Temporal Learned PPO
+# =============================================================================
+# MLP encoder + RNN decoder with learned boundary policy
+network_config:
+  arch_name: temporal_learned_ppo
+
+  # Encoder (MLP - processes task_obs observations)
+  encoder_layer_sizes: [2048, 1024, 1024]
+  intention_size: 16
+
+  # Decoder (RNN - processes latent + proprioception)
+  rnn_type: lstm                           # "simple", "gru", or "lstm"
+  rnn_hidden_sizes: [512, 256]            # Hidden sizes per RNN layer
+  proprioception_noise_std: 0.1           # Multiplicative decoder state noise std
+  min_macro_horizon: 4                    # Minimum steps before learned refresh
+  max_macro_horizon: 64                   # Maximum forced refresh horizon
+  eval_gate_threshold: 0.5                # Deterministic eval threshold on gate probability
+  gate_entropy_cost: 1e-4                 # Entropy bonus for Bernoulli gate policy
+  discounting_gate: 0.9                   # Optional gate-specific discount for advantages
+  target_refresh_rate: 0.0625             # Target average refresh probability per step
+  lambda_refresh_rate: 1e-2               # Weight for refresh-rate regularizer
+  condition_value_on_latent: true         # Condition critic on committed latent
+  horizon_ramp: false                     # Optionally ramp horizons from 1 -> targets
+  horizon_ramp_steps: 0                   # Number of train iterations for horizon ramp
+
+  # Value network (MLP)
+  critic_layer_sizes: [2048, 1024, 1024, 1024, 1024, 512]
+
+  # Variational layer regularization losses
+  kl_schedule: true
+  latent_kl_weight: 1e-1
+  latent_ar1_weight: 1e-2
+
+# =============================================================================
+# Training Setup
+# =============================================================================
+train_setup:
+  agent_name: rodent
+  run_name: temporal_learned_ppo
+
+  checkpoint_to_restore: null
+  restore_from_run_state: null
+
+  train_test_split_info: null
+  train_subset_ratio: 0.8
+
+  eval_every: 25_000_000
+  episode_length: 200
+  reset_every: 25_000_000
+
+  # ---------------------------------------------------------------------------
+  # PPO Training Hyperparameters
+  # ---------------------------------------------------------------------------
+  train_config:
+    num_envs: 4096
+    num_timesteps: 6_000_000_000
+    batch_size: 512
+    num_minibatches: 32
+    num_updates_per_batch: 4              # Epochs per PPO update
+    learning_rate: 5e-5
+    grad_clip_threshold: 10.0
+    clipping_epsilon: 0.2
+    discounting: 0.97                     
+    gae_lambda: 0.97                      
+    action_repeat: 1
+    entropy_cost: 5e-3                    
+    vf_loss_coefficient: 0.25
+    reward_scaling: 1
+    normalize_observations: true
+    unroll_length: 128
+    seed: 0
+    deterministic_eval: true
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging_config:
+  project_name: mimic-mjx
+  group_name: temporal-learned-ppo
+  exp_name: rodent-temporal-learned
+  clip_id: -1
+  model_path: model_checkpoints/
+
+# =============================================================================
+# Walker Configuration
+# =============================================================================
+walker_config:
+  walker_name: "rodent"
+  torque_actuators: true
+  rescale_factor: 0.9

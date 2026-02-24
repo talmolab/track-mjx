@@ -73,17 +73,29 @@ def rollout_logging_fn(
 
     episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
 
-    # Check if using recurrent policy
+    # Check if using recurrent-style policy
     arch_name = cfg.network_config.get("arch_name", "intention")
-    is_recurrent = arch_name == "recurrent_intention"
+    recurrent_arches = {
+        "recurrent_intention",
+        "temporal_fixed_ppo",
+        "temporal_learned_ppo",
+    }
+    is_recurrent = arch_name in recurrent_arches
 
-    # Initialize hidden state for recurrent policies
+    # Initialize carry for recurrent-style policies
     if is_recurrent:
         if ppo_network is None:
             raise ValueError(
                 "ppo_network must be provided for recurrent policy rollouts"
             )
-        hidden = ppo_network.policy_network.init_hidden(1)
+        init_state_fn = (
+            ppo_network.policy_network.init_carry
+            if hasattr(ppo_network.policy_network, "init_carry")
+            else ppo_network.policy_network.init_hidden
+        )
+        hidden = jax.tree.map(lambda x: x[0], init_state_fn(1))
+
+    refresh_mask_values = []
 
     for _ in range(episode_length):
         _, act_rng = jax.random.split(act_rng)
@@ -99,6 +111,8 @@ def rollout_logging_fn(
 
         latent_means.append(extras["latent_mean"])
         latent_logvars.append(extras["latent_logvar"])
+        if "refresh_mask" in extras:
+            refresh_mask_values.append(jnp.mean(extras["refresh_mask"]))
 
         state = jit_step(state, ctrl)
         rollout.append(state)
@@ -119,6 +133,17 @@ def rollout_logging_fn(
                 f"latents/latent_means_std{i}": means_std[i],
                 f"latents/latent_logvars_mean{i}": logvars_mean[i],
                 f"latents/latent_logvars_std{i}": logvars_std[i],
+            },
+            commit=False,
+        )
+
+    if refresh_mask_values:
+        refresh_rate = jnp.mean(jnp.asarray(refresh_mask_values))
+        wandb.log(
+            {
+                "temporal/refresh_rate_rollout": refresh_rate,
+                "temporal/mean_segment_length_rollout": 1.0
+                / jnp.maximum(refresh_rate, 1e-6),
             },
             commit=False,
         )

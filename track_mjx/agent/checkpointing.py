@@ -28,6 +28,8 @@ from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from track_mjx.agent.recurrent_ppo import losses as recurrent_ppo_losses
 from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
+from track_mjx.agent.temporal_ppo import losses as temporal_ppo_losses
+from track_mjx.agent.temporal_ppo import networks as temporal_ppo_networks
 import flax
 from brax.training.acme import running_statistics, specs
 
@@ -301,6 +303,11 @@ def make_abstract_policy(
             policy=ppo_network.policy_network.init(key_policy),
             value=ppo_network.value_network.init(key_value),
         )
+    elif arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+        init_params = temporal_ppo_losses.TemporalPPONetworkParams(
+            policy=ppo_network.policy_network.init(key_policy),
+            value=ppo_network.value_network.init(key_value),
+        )
     else:
         init_params = ff_ppo_losses.PPONetworkParams(
             policy=ppo_network.policy_network.init(key_policy),
@@ -347,6 +354,11 @@ def _make_legacy_dict_abstract_policy(
         arch_name = "intention"
     if arch_name == "recurrent_intention":
         init_params = recurrent_ppo_losses.RecurrentPPONetworkParams(
+            policy=ppo_network.policy_network.init(key_policy),
+            value=ppo_network.value_network.init(key_value),
+        )
+    elif arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+        init_params = temporal_ppo_losses.TemporalPPONetworkParams(
             policy=ppo_network.policy_network.init(key_policy),
             value=ppo_network.value_network.init(key_value),
         )
@@ -432,14 +444,22 @@ def load_inference_fn(
         )
         arch_name = "intention"
 
-    if arch_name == "recurrent_intention":
-        make_policy = recurrent_ppo_networks.make_inference_fn(ppo_network)
+    recurrent_arches = {
+        "recurrent_intention",
+        "temporal_fixed_ppo",
+        "temporal_learned_ppo",
+    }
+    if arch_name in recurrent_arches:
+        if arch_name == "recurrent_intention":
+            make_policy = recurrent_ppo_networks.make_inference_fn(ppo_network)
+        else:
+            make_policy = temporal_ppo_networks.make_inference_fn(ppo_network)
     else:
         make_policy = ff_ppo_networks.make_inference_fn(ppo_network)
 
     require_obs_sizes(cfg.network_config)
 
-    if arch_name == "recurrent_intention":
+    if arch_name in recurrent_arches:
         return make_policy(
             policy_params, deterministic=deterministic, get_activation=get_activation
         )
@@ -450,17 +470,21 @@ def load_inference_fn(
 
 
 def load_recurrent_extras(cfg: DictConfig) -> tuple[Callable, str]:
-    """Return hidden state initializer and cell type for recurrent checkpoints.
+    """Return recurrent-state initializer and cell type for recurrent checkpoints.
 
     Args:
         cfg: Configuration with network_config section.
 
     Returns:
-        Tuple of (init_hidden_fn, cell_type) where init_hidden_fn has signature
-        (batch_size: int) -> list[HiddenState].
+        Tuple of (init_state_fn, cell_type).
     """
     ppo_network = make_ppo_network_from_cfg(cfg)
-    return ppo_network.policy_network.init_hidden, ppo_network.cell_type
+    init_state_fn = (
+        ppo_network.policy_network.init_carry
+        if hasattr(ppo_network.policy_network, "init_carry")
+        else ppo_network.policy_network.init_hidden
+    )
+    return init_state_fn, ppo_network.cell_type
 
 
 def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
@@ -509,6 +533,30 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
                 "proprioception_noise_std", 0.0
             ),
             value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
+        )
+    elif arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+        boundary_mode = "fixed" if arch_name == "temporal_fixed_ppo" else "learned"
+        return temporal_ppo_networks.make_temporal_intention_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            intention_latent_size=network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
+            rnn_type=network_config.rnn_type,
+            rnn_hidden_sizes=tuple(network_config.rnn_hidden_sizes),
+            boundary_mode=boundary_mode,
+            macro_horizon=network_config.get("macro_horizon", 16),
+            min_macro_horizon=network_config.get("min_macro_horizon", 4),
+            max_macro_horizon=network_config.get("max_macro_horizon", 64),
+            eval_gate_threshold=network_config.get("eval_gate_threshold", 0.5),
+            proprioception_noise_std=network_config.get(
+                "proprioception_noise_std", 0.0
+            ),
+            value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
+            condition_value_on_latent=network_config.get(
+                "condition_value_on_latent", True
+            ),
+            horizon_ramp=network_config.get("horizon_ramp", False),
+            horizon_ramp_steps=network_config.get("horizon_ramp_steps", 0),
         )
     else:
         raise ValueError(f"Unknown network architecture: {arch_name}")

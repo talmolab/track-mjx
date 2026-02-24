@@ -26,6 +26,10 @@ from track_mjx.agent.recurrent_ppo import (
     ppo as recurrent_ppo,
     networks as recurrent_networks,
 )
+from track_mjx.agent.temporal_ppo import (
+    ppo as temporal_ppo,
+    networks as temporal_networks,
+)
 from track_mjx.agent.domain_randomization import domain_randomization_maker
 
 
@@ -118,7 +122,12 @@ def main(cfg: DictConfig) -> None:
     logging.info(f"Using architecture: {arch_name}")
 
     # Validate architecture name
-    valid_arch_names = {"intention", "recurrent_intention"}
+    valid_arch_names = {
+        "intention",
+        "recurrent_intention",
+        "temporal_fixed_ppo",
+        "temporal_learned_ppo",
+    }
     if arch_name not in valid_arch_names:
         raise ValueError(
             f"Unknown architecture '{arch_name}'. "
@@ -148,6 +157,38 @@ def main(cfg: DictConfig) -> None:
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
         ppo_module = recurrent_ppo
+    elif arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+        required_keys = ["rnn_type", "rnn_hidden_sizes"]
+        missing_keys = [k for k in required_keys if not hasattr(cfg.network_config, k)]
+        if missing_keys:
+            raise ValueError(
+                f"{arch_name} architecture requires these config keys: {missing_keys}. "
+                f"Please add them to network_config in your YAML file."
+            )
+
+        boundary_mode = "fixed" if arch_name == "temporal_fixed_ppo" else "learned"
+        network_factory = functools.partial(
+            temporal_networks.make_temporal_intention_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            rnn_type=cfg.network_config.rnn_type,
+            rnn_hidden_sizes=tuple(cfg.network_config.rnn_hidden_sizes),
+            boundary_mode=boundary_mode,
+            macro_horizon=cfg.network_config.get("macro_horizon", 16),
+            min_macro_horizon=cfg.network_config.get("min_macro_horizon", 4),
+            max_macro_horizon=cfg.network_config.get("max_macro_horizon", 64),
+            eval_gate_threshold=cfg.network_config.get("eval_gate_threshold", 0.5),
+            proprioception_noise_std=cfg.network_config.get(
+                "proprioception_noise_std", 0.0
+            ),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            condition_value_on_latent=cfg.network_config.get(
+                "condition_value_on_latent", True
+            ),
+            horizon_ramp=cfg.network_config.get("horizon_ramp", False),
+            horizon_ramp_steps=cfg.network_config.get("horizon_ramp_steps", 0),
+        )
+        ppo_module = temporal_ppo
     else:
         # Feedforward intention network (default)
         network_factory = functools.partial(
@@ -222,8 +263,22 @@ def main(cfg: DictConfig) -> None:
         ),
     )
 
-    # Add get_activation only for feedforward PPO (not supported for recurrent)
-    if arch_name != "recurrent_intention":
+    if arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+        train_kwargs["gate_entropy_cost"] = cfg.network_config.get(
+            "gate_entropy_cost", 1e-4
+        )
+        train_kwargs["discounting_gate"] = cfg.network_config.get(
+            "discounting_gate", None
+        )
+        train_kwargs["target_refresh_rate"] = cfg.network_config.get(
+            "target_refresh_rate", None
+        )
+        train_kwargs["lambda_refresh_rate"] = cfg.network_config.get(
+            "lambda_refresh_rate", 0.0
+        )
+
+    # Add get_activation only for feedforward PPO.
+    if arch_name == "intention":
         train_kwargs["get_activation"] = cfg.train_setup.train_config.get(
             "get_activation", False
         )

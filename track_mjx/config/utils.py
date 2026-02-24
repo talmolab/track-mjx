@@ -148,9 +148,9 @@ def prepare_config(
 ) -> tuple[DictConfig, dict[str, Any], config_dict.ConfigDict]:
     """Prepare config by merging env defaults and resolving track-mjx overrides.
 
-    Takes a Hydra/OmegaConf configuration, validates that deprecated compatibility
-    keys are not used, merges vnl-playground defaults with track-mjx defaults and
-    user env_config overrides, then returns multiple config formats.
+    Takes a Hydra/OmegaConf configuration, merges vnl-playground defaults with
+    track-mjx defaults and user env_config overrides, then returns multiple
+    config formats.
 
     Args:
         cfg: The root OmegaConf configuration containing env_config.
@@ -162,18 +162,9 @@ def prepare_config(
             - env_cfg_ml: The env_config as an ml_collections ConfigDict.
 
     Raises:
-        ValueError: If deprecated keys are present, if env_config.env_name is
-            missing/unknown, or if no reference_data_path can be resolved.
+        ValueError: If env_config.env_name is missing/unknown or if no
+            reference_data_path can be resolved.
     """
-    if OmegaConf.select(cfg, "walker_config", default=None) is not None:
-        raise ValueError(
-            "`walker_config` has been removed. Move walker fields into `env_config`."
-        )
-    if OmegaConf.select(cfg, "data_path", default=None) is not None:
-        raise ValueError(
-            "`data_path` has been removed. Use `env_config.reference_data_path`."
-        )
-
     cfg = _merge_env_config_with_defaults(cfg)
 
     if OmegaConf.select(cfg, "env_config.reference_data_path", default=None) is None:

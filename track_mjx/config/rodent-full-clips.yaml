@@ -65,8 +65,8 @@ env_config:
   # -----------------------------------------------------------------------------
   # Reward Terms
   # -----------------------------------------------------------------------------
-  # Imitation rewards computed as: weight * exp(-exp_scale * error)
-  # Higher exp_scale = sharper penalty for deviations
+  # Imitation rewards computed as: weight * exp(-((error / exp_scale)^2) / 2)
+  # Higher exp_scale = more lenient penalty for deviations
   reward_terms:
     # Root (pelvis) position tracking
     root_pos:

@@ -80,11 +80,16 @@ def _to_omegaconf_compatible(value: Any) -> Any:
         return [_to_omegaconf_compatible(v) for v in value]
     if isinstance(value, os.PathLike):
         return os.fspath(value)
+    if not isinstance(value, (str, int, float, bool, type(None))):
+        logging.debug(
+            "Passing through non-primitive value in _to_omegaconf_compatible: %s",
+            type(value).__name__,
+        )
     return value
 
 
 def _get_track_env_overrides(env_name: str) -> dict[str, Any]:
-    """Return track-mjx env defaults layered on top of vnl-playground defaults."""
+    """Return track-mjx-specific env overrides for a given env_name."""
     if env_name == "RodentImitation":
         return {
             "walker_name": "rodent",
@@ -103,6 +108,12 @@ def _get_track_env_overrides(env_name: str) -> dict[str, Any]:
                 "data/fruitfly/fly_reference_clip.h5"
             ),
         }
+    if env_name:
+        logging.warning(
+            "No track-mjx-specific env overrides found for env_name='%s'. "
+            "Using vnl-playground defaults and user env_config only.",
+            env_name,
+        )
     return {}
 
 
@@ -157,7 +168,7 @@ def prepare_config(
 
     Returns:
         A tuple containing:
-            - cfg: The updated OmegaConf DictConfig with resolved paths.
+            - cfg: The updated OmegaConf DictConfig with merged env defaults.
             - cfg_dict: The full config as a plain Python dictionary.
             - env_cfg_ml: The env_config as an ml_collections ConfigDict.
 
@@ -173,15 +184,21 @@ def prepare_config(
             "Set env_config.reference_data_path explicitly."
         )
 
+    # Preserve this field in cfg/env_cfg_ml/cfg_dict for run metadata parity.
+    merged_env_cfg = OmegaConf.merge(
+        cfg.env_config,
+        OmegaConf.create(
+            {"vnl_playground_commit": _get_package_commit("vnl-playground")}
+        ),
+    )
+    OmegaConf.update(cfg, "env_config", merged_env_cfg, merge=False)
+
     # Create ml_collections ConfigDict for env_config
     env_cfg_dict = OmegaConf.to_container(cfg.env_config, resolve=True)
     env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
 
     # Convert full config to dict and log
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    cfg_dict["env_config"]["vnl_playground_commit"] = _get_package_commit(
-        "vnl-playground"
-    )
     logging.info(f"Configs: {cfg_dict}")
 
     return cfg, cfg_dict, env_cfg_ml

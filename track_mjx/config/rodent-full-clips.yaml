@@ -12,6 +12,9 @@
 env_config:
   # Environment name for registry lookup
   env_name: "RodentImitation"
+  walker_name: "rodent"
+  torque_actuators: true              # Use torque (vs position) control
+  rescale_factor: 0.9                 # Model scale factor
 
   # MuJoCo backend: "jax" for GPU-accelerated simulation via MJX
   mujoco_impl: "jax"
@@ -213,12 +216,3 @@ logging_config:
   exp_name: baseline
   clip_id: -1                         # Clip ID for single-clip runs (-1 = all)
   model_path: model_checkpoints/
-
-# =============================================================================
-# Walker Configuration
-# =============================================================================
-# Rodent morphology and actuator settings
-walker_config:
-  walker_name: "rodent"
-  torque_actuators: true              # Use torque (vs position) control
-  rescale_factor: 0.9                 # Model scale factor

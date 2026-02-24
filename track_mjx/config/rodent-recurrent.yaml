@@ -10,6 +10,9 @@
 # =============================================================================
 env_config:
   env_name: "RodentImitation"
+  walker_name: "rodent"
+  torque_actuators: true
+  rescale_factor: 0.9
   mujoco_impl: "jax"
 
   # Physics Solver Settings
@@ -167,11 +170,3 @@ logging_config:
   exp_name: rodent-recurrent
   clip_id: -1
   model_path: model_checkpoints/
-
-# =============================================================================
-# Walker Configuration
-# =============================================================================
-walker_config:
-  walker_name: "rodent"
-  torque_actuators: true
-  rescale_factor: 0.9

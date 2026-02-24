@@ -28,7 +28,7 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
 
     Args:
         cfg_dict: Configuration dictionary. Can be either:
-            - Full config with "walker_config" key: extracts "env_config" section
+            - Full config with "env_config" key: extracts "env_config" section
             - Direct env_config dict: used as-is
             Must contain env_name, reference_data_path, clip_length, and
             optionally keep_clips_idx.
@@ -42,7 +42,7 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
         >>> state = env.reset(jax.random.PRNGKey(0))
         >>> print(state.obs.keys())  # dict_keys(['state', 'privileged_state'])
     """
-    if "walker_config" in cfg_dict:
+    if "env_config" in cfg_dict:
         env_cfg = cfg_dict["env_config"]
         env_cfg_ml = config_dict.ConfigDict(
             OmegaConf.to_container(env_cfg, resolve=True)

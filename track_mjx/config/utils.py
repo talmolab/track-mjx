@@ -1,7 +1,7 @@
 """Configuration utilities for track-mjx training pipelines.
 
 This module provides helper functions for preparing and updating OmegaConf
-configurations, including walker-specific path resolution and config merging.
+configurations, including environment default layering and config merging.
 """
 
 import json
@@ -54,7 +54,6 @@ def _get_package_commit(package_name: str) -> str:
 
 from vnl_playground import registry as vnl_registry
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
-from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
 
 # Project root directory (track-mjx/)
@@ -82,6 +81,29 @@ def _to_omegaconf_compatible(value: Any) -> Any:
     if isinstance(value, os.PathLike):
         return os.fspath(value)
     return value
+
+
+def _get_track_env_overrides(env_name: str) -> dict[str, Any]:
+    """Return track-mjx env defaults layered on top of vnl-playground defaults."""
+    if env_name == "RodentImitation":
+        return {
+            "walker_name": "rodent",
+            "walker_xml_path": str(rodent_consts.RODENT_XML_PATH),
+            "arena_xml_path": str(rodent_consts.ARENA_XML_PATH),
+            "reference_data_path": _resolve_data_path(
+                "data/rodent/rodent_reference_clips.h5"
+            ),
+        }
+    if env_name == "FruitflyImitation":
+        return {
+            "walker_name": "fruitfly",
+            "walker_xml_path": str(fruitfly_consts.FRUITFLY_XML_PATH),
+            "arena_xml_path": str(fruitfly_consts.ARENA_XML_PATH),
+            "reference_data_path": _resolve_data_path(
+                "data/fruitfly/fly_reference_clip.h5"
+            ),
+        }
+    return {}
 
 
 def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
@@ -113,27 +135,25 @@ def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
 
     merged_env_cfg = OmegaConf.merge(
         OmegaConf.create(_to_omegaconf_compatible(default_env_cfg.to_dict())),
+        OmegaConf.create(_get_track_env_overrides(env_name)),
         cfg.env_config,
     )
 
-    OmegaConf.set_struct(cfg, False)
-    cfg.env_config = merged_env_cfg
-    OmegaConf.set_struct(cfg, True)
+    OmegaConf.update(cfg, "env_config", merged_env_cfg, merge=False)
     return cfg
 
 
 def prepare_config(
     cfg: DictConfig,
 ) -> tuple[DictConfig, dict[str, Any], config_dict.ConfigDict]:
-    """Prepare config by merging task defaults and resolving walker-specific paths.
+    """Prepare config by merging env defaults and resolving track-mjx overrides.
 
-    Takes a Hydra/OmegaConf configuration, merges env_config with the
-    vnl-playground default config for env_name, then resolves walker-specific XML
-    and reference data paths based on walker_name. Updates env_config with these
-    resolved paths and walker settings, then returns multiple config formats.
+    Takes a Hydra/OmegaConf configuration, validates that deprecated compatibility
+    keys are not used, merges vnl-playground defaults with track-mjx defaults and
+    user env_config overrides, then returns multiple config formats.
 
     Args:
-        cfg: The root OmegaConf configuration containing walker_config and env_config.
+        cfg: The root OmegaConf configuration containing env_config.
 
     Returns:
         A tuple containing:
@@ -142,76 +162,25 @@ def prepare_config(
             - env_cfg_ml: The env_config as an ml_collections ConfigDict.
 
     Raises:
-        ValueError: If walker_name is not recognized.
-        NotImplementedError: If the specified walker is not yet fully implemented.
+        ValueError: If deprecated keys are present, if env_config.env_name is
+            missing/unknown, or if no reference_data_path can be resolved.
     """
+    if OmegaConf.select(cfg, "walker_config", default=None) is not None:
+        raise ValueError(
+            "`walker_config` has been removed. Move walker fields into `env_config`."
+        )
+    if OmegaConf.select(cfg, "data_path", default=None) is not None:
+        raise ValueError(
+            "`data_path` has been removed. Use `env_config.reference_data_path`."
+        )
+
     cfg = _merge_env_config_with_defaults(cfg)
-    walker_name = cfg.walker_config.walker_name
 
-    # Use explicitly provided data_path if available, otherwise resolve from
-    # project root. This ensures the path is correct for non-editable installs
-    # where _PROJECT_ROOT would point into site-packages/.
-    explicit_data_path = OmegaConf.select(cfg, "data_path", default=None)
-
-    if walker_name == "rodent":
-        logging.info("Using rodent walker")
-        walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
-        arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
-        reference_data_path = (
-            str(explicit_data_path)
-            if explicit_data_path is not None
-            else _resolve_data_path("data/rodent/rodent_reference_clips.h5")
+    if OmegaConf.select(cfg, "env_config.reference_data_path", default=None) is None:
+        raise ValueError(
+            "Missing env_config.reference_data_path after config preparation. "
+            "Set env_config.reference_data_path explicitly."
         )
-    elif walker_name == "fruitfly":
-        logging.info("Using fruitfly walker")
-        walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
-        arena_xml_path = str(fruitfly_consts.ARENA_XML_PATH)
-        reference_data_path = (
-            str(explicit_data_path)
-            if explicit_data_path is not None
-            else _resolve_data_path("data/fruitfly/fly_reference_clip.h5")
-        )
-    elif walker_name == "celegans":
-        logging.info("Using celegans walker")
-        raise NotImplementedError("Celegans walker not implemented yet.")
-    elif walker_name == "mouse":
-        logging.info("Using mouse walker")
-        walker_xml_path = str(mouse_consts.MOUSE_XML_PATH)
-        raise NotImplementedError(
-            "Mouse arena and reference data paths not implemented yet."
-        )
-    elif walker_name == "stickbug":
-        logging.info("Using stickbug walker")
-        raise NotImplementedError("Stickbug walker not implemented yet.")
-    else:
-        raise ValueError(f"Unknown walker name: {walker_name}")
-
-    # Update env_config with resolved paths and walker settings
-    OmegaConf.set_struct(cfg.env_config, False)
-    OmegaConf.update(cfg.env_config, "walker_xml_path", walker_xml_path, merge=False)
-    OmegaConf.update(cfg.env_config, "arena_xml_path", arena_xml_path, merge=False)
-    OmegaConf.update(
-        cfg.env_config, "reference_data_path", reference_data_path, merge=False
-    )
-    OmegaConf.update(
-        cfg.env_config, "walker_name", cfg.walker_config.walker_name, merge=False
-    )
-    OmegaConf.update(
-        cfg.env_config,
-        "torque_actuators",
-        cfg.walker_config.torque_actuators,
-        merge=False,
-    )
-    OmegaConf.update(
-        cfg.env_config, "rescale_factor", cfg.walker_config.rescale_factor, merge=False
-    )
-    OmegaConf.update(
-        cfg.env_config,
-        "vnl_playground_commit",
-        _get_package_commit("vnl-playground"),
-        merge=False,
-    )
-    OmegaConf.set_struct(cfg.env_config, True)
 
     # Create ml_collections ConfigDict for env_config
     env_cfg_dict = OmegaConf.to_container(cfg.env_config, resolve=True)
@@ -219,6 +188,9 @@ def prepare_config(
 
     # Convert full config to dict and log
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    cfg_dict["env_config"]["vnl_playground_commit"] = _get_package_commit(
+        "vnl-playground"
+    )
     logging.info(f"Configs: {cfg_dict}")
 
     return cfg, cfg_dict, env_cfg_ml

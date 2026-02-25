@@ -10,6 +10,9 @@
 # =============================================================================
 env_config:
   env_name: "RodentImitation"
+  walker_name: "rodent"
+  torque_actuators: true
+  rescale_factor: 0.9
   mujoco_impl: "jax"
 
   # Physics Solver Settings
@@ -18,7 +21,7 @@ env_config:
   ls_iterations: 5
   nconmax: 256
   naconmax: 131072
-  njmax: 128
+  njmax: 512
   noslip_iterations: 0
 
   # Timing Configuration
@@ -30,6 +33,7 @@ env_config:
   clip_length: 250
   clip_set: "all"
   reference_length: 16
+  reference_stride: 4
   start_frame_range: [0, 50]
   qvel_init: "zeros"
   keep_clips_idx: null
@@ -171,11 +175,3 @@ logging_config:
   exp_name: rodent-temporal-fixed
   clip_id: -1
   model_path: model_checkpoints/
-
-# =============================================================================
-# Walker Configuration
-# =============================================================================
-walker_config:
-  walker_name: "rodent"
-  torque_actuators: true
-  rescale_factor: 0.9

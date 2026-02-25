@@ -44,7 +44,7 @@ dependencies = [
     # HuggingFace for model/data downloads
     "huggingface-hub",
     # Other utilities
-    "playground",
+    "playground>=0.1.0",
     "ipykernel",
     "vnl-playground",
 ]
@@ -80,14 +80,14 @@ dev = [
 Repository = "https://github.com/talmolab/track-mjx"
 
 [tool.setuptools.packages.find]
-exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
+where = ["."]
+include = ["track_mjx*"]
 
 [tool.black]
 line-length = 88
 
 [tool.uv.sources]
 vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.13" }
-playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
 
 [pydocstyle]
 convention = "google"

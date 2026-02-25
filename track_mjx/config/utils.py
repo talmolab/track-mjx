@@ -192,13 +192,12 @@ def prepare_config(
         )
 
     # Preserve this field in cfg/env_cfg_ml/cfg_dict for run metadata parity.
-    merged_env_cfg = OmegaConf.merge(
-        cfg.env_config,
-        OmegaConf.create(
-            {"vnl_playground_commit": _get_package_commit("vnl-playground")}
-        ),
+    OmegaConf.update(
+        cfg,
+        "env_config.vnl_playground_commit",
+        _get_package_commit("vnl-playground"),
+        force_add=True,
     )
-    OmegaConf.update(cfg, "env_config", merged_env_cfg, merge=False)
 
     # Create ml_collections ConfigDict for env_config
     env_cfg_dict = OmegaConf.to_container(cfg.env_config, resolve=True)

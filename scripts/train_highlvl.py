@@ -44,6 +44,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+import hydra
 import jax
 import wandb
 from brax.training.acme import running_statistics
@@ -51,10 +52,13 @@ from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from etils import epath
 from mujoco_playground import wrapper
+from omegaconf import OmegaConf
 
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
-from track_mjx.agent import highlvl_decoder
+from track_mjx.agent import checkpointing
+from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
+from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
 from utils import (
     apply_env_overrides,
     configure_warp_backend,
@@ -72,7 +76,42 @@ setup_jax_cache()
 
 def load_mimic_checkpoint(checkpoint_path: str) -> tuple:
     """Load mimic checkpoint config and decoder policy callables."""
-    return highlvl_decoder.load_mimic_checkpoint_and_decoder_fns(checkpoint_path)
+    if os.path.isabs(checkpoint_path):
+        full_path = os.path.abspath(checkpoint_path)
+    else:
+        full_path = hydra.utils.to_absolute_path(
+            f"./model_checkpoints/{checkpoint_path}"
+        )
+
+    mimic_cfg = OmegaConf.create(checkpointing.load_config_from_checkpoint(full_path))
+    arch_name = mimic_cfg.network_config.get("arch_name", "intention")
+
+    if arch_name == "intention":
+        decoder_fns = {
+            "mode": "feedforward",
+            "decoder_inference_fn": ff_ppo_networks.make_decoder_policy_fn(full_path),
+        }
+        return mimic_cfg, decoder_fns
+
+    if arch_name == "recurrent_intention":
+        (
+            decoder_step_fn,
+            init_decoder_hidden_fn,
+            reset_decoder_hidden_fn,
+        ) = recurrent_ppo_networks.make_decoder_policy_fns(full_path)
+        decoder_fns = {
+            "mode": "recurrent",
+            "decoder_step_fn": decoder_step_fn,
+            "init_decoder_hidden_fn": init_decoder_hidden_fn,
+            "reset_decoder_hidden_fn": reset_decoder_hidden_fn,
+        }
+        return mimic_cfg, decoder_fns
+
+    raise ValueError(
+        "Unsupported mimic checkpoint architecture for high-level transfer: "
+        f"{arch_name!r}. Supported architectures are 'intention' and "
+        "'recurrent_intention'."
+    )
 
 
 def create_env_config(task_name: str, mimic_cfg: Any):

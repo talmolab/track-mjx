@@ -44,7 +44,6 @@ import json
 from datetime import datetime
 from typing import Any
 
-import hydra
 import jax
 import wandb
 from brax.training.acme import running_statistics
@@ -52,12 +51,10 @@ from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from etils import epath
 from mujoco_playground import wrapper
-from omegaconf import OmegaConf
 
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
-from track_mjx.agent import checkpointing
-from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
+from track_mjx.agent import highlvl_decoder
 from utils import (
     apply_env_overrides,
     configure_warp_backend,
@@ -74,17 +71,8 @@ setup_jax_cache()
 
 
 def load_mimic_checkpoint(checkpoint_path: str) -> tuple:
-    """Load mimic checkpoint config and decoder policy."""
-    if os.path.isabs(checkpoint_path):
-        full_path = checkpoint_path
-    else:
-        full_path = hydra.utils.to_absolute_path(
-            f"./model_checkpoints/{checkpoint_path}"
-        )
-
-    mimic_cfg = OmegaConf.create(checkpointing.load_config_from_checkpoint(full_path))
-    decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(full_path)
-    return mimic_cfg, decoder_policy_fn
+    """Load mimic checkpoint config and decoder policy callables."""
+    return highlvl_decoder.load_mimic_checkpoint_and_decoder_fns(checkpoint_path)
 
 
 def create_env_config(task_name: str, mimic_cfg: Any):
@@ -97,26 +85,41 @@ def create_env_config(task_name: str, mimic_cfg: Any):
 def create_environments(
     task_name: str,
     env_cfg: Any,
-    decoder_policy_fn,
+    decoder_fns: dict[str, Any],
     intention_size: int,
     highlvl_obs_key: str,
     policy_obs_key: str = "state",
     value_obs_key: str = "state",
 ):
-    """Create training and eval environments with HighLevelWrapper."""
+    """Create training and eval environments with high-level decoder wrappers."""
     wrapper_kwargs = dict(
-        decoder_inference_fn=decoder_policy_fn,
         latent_size=intention_size,
         policy_obs_key=policy_obs_key,
         value_obs_key=value_obs_key,
         highlvl_obs_key=highlvl_obs_key,
         lowlvl_obs_key="proprioception",
     )
-    env = rodent_wrappers.HighLevelWrapper(
+
+    if decoder_fns["mode"] == "feedforward":
+        env_wrapper = rodent_wrappers.HighLevelWrapper
+        wrapper_kwargs["decoder_inference_fn"] = decoder_fns["decoder_inference_fn"]
+    elif decoder_fns["mode"] == "recurrent":
+        env_wrapper = rodent_wrappers.RecurrentHighLevelWrapper
+        wrapper_kwargs["decoder_step_fn"] = decoder_fns["decoder_step_fn"]
+        wrapper_kwargs["init_decoder_hidden_fn"] = decoder_fns[
+            "init_decoder_hidden_fn"
+        ]
+        wrapper_kwargs["reset_decoder_hidden_fn"] = decoder_fns[
+            "reset_decoder_hidden_fn"
+        ]
+    else:
+        raise ValueError(f"Unsupported decoder mode {decoder_fns['mode']!r}")
+
+    env = env_wrapper(
         registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False),
         **wrapper_kwargs,
     )
-    eval_env = rodent_wrappers.HighLevelWrapper(
+    eval_env = env_wrapper(
         registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False),
         **wrapper_kwargs,
     )
@@ -166,7 +169,7 @@ def main():
 
     # Load mimic checkpoint
     print(f"Loading mimic checkpoint: {args.mimic_checkpoint}")
-    mimic_cfg, decoder_policy_fn = load_mimic_checkpoint(args.mimic_checkpoint)
+    mimic_cfg, decoder_fns = load_mimic_checkpoint(args.mimic_checkpoint)
 
     # Create configs
     cli_env_overrides = parse_env_overrides_str(args.env)
@@ -199,6 +202,7 @@ def main():
         "env_config": env_cfg.to_dict(),
         "ppo_params": dict(ppo_params),
         "mimic_checkpoint": args.mimic_checkpoint,
+        "mimic_architecture": mimic_cfg.network_config.get("arch_name", "intention"),
         "cli_env_overrides": cli_env_overrides,
         "highlvl_obs_key": args.highlvl_obs_key,
         "policy_obs_key": args.policy_obs_key,
@@ -225,7 +229,7 @@ def main():
     env, eval_env = create_environments(
         args.task,
         env_cfg,
-        decoder_policy_fn,
+        decoder_fns,
         mimic_cfg.network_config.intention_size,
         args.highlvl_obs_key,
         policy_obs_key=args.policy_obs_key,

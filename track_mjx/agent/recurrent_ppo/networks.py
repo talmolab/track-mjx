@@ -24,6 +24,7 @@ The value network uses 'state' by default (configurable via value_obs_key).
 
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Literal, Union
 
 import flax
@@ -758,4 +759,135 @@ def make_recurrent_intention_ppo_networks(
         parametric_action_distribution=parametric_action_distribution,
         rnn_hidden_sizes=rnn_hidden_sizes,
         cell_type=rnn_type,
+    )
+
+
+def make_decoder_policy_fns(
+    ckpt_path: str | Path,
+    step: int | None = None,
+) -> tuple[Callable, Callable[[int], list[HiddenState]], Callable]:
+    """Load decoder-only recurrent policy callables from checkpoint.
+
+    Mirrors the feedforward decoder loader pattern but returns recurrent decoder
+    callables suitable for high-level wrapper integration.
+
+    Args:
+        ckpt_path: Path to checkpoint directory.
+        step: Optional checkpoint step. If ``None``, loads the latest.
+
+    Returns:
+        Tuple of:
+            - ``decoder_step_fn`` with signature
+              ``(decoder_input, hidden) -> (action, extras, new_hidden)``.
+            - ``init_hidden_fn`` with signature ``batch_size -> hidden``.
+            - ``reset_hidden_fn`` with signature ``(hidden, done) -> hidden``.
+
+    Raises:
+        ValueError: If the checkpoint is not ``recurrent_intention`` architecture.
+    """
+    from track_mjx.agent import checkpointing
+
+    def make_decoder_policy(
+        params: tuple,
+        policy_module: RecurrentDecoder,
+        parametric_action_distribution: distribution.ParametricDistribution,
+        latent_size: int,
+        proprio_size: int,
+        rnn_type: RNNCellType,
+        rnn_hidden_sizes: tuple[int, ...],
+    ) -> tuple[Callable, Callable[[int], list[HiddenState]], Callable]:
+        def init_hidden_fn(batch_size: int) -> list[HiddenState]:
+            if batch_size < 1:
+                raise ValueError(f"batch_size must be >= 1. Got {batch_size}.")
+            return [
+                init_hidden_state(rnn_type, hidden_size, batch_size)
+                for hidden_size in rnn_hidden_sizes
+            ]
+
+        def reset_hidden_fn(hidden: Any, done: jax.Array) -> Any:
+            return reset_hidden_on_done(hidden, done, rnn_type)
+
+        def decoder_step_fn(
+            observations: types.Observation,
+            hidden: Any,
+        ) -> tuple[types.Action, types.Extra, Any]:
+            is_unbatched = observations.ndim == 1
+            obs = observations[None, :] if is_unbatched else observations
+
+            if obs.shape[-1] != latent_size + proprio_size:
+                raise ValueError(
+                    "Decoder input size mismatch. Expected last dimension "
+                    f"{latent_size + proprio_size}, got {obs.shape[-1]}."
+                )
+
+            latent_obs = obs[..., :latent_size]
+            proprio_obs = running_statistics.normalize(
+                obs[..., latent_size:],
+                params[0],
+            )
+            normalized_obs = jnp.concatenate([latent_obs, proprio_obs], axis=-1)
+
+            logits, new_hidden = policy_module.apply(
+                params[1],
+                x=normalized_obs,
+                hidden=hidden,
+                get_activation=False,
+            )
+            action = parametric_action_distribution.mode(logits)
+            extras = {"logits": logits}
+
+            if is_unbatched:
+                action = action[0]
+                extras = jax.tree_util.tree_map(lambda x: x[0], extras)
+
+            return action, extras, new_hidden
+
+        return decoder_step_fn, init_hidden_fn, reset_hidden_fn
+
+    full_path = str(Path(ckpt_path).expanduser().resolve())
+
+    cfg = checkpointing.load_config_from_checkpoint(full_path, step=step)
+    network_config = cfg["network_config"]
+    arch_name = network_config.get("arch_name")
+    if arch_name != "recurrent_intention":
+        raise ValueError(
+            "make_decoder_policy_fns expects recurrent_intention checkpoint, "
+            f"got arch_name={arch_name!r}."
+        )
+
+    obs_sizes = checkpointing.require_obs_sizes(network_config)
+    action_size = int(network_config["action_size"])
+    latent_size = int(network_config["intention_size"])
+    proprio_size = int(obs_sizes["proprioception"])
+    rnn_type = network_config["rnn_type"]
+    rnn_hidden_sizes = tuple(int(v) for v in network_config["rnn_hidden_sizes"])
+
+    intention_policy_params = checkpointing.load_policy(full_path, cfg, step=step)
+
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+    policy_module = RecurrentDecoder(
+        output_size=parametric_action_distribution.param_size,
+        rnn_hidden_sizes=rnn_hidden_sizes,
+        cell_type=rnn_type,
+    )
+
+    normalizer_state = intention_policy_params[0]
+    state_normalizer = normalizer_select(normalizer_state, "state")
+    decoder_normalizer_params = normalizer_select(state_normalizer, "proprioception")
+
+    decoder_params = (
+        decoder_normalizer_params,
+        {"params": intention_policy_params[1]["params"]["decoder"]},
+    )
+
+    return make_decoder_policy(
+        decoder_params,
+        policy_module,
+        parametric_action_distribution,
+        latent_size,
+        proprio_size,
+        rnn_type,
+        rnn_hidden_sizes,
     )

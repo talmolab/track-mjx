@@ -129,8 +129,8 @@ network_config:
 
   # Variational layer regularization losses
   kl_schedule: true
-  latent_kl_weight: 1e-1
-  latent_ar1_weight: 1e-2
+  latent_kl_weight: 1e-3
+  latent_ar1_weight: 0
 
 # =============================================================================
 # Training Setup
@@ -153,9 +153,9 @@ train_setup:
   # PPO Training Hyperparameters
   # ---------------------------------------------------------------------------
   train_config:
-    num_envs: 4096
+    num_envs: 1024
     num_timesteps: 6_000_000_000
-    batch_size: 512
+    batch_size: 256
     num_minibatches: 32
     num_updates_per_batch: 4              # Epochs per PPO update
     learning_rate: 5e-5

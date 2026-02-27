@@ -151,11 +151,20 @@ def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
             "Expected a registered vnl_playground task name."
         ) from exc
 
+    track_overrides = _get_track_env_overrides(env_name)
+
     merged_env_cfg = OmegaConf.merge(
         OmegaConf.create(_to_omegaconf_compatible(default_env_cfg.to_dict())),
-        OmegaConf.create(_get_track_env_overrides(env_name)),
+        OmegaConf.create(track_overrides),
         cfg.env_config,
     )
+
+    # Force-apply installation-specific paths from track-mjx overrides.
+    # These are determined by the local package installation and must not
+    # be overridden by stale absolute paths saved in checkpoints.
+    for key in ("walker_xml_path", "arena_xml_path", "reference_data_path"):
+        if key in track_overrides:
+            OmegaConf.update(merged_env_cfg, key, track_overrides[key], merge=False)
 
     OmegaConf.update(cfg, "env_config", merged_env_cfg, merge=False)
     return cfg
@@ -184,6 +193,18 @@ def prepare_config(
             reference_data_path can be resolved.
     """
     cfg = _merge_env_config_with_defaults(cfg)
+
+    # If data_path is explicitly set (e.g., from a notebook pointing to
+    # locally-downloaded data), use it as reference_data_path so that stale
+    # absolute paths baked into checkpoints are overridden.
+    data_path = OmegaConf.select(cfg, "data_path", default=None)
+    if data_path is not None:
+        OmegaConf.update(
+            cfg,
+            "env_config.reference_data_path",
+            str(data_path),
+            merge=False,
+        )
 
     if OmegaConf.select(cfg, "env_config.reference_data_path", default=None) is None:
         raise ValueError(

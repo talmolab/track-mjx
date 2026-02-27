@@ -22,7 +22,11 @@ from track_mjx.agent.ff_ppo import ppo, losses as original_losses
 from track_mjx.agent.ff_ppo import ppo_networks as original_ppo_networks
 
 # Import VQ-VAE specific modules
-from vq_ppo_networks import make_vq_intention_ppo_networks, make_vq_logging_inference_fn
+from vq_ppo_networks import (
+    make_vq_intention_ppo_networks,
+    make_vq_inference_fn,
+    make_vq_logging_inference_fn,
+)
 from vq_losses import compute_vq_ppo_loss, PPONetworkParams, reinit_dead_codes
 
 
@@ -79,6 +83,7 @@ def train(
     dead_code_threshold: float = 0.01,
     num_codes: int = 32,
     reinit_data: dict | None = None,
+    kl_weight: float = 0.0,
 ):
     """Train a VQ-VAE PPO agent.
 
@@ -149,6 +154,7 @@ def train(
             rvq_depth=rvq_depth,
             codebook_entropy_weight=codebook_entropy_weight,
             codebook_entropy_temperature=codebook_entropy_temperature,
+            kl_weight=kl_weight,
         )
 
     # Build post-eval hook for dead code reinit
@@ -196,6 +202,10 @@ def train(
 
     # Monkey-patch the loss function
     original_losses.compute_ppo_loss = vq_compute_ppo_loss
+
+    # Monkey-patch inference functions to handle VQ-VAE's 4-value return contract
+    original_make_inference_fn = original_ppo_networks.make_inference_fn
+    original_ppo_networks.make_inference_fn = make_vq_inference_fn
 
     # Monkey-patch the logging inference function to support prev_indices for stickiness
     # This ensures eval rollouts apply the same stickiness bias as training
@@ -250,6 +260,7 @@ def train(
     finally:
         # Restore original functions
         original_losses.compute_ppo_loss = original_compute_ppo_loss
+        original_ppo_networks.make_inference_fn = original_make_inference_fn
         original_ppo_networks.make_logging_inference_fn = (
             original_make_logging_inference_fn
         )

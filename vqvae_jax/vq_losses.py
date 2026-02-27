@@ -101,6 +101,22 @@ def compute_gae(
     return jax.lax.stop_gradient(vs), jax.lax.stop_gradient(advantages)
 
 
+def compute_kl_loss(
+    mean: jnp.ndarray,
+    logvar: jnp.ndarray,
+) -> jnp.ndarray:
+    """KL divergence KL(N(mean, exp(logvar)) || N(0,1)).
+
+    Args:
+        mean: Encoder mean, shape [..., latent_dim].
+        logvar: Encoder log-variance, shape [..., latent_dim].
+
+    Returns:
+        Scalar KL divergence averaged over all elements.
+    """
+    return 0.5 * jnp.mean(jnp.exp(logvar) + mean**2 - 1.0 - logvar)
+
+
 def compute_vq_loss(
     z_e: jnp.ndarray,
     z_q: jnp.ndarray | None = None,
@@ -416,6 +432,7 @@ def compute_vq_ppo_loss(
     rvq_depth: int = 1,
     codebook_entropy_weight: float = 0.0,
     codebook_entropy_temperature: float = 1.0,
+    kl_weight: float = 0.0,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss with VQ-VAE auxiliary losses.
 
@@ -464,7 +481,7 @@ def compute_vq_ppo_loss(
         episode_mask = jnp.concatenate(
             [jnp.zeros((1, continues.shape[1])), continues[:-1]], axis=0
         )
-        policy_logits, z_e, all_indices = policy_network.apply_temporal(
+        policy_logits, z_e, all_indices, logvar = policy_network.apply_temporal(
             normalizer_params,
             params.policy,
             data.observation,
@@ -472,7 +489,7 @@ def compute_vq_ppo_loss(
             proprio_noise_key=policy_key,
         )
     else:
-        policy_logits, z_e, all_indices = policy_network.apply(
+        policy_logits, z_e, all_indices, logvar = policy_network.apply(
             normalizer_params, params.policy, data.observation, policy_key
         )
 
@@ -536,6 +553,14 @@ def compute_vq_ppo_loss(
     else:
         scaled_entropy_reg = jnp.array(0.0)
         entropy_metrics = {}
+
+    # KL divergence loss (continuous latent)
+    if logvar is not None and kl_weight > 0:
+        kl_loss = compute_kl_loss(z_e, logvar)
+        scaled_kl_loss = kl_weight * kl_loss
+    else:
+        kl_loss = jnp.array(0.0)
+        scaled_kl_loss = jnp.array(0.0)
 
     # Standard PPO loss computation
     rewards = data.reward * reward_scaling
@@ -615,6 +640,7 @@ def compute_vq_ppo_loss(
         + scaled_vq_loss
         + scaled_ce_stickiness_loss
         + scaled_entropy_reg
+        + scaled_kl_loss
     )
 
     metrics = {
@@ -639,6 +665,9 @@ def compute_vq_ppo_loss(
         "transition_rate": transition_rate,
         # Codebook entropy regularization
         "scaled_codebook_entropy_reg": scaled_entropy_reg,
+        # KL divergence (continuous latent)
+        "kl_loss": kl_loss,
+        "scaled_kl_loss": scaled_kl_loss,
     }
 
     # Add per-depth metrics

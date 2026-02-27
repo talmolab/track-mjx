@@ -524,6 +524,8 @@ def main(cfg: DictConfig) -> None:
     dead_code_threshold = float(cfg.network_config.get("dead_code_threshold", 0.01))
     num_codes = int(cfg.network_config.get("num_codes", 32))
     proprio_noise_scale = float(cfg.network_config.get("proprio_noise_scale", 0.0))
+    use_continuous_latent = bool(cfg.network_config.get("use_continuous_latent", False))
+    kl_weight = float(cfg.network_config.get("kl_weight", 0.0))
 
     # Shared mutable dict for dead code reinit data (populated by rollout callback)
     reinit_data = {} if dead_code_reinit else None
@@ -545,6 +547,7 @@ def main(cfg: DictConfig) -> None:
         use_rotation=use_rotation,
         coupled_residual_grad=coupled_residual_grad,
         proprio_noise_scale=proprio_noise_scale,
+        use_continuous_latent=use_continuous_latent,
     )
 
     # Initialize wandb
@@ -578,6 +581,8 @@ def main(cfg: DictConfig) -> None:
             "dead_code_reinit": dead_code_reinit,
             "dead_code_threshold": dead_code_threshold,
             "proprio_noise_scale": proprio_noise_scale,
+            "use_continuous_latent": use_continuous_latent,
+            "kl_weight": kl_weight,
         }
     )
 
@@ -645,6 +650,7 @@ def main(cfg: DictConfig) -> None:
         dead_code_threshold=dead_code_threshold,
         num_codes=num_codes,
         reinit_data=reinit_data,
+        kl_weight=kl_weight,
     )
 
     # Set the render env start frame to always be 0

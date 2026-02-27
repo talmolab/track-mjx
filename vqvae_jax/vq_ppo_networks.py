@@ -97,15 +97,17 @@ def make_vq_inference_fn(
             activations = None
 
             if get_activation:
-                logits, z_e, all_indices, activations = policy_network.apply(
-                    *params,
-                    observations,
-                    key_network,
-                    deterministic=deterministic,
-                    get_activation=True,
+                logits, z_e, all_indices, logvar, activations = (
+                    policy_network.apply(
+                        *params,
+                        observations,
+                        key_network,
+                        deterministic=deterministic,
+                        get_activation=True,
+                    )
                 )
             else:
-                logits, z_e, all_indices = policy_network.apply(
+                logits, z_e, all_indices, logvar = policy_network.apply(
                     *params, observations, key_network, deterministic=deterministic
                 )
 
@@ -185,7 +187,7 @@ def make_vq_logging_inference_fn(
             prev_indices: tuple[jnp.ndarray, ...] | jnp.ndarray | None = None,
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
-            logits, z_e, all_indices = policy_network.apply(
+            logits, z_e, all_indices, logvar = policy_network.apply(
                 *params,
                 observations,
                 key_network,
@@ -282,6 +284,7 @@ def make_vq_intention_ppo_networks(
     use_rotation: bool = False,
     coupled_residual_grad: bool = False,
     proprio_noise_scale: float = 0.0,
+    use_continuous_latent: bool = False,
 ) -> VQPPOImitationNetworks:
     """Create VQ-VAE intention-based PPO networks for imitation learning.
 
@@ -321,6 +324,7 @@ def make_vq_intention_ppo_networks(
         use_rotation=use_rotation,
         coupled_residual_grad=coupled_residual_grad,
         proprio_noise_scale=proprio_noise_scale,
+        use_continuous_latent=use_continuous_latent,
     )
 
     value_network = make_vq_dict_value_network(

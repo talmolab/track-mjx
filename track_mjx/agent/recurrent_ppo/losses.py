@@ -220,7 +220,8 @@ def compute_recurrent_ppo_loss(
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     # Importance sampling ratio
-    rho_s = jnp.exp(target_action_log_probs - behaviour_action_log_probs)
+    log_rho = target_action_log_probs - behaviour_action_log_probs
+    rho_s = jnp.exp(log_rho)
 
     # Clipped surrogate loss
     surrogate_loss1 = rho_s * advantages
@@ -228,6 +229,10 @@ def compute_recurrent_ppo_loss(
         jnp.clip(rho_s, 1 - clipping_epsilon, 1 + clipping_epsilon) * advantages
     )
     policy_loss = -jnp.mean(jnp.minimum(surrogate_loss1, surrogate_loss2))
+
+    # Diagnostic metrics (not used in loss, for logging only)
+    approx_kl = jnp.mean((rho_s - 1) - log_rho)
+    clip_frac = jnp.mean(jnp.abs(rho_s - 1) > clipping_epsilon)
 
     # Value function loss
     v_error = vs - baseline
@@ -270,6 +275,8 @@ def compute_recurrent_ppo_loss(
         "entropy_loss": entropy_loss,
         "latent_kl_weight": current_kl_weight,
         "latent_ar1_weight": current_ar1_weight,
+        "approx_kl": approx_kl,
+        "clip_frac": clip_frac,
     }
 
 

@@ -494,7 +494,7 @@ def train(
 
     optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
-        optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
+        optax.contrib.muon(learning_rate=learning_rate),
     )
 
     latent_kl_schedule = None

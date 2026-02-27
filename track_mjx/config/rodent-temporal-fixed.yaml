@@ -150,7 +150,7 @@ train_setup:
     num_envs: 1024
     num_timesteps: 6_000_000_000
     batch_size: 256
-    num_minibatches: 32
+    num_minibatches: 16
     num_updates_per_batch: 4              # Epochs per PPO update
     learning_rate: 1e-4
     grad_clip_threshold: 10.0
@@ -158,7 +158,7 @@ train_setup:
     discounting: 0.97
     gae_lambda: 0.97
     action_repeat: 1
-    entropy_cost: 5e-3
+    entropy_cost: 1e-2
     vf_loss_coefficient: 0.25
     reward_scaling: 1
     normalize_observations: true

@@ -107,11 +107,11 @@ network_config:
 
   # Encoder (MLP - processes task_obs observations)
   encoder_layer_sizes: [2048, 1024, 1024]
-  intention_size: 16
+  intention_size: 64
 
   # Decoder (RNN - processes latent + proprioception)
-  rnn_type: lstm                           # "simple", "gru", or "lstm"
-  rnn_hidden_sizes: [512, 256]            # Hidden sizes per RNN layer
+  rnn_type: simple                         # "simple", "gru", or "lstm"
+  rnn_hidden_sizes: [1024]                # Hidden sizes per RNN layer
   proprioception_noise_std: 0.1           # Multiplicative decoder state noise std
   min_macro_horizon: 4                    # Minimum steps before learned refresh
   max_macro_horizon: 32                   # Maximum forced refresh horizon

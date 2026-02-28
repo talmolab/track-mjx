@@ -267,6 +267,9 @@ def main(cfg: DictConfig) -> None:
         train_kwargs["gate_entropy_cost"] = cfg.network_config.get(
             "gate_entropy_cost", 1e-4
         )
+        train_kwargs["latent_entropy_cost"] = cfg.network_config.get(
+            "latent_entropy_cost", 0.0
+        )
         train_kwargs["discounting_gate"] = cfg.network_config.get(
             "discounting_gate", None
         )

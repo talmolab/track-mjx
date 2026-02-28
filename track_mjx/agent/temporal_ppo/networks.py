@@ -80,7 +80,9 @@ def reset_hidden_on_done(
     return [_reset_single_hidden(h, done_expanded, cell_type) for h in hidden]
 
 
-def _extract_top_hidden(hidden: list[HiddenState], cell_type: RNNCellType) -> jnp.ndarray:
+def _extract_top_hidden(
+    hidden: list[HiddenState], cell_type: RNNCellType
+) -> jnp.ndarray:
     """Gets the top-layer hidden activation used by the gate head."""
     top = hidden[-1]
     if cell_type == "lstm":
@@ -117,7 +119,9 @@ def _ramp_int(
     step_f = jnp.asarray(train_step, dtype=jnp.float32)
     frac = jnp.clip(step_f / float(ramp_steps), 0.0, 1.0)
     value = 1.0 + frac * (target_f - 1.0)
-    return jnp.maximum(jnp.asarray(1, dtype=jnp.int32), jnp.asarray(jnp.round(value), dtype=jnp.int32))
+    return jnp.maximum(
+        jnp.asarray(1, dtype=jnp.int32), jnp.asarray(jnp.round(value), dtype=jnp.int32)
+    )
 
 
 def compute_effective_horizons(
@@ -191,7 +195,9 @@ def reset_carry_on_done(
         decoder_hidden=reset_hidden_on_done(carry.decoder_hidden, done, cell_type),
         current_latent=jnp.where(done_expanded, 0.0, carry.current_latent),
         current_latent_mean=jnp.where(done_expanded, 0.0, carry.current_latent_mean),
-        current_latent_logvar=jnp.where(done_expanded, 0.0, carry.current_latent_logvar),
+        current_latent_logvar=jnp.where(
+            done_expanded, 0.0, carry.current_latent_logvar
+        ),
         segment_step=jnp.where(
             done,
             jnp.asarray(reset_segment_step, dtype=jnp.int32),
@@ -213,6 +219,26 @@ def bernoulli_entropy(logits: jnp.ndarray) -> jnp.ndarray:
     probs = jax.nn.sigmoid(logits)
     eps = 1e-8
     return -(probs * jnp.log(probs + eps) + (1.0 - probs) * jnp.log(1.0 - probs + eps))
+
+
+def gaussian_diag_log_prob(
+    mean: jnp.ndarray,
+    logvar: jnp.ndarray,
+    sample: jnp.ndarray,
+) -> jnp.ndarray:
+    """Computes diagonal-Gaussian log-prob."""
+    inv_var = jnp.exp(-logvar)
+    log_two_pi = jnp.log(2.0 * jnp.pi)
+    return -0.5 * jnp.sum(
+        log_two_pi + logvar + jnp.square(sample - mean) * inv_var,
+        axis=-1,
+    )
+
+
+def gaussian_diag_entropy(logvar: jnp.ndarray) -> jnp.ndarray:
+    """Computes diagonal-Gaussian entropy."""
+    log_two_pi_e = jnp.log(2.0 * jnp.pi * jnp.e)
+    return 0.5 * jnp.sum(logvar + log_two_pi_e, axis=-1)
 
 
 class TemporalDecoder(nn.Module):
@@ -243,12 +269,15 @@ class TemporalDecoder(nn.Module):
         x: jnp.ndarray,
         hidden: list[HiddenState],
         get_activation: bool = False,
-    ) -> tuple[jnp.ndarray, list[HiddenState], jnp.ndarray] | tuple[
-        jnp.ndarray,
-        list[HiddenState],
-        jnp.ndarray,
-        dict[str, jnp.ndarray],
-    ]:
+    ) -> (
+        tuple[jnp.ndarray, list[HiddenState], jnp.ndarray]
+        | tuple[
+            jnp.ndarray,
+            list[HiddenState],
+            jnp.ndarray,
+            dict[str, jnp.ndarray],
+        ]
+    ):
         if get_activation:
             activations: dict[str, jnp.ndarray] = {}
 
@@ -317,9 +346,12 @@ class TemporalIntentionNetwork(nn.Module):
         key: jax.Array,
         deterministic: bool = False,
         gate_sample_override: jnp.ndarray | None = None,
+        latent_override: jnp.ndarray | None = None,
         train_step: jnp.ndarray | None = None,
         get_activation: bool = False,
     ) -> tuple[
+        jnp.ndarray,
+        jnp.ndarray,
         jnp.ndarray,
         jnp.ndarray,
         jnp.ndarray,
@@ -353,7 +385,9 @@ class TemporalIntentionNetwork(nn.Module):
         eff_min, _, eff_max = self._effective_horizons(train_step)
 
         if self.boundary_mode == "learned":
-            prev_top_hidden = _extract_top_hidden(carry.decoder_hidden, self.cell_type)
+            prev_top_hidden = jax.lax.stop_gradient(
+                _extract_top_hidden(carry.decoder_hidden, self.cell_type)
+            )
             gate_logits = jnp.squeeze(self.gate_head(prev_top_hidden), axis=-1)
             gate_probs = jax.nn.sigmoid(gate_logits)
 
@@ -378,7 +412,9 @@ class TemporalIntentionNetwork(nn.Module):
             else:
                 gate_samples = gate_sample_override.astype(jnp.float32)
 
-            gate_valid = (carry.segment_step >= eff_min) & (carry.segment_step < eff_max)
+            gate_valid = (carry.segment_step >= eff_min) & (
+                carry.segment_step < eff_max
+            )
             refresh_from_gate = gate_valid & (gate_samples > 0.5)
             refresh_mask = (carry.segment_step >= eff_max) | refresh_from_gate
         else:
@@ -405,11 +441,22 @@ class TemporalIntentionNetwork(nn.Module):
         reused_mean = jax.lax.stop_gradient(carry.current_latent_mean)
         reused_logvar = jax.lax.stop_gradient(carry.current_latent_logvar)
 
-        selected_z = jnp.where(refresh_expanded, fresh_z, reused_z)
+        if latent_override is None:
+            selected_z = jnp.where(refresh_expanded, fresh_z, reused_z)
+        else:
+            selected_z = latent_override.astype(fresh_z.dtype)
         selected_mean = jnp.where(refresh_expanded, fresh_mean, reused_mean)
         selected_logvar = jnp.where(refresh_expanded, fresh_logvar, reused_logvar)
 
-        decoder_input = jnp.concatenate([selected_z, egocentric_obs], axis=-1)
+        fresh_latent_log_prob = gaussian_diag_log_prob(
+            fresh_mean, fresh_logvar, selected_z
+        )
+        latent_log_prob = jnp.where(refresh_mask, fresh_latent_log_prob, 0.0)
+        fresh_latent_entropy = gaussian_diag_entropy(fresh_logvar)
+        latent_entropy = jnp.where(refresh_mask, fresh_latent_entropy, 0.0)
+
+        decoder_latent = jax.lax.stop_gradient(selected_z)
+        decoder_input = jnp.concatenate([decoder_latent, egocentric_obs], axis=-1)
         if get_activation:
             (
                 motor_logits,
@@ -450,6 +497,8 @@ class TemporalIntentionNetwork(nn.Module):
             selected_mean,
             selected_logvar,
             selected_z,
+            latent_log_prob,
+            latent_entropy,
             gate_logits,
             gate_probs,
             gate_samples,
@@ -507,7 +556,9 @@ class LatentConditionedValueMLP(nn.Module):
         latent: jnp.ndarray,
     ) -> jnp.ndarray:
         if self.condition_on_latent:
-            x = jnp.concatenate([obs["task_obs"], obs["proprioception"], latent], axis=-1)
+            x = jnp.concatenate(
+                [obs["task_obs"], obs["proprioception"], latent], axis=-1
+            )
         else:
             x = jnp.concatenate([obs["task_obs"], obs["proprioception"]], axis=-1)
 
@@ -535,7 +586,9 @@ def make_temporal_value_network(
 
     dummy_obs = {
         "task_obs": jnp.zeros((1, obs_sizes["task_obs"]), dtype=jnp.float32),
-        "proprioception": jnp.zeros((1, obs_sizes["proprioception"]), dtype=jnp.float32),
+        "proprioception": jnp.zeros(
+            (1, obs_sizes["proprioception"]), dtype=jnp.float32
+        ),
     }
     dummy_latent = jnp.zeros((1, latent_size), dtype=jnp.float32)
 
@@ -549,7 +602,9 @@ def make_temporal_value_network(
         latent: jnp.ndarray,
     ) -> jnp.ndarray:
         value_normalizer = normalizer_select(processor_params, value_obs_key)
-        normalized_obs = running_statistics.normalize(obs[value_obs_key], value_normalizer)
+        normalized_obs = running_statistics.normalize(
+            obs[value_obs_key], value_normalizer
+        )
         return value_module.apply(value_params, normalized_obs, latent)
 
     return TemporalValueNetwork(init=init, apply=apply)
@@ -591,6 +646,8 @@ def make_inference_fn(
                 latent_mean,
                 latent_logvar,
                 latent_z,
+                latent_log_prob,
+                latent_entropy,
                 gate_logits,
                 gate_probs,
                 gate_samples,
@@ -612,6 +669,8 @@ def make_inference_fn(
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                     "latent": latent_z,
+                    "latent_log_prob": latent_log_prob,
+                    "latent_entropy": latent_entropy,
                     "refresh_mask": refresh_mask,
                     "gate_prob": gate_probs,
                     "gate_sample": gate_samples,
@@ -626,7 +685,9 @@ def make_inference_fn(
             motor_log_prob = parametric_action_distribution.log_prob(
                 motor_logits, raw_actions
             )
-            postprocessed_actions = parametric_action_distribution.postprocess(raw_actions)
+            postprocessed_actions = parametric_action_distribution.postprocess(
+                raw_actions
+            )
 
             gate_log_prob = bernoulli_log_prob(gate_logits, gate_samples)
 
@@ -634,6 +695,8 @@ def make_inference_fn(
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
                 "latent": latent_z,
+                "latent_log_prob": latent_log_prob,
+                "latent_entropy": latent_entropy,
                 "log_prob": motor_log_prob,
                 "raw_action": raw_actions,
                 "logits": motor_logits,
@@ -676,6 +739,8 @@ def make_logging_inference_fn(
                 latent_mean,
                 latent_logvar,
                 latent_z,
+                _,
+                _,
                 gate_logits,
                 gate_probs,
                 gate_samples,
@@ -761,7 +826,9 @@ def make_temporal_intention_ppo_networks(
         eval_gate_threshold=eval_gate_threshold,
     )
 
-    reset_segment_step = macro_horizon if boundary_mode == "fixed" else max_macro_horizon
+    reset_segment_step = (
+        macro_horizon if boundary_mode == "fixed" else max_macro_horizon
+    )
 
     def policy_apply(
         processor_params: running_statistics.RunningStatisticsState,
@@ -771,11 +838,14 @@ def make_temporal_intention_ppo_networks(
         key: jax.Array,
         deterministic: bool = False,
         gate_sample_override: jnp.ndarray | None = None,
+        latent_override: jnp.ndarray | None = None,
         train_step: jnp.ndarray | None = None,
         get_activation: bool = False,
     ):
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
-        normalized_obs = running_statistics.normalize(obs[policy_obs_key], policy_normalizer)
+        normalized_obs = running_statistics.normalize(
+            obs[policy_obs_key], policy_normalizer
+        )
         return policy_module.apply(
             policy_params,
             obs=normalized_obs,
@@ -783,6 +853,7 @@ def make_temporal_intention_ppo_networks(
             key=key,
             deterministic=deterministic,
             gate_sample_override=gate_sample_override,
+            latent_override=latent_override,
             train_step=train_step,
             get_activation=get_activation,
         )
@@ -798,6 +869,7 @@ def make_temporal_intention_ppo_networks(
         train_step: jnp.ndarray | None = None,
         stored_keys: jax.Array | None = None,
         stored_gate_samples: jax.Array | None = None,
+        stored_latents: jnp.ndarray | None = None,
     ):
         policy_normalizer = normalizer_select(processor_params, policy_obs_key)
         obs_seq_normalized = running_statistics.normalize(
@@ -830,56 +902,128 @@ def make_temporal_intention_ppo_networks(
                     f"stored_gate_samples has shape {stored_gate_samples.shape}, expected {expected_gate_shape}."
                 )
 
+        if stored_latents is not None:
+            ref_obs = obs_seq_normalized["task_obs"]
+            expected_latent_shape = ref_obs.shape[:2] + (
+                initial_carry.current_latent.shape[-1],
+            )
+            if stored_latents.shape != expected_latent_shape:
+                raise ValueError(
+                    f"stored_latents has shape {stored_latents.shape}, expected {expected_latent_shape}."
+                )
+
         if stored_keys is not None:
-
-            def scan_step(carry, inputs):
-                obs_t, done_t, keys_t, gate_t = inputs
-                (
-                    motor_logits,
-                    latent_mean,
-                    latent_logvar,
-                    latent_z,
-                    gate_logits,
-                    gate_probs,
-                    gate_samples,
-                    gate_valid,
-                    refresh_mask,
-                    new_carry,
-                ) = policy_module.apply(
-                    policy_params,
-                    obs=obs_t,
-                    carry=carry,
-                    key=keys_t,
-                    deterministic=deterministic,
-                    gate_sample_override=gate_t,
-                    train_step=train_step,
-                )
-                new_carry = reset_carry_on_done(
-                    new_carry,
-                    done_t,
-                    cell_type=rnn_type,
-                    reset_segment_step=eff_max,
-                )
-                return new_carry, (
-                    motor_logits,
-                    latent_mean,
-                    latent_logvar,
-                    latent_z,
-                    gate_logits,
-                    gate_probs,
-                    gate_samples,
-                    gate_valid,
-                    refresh_mask,
-                )
-
             if stored_gate_samples is None:
                 stored_gate_samples = jnp.zeros_like(done_seq, dtype=jnp.float32)
+            if stored_latents is not None:
 
-            final_carry, outputs = jax.lax.scan(
-                scan_step,
-                initial_carry,
-                (obs_seq_normalized, done_seq, stored_keys, stored_gate_samples),
-            )
+                def scan_step(carry, inputs):
+                    obs_t, done_t, keys_t, gate_t, latent_t = inputs
+                    (
+                        motor_logits,
+                        latent_mean,
+                        latent_logvar,
+                        latent_z,
+                        latent_log_prob,
+                        latent_entropy,
+                        gate_logits,
+                        gate_probs,
+                        gate_samples,
+                        gate_valid,
+                        refresh_mask,
+                        new_carry,
+                    ) = policy_module.apply(
+                        policy_params,
+                        obs=obs_t,
+                        carry=carry,
+                        key=keys_t,
+                        deterministic=deterministic,
+                        gate_sample_override=gate_t,
+                        latent_override=latent_t,
+                        train_step=train_step,
+                    )
+                    new_carry = reset_carry_on_done(
+                        new_carry,
+                        done_t,
+                        cell_type=rnn_type,
+                        reset_segment_step=eff_max,
+                    )
+                    return new_carry, (
+                        motor_logits,
+                        latent_mean,
+                        latent_logvar,
+                        latent_z,
+                        latent_log_prob,
+                        latent_entropy,
+                        gate_logits,
+                        gate_probs,
+                        gate_samples,
+                        gate_valid,
+                        refresh_mask,
+                    )
+
+                final_carry, outputs = jax.lax.scan(
+                    scan_step,
+                    initial_carry,
+                    (
+                        obs_seq_normalized,
+                        done_seq,
+                        stored_keys,
+                        stored_gate_samples,
+                        stored_latents,
+                    ),
+                )
+            else:
+
+                def scan_step(carry, inputs):
+                    obs_t, done_t, keys_t, gate_t = inputs
+                    (
+                        motor_logits,
+                        latent_mean,
+                        latent_logvar,
+                        latent_z,
+                        latent_log_prob,
+                        latent_entropy,
+                        gate_logits,
+                        gate_probs,
+                        gate_samples,
+                        gate_valid,
+                        refresh_mask,
+                        new_carry,
+                    ) = policy_module.apply(
+                        policy_params,
+                        obs=obs_t,
+                        carry=carry,
+                        key=keys_t,
+                        deterministic=deterministic,
+                        gate_sample_override=gate_t,
+                        train_step=train_step,
+                    )
+                    new_carry = reset_carry_on_done(
+                        new_carry,
+                        done_t,
+                        cell_type=rnn_type,
+                        reset_segment_step=eff_max,
+                    )
+                    return new_carry, (
+                        motor_logits,
+                        latent_mean,
+                        latent_logvar,
+                        latent_z,
+                        latent_log_prob,
+                        latent_entropy,
+                        gate_logits,
+                        gate_probs,
+                        gate_samples,
+                        gate_valid,
+                        refresh_mask,
+                    )
+
+                final_carry, outputs = jax.lax.scan(
+                    scan_step,
+                    initial_carry,
+                    (obs_seq_normalized, done_seq, stored_keys, stored_gate_samples),
+                )
         else:
 
             def scan_step(carry_key, inputs):
@@ -892,6 +1036,8 @@ def make_temporal_intention_ppo_networks(
                     latent_mean,
                     latent_logvar,
                     latent_z,
+                    latent_log_prob,
+                    latent_entropy,
                     gate_logits,
                     gate_probs,
                     gate_samples,
@@ -904,6 +1050,7 @@ def make_temporal_intention_ppo_networks(
                     carry=carry,
                     key=step_key,
                     deterministic=deterministic,
+                    latent_override=None,
                     train_step=train_step,
                 )
                 new_carry = reset_carry_on_done(
@@ -918,6 +1065,8 @@ def make_temporal_intention_ppo_networks(
                     latent_mean,
                     latent_logvar,
                     latent_z,
+                    latent_log_prob,
+                    latent_entropy,
                     gate_logits,
                     gate_probs,
                     gate_samples,
@@ -934,6 +1083,8 @@ def make_temporal_intention_ppo_networks(
             latent_means,
             latent_logvars,
             latent_z,
+            latent_log_prob,
+            latent_entropy,
             gate_logits,
             gate_probs,
             gate_samples,
@@ -946,6 +1097,8 @@ def make_temporal_intention_ppo_networks(
             latent_means,
             latent_logvars,
             latent_z,
+            latent_log_prob,
+            latent_entropy,
             gate_logits,
             gate_probs,
             gate_samples,
@@ -956,7 +1109,9 @@ def make_temporal_intention_ppo_networks(
 
     dummy_obs = {
         "task_obs": jnp.zeros((1, obs_sizes["task_obs"]), dtype=jnp.float32),
-        "proprioception": jnp.zeros((1, obs_sizes["proprioception"]), dtype=jnp.float32),
+        "proprioception": jnp.zeros(
+            (1, obs_sizes["proprioception"]), dtype=jnp.float32
+        ),
     }
     dummy_key = jax.random.PRNGKey(0)
 

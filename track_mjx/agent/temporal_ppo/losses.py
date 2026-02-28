@@ -76,7 +76,9 @@ def _ar1_single_batch(
 
         next_prev_z = jnp.where(refresh_t[..., None], z_t, prev_z)
         next_has_prev = jnp.where(refresh_t, True, has_prev)
-        next_steps = jnp.where(refresh_t, 1, steps_since_prev + has_prev.astype(jnp.int32))
+        next_steps = jnp.where(
+            refresh_t, 1, steps_since_prev + has_prev.astype(jnp.int32)
+        )
 
         # Break latent continuity across episode boundaries.
         next_has_prev = jnp.where(continuation, next_has_prev, False)
@@ -136,6 +138,7 @@ def compute_temporal_ppo_loss(
     temporal_ppo_network: networks.TemporalPPONetworks,
     entropy_cost: float = 1e-4,
     gate_entropy_cost: float = 1e-4,
+    latent_entropy_cost: float = 0.0,
     latent_kl_weight: float = 1e-3,
     latent_ar1_weight: float = 1e-3,
     discounting: float = 0.9,
@@ -193,12 +196,15 @@ def compute_temporal_ppo_loss(
 
     stored_keys = data.extras["policy_extras"].get("policy_rng")
     stored_gate_samples = data.extras["policy_extras"].get("gate_sample")
+    stored_latents = data.extras["policy_extras"]["latent"]
 
     (
         motor_logits,
         latent_mean,
         latent_logvar,
         latent_z,
+        target_latent_log_prob,
+        latent_entropy_per_step,
         gate_logits,
         _,
         gate_samples,
@@ -216,15 +222,19 @@ def compute_temporal_ppo_loss(
         train_step=step,
         stored_keys=stored_keys,
         stored_gate_samples=stored_gate_samples,
+        stored_latents=stored_latents,
     )
 
-    baseline = value_apply(normalizer_params, params.value, data.observation, latent_z)
+    detached_latent_z = jax.lax.stop_gradient(latent_z)
+    baseline = value_apply(
+        normalizer_params, params.value, data.observation, detached_latent_z
+    )
     last_next_obs = jax.tree_util.tree_map(lambda x: x[-1], data.next_observation)
     bootstrap_value = value_apply(
         normalizer_params,
         params.value,
         last_next_obs,
-        final_carry.current_latent,
+        jax.lax.stop_gradient(final_carry.current_latent),
     )
 
     rewards = data.reward * reward_scaling
@@ -255,12 +265,27 @@ def compute_temporal_ppo_loss(
     motor_surr2 = (
         jnp.clip(motor_ratio, 1 - clipping_epsilon, 1 + clipping_epsilon) * advantages
     )
-    policy_loss = -jnp.mean(jnp.minimum(motor_surr1, motor_surr2))
+    motor_policy_loss = -jnp.mean(jnp.minimum(motor_surr1, motor_surr2))
+
+    refresh_denom = jnp.maximum(jnp.sum(refresh_mask), 1.0)
+    behaviour_latent_log_prob = data.extras["policy_extras"]["latent_log_prob"]
+    latent_ratio = jnp.exp(target_latent_log_prob - behaviour_latent_log_prob)
+    latent_surr1 = latent_ratio * advantages
+    latent_surr2 = (
+        jnp.clip(latent_ratio, 1 - clipping_epsilon, 1 + clipping_epsilon) * advantages
+    )
+    latent_policy_loss = (
+        -jnp.sum(refresh_mask * jnp.minimum(latent_surr1, latent_surr2)) / refresh_denom
+    )
+    latent_entropy = jnp.sum(latent_entropy_per_step) / refresh_denom
+    latent_entropy_loss = latent_entropy_cost * -latent_entropy
 
     v_error = vs - baseline
     v_loss = jnp.mean(v_error * v_error) * 0.5 * vf_coefficient
 
-    entropy = jnp.mean(parametric_action_distribution.entropy(motor_logits, entropy_key))
+    entropy = jnp.mean(
+        parametric_action_distribution.entropy(motor_logits, entropy_key)
+    )
     entropy_loss = entropy_cost * -entropy
 
     # Gate losses (learned boundary mode only).
@@ -296,7 +321,9 @@ def compute_temporal_ppo_loss(
         )
 
         valid_denom = jnp.maximum(jnp.sum(gate_valid), 1.0)
-        gate_policy_loss = -jnp.sum(gate_valid * jnp.minimum(gate_surr1, gate_surr2)) / valid_denom
+        gate_policy_loss = (
+            -jnp.sum(gate_valid * jnp.minimum(gate_surr1, gate_surr2)) / valid_denom
+        )
 
         gate_entropy_per_step = networks.bernoulli_entropy(gate_logits)
         gate_entropy = jnp.sum(gate_valid * gate_entropy_per_step) / valid_denom
@@ -331,9 +358,11 @@ def compute_temporal_ppo_loss(
     refresh_rate = jnp.mean(refresh_mask)
 
     total_loss = (
-        policy_loss
+        motor_policy_loss
         + v_loss
         + entropy_loss
+        + latent_policy_loss
+        + latent_entropy_loss
         + latent_loss
         + gate_policy_loss
         + gate_entropy_loss
@@ -342,9 +371,13 @@ def compute_temporal_ppo_loss(
 
     return total_loss, {
         "total_loss": total_loss,
-        "policy_loss": policy_loss,
+        "policy_loss": motor_policy_loss,
+        "motor_policy_loss": motor_policy_loss,
         "v_loss": v_loss,
         "entropy_loss": entropy_loss,
+        "latent_policy_loss": latent_policy_loss,
+        "latent_entropy": latent_entropy,
+        "latent_entropy_loss": latent_entropy_loss,
         "total_latent_loss": latent_loss,
         "latent_kl_loss": kl_weighted,
         "latent_ar1_loss": ar1_weighted,

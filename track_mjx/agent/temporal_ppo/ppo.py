@@ -267,6 +267,7 @@ def train(
     learning_rate: float = 1e-4,
     entropy_cost: float = 1e-4,
     gate_entropy_cost: float = 1e-4,
+    latent_entropy_cost: float = 0.0,
     latent_kl_weight: float = 1e-3,
     latent_ar1_weight: float = 1e-3,
     discounting: float = 0.9,
@@ -443,6 +444,7 @@ def train(
         temporal_ppo_network=temporal_network,
         entropy_cost=entropy_cost,
         gate_entropy_cost=gate_entropy_cost,
+        latent_entropy_cost=latent_entropy_cost,
         latent_kl_weight=latent_kl_weight,
         latent_ar1_weight=latent_ar1_weight,
         discounting=discounting,
@@ -578,7 +580,9 @@ def train(
     def training_step(
         carry: Tuple[TrainingState, envs.State, TemporalPolicyCarry, PRNGKey, int],
         unused_t,
-    ) -> Tuple[Tuple[TrainingState, envs.State, TemporalPolicyCarry, PRNGKey, int], Metrics]:
+    ) -> Tuple[
+        Tuple[TrainingState, envs.State, TemporalPolicyCarry, PRNGKey, int], Metrics
+    ]:
         training_state, state, policy_carry, key_train, it = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key_train, 3)
 
@@ -626,7 +630,9 @@ def train(
         policy_extras["initial_segment_step"] = initial_policy_carry.segment_step
         policy_extras["initial_current_latent"] = initial_policy_carry.current_latent
         policy_extras["initial_latent_mean"] = initial_policy_carry.current_latent_mean
-        policy_extras["initial_latent_logvar"] = initial_policy_carry.current_latent_logvar
+        policy_extras["initial_latent_logvar"] = (
+            initial_policy_carry.current_latent_logvar
+        )
 
         data = types.Transition(
             observation=data.observation,
@@ -855,7 +861,9 @@ def train(
 
             if num_resets_per_eval > 0:
                 env_state = reset_fn((training_state, env_state), key_envs)
-                policy_carry = temporal_network.policy_network.init_carry(envs_per_device)
+                policy_carry = temporal_network.policy_network.init_carry(
+                    envs_per_device
+                )
                 policy_carry = jax.device_put_replicated(
                     policy_carry,
                     jax.local_devices()[:local_devices_to_use],

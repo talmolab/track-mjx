@@ -123,6 +123,7 @@ network_config:
 
   # Variational layer regularization losses
   kl_schedule: true
+  latent_entropy_cost: 0.0
   latent_kl_weight: 1e-3
   latent_ar1_weight: 0
 

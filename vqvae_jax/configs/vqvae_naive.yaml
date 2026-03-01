@@ -108,9 +108,9 @@ network_config:
   decoder_layer_sizes: [512, 512, 256, 256]
   critic_layer_sizes: [512, 512, 256, 256]
 
-  # Latent space settings - smaller for naive experiment
-  intention_size: 8
-  latent_dim: 8
+  # Latent space settings
+  intention_size: 16
+  latent_dim: 16                # Discrete codebook dimension
 
   # VQ-VAE specific settings
   num_codes: 32
@@ -119,8 +119,6 @@ network_config:
   codebook_entropy_weight: 0.1
   codebook_entropy_temperature: 1.0
   codebook_init_scale: 1.0
-  ce_stickiness_cost: 0.0
-  ce_stickiness_temperature: 1.0
   stickiness_bias: [0.0, 0.0]
 
   # Dead code reinitialization
@@ -135,7 +133,12 @@ network_config:
 
   # Continuous latent (hybrid VQ+VAE) - ENABLED
   use_continuous_latent: true
-  kl_weight: 0.5
+  continuous_latent_dim: 4          # Dimension of continuous head
+  kl_weight: 0.1                    # Lower for two-head architecture
+
+  # Code chunking (Semi-MDP temporal commitment)
+  use_code_chunking: false
+  code_commitment_horizon: 0
 
   # Disable KL schedule
   kl_schedule: false

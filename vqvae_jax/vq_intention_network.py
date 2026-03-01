@@ -38,20 +38,23 @@ class VQEncoder(nn.Module):
 
     When use_continuous_latent=False (default), outputs a single deterministic
     embedding z_e via a single Dense projection. When use_continuous_latent=True,
-    outputs (mean, logvar) via two separate Dense projections for VAE-style
-    reparameterization.
+    outputs (z_e_discrete, cont_mean, cont_logvar) via three separate Dense
+    projections — a discrete head for VQ quantization and a continuous head for
+    VAE-style reparameterization with an independently sized latent.
 
     Attributes:
         layer_sizes: Hidden layer dimensions for the MLP.
-        latent_dim: Dimension of the output embedding (must match codebook).
+        latent_dim: Dimension of the discrete output embedding (must match codebook).
+        continuous_latent_dim: Dimension of the continuous head (mean/logvar).
         activation: Activation function (default: SiLU).
         kernel_init: Weight initializer (default: LeCun uniform).
         bias: Whether to use bias terms in Dense layers.
-        use_continuous_latent: If True, output (mean, logvar) instead of z_e.
+        use_continuous_latent: If True, output two-head (discrete + continuous).
     """
 
     layer_sizes: Sequence[int]
     latent_dim: int
+    continuous_latent_dim: int = 4
     activation: networks.ActivationFn = nn.silu
     kernel_init: networks.Initializer = jax.nn.initializers.lecun_uniform()
     bias: bool = True
@@ -71,8 +74,9 @@ class VQEncoder(nn.Module):
             When use_continuous_latent=False:
                 z_e: shape [..., latent_dim], or (z_e, activations) dict.
             When use_continuous_latent=True:
-                (mean, logvar): each shape [..., latent_dim],
-                or (mean, logvar, activations) dict.
+                (z_e_discrete, cont_mean, cont_logvar): shapes
+                [..., latent_dim], [..., continuous_latent_dim],
+                [..., continuous_latent_dim], or (..., activations) dict.
         """
         activations = {}
 
@@ -90,13 +94,21 @@ class VQEncoder(nn.Module):
                 activations[f"layer_{i}"] = x
 
         if self.use_continuous_latent:
-            mean = nn.Dense(self.latent_dim, name="latent_mean")(x)
-            logvar = nn.Dense(self.latent_dim, name="latent_logvar")(x)
+            # Discrete head: goes to VQ (reuses 'latent_projection' for compat)
+            z_e_discrete = nn.Dense(self.latent_dim, name="latent_projection")(x)
+            # Continuous head: separate dimension
+            cont_mean = nn.Dense(
+                self.continuous_latent_dim, name="continuous_mean"
+            )(x)
+            cont_logvar = nn.Dense(
+                self.continuous_latent_dim, name="continuous_logvar"
+            )(x)
             if get_activation:
-                activations["mean"] = mean
-                activations["logvar"] = logvar
-                return mean, logvar, activations
-            return mean, logvar
+                activations["z_e_discrete"] = z_e_discrete
+                activations["cont_mean"] = cont_mean
+                activations["cont_logvar"] = cont_logvar
+                return z_e_discrete, cont_mean, cont_logvar, activations
+            return z_e_discrete, cont_mean, cont_logvar
         else:
             # Project to latent dimension (no activation on final layer)
             z_e = nn.Dense(self.latent_dim, name="latent_projection")(x)
@@ -466,12 +478,14 @@ class VQIntentionNetwork(nn.Module):
     coupled_residual_grad: bool = False
     proprio_noise_scale: float = 0.0
     use_continuous_latent: bool = False
+    continuous_latent_dim: int = 4
 
     def setup(self):
         """Initialize encoder, quantizer, and decoder submodules."""
         self.encoder = VQEncoder(
             layer_sizes=self.encoder_layers,
             latent_dim=self.latent_dim,
+            continuous_latent_dim=self.continuous_latent_dim,
             use_continuous_latent=self.use_continuous_latent,
         )
         self.quantizer = ResidualVectorQuantizer(
@@ -516,10 +530,11 @@ class VQIntentionNetwork(nn.Module):
 
         Returns:
             action_params: Shape [..., action_size*2].
-            z_e_or_mean: Continuous encoder output (z_e) or mean when
-                use_continuous_latent=True, shape [..., latent_dim].
+            z_e: Discrete encoder output, shape [..., latent_dim].
+                Used for VQ commitment loss.
             all_indices: Tuple of D index arrays, each shape [...].
-            logvar: logvar when use_continuous_latent=True, else None.
+            logvar: (cont_mean, cont_logvar) tuple when use_continuous_latent=True,
+                else None. Each shape [..., continuous_latent_dim].
             (optional) extras: Dict of activations if get_activation=True
                 (appended as 5th element).
         """
@@ -543,24 +558,24 @@ class VQIntentionNetwork(nn.Module):
             reparam_key = base_key
 
         if self.use_continuous_latent:
-            # Encoder outputs (mean, logvar) or (mean, logvar, activations)
+            # Two-head encoder: discrete + continuous
             if get_activation:
-                mean, logvar, encoder_activations = self.encoder(
-                    traj, get_activation=True
+                z_e_discrete, cont_mean, cont_logvar, encoder_activations = (
+                    self.encoder(traj, get_activation=True)
                 )
             else:
-                mean, logvar = self.encoder(traj)
+                z_e_discrete, cont_mean, cont_logvar = self.encoder(traj)
 
-            # Reparameterize: z_e = mean + exp(0.5*logvar) * eps
+            # Reparameterize continuous head
             if deterministic:
-                z_e_sampled = mean
+                z_e_sampled = cont_mean
             else:
-                eps = jax.random.normal(reparam_key, mean.shape)
-                z_e_sampled = mean + jnp.exp(0.5 * logvar) * eps
+                eps = jax.random.normal(reparam_key, cont_mean.shape)
+                z_e_sampled = cont_mean + jnp.exp(0.5 * cont_logvar) * eps
 
-            # VQ quantizes the MEAN (not sampled z_e)
+            # VQ quantizes the discrete head
             z_hat_st, all_indices, all_z_q, all_residuals = self.quantizer(
-                mean, prev_indices=prev_indices
+                z_e_discrete, prev_indices=prev_indices
             )
 
             # Decoder input: [z_hat_st, z_e_sampled, proprioception]
@@ -573,16 +588,17 @@ class VQIntentionNetwork(nn.Module):
                 )
                 return (
                     action,
-                    mean,
+                    z_e_discrete,
                     all_indices,
-                    logvar,
+                    (cont_mean, cont_logvar),
                     {
                         "encoder": encoder_activations,
                         "decoder": decoder_activations,
                         "egocentric_obs": egocentric_obs,
                         "traj_obs": traj,
-                        "mean": mean,
-                        "logvar": logvar,
+                        "z_e_discrete": z_e_discrete,
+                        "cont_mean": cont_mean,
+                        "cont_logvar": cont_logvar,
                         "z_e_sampled": z_e_sampled,
                         "all_z_q": all_z_q,
                         "all_residuals": all_residuals,
@@ -592,7 +608,7 @@ class VQIntentionNetwork(nn.Module):
                 )
             else:
                 action, _ = self.decoder(concatenated)
-                return action, mean, all_indices, logvar
+                return action, z_e_discrete, all_indices, (cont_mean, cont_logvar)
         else:
             # Original deterministic path
             if get_activation:
@@ -634,12 +650,343 @@ class VQIntentionNetwork(nn.Module):
                 action, _ = self.decoder(concatenated)
                 return action, z_e, all_indices, None
 
+    def forward_step_chunked(
+        self,
+        obs: Mapping[str, jnp.ndarray],
+        held_d0_idx: jnp.ndarray,
+        tau: jnp.ndarray,
+        commitment_horizon: int,
+        key: jax.Array | None = None,
+        deterministic: bool = False,
+    ) -> tuple[
+        jnp.ndarray,
+        jnp.ndarray,
+        tuple[jnp.ndarray, jnp.ndarray],
+        tuple[jnp.ndarray, jnp.ndarray] | None,
+        tuple[jnp.ndarray, jnp.ndarray],
+    ]:
+        """Single-timestep forward with D0 temporal commitment.
+
+        Args:
+            obs: Dict obs, each value shape [B, ...] (single timestep).
+            held_d0_idx: Currently held D0 code index, shape [B].
+            tau: Timer value, shape [B]. 0 = manager step.
+            commitment_horizon: H.
+            key: PRNG key for noise/reparameterization.
+            deterministic: If True, skip noise.
+
+        Returns:
+            action_params: Shape [B, action_size*2].
+            z_e_or_mean: Shape [B, latent_dim].
+            all_indices: Tuple of (d0_idx, d1_idx), each shape [B].
+            logvar: Shape [B, latent_dim] or None.
+            new_chunk_state: Tuple of (new_held_d0, new_tau), each shape [B].
+        """
+        traj = obs["imitation_target"]
+        egocentric_obs = obs["proprioception"]
+        H = commitment_horizon
+
+        # PRNG key management
+        reparam_key = None
+        if self.proprio_noise_scale > 0.0 and not deterministic and key is not None:
+            if self.use_continuous_latent:
+                noise_key, reparam_key = jax.random.split(key)
+            else:
+                noise_key = key
+            noise = (
+                jax.random.normal(noise_key, egocentric_obs.shape)
+                * self.proprio_noise_scale
+            )
+            egocentric_obs = egocentric_obs + noise
+        elif self.use_continuous_latent and not deterministic and key is not None:
+            reparam_key = key
+
+        if self.use_continuous_latent:
+            z_e_discrete, cont_mean, cont_logvar = self.encoder(traj)
+            if deterministic or reparam_key is None:
+                z_e_sampled = cont_mean
+            else:
+                eps = jax.random.normal(reparam_key, cont_mean.shape)
+                z_e_sampled = cont_mean + jnp.exp(0.5 * cont_logvar) * eps
+            vq_input = z_e_discrete
+        else:
+            vq_input = self.encoder(traj)
+            cont_mean = None
+            cont_logvar = None
+            z_e_sampled = None
+
+        codebook_0 = self.quantizer.codebooks[0].embeddings
+        codebook_1 = self.quantizer.codebooks[1].embeddings
+
+        # Manager vs worker
+        is_manager = tau == 0  # [B]
+
+        # Fresh D0 quantization (with stickiness toward held code)
+        bias_d0 = self.quantizer._bias_per_level[0]
+        fresh_d0_z_q, fresh_d0_idx, _ = _quantize_single_level(
+            z_e=vq_input,
+            codebook=codebook_0,
+            num_codes=self.num_codes,
+            latent_dim=self.latent_dim,
+            stickiness_bias=bias_d0,
+            prev_indices=held_d0_idx,
+            use_rotation=False,
+        )
+
+        # Select fresh or held D0
+        held_d0_z_q = codebook_0[held_d0_idx]
+        d0_idx = jnp.where(is_manager, fresh_d0_idx, held_d0_idx)
+        # Expand is_manager for broadcasting against [B, D] (handles scalar tau too)
+        is_manager_expanded = jnp.expand_dims(is_manager, axis=-1)
+        d0_z_q = jnp.where(is_manager_expanded, fresh_d0_z_q, held_d0_z_q)
+
+        # STE for D0
+        z_q_st_d0 = (
+            vq_input
+            - jax.lax.stop_gradient(vq_input)
+            + jax.lax.stop_gradient(d0_z_q)
+        )
+
+        # D1: always fresh
+        residual = vq_input - jax.lax.stop_gradient(d0_z_q)
+        _, d1_idx, z_q_st_d1 = _quantize_single_level(
+            z_e=residual,
+            codebook=codebook_1,
+            num_codes=self.num_codes,
+            latent_dim=self.latent_dim,
+            stickiness_bias=0.0,
+            prev_indices=None,
+            use_rotation=self.quantizer.use_rotation,
+        )
+
+        # Decode
+        z_hat_st = z_q_st_d0 + z_q_st_d1
+        if self.use_continuous_latent:
+            concatenated = jnp.concatenate(
+                [z_hat_st, z_e_sampled, egocentric_obs], axis=-1
+            )
+        else:
+            concatenated = jnp.concatenate(
+                [z_hat_st, egocentric_obs], axis=-1
+            )
+        action, _ = self.decoder(concatenated)
+
+        # Update chunk state
+        new_tau = (tau + 1) % H
+        new_held_d0 = d0_idx
+
+        logvar = (cont_mean, cont_logvar) if self.use_continuous_latent else None
+        return (
+            action,
+            vq_input,
+            (d0_idx, d1_idx),
+            logvar,
+            (new_held_d0, new_tau),
+        )
+
+    def forward_temporal_chunked(
+        self,
+        obs: Mapping[str, jnp.ndarray],
+        commitment_horizon: int,
+        episode_mask: jnp.ndarray | None = None,
+        key: jax.Array | None = None,
+        initial_held_d0_idx: jnp.ndarray | None = None,
+        initial_tau: jnp.ndarray | None = None,
+    ) -> tuple[
+        jnp.ndarray,
+        jnp.ndarray,
+        tuple[jnp.ndarray, ...],
+        tuple[jnp.ndarray, jnp.ndarray] | None,
+        jnp.ndarray,
+    ]:
+        """Forward pass with D0 temporal commitment (code chunking).
+
+        D0 codes are held constant for commitment_horizon steps while D1 codes
+        change freely every step. Requires rvq_depth >= 2.
+
+        Args:
+            obs: Dictionary observation with keys:
+                - "imitation_target": Shape [T, B, traj_dim].
+                - "proprioception": Shape [T, B, proprio_dim].
+            commitment_horizon: H, number of steps to hold D0 code.
+            episode_mask: Optional mask indicating episode boundaries.
+                Shape [T, B]. Value of 0 indicates episode start.
+            key: JAX random key for noise/reparameterization.
+            initial_held_d0_idx: Optional initial D0 index, shape [B].
+                Used to continue chunking from a previous unroll boundary.
+            initial_tau: Optional initial tau, shape [B].
+                Used to continue chunking from a previous unroll boundary.
+
+        Returns:
+            action_params: Shape [T, B, action_size*2].
+            z_e_or_mean: Shape [T, B, latent_dim].
+            all_indices: Tuple of 2 arrays (d0_indices, d1_indices),
+                each shape [T, B].
+            logvar: Shape [T, B, latent_dim] when continuous=True, else None.
+            tau: Timer values, shape [T, B].
+        """
+        traj = obs["imitation_target"]  # [T, B, traj_dim]
+        egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
+        T, B = traj.shape[0], traj.shape[1]
+        H = commitment_horizon
+
+        # PRNG key management
+        reparam_key = None
+        if self.proprio_noise_scale > 0.0 and key is not None:
+            if self.use_continuous_latent:
+                noise_key, reparam_key = jax.random.split(key)
+            else:
+                noise_key = key
+            noise = (
+                jax.random.normal(noise_key, egocentric_obs.shape)
+                * self.proprio_noise_scale
+            )
+            egocentric_obs = egocentric_obs + noise
+        elif self.use_continuous_latent and key is not None:
+            reparam_key = key
+
+        if self.use_continuous_latent:
+            z_e_discrete, cont_mean, cont_logvar = self.encoder(traj)
+            if reparam_key is not None:
+                eps = jax.random.normal(reparam_key, cont_mean.shape)
+                z_e_sampled = cont_mean + jnp.exp(0.5 * cont_logvar) * eps
+            else:
+                z_e_sampled = cont_mean
+            vq_input = z_e_discrete
+        else:
+            vq_input = self.encoder(traj)  # [T, B, latent_dim]
+            cont_mean = None
+            cont_logvar = None
+            z_e_sampled = None
+
+        # Get codebooks for D0 and D1
+        codebook_0 = self.quantizer.codebooks[0].embeddings
+        codebook_1 = self.quantizer.codebooks[1].embeddings
+
+        # Prepare episode start mask: True = episode start
+        if episode_mask is not None:
+            is_episode_start = episode_mask == 0  # [T, B]
+        else:
+            is_episode_start = jnp.concatenate(
+                [jnp.ones((1, B), dtype=bool), jnp.zeros((T - 1, B), dtype=bool)],
+                axis=0,
+            )
+
+        # --- Step 1: Precompute tau via lightweight scan (carries [B] int32) ---
+        if initial_tau is not None:
+            init_tau = initial_tau
+        else:
+            init_tau = jnp.zeros((B,), dtype=jnp.int32)
+
+        def tau_step(prev_tau, is_start_t):
+            # At episode start, force manager step (tau=0) then advance to 1
+            # Otherwise, advance the counter cyclically
+            force_fresh = (prev_tau == 0) | is_start_t
+            # cur_tau is the tau value *at* this step (before increment)
+            cur_tau = jnp.where(is_start_t, jnp.zeros_like(prev_tau), prev_tau)
+            # next_tau advances; episode start acts as manager so next is 1
+            next_tau = jnp.where(
+                is_start_t,
+                jnp.ones_like(prev_tau) % H,
+                (prev_tau + 1) % H,
+            )
+            return next_tau, (cur_tau, force_fresh)
+
+        _, (tau, force_fresh) = jax.lax.scan(tau_step, init_tau, is_episode_start)
+        # tau: [T, B], force_fresh: [T, B]
+
+        # --- Step 2+3: D0 quantization with optional stickiness ---
+        if initial_held_d0_idx is not None:
+            init_d0_idx = initial_held_d0_idx
+        else:
+            init_d0_idx = jnp.zeros((B,), dtype=jnp.int32)
+
+        bias_d0 = self.quantizer._bias_per_level[0]
+        if bias_d0 <= 0:
+            # Fast path: vectorized D0 quantization (no stickiness)
+            _, fresh_d0_idx, _ = _quantize_single_level(
+                z_e=vq_input,
+                codebook=codebook_0,
+                num_codes=self.num_codes,
+                latent_dim=self.latent_dim,
+                stickiness_bias=0.0,
+                prev_indices=None,
+                use_rotation=False,
+            )
+
+            def fill_fn(prev_idx, inputs_t):
+                is_fresh_t, fresh_idx_t = inputs_t
+                new_idx = jnp.where(is_fresh_t, fresh_idx_t, prev_idx)
+                return new_idx, new_idx
+
+            _, d0_indices = jax.lax.scan(
+                fill_fn, init_d0_idx, (force_fresh, fresh_d0_idx)
+            )
+        else:
+            # Sequential D0 quantization with stickiness toward held code
+            def fill_with_stickiness_fn(prev_idx, inputs_t):
+                is_fresh_t, vq_input_t = inputs_t  # vq_input_t: [B, D]
+                _, fresh_idx_t, _ = _quantize_single_level(
+                    z_e=vq_input_t,
+                    codebook=codebook_0,
+                    num_codes=self.num_codes,
+                    latent_dim=self.latent_dim,
+                    stickiness_bias=bias_d0,
+                    prev_indices=prev_idx,
+                    use_rotation=False,
+                )
+                new_idx = jnp.where(is_fresh_t, fresh_idx_t, prev_idx)
+                return new_idx, new_idx
+
+            _, d0_indices = jax.lax.scan(
+                fill_with_stickiness_fn, init_d0_idx, (force_fresh, vq_input)
+            )
+        # d0_indices: [T, B]
+
+        # --- Step 4: Look up D0 vectors and compute STE ---
+        d0_z_q = codebook_0[d0_indices]  # [T, B, D]
+        z_q_st_d0 = (
+            vq_input
+            - jax.lax.stop_gradient(vq_input)
+            + jax.lax.stop_gradient(d0_z_q)
+        )
+
+        # --- Step 5: Vectorized D1 over all [T, B] at once ---
+        residual = vq_input - jax.lax.stop_gradient(d0_z_q)
+        _, d1_indices, z_q_st_d1 = _quantize_single_level(
+            z_e=residual,
+            codebook=codebook_1,
+            num_codes=self.num_codes,
+            latent_dim=self.latent_dim,
+            stickiness_bias=0.0,
+            prev_indices=None,
+            use_rotation=self.quantizer.use_rotation,
+        )
+
+        # --- Step 6: Combine ---
+        z_hat_st = z_q_st_d0 + z_q_st_d1
+
+        # Decode all timesteps in parallel
+        if self.use_continuous_latent:
+            concatenated = jnp.concatenate(
+                [z_hat_st, z_e_sampled, egocentric_obs], axis=-1
+            )
+        else:
+            concatenated = jnp.concatenate(
+                [z_hat_st, egocentric_obs], axis=-1
+            )
+        action, _ = self.decoder(concatenated)
+
+        all_indices = (d0_indices, d1_indices)
+        logvar = (cont_mean, cont_logvar) if self.use_continuous_latent else None
+        return action, vq_input, all_indices, logvar, tau
+
     def forward_temporal(
         self,
         obs: Mapping[str, jnp.ndarray],
         episode_mask: jnp.ndarray | None = None,
         key: jax.Array | None = None,
-    ) -> tuple[jnp.ndarray, jnp.ndarray, tuple[jnp.ndarray, ...], jnp.ndarray | None]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, tuple[jnp.ndarray, ...], tuple[jnp.ndarray, jnp.ndarray] | None]:
         """Forward pass with temporal stickiness bias using sequential processing.
 
         Processes a sequence of observations where each timestep's code selection
@@ -680,22 +1027,23 @@ class VQIntentionNetwork(nn.Module):
             reparam_key = key
 
         if self.use_continuous_latent:
-            # Encoder outputs (mean, logvar), each [T, B, latent_dim]
-            mean, logvar = self.encoder(traj)
+            # Two-head encoder: discrete + continuous
+            z_e_discrete, cont_mean, cont_logvar = self.encoder(traj)
 
-            # Reparameterize all timesteps in parallel (independent of timestep)
+            # Reparameterize continuous head
             if reparam_key is not None:
-                eps = jax.random.normal(reparam_key, mean.shape)
-                z_e_sampled = mean + jnp.exp(0.5 * logvar) * eps
+                eps = jax.random.normal(reparam_key, cont_mean.shape)
+                z_e_sampled = cont_mean + jnp.exp(0.5 * cont_logvar) * eps
             else:
-                z_e_sampled = mean
+                z_e_sampled = cont_mean
 
-            # VQ quantizes the MEAN
-            vq_input = mean
+            # VQ quantizes the discrete head
+            vq_input = z_e_discrete
         else:
             # Encode all timesteps in parallel
             vq_input = self.encoder(traj)  # [T, B, latent_dim]
-            logvar = None
+            cont_mean = None
+            cont_logvar = None
             z_e_sampled = None
 
         D = self.rvq_depth
@@ -714,7 +1062,8 @@ class VQIntentionNetwork(nn.Module):
                     [z_hat_st, egocentric_obs], axis=-1
                 )
             action, _ = self.decoder(concatenated)
-            return action, (mean if self.use_continuous_latent else vq_input), all_indices, logvar
+            logvar = (cont_mean, cont_logvar) if self.use_continuous_latent else None
+            return action, vq_input, all_indices, logvar
 
         # Sequential quantization with stickiness bias using scan
         T, B = vq_input.shape[0], vq_input.shape[1]
@@ -831,20 +1180,23 @@ class VQIntentionNetwork(nn.Module):
             )
         action, _ = self.decoder(concatenated)
 
-        return action, (mean if self.use_continuous_latent else vq_input), all_indices, logvar
+        logvar = (cont_mean, cont_logvar) if self.use_continuous_latent else None
+        return action, vq_input, all_indices, logvar
 
 
 class VQPolicyNetwork:
-    """VQ-VAE policy network with both standard and temporal apply methods.
+    """VQ-VAE policy network with standard, temporal, and chunked apply methods.
 
-    This class wraps a VQIntentionNetwork and provides two apply methods:
+    This class wraps a VQIntentionNetwork and provides apply methods:
     - apply: Standard forward pass (parallel processing, optional prev_indices)
     - apply_temporal: Sequential processing with stickiness bias via scan
+    - apply_temporal_chunked: D0 temporal commitment with free D1
 
     Attributes:
         init: Initialization function.
         apply: Standard apply function.
         apply_temporal: Temporal apply function with sequential quantization.
+        apply_temporal_chunked: Chunked apply with D0 commitment.
         stickiness_bias: The stickiness bias value (float or tuple).
         num_codes: Number of codebook entries per level.
         latent_dim: Dimension of latent space.
@@ -860,10 +1212,14 @@ class VQPolicyNetwork:
         num_codes: int,
         latent_dim: int,
         rvq_depth: int = 1,
+        apply_temporal_chunked=None,
+        apply_step_chunked=None,
     ):
         self.init = init
         self.apply = apply
         self.apply_temporal = apply_temporal
+        self.apply_temporal_chunked = apply_temporal_chunked
+        self.apply_step_chunked = apply_step_chunked
         self.stickiness_bias = stickiness_bias
         self.num_codes = num_codes
         self.latent_dim = latent_dim
@@ -885,6 +1241,7 @@ def make_vq_intention_policy(
     coupled_residual_grad: bool = False,
     proprio_noise_scale: float = 0.0,
     use_continuous_latent: bool = False,
+    continuous_latent_dim: int = 4,
 ) -> VQPolicyNetwork:
     """Create a VQ-VAE intention-based policy network.
 
@@ -921,6 +1278,7 @@ def make_vq_intention_policy(
         coupled_residual_grad=coupled_residual_grad,
         proprio_noise_scale=proprio_noise_scale,
         use_continuous_latent=use_continuous_latent,
+        continuous_latent_dim=continuous_latent_dim,
     )
 
     def apply(
@@ -975,6 +1333,68 @@ def make_vq_intention_policy(
             method=policy_module.forward_temporal,
         )
 
+    def apply_temporal_chunked(
+        processor_params: DictRunningStatisticsState,
+        policy_params,
+        obs: Mapping[str, jnp.ndarray],
+        commitment_horizon: int,
+        episode_mask: jnp.ndarray | None = None,
+        proprio_noise_key: jax.Array | None = None,
+        initial_held_d0_idx: jnp.ndarray | None = None,
+        initial_tau: jnp.ndarray | None = None,
+    ):
+        """Apply VQ policy with D0 temporal commitment (code chunking).
+
+        Returns:
+            action_params: Shape [T, B, action_size*2].
+            z_e_or_mean: Shape [T, B, latent_dim].
+            all_indices: Tuple of 2 arrays (d0, d1), each [T, B].
+            logvar: Shape [T, B, latent_dim] or None.
+            tau: Timer values, shape [T, B].
+        """
+        obs = normalize_dict_obs(obs, processor_params)
+        return policy_module.apply(
+            policy_params,
+            obs=obs,
+            commitment_horizon=commitment_horizon,
+            episode_mask=episode_mask,
+            key=proprio_noise_key,
+            initial_held_d0_idx=initial_held_d0_idx,
+            initial_tau=initial_tau,
+            method=policy_module.forward_temporal_chunked,
+        )
+
+    def apply_step_chunked(
+        processor_params: DictRunningStatisticsState,
+        policy_params,
+        obs: Mapping[str, jnp.ndarray],
+        held_d0_idx: jnp.ndarray,
+        tau: jnp.ndarray,
+        commitment_horizon: int,
+        key: jax.Array | None = None,
+        deterministic: bool = False,
+    ):
+        """Apply VQ policy for a single chunked timestep.
+
+        Returns:
+            action_params: Shape [B, action_size*2].
+            z_e_or_mean: Shape [B, latent_dim].
+            all_indices: Tuple of (d0_idx, d1_idx), each [B].
+            logvar: Shape [B, latent_dim] or None.
+            new_chunk_state: Tuple of (new_held_d0, new_tau), each [B].
+        """
+        obs = normalize_dict_obs(obs, processor_params)
+        return policy_module.apply(
+            policy_params,
+            obs=obs,
+            held_d0_idx=held_d0_idx,
+            tau=tau,
+            commitment_horizon=commitment_horizon,
+            key=key,
+            deterministic=deterministic,
+            method=policy_module.forward_step_chunked,
+        )
+
     # Create dummy dict observation for initialization
     dummy_obs = {
         "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
@@ -986,6 +1406,8 @@ def make_vq_intention_policy(
         init=lambda key: policy_module.init(key, dummy_obs, dummy_key),
         apply=apply,
         apply_temporal=apply_temporal,
+        apply_temporal_chunked=apply_temporal_chunked,
+        apply_step_chunked=apply_step_chunked,
         stickiness_bias=stickiness_bias,
         num_codes=num_codes,
         latent_dim=latent_dim,

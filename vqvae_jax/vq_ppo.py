@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from brax import envs
+from brax.training import types
 from brax.training.types import Metrics
 import orbax.checkpoint as ocp
 from mujoco_playground import wrapper as mp_wrapper
@@ -26,8 +27,93 @@ from vq_ppo_networks import (
     make_vq_intention_ppo_networks,
     make_vq_inference_fn,
     make_vq_logging_inference_fn,
+    make_vq_chunked_inference_fn,
 )
-from vq_losses import compute_vq_ppo_loss, PPONetworkParams, reinit_dead_codes
+from vq_losses import (
+    compute_vq_ppo_loss,
+    compute_vq_chunked_ppo_loss,
+    PPONetworkParams,
+    reinit_dead_codes,
+)
+
+
+# ---------------------------------------------------------------------------
+# Chunked rollout helpers
+# ---------------------------------------------------------------------------
+
+Transition = types.Transition
+
+
+def reset_chunk_state_on_done(
+    chunk_state: tuple[jnp.ndarray, jnp.ndarray],
+    done: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Reset (held_d0_idx, tau) to (0, 0) where episodes ended.
+
+    Args:
+        chunk_state: Tuple of (held_d0_idx, tau), each shape [B].
+        done: Boolean done signal, shape [B].
+
+    Returns:
+        Updated chunk_state with zeros where done==True.
+    """
+    held_d0, tau = chunk_state
+    return (
+        jnp.where(done, jnp.zeros_like(held_d0), held_d0),
+        jnp.where(done, jnp.zeros_like(tau), tau),
+    )
+
+
+def generate_unroll_chunked(
+    env,
+    env_state,
+    policy,
+    chunk_state: tuple[jnp.ndarray, jnp.ndarray],
+    key,
+    unroll_length: int,
+    extra_fields: tuple[str, ...] = (),
+):
+    """Generate an unroll with chunk state carry for Semi-MDP commitment.
+
+    Drop-in replacement for brax.training.acting.generate_unroll when using
+    code chunking. The policy must accept (obs, chunk_state, key) and return
+    (action, extras, new_chunk_state).
+
+    Args:
+        env: Wrapped environment.
+        env_state: Current environment state.
+        policy: Chunked policy function with signature
+            (obs, chunk_state, key) -> (action, extras, new_chunk_state).
+        chunk_state: Tuple of (held_d0_idx, tau), each shape [B].
+        key: JAX random key.
+        unroll_length: Number of steps to unroll.
+        extra_fields: Additional fields to extract from env state info.
+
+    Returns:
+        Tuple of (final_env_state, transitions, final_chunk_state).
+    """
+
+    def f(carry, unused_t):
+        state, cs, current_key = carry
+        current_key, next_key = jax.random.split(current_key)
+        actions, policy_extras, new_cs = policy(state.obs, cs, current_key)
+        nstate = env.step(state, actions)
+        state_extras = {x: nstate.info[x] for x in extra_fields}
+        new_cs = reset_chunk_state_on_done(new_cs, nstate.done)
+        transition = Transition(
+            observation=state.obs,
+            action=actions,
+            reward=nstate.reward,
+            discount=1 - nstate.done,
+            next_observation=nstate.obs,
+            extras={"policy_extras": policy_extras, "state_extras": state_extras},
+        )
+        return (nstate, new_cs, next_key), transition
+
+    (final_state, final_cs, _), data = jax.lax.scan(
+        f, (env_state, chunk_state, key), (), length=unroll_length
+    )
+    return final_state, data, final_cs
 
 
 def train(
@@ -73,9 +159,6 @@ def train(
     # VQ-VAE specific parameters
     commitment_cost: float = 0.25,
     codebook_loss_weight: float = 1.0,
-    ce_stickiness_cost: float = 0.0,
-    ce_stickiness_temperature: float = 1.0,
-    stickiness_bias: float | tuple[float, ...] = 0.0,
     rvq_depth: int = 1,
     codebook_entropy_weight: float = 0.0,
     codebook_entropy_temperature: float = 1.0,
@@ -84,6 +167,9 @@ def train(
     num_codes: int = 32,
     reinit_data: dict | None = None,
     kl_weight: float = 0.0,
+    # Code chunking (Semi-MDP temporal commitment)
+    use_code_chunking: bool = False,
+    code_commitment_horizon: int = 0,
 ):
     """Train a VQ-VAE PPO agent.
 
@@ -94,9 +180,6 @@ def train(
         All standard PPO args, plus:
         commitment_cost: Weight for commitment loss (beta in VQ-VAE paper).
         codebook_loss_weight: Weight for codebook loss.
-        ce_stickiness_cost: Weight for cross-entropy stickiness loss (code space).
-        ce_stickiness_temperature: Temperature for CE stickiness softmax.
-        stickiness_bias: Bias subtracted from distance to previous code.
         codebook_entropy_weight: Weight for soft codebook entropy regularization.
         codebook_entropy_temperature: Temperature for soft code assignments.
         dead_code_reinit: Whether to reinitialize dead codebook entries.
@@ -112,50 +195,92 @@ def train(
     original_compute_ppo_loss = original_losses.compute_ppo_loss
 
     # Create VQ-VAE loss function with same interface as ff_ppo losses.compute_ppo_loss
-    def vq_compute_ppo_loss(
-        params,
-        normalizer_params,
-        data,
-        rng,
-        step,
-        ppo_network,
-        entropy_cost=1e-4,
-        latent_kl_weight=1e-3,  # Ignored in VQ-VAE
-        latent_ar1_weight=1e-3,  # Ignored in VQ-VAE
-        discounting=0.9,
-        reward_scaling=1.0,
-        gae_lambda=0.95,
-        clipping_epsilon=0.3,
-        normalize_advantage=True,
-        vf_coefficient=0.5,
-        latent_kl_schedule=None,  # Ignored in VQ-VAE
-        latent_ar1_schedule=None,  # Ignored in VQ-VAE
-    ):
-        """VQ-VAE loss with same interface as compute_ppo_loss."""
-        return compute_vq_ppo_loss(
-            params=params,
-            normalizer_params=normalizer_params,
-            data=data,
-            rng=rng,
-            step=step,
-            ppo_network=ppo_network,
-            entropy_cost=entropy_cost,
-            commitment_cost=commitment_cost,
-            codebook_loss_weight=codebook_loss_weight,
-            ce_stickiness_cost=ce_stickiness_cost,
-            ce_stickiness_temperature=ce_stickiness_temperature,
-            stickiness_bias=stickiness_bias,
-            discounting=discounting,
-            reward_scaling=reward_scaling,
-            gae_lambda=gae_lambda,
-            clipping_epsilon=clipping_epsilon,
-            normalize_advantage=normalize_advantage,
-            vq_loss_schedule=None,
-            rvq_depth=rvq_depth,
-            codebook_entropy_weight=codebook_entropy_weight,
-            codebook_entropy_temperature=codebook_entropy_temperature,
-            kl_weight=kl_weight,
-        )
+    if use_code_chunking:
+
+        def vq_compute_ppo_loss(
+            params,
+            normalizer_params,
+            data,
+            rng,
+            step,
+            ppo_network,
+            entropy_cost=1e-4,
+            latent_kl_weight=1e-3,  # Ignored in VQ-VAE
+            latent_ar1_weight=1e-3,  # Ignored in VQ-VAE
+            discounting=0.9,
+            reward_scaling=1.0,
+            gae_lambda=0.95,
+            clipping_epsilon=0.3,
+            normalize_advantage=True,
+            vf_coefficient=0.5,
+            latent_kl_schedule=None,  # Ignored in VQ-VAE
+            latent_ar1_schedule=None,  # Ignored in VQ-VAE
+        ):
+            """VQ-VAE chunked loss with same interface as compute_ppo_loss."""
+            return compute_vq_chunked_ppo_loss(
+                params=params,
+                normalizer_params=normalizer_params,
+                data=data,
+                rng=rng,
+                step=step,
+                ppo_network=ppo_network,
+                entropy_cost=entropy_cost,
+                commitment_cost=commitment_cost,
+                codebook_loss_weight=codebook_loss_weight,
+                commitment_horizon=code_commitment_horizon,
+                num_codes=num_codes,
+                discounting=discounting,
+                reward_scaling=reward_scaling,
+                gae_lambda=gae_lambda,
+                clipping_epsilon=clipping_epsilon,
+                normalize_advantage=normalize_advantage,
+                codebook_entropy_weight=codebook_entropy_weight,
+                codebook_entropy_temperature=codebook_entropy_temperature,
+                kl_weight=kl_weight,
+            )
+    else:
+
+        def vq_compute_ppo_loss(
+            params,
+            normalizer_params,
+            data,
+            rng,
+            step,
+            ppo_network,
+            entropy_cost=1e-4,
+            latent_kl_weight=1e-3,  # Ignored in VQ-VAE
+            latent_ar1_weight=1e-3,  # Ignored in VQ-VAE
+            discounting=0.9,
+            reward_scaling=1.0,
+            gae_lambda=0.95,
+            clipping_epsilon=0.3,
+            normalize_advantage=True,
+            vf_coefficient=0.5,
+            latent_kl_schedule=None,  # Ignored in VQ-VAE
+            latent_ar1_schedule=None,  # Ignored in VQ-VAE
+        ):
+            """VQ-VAE loss with same interface as compute_ppo_loss."""
+            return compute_vq_ppo_loss(
+                params=params,
+                normalizer_params=normalizer_params,
+                data=data,
+                rng=rng,
+                step=step,
+                ppo_network=ppo_network,
+                entropy_cost=entropy_cost,
+                commitment_cost=commitment_cost,
+                codebook_loss_weight=codebook_loss_weight,
+                discounting=discounting,
+                reward_scaling=reward_scaling,
+                gae_lambda=gae_lambda,
+                clipping_epsilon=clipping_epsilon,
+                normalize_advantage=normalize_advantage,
+                vq_loss_schedule=None,
+                rvq_depth=rvq_depth,
+                codebook_entropy_weight=codebook_entropy_weight,
+                codebook_entropy_temperature=codebook_entropy_temperature,
+                kl_weight=kl_weight,
+            )
 
     # Build post-eval hook for dead code reinit
     post_eval_fn = None
@@ -203,14 +328,40 @@ def train(
     # Monkey-patch the loss function
     original_losses.compute_ppo_loss = vq_compute_ppo_loss
 
-    # Monkey-patch inference functions to handle VQ-VAE's 4-value return contract
-    original_make_inference_fn = original_ppo_networks.make_inference_fn
-    original_ppo_networks.make_inference_fn = make_vq_inference_fn
+    # When chunking, use the stateful chunked inference fn + custom unroll.
+    # When not chunking, use standard VQ inference with monkey-patching.
+    if use_code_chunking:
+        # Chunked training: use generate_unroll_chunked with carry state.
+        # The Evaluator and logging still use standard VQ inference fn (obs, key).
+        # The training rollout uses chunked policy via make_rollout_policy_fn.
+        original_make_inference_fn = original_ppo_networks.make_inference_fn
+        original_ppo_networks.make_inference_fn = make_vq_inference_fn
+        original_make_logging_inference_fn = (
+            original_ppo_networks.make_logging_inference_fn
+        )
+        original_ppo_networks.make_logging_inference_fn = make_vq_logging_inference_fn
 
-    # Monkey-patch the logging inference function to support prev_indices for stickiness
-    # This ensures eval rollouts apply the same stickiness bias as training
-    original_make_logging_inference_fn = original_ppo_networks.make_logging_inference_fn
-    original_ppo_networks.make_logging_inference_fn = make_vq_logging_inference_fn
+        _generate_unroll_fn = generate_unroll_chunked
+        _init_carry_state_fn = lambda n: (
+            jnp.zeros(n, dtype=jnp.int32),  # held_d0_idx
+            jnp.zeros(n, dtype=jnp.int32),  # tau
+        )
+        _make_rollout_policy_fn = functools.partial(
+            make_vq_chunked_inference_fn,
+            commitment_horizon=code_commitment_horizon,
+        )
+    else:
+        # Standard VQ: monkey-patch inference to handle 4-value return
+        original_make_inference_fn = original_ppo_networks.make_inference_fn
+        original_ppo_networks.make_inference_fn = make_vq_inference_fn
+        original_make_logging_inference_fn = (
+            original_ppo_networks.make_logging_inference_fn
+        )
+        original_ppo_networks.make_logging_inference_fn = make_vq_logging_inference_fn
+
+        _generate_unroll_fn = None
+        _init_carry_state_fn = None
+        _make_rollout_policy_fn = None
 
     try:
         # Run training with VQ-VAE loss
@@ -256,6 +407,9 @@ def train(
             checkpoint_callback=checkpoint_callback,
             wrap_for_training=wrap_for_training,
             post_eval_params_fn=post_eval_fn,
+            generate_unroll_fn=_generate_unroll_fn,
+            init_carry_state_fn=_init_carry_state_fn,
+            make_rollout_policy_fn=_make_rollout_policy_fn,
         )
     finally:
         # Restore original functions

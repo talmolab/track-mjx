@@ -226,6 +226,9 @@ def train(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
     post_eval_params_fn: Callable | None = None,
+    generate_unroll_fn: Callable | None = None,
+    init_carry_state_fn: Callable[[int], Any] | None = None,
+    make_rollout_policy_fn: Callable | None = None,
 ) -> tuple[Callable, InferenceParams, Metrics]:
     """Train a PPO agent on the given environment.
 
@@ -379,41 +382,101 @@ def train(
         )
         return (optimizer_state, params, key, it), metrics
 
+    # Whether to use custom unroll with carry state (e.g., code chunking)
+    _use_carry = generate_unroll_fn is not None
+
     def training_step(
-        carry: Tuple[TrainingState, envs.State, PRNGKey, int], unused_t
-    ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey, int], Metrics]:
-        training_state, state, key, it = carry
+        carry, unused_t
+    ):
+        if _use_carry:
+            training_state, state, carry_state, key, it = carry
+        else:
+            training_state, state, key, it = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
-        policy = make_policy(
-            (training_state.normalizer_params, training_state.params.policy)
+        params_for_policy = (
+            training_state.normalizer_params,
+            training_state.params.policy,
         )
+        if _use_carry:
+            policy = make_rollout_policy(params_for_policy)
+        else:
+            policy = make_policy(params_for_policy)
 
-        def f(carry, unused_t):
-            current_state, current_key = carry
-            current_key, next_key = jax.random.split(current_key)
-            next_state, data = acting.generate_unroll(
-                env,
-                current_state,
-                policy,
-                current_key,
-                unroll_length,
-                extra_fields=("truncation",),
+        if _use_carry:
+
+            def f(carry, unused_t):
+                current_state, current_carry, current_key = carry
+                current_key, next_key = jax.random.split(current_key)
+                initial_carry = current_carry  # snapshot for loss alignment
+                next_state, data, new_carry = generate_unroll_fn(
+                    env,
+                    current_state,
+                    policy,
+                    current_carry,
+                    current_key,
+                    unroll_length,
+                    extra_fields=("truncation",),
+                )
+                return (next_state, new_carry, next_key), (data, initial_carry)
+
+            (state, carry_state, _), (data, initial_carries) = jax.lax.scan(
+                f,
+                (state, carry_state, key_generate_unroll),
+                (),
+                length=batch_size * num_minibatches // num_envs,
             )
-            return (next_state, next_key), data
 
-        (state, _), data = jax.lax.scan(
-            f,
-            (state, key_generate_unroll),
-            (),
-            length=batch_size * num_minibatches // num_envs,
-        )
+        else:
+
+            def f(carry, unused_t):
+                current_state, current_key = carry
+                current_key, next_key = jax.random.split(current_key)
+                next_state, data = acting.generate_unroll(
+                    env,
+                    current_state,
+                    policy,
+                    current_key,
+                    unroll_length,
+                    extra_fields=("truncation",),
+                )
+                return (next_state, next_key), data
+
+            (state, _), data = jax.lax.scan(
+                f,
+                (state, key_generate_unroll),
+                (),
+                length=batch_size * num_minibatches // num_envs,
+            )
+
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(
             lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
         )
         assert data.discount.shape[1:] == (unroll_length,)
+
+        # Inject initial carry state into data extras for loss alignment
+        if _use_carry:
+            # initial_carries has shape (num_scans, *carry_shape)
+            # Reshape to match batch dim: (num_scans,) -> (num_scans,)
+            # Each scan iteration produces one unroll of num_envs trajectories,
+            # so we need to broadcast carry to (batch_size * num_minibatches,)
+            def _broadcast_carry(c):
+                # c shape: (num_scans, num_envs_per_device, ...)
+                # -> (num_scans * num_envs_per_device, ...)
+                return jnp.reshape(c, (-1,) + c.shape[2:])
+
+            flat_carries = jax.tree_util.tree_map(_broadcast_carry, initial_carries)
+            data = data._replace(
+                extras={
+                    **data.extras,
+                    "policy_extras": {
+                        **data.extras["policy_extras"],
+                        "initial_carry_state": flat_carries,
+                    },
+                }
+            )
 
         # Update normalization params (only if normalization is enabled).
         # When disabled, normalizer stays at identity (mean=0, std=1).
@@ -448,36 +511,72 @@ def train(
                 + env_step_per_training_step / STEPS_IN_THOUSANDS
             ),  # env step in thousands
         )
+        if _use_carry:
+            return (new_training_state, state, carry_state, new_key, it), metrics
         return (new_training_state, state, new_key, it), metrics
 
-    def training_epoch(
-        training_state: TrainingState, state: envs.State, key: PRNGKey, it: int
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
-        (training_state, state, _, _), loss_metrics = jax.lax.scan(
-            training_step,
-            (training_state, state, key, it),
-            (),
-            length=num_training_steps_per_epoch,
-        )
-        loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
-        return training_state, state, loss_metrics
+    if _use_carry:
 
-    training_epoch = jax.pmap(
-        training_epoch,
-        axis_name=_PMAP_AXIS_NAME,
-        donate_argnums=(0, 1),
-    )
+        def training_epoch(
+            training_state: TrainingState,
+            state: envs.State,
+            carry_state,
+            key: PRNGKey,
+            it: int,
+        ) -> Tuple[TrainingState, envs.State, Any, Metrics]:
+            (training_state, state, carry_state, _, _), loss_metrics = jax.lax.scan(
+                training_step,
+                (training_state, state, carry_state, key, it),
+                (),
+                length=num_training_steps_per_epoch,
+            )
+            loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
+            return training_state, state, carry_state, loss_metrics
+
+        training_epoch = jax.pmap(
+            training_epoch,
+            axis_name=_PMAP_AXIS_NAME,
+            donate_argnums=(0, 1, 2),
+        )
+
+    else:
+
+        def training_epoch(
+            training_state: TrainingState, state: envs.State, key: PRNGKey, it: int
+        ) -> Tuple[TrainingState, envs.State, Metrics]:
+            (training_state, state, _, _), loss_metrics = jax.lax.scan(
+                training_step,
+                (training_state, state, key, it),
+                (),
+                length=num_training_steps_per_epoch,
+            )
+            loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
+            return training_state, state, loss_metrics
+
+        training_epoch = jax.pmap(
+            training_epoch,
+            axis_name=_PMAP_AXIS_NAME,
+            donate_argnums=(0, 1),
+        )
 
     # Note that this is NOT a pure jittable method.
     def training_epoch_with_timing(
         training_state: TrainingState, env_state: envs.State, key: PRNGKey, it: int
     ) -> Tuple[TrainingState, envs.State, Metrics]:
-        nonlocal training_walltime
+        nonlocal training_walltime, carry_state_outer
         t = time.time()
         training_state, env_state = _strip_weak_type((training_state, env_state))
         step = jnp.ones_like(training_state.env_steps) * it
-        result = training_epoch(training_state, env_state, key, step)
-        training_state, env_state, metrics = _strip_weak_type(result)
+        if _use_carry:
+            result = training_epoch(
+                training_state, env_state, carry_state_outer, key, step
+            )
+            training_state, env_state, carry_state_outer, metrics = _strip_weak_type(
+                result
+            )
+        else:
+            result = training_epoch(training_state, env_state, key, step)
+            training_state, env_state, metrics = _strip_weak_type(result)
 
         metrics = jax.tree_util.tree_map(jnp.mean, metrics)
         jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
@@ -569,6 +668,12 @@ def train(
         env.action_size,
     )
     make_policy = ppo_networks.make_inference_fn(ppo_network)
+
+    # When using custom unroll with carry, build a separate rollout policy
+    # with the appropriate signature (obs, carry, key) -> (action, extras, carry)
+    make_rollout_policy = None
+    if _use_carry and make_rollout_policy_fn is not None:
+        make_rollout_policy = make_rollout_policy_fn(ppo_network)
 
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
@@ -696,6 +801,15 @@ def train(
         training_state, jax.local_devices()[:local_devices_to_use]
     )
 
+    # Initialize carry state for custom unroll (e.g., code chunking)
+    carry_state_outer = None
+    if _use_carry:
+        envs_per_device = num_envs // device_count
+        carry_state_outer = init_carry_state_fn(envs_per_device)
+        carry_state_outer = jax.device_put_replicated(
+            carry_state_outer, jax.local_devices()[:local_devices_to_use]
+        )
+
     if eval_env is None:
         eval_env = environment
     if randomization_fn is not None:
@@ -810,6 +924,13 @@ def train(
             # TODO: move extra reset logic to the AutoResetWrapper.
             if num_resets_per_eval > 0:
                 env_state = reset_fn((training_state, env_state), key_envs)
+                # Reset carry state when environment is reset
+                if _use_carry:
+                    envs_per_device = num_envs // device_count
+                    carry_state_outer = jax.device_put_replicated(
+                        init_carry_state_fn(envs_per_device),
+                        jax.local_devices()[:local_devices_to_use],
+                    )
 
         if process_id == 0:
             # Run evaluation rollout, logging and checkpointing.

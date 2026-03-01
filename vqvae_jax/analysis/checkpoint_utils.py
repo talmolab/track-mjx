@@ -133,6 +133,12 @@ def make_vq_ppo_network_from_cfg(
         coupled_residual_grad=bool(
             cfg.network_config.get("coupled_residual_grad", False)
         ),
+        use_continuous_latent=bool(
+            cfg.network_config.get("use_continuous_latent", False)
+        ),
+        continuous_latent_dim=int(
+            cfg.network_config.get("continuous_latent_dim", 4)
+        ),
     )
 
 
@@ -390,9 +396,10 @@ def load_vq_inference_fn_with_stickiness(
         key, key_network = jax.random.split(key)
 
         # Apply policy with prev_indices for stickiness
-        # Pass observations in same format as original - let policy_network handle it
+        # Returns 4 values: (logits, z_e, all_indices, logvar)
+        # or 5 with get_activation: (logits, z_e, all_indices, logvar, activations)
         if get_activation:
-            logits, z_e, all_indices, activations = policy_network.apply(
+            logits, z_e, all_indices, logvar, activations = policy_network.apply(
                 *policy_params,
                 observations,
                 key_network,
@@ -401,7 +408,7 @@ def load_vq_inference_fn_with_stickiness(
                 prev_indices=prev_indices,
             )
         else:
-            logits, z_e, all_indices = policy_network.apply(
+            logits, z_e, all_indices, logvar = policy_network.apply(
                 *policy_params,
                 observations,
                 key_network,

@@ -376,7 +376,7 @@ def test_vq_intention_network_depth2():
     }
 
     params = model.init(init_rng, obs, call_rng)
-    action, z_e, all_indices = model.apply(params, obs, call_rng)
+    action, z_e, all_indices, logvar = model.apply(params, obs, call_rng)
 
     ok = True
     details = []
@@ -407,7 +407,7 @@ def test_vq_intention_network_depth2():
                 )
 
     # Test get_activation=True path
-    action_act, z_e_act, all_indices_act, extras = model.apply(
+    action_act, z_e_act, all_indices_act, logvar_act, extras = model.apply(
         params, obs, call_rng, get_activation=True
     )
     if "all_z_q" not in extras:
@@ -422,7 +422,7 @@ def test_vq_intention_network_depth2():
 
     # Test with prev_indices
     prev_idx = tuple(jnp.zeros((BATCH,), dtype=jnp.int32) for _ in range(DEPTH))
-    action_pi, z_e_pi, all_indices_pi = model.apply(
+    action_pi, z_e_pi, all_indices_pi, logvar_pi = model.apply(
         params, obs, call_rng, prev_indices=prev_idx
     )
     if action_pi.shape != expected_action_shape:

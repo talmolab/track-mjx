@@ -43,7 +43,11 @@ from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.domain_randomization import domain_randomization_maker
 
 # Import VQ-VAE modules from scratch
-from vq_ppo_networks import make_vq_intention_ppo_networks
+from vq_ppo_networks import (
+    make_vq_intention_ppo_networks,
+    make_vq_chunked_ppo_networks,
+    make_vq_chunked_logging_inference_fn,
+)
 from vq_ppo import train as vq_train
 from analysis.rendering import (
     render_rollout_to_video,
@@ -73,6 +77,8 @@ def vq_rollout_logging_fn(
     render_video=True,
     ppo_network=None,  # Added for compatibility with main PPO code
     reinit_data=None,
+    jit_chunked_logging_fn=None,
+    use_code_chunking=False,
 ):
     """Rollout logging with VQ-VAE specific metrics and code visualization.
 
@@ -127,11 +133,22 @@ def vq_rollout_logging_fn(
         rollout_indices_per_depth = [[] for _ in range(rvq_depth)]
         prev_indices = None
 
+        # Initialize chunk state for chunked eval
+        if use_code_chunking and jit_chunked_logging_fn is not None:
+            held_d0_idx = jnp.zeros((), dtype=jnp.int32)
+            chunk_tau = jnp.zeros((), dtype=jnp.int32)
+
         for _ in range(episode_length):
             key, subkey = jax.random.split(key)
-            action, extras = jit_logging_inference_fn(
-                params, state.obs, subkey, prev_indices
-            )
+
+            if use_code_chunking and jit_chunked_logging_fn is not None:
+                action, extras, (held_d0_idx, chunk_tau) = jit_chunked_logging_fn(
+                    params, state.obs, (held_d0_idx, chunk_tau), subkey
+                )
+            else:
+                action, extras = jit_logging_inference_fn(
+                    params, state.obs, subkey, prev_indices
+                )
 
             # Collect VQ-specific data
             if "indices" in extras:
@@ -165,6 +182,10 @@ def vq_rollout_logging_fn(
 
             if state.done:
                 prev_indices = None
+                # Reset chunk state on done
+                if use_code_chunking and jit_chunked_logging_fn is not None:
+                    held_d0_idx = jnp.zeros((), dtype=jnp.int32)
+                    chunk_tau = jnp.zeros((), dtype=jnp.int32)
                 break
 
         all_rollout_indices.append(np.array(rollout_indices))
@@ -525,30 +546,77 @@ def main(cfg: DictConfig) -> None:
     num_codes = int(cfg.network_config.get("num_codes", 32))
     proprio_noise_scale = float(cfg.network_config.get("proprio_noise_scale", 0.0))
     use_continuous_latent = bool(cfg.network_config.get("use_continuous_latent", False))
+    continuous_latent_dim = int(cfg.network_config.get("continuous_latent_dim", 4))
     kl_weight = float(cfg.network_config.get("kl_weight", 0.0))
+
+    # Code chunking (Semi-MDP temporal commitment) config
+    use_code_chunking = bool(cfg.network_config.get("use_code_chunking", False))
+    code_commitment_horizon = int(cfg.network_config.get("code_commitment_horizon", 0))
+
+    # Assertions for code chunking
+    if use_code_chunking:
+        assert not coupled_residual_grad, (
+            "coupled_residual_grad must be False when using code chunking. "
+            "Coupled gradients through held D0 codes produce zero D1 gradients "
+            "at worker steps ((H-1)/H of all steps)."
+        )
+        assert code_commitment_horizon > 0, (
+            f"code_commitment_horizon must be > 0 when use_code_chunking=True, "
+            f"got {code_commitment_horizon}"
+        )
+        unroll_length = cfg.train_setup.train_config.unroll_length
+        if unroll_length % code_commitment_horizon != 0:
+            logging.warning(
+                f"unroll_length ({unroll_length}) is not divisible by "
+                f"code_commitment_horizon ({code_commitment_horizon}). "
+                f"This causes inconsistent commitment windows at unroll boundaries."
+            )
 
     # Shared mutable dict for dead code reinit data (populated by rollout callback)
     reinit_data = {} if dead_code_reinit else None
 
     # VQ-VAE network factory
-    network_factory = functools.partial(
-        make_vq_intention_ppo_networks,
-        latent_dim=cfg.network_config.get(
-            "latent_dim", cfg.network_config.intention_size
-        ),
-        num_codes=cfg.network_config.get("num_codes", 512),
-        commitment_cost=cfg.network_config.get("commitment_cost", 0.25),
-        codebook_init_scale=cfg.network_config.get("codebook_init_scale", 1.0),
-        encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        stickiness_bias=stickiness_bias,
-        rvq_depth=rvq_depth,
-        use_rotation=use_rotation,
-        coupled_residual_grad=coupled_residual_grad,
-        proprio_noise_scale=proprio_noise_scale,
-        use_continuous_latent=use_continuous_latent,
-    )
+    if use_code_chunking:
+        network_factory = functools.partial(
+            make_vq_chunked_ppo_networks,
+            commitment_horizon=code_commitment_horizon,
+            latent_dim=cfg.network_config.get(
+                "latent_dim", cfg.network_config.intention_size
+            ),
+            num_codes=cfg.network_config.get("num_codes", 512),
+            commitment_cost=cfg.network_config.get("commitment_cost", 0.25),
+            codebook_init_scale=cfg.network_config.get("codebook_init_scale", 1.0),
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            stickiness_bias=stickiness_bias,
+            rvq_depth=rvq_depth,
+            use_rotation=use_rotation,
+            coupled_residual_grad=coupled_residual_grad,
+            proprio_noise_scale=proprio_noise_scale,
+            use_continuous_latent=use_continuous_latent,
+            continuous_latent_dim=continuous_latent_dim,
+        )
+    else:
+        network_factory = functools.partial(
+            make_vq_intention_ppo_networks,
+            latent_dim=cfg.network_config.get(
+                "latent_dim", cfg.network_config.intention_size
+            ),
+            num_codes=cfg.network_config.get("num_codes", 512),
+            commitment_cost=cfg.network_config.get("commitment_cost", 0.25),
+            codebook_init_scale=cfg.network_config.get("codebook_init_scale", 1.0),
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            stickiness_bias=stickiness_bias,
+            rvq_depth=rvq_depth,
+            use_rotation=use_rotation,
+            coupled_residual_grad=coupled_residual_grad,
+            proprio_noise_scale=proprio_noise_scale,
+            use_continuous_latent=use_continuous_latent,
+            continuous_latent_dim=continuous_latent_dim,
+        )
 
     # Initialize wandb
     wandb_logging.initialize_wandb_logging(
@@ -565,10 +633,6 @@ def main(cfg: DictConfig) -> None:
             "num_codes": cfg.network_config.get("num_codes", 512),
             "commitment_cost": cfg.network_config.get("commitment_cost", 0.25),
             "codebook_loss_weight": cfg.network_config.get("codebook_loss_weight", 1.0),
-            "ce_stickiness_cost": cfg.network_config.get("ce_stickiness_cost", 0.0),
-            "ce_stickiness_temperature": cfg.network_config.get(
-                "ce_stickiness_temperature", 1.0
-            ),
             "stickiness_bias": stickiness_bias,
             "latent_dim": cfg.network_config.get(
                 "latent_dim", cfg.network_config.intention_size
@@ -583,6 +647,8 @@ def main(cfg: DictConfig) -> None:
             "proprio_noise_scale": proprio_noise_scale,
             "use_continuous_latent": use_continuous_latent,
             "kl_weight": kl_weight,
+            "use_code_chunking": use_code_chunking,
+            "code_commitment_horizon": code_commitment_horizon,
         }
     )
 
@@ -638,11 +704,6 @@ def main(cfg: DictConfig) -> None:
         # VQ-VAE specific parameters
         commitment_cost=cfg.network_config.get("commitment_cost", 0.25),
         codebook_loss_weight=cfg.network_config.get("codebook_loss_weight", 1.0),
-        ce_stickiness_cost=cfg.network_config.get("ce_stickiness_cost", 0.0),
-        ce_stickiness_temperature=cfg.network_config.get(
-            "ce_stickiness_temperature", 1.0
-        ),
-        stickiness_bias=stickiness_bias,
         rvq_depth=rvq_depth,
         codebook_entropy_weight=codebook_entropy_weight,
         codebook_entropy_temperature=codebook_entropy_temperature,
@@ -651,6 +712,8 @@ def main(cfg: DictConfig) -> None:
         num_codes=num_codes,
         reinit_data=reinit_data,
         kl_weight=kl_weight,
+        use_code_chunking=use_code_chunking,
+        code_commitment_horizon=code_commitment_horizon,
     )
 
     # Set the render env start frame to always be 0
@@ -662,15 +725,49 @@ def main(cfg: DictConfig) -> None:
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
 
-    policy_params_fn = functools.partial(
-        vq_rollout_logging_fn,
-        rollout_env,
-        jit_reset,
-        jit_step,
-        cfg,
-        checkpoint_path,
-        reinit_data=reinit_data,
-    )
+    # Build chunked logging inference fn lazily (needs ppo_network from training)
+    _chunked_logging_fn_cache = {}
+
+    def _get_chunked_logging_fn(ppo_network):
+        """Build and cache chunked logging inference fn."""
+        if "fn" not in _chunked_logging_fn_cache:
+            make_fn = make_vq_chunked_logging_inference_fn(
+                ppo_network, code_commitment_horizon
+            )
+            _chunked_logging_fn_cache["fn"] = jax.jit(make_fn(deterministic=True))
+        return _chunked_logging_fn_cache["fn"]
+
+    def _policy_params_fn_wrapper(
+        current_step,
+        jit_logging_inference_fn,
+        params,
+        policy_params_fn_key,
+        render_video=True,
+        ppo_network=None,
+    ):
+        """Wrapper that injects chunked logging fn when code chunking is enabled."""
+        jit_chunked_fn = None
+        if use_code_chunking and ppo_network is not None:
+            jit_chunked_fn = _get_chunked_logging_fn(ppo_network)
+
+        return vq_rollout_logging_fn(
+            rollout_env,
+            jit_reset,
+            jit_step,
+            cfg,
+            checkpoint_path,
+            current_step=current_step,
+            jit_logging_inference_fn=jit_logging_inference_fn,
+            params=params,
+            policy_params_fn_key=policy_params_fn_key,
+            render_video=render_video,
+            ppo_network=ppo_network,
+            reinit_data=reinit_data,
+            jit_chunked_logging_fn=jit_chunked_fn,
+            use_code_chunking=use_code_chunking,
+        )
+
+    policy_params_fn = _policy_params_fn_wrapper
 
     # Run training
     make_inference_fn, params, _ = train_fn(

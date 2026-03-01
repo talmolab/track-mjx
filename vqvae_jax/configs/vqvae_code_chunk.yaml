@@ -1,8 +1,12 @@
 # =============================================================================
-# VQ-VAE Minimal Experiment Configuration
+# VQ-VAE Code Chunking (Semi-MDP Temporal Commitment) Configuration
 # =============================================================================
-# Minimal configuration for testing VQ-VAE implementation.
-# Uses small settings for fast iteration and debugging.
+# D0 (coarse) codes are held constant for H=5 steps (~0.1s at 50Hz),
+# forcing them to encode sustained behavioral identity rather than
+# momentary change signals. D1 (fine) codes change freely every step.
+#
+# Key constraint: coupled_residual_grad must be false for chunking
+# (to avoid zero-gradient at intermediate steps where D0 is held).
 # =============================================================================
 
 # =============================================================================
@@ -24,13 +28,13 @@ env_config:
   ctrl_dt: 0.01
   mocap_hz: 50
 
-  # Reference Clip Settings - MINIMAL
-  clip_length: 250              # Shorter clips for faster iteration
-  clip_set: "all"               # Use all clips
+  # Reference Clip Settings
+  clip_length: 250
+  clip_set: "all"
   reference_length: 5
-  start_frame_range: [0, 20]    # Smaller range
+  start_frame_range: [0, 20]
   qvel_init: "zeros"
-  keep_clips_idx: null          # Use all clips (null = no filtering)
+  keep_clips_idx: null
   balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
 
   # Domain Randomization - prevents decoder from memorizing dynamics
@@ -75,14 +79,14 @@ env_config:
       max_value: 50.0
       weight: 0.01
 
-  # Termination Criteria - More lenient for debugging
+  # Termination Criteria
   termination_criteria:
     root_too_far:
-      max_distance: 0.2         # More lenient
+      max_distance: 0.2
     root_too_rotated:
-      max_degrees: 90.0         # More lenient
+      max_degrees: 90.0
     pose_error:
-      max_l2_error: 6.0         # More lenient
+      max_l2_error: 6.0
     nan_termination: {}
 
 # =============================================================================
@@ -91,53 +95,53 @@ env_config:
 render_config:
   render_camera_name: close_profile
   render_fps: 50
-  render_interval: 5            # Render video every N evals
-  render_per_code_videos: false # Disabled - too expensive with large codebooks
-  eval_rollouts_for_transition: 16  # Number of rollouts to aggregate for transition matrix
-  num_eval_rollout_videos: 3        # Number of rollout videos to render per eval
+  render_interval: 5
+  render_per_code_videos: false
+  eval_rollouts_for_transition: 16
+  num_eval_rollout_videos: 3
 
 # =============================================================================
-# Network Architecture - VQ-VAE
+# Network Architecture - VQ-VAE with Code Chunking
 # =============================================================================
 network_config:
-  arch_name: vqvae_intention    # NEW: VQ-VAE architecture
+  arch_name: vqvae_code_chunk
 
-  # Encoder/Decoder sizes - SMALLER for fast iteration
-  encoder_layer_sizes: [512, 256, 256]    # Reference trajectory encoder
-  decoder_layer_sizes: [512, 512, 256, 256]  # Policy decoder
-  critic_layer_sizes: [512, 512, 256, 256]   # Value function
+  # Encoder/Decoder sizes
+  encoder_layer_sizes: [512, 256, 256]
+  decoder_layer_sizes: [512, 512, 256, 256]
+  critic_layer_sizes: [512, 512, 256, 256]
 
   # Latent space settings
-  intention_size: 16            # Richer embeddings for 64 codes
-  latent_dim: 16                # Discrete codebook dimension
+  intention_size: 16
+  latent_dim: 16
 
   # VQ-VAE specific settings
-  num_codes: 32                    # Codebook entries per RVQ level
-  commitment_cost: 0.1           # Low to avoid premature lock-in
-  codebook_loss_weight: 1.0      # Weight for codebook loss
-  codebook_entropy_weight: 0.1   # Weight for soft codebook entropy regularization
-  codebook_entropy_temperature: 1.0  # Temperature for soft code assignments
-  codebook_init_scale: 1.0       # Initialization scale
-  stickiness_bias: [1.0, 0.0]
+  num_codes: 32
+  commitment_cost: 0.1
+  codebook_loss_weight: 1.0
+  codebook_entropy_weight: 0.1
+  codebook_entropy_temperature: 1.0
+  codebook_init_scale: 1.0
+  stickiness_bias: [0.0, 0.0]        # Disable — redundant with commitment for D0
 
   # Dead code reinitialization
-  dead_code_reinit: true          # Reinitialize dead codebook entries from z_e
-  dead_code_threshold: 0.01       # Fraction of uniform usage below which code is dead
+  dead_code_reinit: true
+  dead_code_threshold: 0.01
 
-  # Residual VQ settings
-  rvq_depth: 2                   # Number of RVQ levels (1 = vanilla VQ)
-  use_rotation: true            # Householder rotation-augmented STE (STAR)
-  coupled_residual_grad: true   # Couple depth gradients through rotation
-  proprio_noise_scale: 0.2      # Gaussian noise std on normalized proprio (decoder only)
+  # Residual VQ settings — MUST have depth >= 2, coupled_residual_grad = false
+  rvq_depth: 2
+  use_rotation: true
+  coupled_residual_grad: false        # MUST be false for chunking
+  proprio_noise_scale: 0.15
 
-  # Continuous latent (hybrid VQ+VAE) settings
-  use_continuous_latent: false      # When true, encoder outputs two heads (discrete+continuous)
-  continuous_latent_dim: 4          # Dimension of continuous head (mean/logvar)
-  kl_weight: 0.0                   # KL regularization weight (0 = no KL loss)
+  # Continuous latent settings
+  use_continuous_latent: false
+  continuous_latent_dim: 4
+  kl_weight: 0.1
 
-  # Code chunking (Semi-MDP temporal commitment)
-  use_code_chunking: false
-  code_commitment_horizon: 0
+  # Code chunking (Semi-MDP temporal commitment) — ENABLED
+  use_code_chunking: true
+  code_commitment_horizon: 10         # H=10 -> 0.2s at 50Hz, 4 windows per unroll
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false
@@ -148,38 +152,36 @@ network_config:
   vq_ramp_steps: 0
 
 # =============================================================================
-# Training Setup - MINIMAL
+# Training Setup
 # =============================================================================
 train_setup:
   agent_name: rodent
-  run_name: vqvae_minimal_test
+  run_name: vqvae_code_chunk
 
   checkpoint_to_restore: null
   restore_from_run_state: null
 
   train_test_split_info: null
-  train_subset_ratio: 0.7       # 80% train, 20% test (~674 train, ~168 test)
+  train_subset_ratio: 0.7
 
-  # Evaluation and resets - FREQUENT for debugging
-  eval_every: 20_000_000           # Eval more frequently
-  episode_length: 200            # Shorter episodes
-  reset_every: 20_000_000        # Reset less frequently
+  eval_every: 20_000_000
+  episode_length: 200
+  reset_every: 20_000_000
 
-  # PPO Training Hyperparameters - MINIMAL
   train_config:
-    num_envs: 2048               # Reduced for larger codebook (128 codes)
+    num_envs: 1024                    # Halved to offset 2x unroll length
     num_timesteps: 5_000_000_000
-    batch_size: 512              # Smaller batch for memory
-    num_minibatches: 16          # Fewer minibatches
-    num_updates_per_batch: 4    # Fewer updates
-    learning_rate: 1e-4         # Slightly higher LR for faster learning
+    batch_size: 512
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
     clipping_epsilon: 0.2
     discounting: 0.95
     action_repeat: 1
     entropy_cost: 1e-2
     reward_scaling: 1
     normalize_observations: true
-    unroll_length: 20           # Shorter unroll
+    unroll_length: 40                 # 4 windows of H=10 -> 3 D0 transitions per unroll
     seed: 0
     get_activation: false
     deterministic_eval: true
@@ -189,9 +191,9 @@ train_setup:
 # =============================================================================
 logging_config:
   project_name: vqvae_experiments
-  group_name: minimal_tests
-  exp_name: vqvae_multi_clip
-  clip_id: 0  # Only used for eval video rendering, not training
+  group_name: code_chunking
+  exp_name: vqvae_code_chunk
+  clip_id: 0
   model_path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints
 
 # =============================================================================

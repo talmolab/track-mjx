@@ -379,7 +379,7 @@ def test_full_network_depth1():
     params = network.init(init_key, obs, dummy_key)
 
     # Standard forward pass
-    action, z_e, all_indices = network.apply(params, obs, dummy_key)
+    action, z_e, all_indices, logvar = network.apply(params, obs, dummy_key)
 
     # Shape checks
     assert action.shape == (BATCH, ACTION_SIZE * 2), (
@@ -447,7 +447,7 @@ def test_full_network_activations():
     dummy_key = jax.random.PRNGKey(0)
     params = network.init(init_key, obs, dummy_key)
 
-    action, z_e, all_indices, extras = network.apply(
+    action, z_e, all_indices, logvar, extras = network.apply(
         params, obs, dummy_key, get_activation=True
     )
 

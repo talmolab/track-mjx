@@ -159,9 +159,9 @@ train_setup:
     batch_size: 256
     num_minibatches: 16
     num_updates_per_batch: 4              # Epochs per PPO update
-    learning_rate: 5e-5
+    learning_rate: 1e-4
     grad_clip_threshold: 10.0
-    clipping_epsilon: 0.2
+    clipping_epsilon: 0.15
     discounting: 0.97                     
     gae_lambda: 0.97                      
     action_repeat: 1
@@ -169,7 +169,7 @@ train_setup:
     vf_loss_coefficient: 0.25
     reward_scaling: 1
     normalize_observations: true
-    unroll_length: 64
+    unroll_length: 96
     seed: 0
     deterministic_eval: true
 

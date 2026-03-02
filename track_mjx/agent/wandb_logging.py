@@ -79,6 +79,8 @@ def rollout_logging_fn(
         "recurrent_intention",
         "temporal_fixed_ppo",
         "temporal_learned_ppo",
+        "temporal_fixed_highlvl_ppo",
+        "temporal_learned_highlvl_ppo",
     }
     is_recurrent = arch_name in recurrent_arches
 

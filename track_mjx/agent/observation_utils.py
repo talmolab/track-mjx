@@ -1,20 +1,21 @@
-"""Utilities for handling dictionary observations.
+"""Utilities for handling environment observations.
 
-This module provides utilities for working with nested dictionary observations
-where the structure is:
-    {
-        'state': {'task_obs': ..., 'proprioception': ...},
-        'privileged_state': {'task_obs': ..., 'proprioception': ...}
-    }
+This module supports two observation layouts:
+    1. Nested dict observations:
+        {
+            'state': {'task_obs': ..., 'proprioception': ...},
+            'privileged_state': {'task_obs': ..., 'proprioception': ...}
+        }
+    2. Flat top-level observations:
+        {
+            'state': ...,
+            'privileged_state': ...,
+        }
 
 Each leaf value is a flat 1D array (unbatched) or 2D array (batched).
-
-Key components:
-- normalizer_select: Extracts per-key running statistics from a pytree-structured normalizer
-- get_obs_sizes / get_obs_shape: Extract observation metadata from example observations
 """
 
-from typing import Mapping, Any
+from typing import Any, Mapping
 
 import jax.numpy as jnp
 from brax.training.acme import running_statistics, specs
@@ -52,26 +53,27 @@ def get_obs_sizes(obs: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
     """Extract observation sizes from an example observation dict.
 
     Args:
-        obs: Example observation dict with structure:
-            {'state': {'task_obs': array, 'proprioception': array}, ...}
-            Each leaf array should be flat (1D unbatched or 2D batched).
+        obs: Example observation dict. Supports either nested dict observations
+            or flat top-level arrays.
 
     Returns:
-        Dict mapping each inner key to its feature dimension size.
+        Dict mapping feature keys to their trailing dimension sizes.
     """
     if "state" not in obs:
         raise KeyError(
             f"Expected 'state' key in observation dict, got keys: {list(obs.keys())}. "
-            f"Ensure the environment produces nested observations with 'state' and "
-            f"'privileged_state' keys."
+            "Ensure the environment produces observations with a top-level "
+            "'state' key."
         )
     state_obs = obs["state"]
-    return {key: val.shape[-1] for key, val in state_obs.items()}
+    if isinstance(state_obs, Mapping):
+        return {key: val.shape[-1] for key, val in state_obs.items()}
+    return {key: val.shape[-1] for key, val in obs.items()}
 
 
 def get_obs_shape(
     obs: Mapping[str, Mapping[str, Any]],
-) -> Mapping[str, Mapping[str, specs.Array]]:
+) -> Mapping[str, Mapping[str, specs.Array] | specs.Array]:
     """Extract observation shapes as a pytree for running_statistics.init_state.
 
     Preserves the container types (e.g. OrderedDict) of the input so that the
@@ -79,17 +81,26 @@ def get_obs_shape(
     ``jax.tree_util.tree_map`` calls.
 
     Args:
-        obs: Example observation dict with flat leaf arrays.
+        obs: Example observation dict with nested or flat leaves.
 
     Returns:
         Nested mapping matching obs structure, with specs.Array for each leaf.
     """
+    state_obs = obs["state"]
+    if isinstance(state_obs, Mapping):
 
-    def get_specs(inner_obs: Mapping[str, Any]) -> Mapping[str, specs.Array]:
-        specs_dict = {
+        def get_specs(inner_obs: Mapping[str, Any]) -> Mapping[str, specs.Array]:
+            specs_dict = {
+                key: specs.Array((val.shape[-1],), jnp.dtype("float32"))
+                for key, val in inner_obs.items()
+            }
+            return type(inner_obs)(specs_dict)
+
+        return type(obs)({key: get_specs(inner) for key, inner in obs.items()})
+
+    return type(obs)(
+        {
             key: specs.Array((val.shape[-1],), jnp.dtype("float32"))
-            for key, val in inner_obs.items()
+            for key, val in obs.items()
         }
-        return type(inner_obs)(specs_dict)
-
-    return type(obs)({key: get_specs(inner) for key, inner in obs.items()})
+    )

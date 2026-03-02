@@ -28,6 +28,9 @@ from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from track_mjx.agent.recurrent_ppo import losses as recurrent_ppo_losses
 from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
+from track_mjx.agent.temporal_highlvl_ppo import (
+    networks as temporal_highlvl_ppo_networks,
+)
 from track_mjx.agent.temporal_ppo import losses as temporal_ppo_losses
 from track_mjx.agent.temporal_ppo import networks as temporal_ppo_networks
 import flax
@@ -86,16 +89,13 @@ def require_obs_sizes(network_config) -> dict:
     """Validate that network_config has obs_sizes and return it as a dict.
 
     Handles legacy configs with 'imitation_target' by remapping to 'task_obs'.
-    Raises ValueError if the legacy flat observation format is detected.
     """
     has_obs_sizes = (
         hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
     )
     if not has_obs_sizes:
         raise ValueError(
-            "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes with 'task_obs' "
-            "and 'proprioception' keys."
+            "Config must have network_config.obs_sizes before restoring a policy."
         )
     obs_sizes = dict(network_config["obs_sizes"])
     if "imitation_target" in obs_sizes and "task_obs" not in obs_sizes:
@@ -107,6 +107,60 @@ def require_obs_sizes(network_config) -> dict:
             "proprioception": obs_sizes["proprioception"],
         }
     return obs_sizes
+
+
+def _get_arch_family(arch_name: str | None) -> str:
+    """Returns the network family for an architecture name."""
+    if arch_name is None:
+        return "ff"
+    if arch_name == "recurrent_intention":
+        return "recurrent"
+    if arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+        return "temporal"
+    if arch_name in {
+        "temporal_fixed_highlvl_ppo",
+        "temporal_learned_highlvl_ppo",
+    }:
+        return "temporal_highlvl"
+    return "ff"
+
+
+def _default_obs_keys_for_family(arch_family: str) -> set[str]:
+    """Returns default top-level observation keys for an arch family."""
+    return (
+        {"state"}
+        if arch_family == "temporal_highlvl"
+        else {"state", "privileged_state"}
+    )
+
+
+def _make_dummy_obs_for_arch(
+    cfg: DictConfig,
+    obs_keys: set[str] | None,
+) -> Any:
+    """Constructs dummy observations matching the normalizer layout."""
+    arch_family = _get_arch_family(cfg.network_config.get("arch_name"))
+    obs_sizes = require_obs_sizes(cfg["network_config"])
+    if obs_keys is None:
+        obs_keys = _default_obs_keys_for_family(arch_family)
+
+    if arch_family == "temporal_highlvl":
+        missing = obs_keys.difference(obs_sizes)
+        if missing:
+            raise ValueError(
+                "Missing flat observation sizes for keys "
+                f"{sorted(missing)} in network_config.obs_sizes."
+            )
+        return {
+            key: jnp.zeros((1, obs_sizes[key]), dtype=jnp.float32)
+            for key in sorted(obs_keys)
+        }
+
+    inner = {
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
+        "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+    }
+    return {key: inner for key in sorted(obs_keys)}
 
 
 def load_config_from_checkpoint(
@@ -298,12 +352,13 @@ def make_abstract_policy(
             "If this is unexpected, check your config file."
         )
         arch_name = "intention"
-    if arch_name == "recurrent_intention":
+    arch_family = _get_arch_family(arch_name)
+    if arch_family == "recurrent":
         init_params = recurrent_ppo_losses.RecurrentPPONetworkParams(
             policy=ppo_network.policy_network.init(key_policy),
             value=ppo_network.value_network.init(key_value),
         )
-    elif arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+    elif arch_family in {"temporal", "temporal_highlvl"}:
         init_params = temporal_ppo_losses.TemporalPPONetworkParams(
             policy=ppo_network.policy_network.init(key_policy),
             value=ppo_network.value_network.init(key_value),
@@ -314,14 +369,7 @@ def make_abstract_policy(
             value=ppo_network.value_network.init(key_value),
         )
 
-    obs_sizes = require_obs_sizes(cfg["network_config"])
-    if obs_keys is None:
-        obs_keys = {"state", "privileged_state"}
-    inner = {
-        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
-        "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
-    }
-    dummy_obs = {key: inner for key in sorted(obs_keys)}
+    dummy_obs = _make_dummy_obs_for_arch(cfg, obs_keys)
     normalizer_state = running_statistics.init_state(get_obs_shape(dummy_obs))
 
     return (normalizer_state, init_params.policy)
@@ -352,12 +400,13 @@ def _make_legacy_dict_abstract_policy(
     arch_name = cfg.network_config.get("arch_name")
     if arch_name is None:
         arch_name = "intention"
-    if arch_name == "recurrent_intention":
+    arch_family = _get_arch_family(arch_name)
+    if arch_family == "recurrent":
         init_params = recurrent_ppo_losses.RecurrentPPONetworkParams(
             policy=ppo_network.policy_network.init(key_policy),
             value=ppo_network.value_network.init(key_value),
         )
-    elif arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+    elif arch_family in {"temporal", "temporal_highlvl"}:
         init_params = temporal_ppo_losses.TemporalPPONetworkParams(
             policy=ppo_network.policy_network.init(key_policy),
             value=ppo_network.value_network.init(key_value),
@@ -444,14 +493,12 @@ def load_inference_fn(
         )
         arch_name = "intention"
 
-    recurrent_arches = {
-        "recurrent_intention",
-        "temporal_fixed_ppo",
-        "temporal_learned_ppo",
-    }
-    if arch_name in recurrent_arches:
-        if arch_name == "recurrent_intention":
+    arch_family = _get_arch_family(arch_name)
+    if arch_family in {"recurrent", "temporal", "temporal_highlvl"}:
+        if arch_family == "recurrent":
             make_policy = recurrent_ppo_networks.make_inference_fn(ppo_network)
+        elif arch_family == "temporal_highlvl":
+            make_policy = temporal_highlvl_ppo_networks.make_inference_fn(ppo_network)
         else:
             make_policy = temporal_ppo_networks.make_inference_fn(ppo_network)
     else:
@@ -459,7 +506,7 @@ def load_inference_fn(
 
     require_obs_sizes(cfg.network_config)
 
-    if arch_name in recurrent_arches:
+    if arch_family in {"recurrent", "temporal", "temporal_highlvl"}:
         return make_policy(
             policy_params, deterministic=deterministic, get_activation=get_activation
         )
@@ -551,6 +598,32 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             proprioception_noise_std=network_config.get(
                 "proprioception_noise_std", 0.0
             ),
+            value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
+            condition_value_on_latent=network_config.get(
+                "condition_value_on_latent", True
+            ),
+            horizon_ramp=network_config.get("horizon_ramp", False),
+            horizon_ramp_steps=network_config.get("horizon_ramp_steps", 0),
+        )
+    elif arch_name in {
+        "temporal_fixed_highlvl_ppo",
+        "temporal_learned_highlvl_ppo",
+    }:
+        boundary_mode = (
+            "fixed" if arch_name == "temporal_fixed_highlvl_ppo" else "learned"
+        )
+        return temporal_highlvl_ppo_networks.make_temporal_highlvl_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            intention_latent_size=network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
+            rnn_type=network_config.rnn_type,
+            rnn_hidden_sizes=tuple(network_config.rnn_hidden_sizes),
+            boundary_mode=boundary_mode,
+            macro_horizon=network_config.get("macro_horizon", 16),
+            min_macro_horizon=network_config.get("min_macro_horizon", 4),
+            max_macro_horizon=network_config.get("max_macro_horizon", 64),
+            eval_gate_threshold=network_config.get("eval_gate_threshold", 0.5),
             value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
             condition_value_on_latent=network_config.get(
                 "condition_value_on_latent", True

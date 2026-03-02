@@ -1,6 +1,7 @@
 """Entry point for track-mjx training."""
 
 import os
+from pathlib import Path
 
 # Must set rendering backend before importing MuJoCo
 os.environ["MUJOCO_GL"] = "egl"
@@ -15,7 +16,7 @@ import jax
 import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 
@@ -25,6 +26,9 @@ from track_mjx.agent.ff_ppo import ppo as ff_ppo, ppo_networks as ff_networks
 from track_mjx.agent.recurrent_ppo import (
     ppo as recurrent_ppo,
     networks as recurrent_networks,
+)
+from track_mjx.agent.temporal_highlvl_ppo import (
+    networks as temporal_highlvl_networks,
 )
 from track_mjx.agent.temporal_ppo import (
     ppo as temporal_ppo,
@@ -39,6 +43,73 @@ def _setup_environment() -> None:
     xla_flags += " --xla_gpu_triton_gemm_any=True"
     os.environ["XLA_FLAGS"] = xla_flags
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
+
+_TEMPORAL_ARCHES = {"temporal_fixed_ppo", "temporal_learned_ppo"}
+_TEMPORAL_HIGHLVL_ARCHES = {
+    "temporal_fixed_highlvl_ppo",
+    "temporal_learned_highlvl_ppo",
+}
+_HIGHLVL_WRAPPER_KEYS = {
+    "policy_obs_key": "state",
+    "value_obs_key": "state",
+    "highlvl_obs_key": "task_obs",
+    "lowlvl_obs_key": "proprioception",
+}
+
+
+def _resolve_decoder_checkpoint_path(checkpoint_path: str) -> Path:
+    """Resolves a decoder checkpoint path from config."""
+    path = Path(checkpoint_path)
+    if path.is_absolute():
+        return path
+    project_root = Path(__file__).resolve().parents[1]
+    return project_root / "model_checkpoints" / path
+
+
+def load_decoder_for_highlvl_wrapper(
+    checkpoint_path: str,
+    step: int | None = None,
+) -> tuple[DictConfig, callable]:
+    """Loads and validates a feedforward decoder for HighLevelWrapper."""
+    resolved_path = _resolve_decoder_checkpoint_path(checkpoint_path)
+    decoder_cfg = checkpointing.load_config_from_checkpoint(
+        str(resolved_path), step=step
+    )
+    arch_name = decoder_cfg.network_config.get("arch_name", "intention")
+    if arch_name != "intention":
+        raise ValueError(
+            f"High-level temporal PPO requires a feedforward decoder checkpoint. "
+            f"Got arch_name='{arch_name}' at {resolved_path}."
+        )
+
+    required_keys = (
+        ("network_config", "intention_size"),
+        ("network_config", "decoder_layer_sizes"),
+        ("network_config", "obs_sizes"),
+    )
+    missing = [
+        ".".join(path)
+        for path in required_keys
+        if OmegaConf.select(decoder_cfg, ".".join(path), default=None) is None
+    ]
+    if missing:
+        raise ValueError(
+            f"Decoder checkpoint at {resolved_path} is missing required config keys: {missing}."
+        )
+
+    decoder_policy = ff_networks.make_decoder_policy_fn(str(resolved_path), step=step)
+    return decoder_cfg, decoder_policy
+
+
+def _wrap_with_highlvl_decoder(base_env, decoder_policy, latent_size: int):
+    """Wraps a task env with the frozen feedforward decoder."""
+    return rodent_wrappers.HighLevelWrapper(
+        base_env,
+        decoder_inference_fn=decoder_policy,
+        latent_size=latent_size,
+        **_HIGHLVL_WRAPPER_KEYS,
+    )
 
 
 @hydra.main(
@@ -79,54 +150,17 @@ def main(cfg: DictConfig) -> None:
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
-    # Create the reference clips using registry, get environment name from config
-    logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
     env_name = cfg.env_config.env_name
-    reference_clips = registry.load_reference_clips(
-        env_name,
-        data_path=cfg.env_config.reference_data_path,
-        n_frames_per_clip=cfg.env_config.clip_length,
-        keep_clips_idx=cfg.env_config.keep_clips_idx,
-    )
-    # Create train/test split
-    key_split, _ = jax.random.split(
-        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
-    )
-    train_clips, test_clips = reference_clips.split(
-        train_ratio=cfg.train_setup.train_subset_ratio,
-        seed=key_split,
-    )
-    # Create environments using registry
-    env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
-    )
-    test_env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False)
-    )
-
-    logging.info(f"Environment config: {cfg.env_config}")
-
-    # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
-    steps_per_frame = (1 / cfg.env_config.mocap_hz) / (cfg.env_config.ctrl_dt)
-    episode_length = (
-        cfg.env_config.clip_length
-        - cfg.env_config.start_frame_range[-1]
-        - cfg.env_config.reference_length
-    ) * steps_per_frame
-    logging.info(f"episode_length {episode_length}")
-
-    logging.info("Using PPO Pipeline")
-
-    # Select network factory and train function based on architecture
     arch_name = cfg.network_config.get("arch_name", "intention")
     logging.info(f"Using architecture: {arch_name}")
 
-    # Validate architecture name
     valid_arch_names = {
         "intention",
         "recurrent_intention",
         "temporal_fixed_ppo",
         "temporal_learned_ppo",
+        "temporal_fixed_highlvl_ppo",
+        "temporal_learned_highlvl_ppo",
     }
     if arch_name not in valid_arch_names:
         raise ValueError(
@@ -134,8 +168,96 @@ def main(cfg: DictConfig) -> None:
             f"Valid options are: {sorted(valid_arch_names)}"
         )
 
+    decoder_cfg = None
+    decoder_policy = None
+    decoder_latent_size = None
+    if arch_name in _TEMPORAL_HIGHLVL_ARCHES:
+        if env_name != "RodentImitation":
+            raise ValueError(
+                f"{arch_name} only supports env_name='RodentImitation'. Got '{env_name}'."
+            )
+        decoder_checkpoint_path = cfg.train_setup.get("decoder_checkpoint_path")
+        if decoder_checkpoint_path is None:
+            raise ValueError(
+                f"{arch_name} requires train_setup.decoder_checkpoint_path."
+            )
+        decoder_cfg, decoder_policy = load_decoder_for_highlvl_wrapper(
+            decoder_checkpoint_path,
+            step=cfg.train_setup.get("decoder_checkpoint_step"),
+        )
+        if decoder_cfg.env_config.walker_name != cfg.env_config.walker_name:
+            raise ValueError(
+                "Decoder checkpoint walker does not match training config: "
+                f"{decoder_cfg.env_config.walker_name} vs {cfg.env_config.walker_name}."
+            )
+        decoder_ctrl_dt = decoder_cfg.env_config.ctrl_dt
+        cfg.env_config.ctrl_dt = decoder_ctrl_dt
+        env_cfg_ml.ctrl_dt = decoder_ctrl_dt
+        cfg_dict["env_config"]["ctrl_dt"] = decoder_ctrl_dt
+        decoder_latent_size = int(decoder_cfg.network_config.intention_size)
+
+    logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
+    reference_clips = registry.load_reference_clips(
+        env_name,
+        data_path=cfg.env_config.reference_data_path,
+        n_frames_per_clip=cfg.env_config.clip_length,
+        keep_clips_idx=cfg.env_config.keep_clips_idx,
+    )
+    key_split, _ = jax.random.split(
+        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
+    )
+    train_clips, test_clips = reference_clips.split(
+        train_ratio=cfg.train_setup.train_subset_ratio,
+        seed=key_split,
+    )
+
+    if arch_name in _TEMPORAL_HIGHLVL_ARCHES:
+        train_base_env = registry.load(
+            env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False
+        )
+        test_base_env = registry.load(
+            env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False
+        )
+        env = _wrap_with_highlvl_decoder(
+            train_base_env, decoder_policy, decoder_latent_size
+        )
+        test_env = _wrap_with_highlvl_decoder(
+            test_base_env, decoder_policy, decoder_latent_size
+        )
+        sample_state = env.reset(jax.random.PRNGKey(0))
+        if "state" not in sample_state.obs:
+            raise ValueError(
+                f"Wrapped env observations must include 'state'. Got {sample_state.obs.keys()}."
+            )
+        if env.action_size != decoder_latent_size:
+            raise ValueError(
+                "Wrapped env action size does not match decoder latent size: "
+                f"{env.action_size} vs {decoder_latent_size}."
+            )
+    else:
+        env = rodent_wrappers.TrackMjxObsWrapper(
+            registry.load(
+                env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False
+            )
+        )
+        test_env = rodent_wrappers.TrackMjxObsWrapper(
+            registry.load(
+                env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False
+            )
+        )
+
+    logging.info(f"Environment config: {cfg.env_config}")
+
+    steps_per_frame = (1 / cfg.env_config.mocap_hz) / (cfg.env_config.ctrl_dt)
+    episode_length = (
+        cfg.env_config.clip_length
+        - cfg.env_config.start_frame_range[-1]
+        - cfg.env_config.reference_length
+    ) * steps_per_frame
+    logging.info(f"episode_length {episode_length}")
+    logging.info("Using PPO Pipeline")
+
     if arch_name == "recurrent_intention":
-        # Validate required config keys for recurrent architecture
         required_keys = ["rnn_type", "rnn_hidden_sizes"]
         missing_keys = [k for k in required_keys if not hasattr(cfg.network_config, k)]
         if missing_keys:
@@ -144,7 +266,6 @@ def main(cfg: DictConfig) -> None:
                 f"Please add them to network_config in your YAML file."
             )
 
-        # Recurrent intention network (MLP encoder + RNN decoder)
         network_factory = functools.partial(
             recurrent_networks.make_recurrent_intention_ppo_networks,
             intention_latent_size=cfg.network_config.intention_size,
@@ -157,7 +278,7 @@ def main(cfg: DictConfig) -> None:
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
         ppo_module = recurrent_ppo
-    elif arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+    elif arch_name in _TEMPORAL_ARCHES:
         required_keys = ["rnn_type", "rnn_hidden_sizes"]
         missing_keys = [k for k in required_keys if not hasattr(cfg.network_config, k)]
         if missing_keys:
@@ -189,8 +310,38 @@ def main(cfg: DictConfig) -> None:
             horizon_ramp_steps=cfg.network_config.get("horizon_ramp_steps", 0),
         )
         ppo_module = temporal_ppo
+    elif arch_name in _TEMPORAL_HIGHLVL_ARCHES:
+        required_keys = ["rnn_type", "rnn_hidden_sizes"]
+        missing_keys = [k for k in required_keys if not hasattr(cfg.network_config, k)]
+        if missing_keys:
+            raise ValueError(
+                f"{arch_name} architecture requires these config keys: {missing_keys}. "
+                f"Please add them to network_config in your YAML file."
+            )
+
+        boundary_mode = (
+            "fixed" if arch_name == "temporal_fixed_highlvl_ppo" else "learned"
+        )
+        network_factory = functools.partial(
+            temporal_highlvl_networks.make_temporal_highlvl_ppo_networks,
+            intention_latent_size=cfg.network_config.intention_size,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            rnn_type=cfg.network_config.rnn_type,
+            rnn_hidden_sizes=tuple(cfg.network_config.rnn_hidden_sizes),
+            boundary_mode=boundary_mode,
+            macro_horizon=cfg.network_config.get("macro_horizon", 16),
+            min_macro_horizon=cfg.network_config.get("min_macro_horizon", 4),
+            max_macro_horizon=cfg.network_config.get("max_macro_horizon", 64),
+            eval_gate_threshold=cfg.network_config.get("eval_gate_threshold", 0.5),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            condition_value_on_latent=cfg.network_config.get(
+                "condition_value_on_latent", True
+            ),
+            horizon_ramp=cfg.network_config.get("horizon_ramp", False),
+            horizon_ramp_steps=cfg.network_config.get("horizon_ramp_steps", 0),
+        )
+        ppo_module = temporal_ppo
     else:
-        # Feedforward intention network (default)
         network_factory = functools.partial(
             ff_networks.make_intention_ppo_networks,
             intention_latent_size=cfg.network_config.intention_size,
@@ -263,7 +414,7 @@ def main(cfg: DictConfig) -> None:
         ),
     )
 
-    if arch_name in {"temporal_fixed_ppo", "temporal_learned_ppo"}:
+    if arch_name in _TEMPORAL_ARCHES | _TEMPORAL_HIGHLVL_ARCHES:
         train_kwargs["gate_entropy_cost"] = cfg.network_config.get(
             "gate_entropy_cost", 1e-4
         )
@@ -291,9 +442,17 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=rollout_cfg, clips=None, flatten_obs=False)
-    )
+    if arch_name in _TEMPORAL_HIGHLVL_ARCHES:
+        rollout_base_env = registry.load(
+            env_name, config=rollout_cfg, clips=None, flatten_obs=False
+        )
+        rollout_env = _wrap_with_highlvl_decoder(
+            rollout_base_env, decoder_policy, decoder_latent_size
+        )
+    else:
+        rollout_env = rodent_wrappers.TrackMjxObsWrapper(
+            registry.load(env_name, config=rollout_cfg, clips=None, flatten_obs=False)
+        )
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

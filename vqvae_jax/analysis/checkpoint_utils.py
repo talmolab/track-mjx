@@ -23,6 +23,8 @@ from vq_ppo_networks import (
     VQPPOImitationNetworks,
     make_vq_inference_fn,
     make_vq_intention_ppo_networks,
+    make_vq_chunked_inference_fn,
+    make_vq_chunked_ppo_networks,
 )
 
 from track_mjx.agent.observation_utils import (
@@ -101,11 +103,13 @@ def make_vq_ppo_network_from_cfg(
         VQPPOImitationNetworks with policy, value, and action distribution.
 
     Raises:
-        ValueError: If architecture is not vqvae_intention.
+        ValueError: If architecture is not a recognized VQ-VAE variant.
     """
-    if cfg.network_config.arch_name != "vqvae_intention":
+    valid_arch_names = {"vqvae_intention", "vqvae_naive", "vqvae_code_chunk"}
+    if cfg.network_config.arch_name not in valid_arch_names:
         raise ValueError(
-            f"Expected arch_name='vqvae_intention', got '{cfg.network_config.arch_name}'"
+            f"Expected arch_name in {valid_arch_names}, "
+            f"got '{cfg.network_config.arch_name}'"
         )
 
     obs_sizes = _get_obs_sizes_from_cfg(cfg)
@@ -432,6 +436,76 @@ def load_vq_inference_fn_with_stickiness(
 
     logging.info(f"Created stickiness-aware inference fn (bias={stickiness_bias})")
     return inference_fn, stickiness_bias
+
+
+def load_vq_chunked_inference_fn(
+    cfg: DictConfig,
+    policy_params: tuple[Any, Any],
+    commitment_horizon: int,
+    deterministic: bool = True,
+) -> tuple[Callable, Callable]:
+    """Create a stateful chunked VQ-VAE inference function.
+
+    Wraps make_vq_chunked_inference_fn to produce a policy that carries
+    chunk_state (held_d0_idx, tau) through the rollout, matching the
+    Semi-MDP temporal commitment pattern used during training.
+
+    Args:
+        cfg: Configuration with network_config section.
+        policy_params: Tuple of (normalizer_state, policy_params).
+        commitment_horizon: H, number of steps to hold D0 code.
+        deterministic: If True, use mean action (no sampling).
+
+    Returns:
+        Tuple of:
+        - inference_fn: (obs, chunk_state, rng) -> (action, extras, new_chunk_state)
+        - initial_chunk_state_fn: () -> (held_d0_idx=0, tau=0)
+    """
+    obs_sizes = _get_obs_sizes_from_cfg(cfg)
+
+    stickiness_bias = cfg.network_config.get("stickiness_bias", 0.0)
+    try:
+        stickiness_bias = tuple(float(b) for b in stickiness_bias)
+    except TypeError:
+        stickiness_bias = float(stickiness_bias)
+
+    ppo_network = make_vq_chunked_ppo_networks(
+        obs_sizes=obs_sizes,
+        action_size=cfg.network_config.action_size,
+        commitment_horizon=commitment_horizon,
+        latent_dim=cfg.network_config.latent_dim,
+        num_codes=cfg.network_config.num_codes,
+        commitment_cost=cfg.network_config.commitment_cost,
+        codebook_init_scale=cfg.network_config.codebook_init_scale,
+        encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        stickiness_bias=stickiness_bias,
+        rvq_depth=int(cfg.network_config.get("rvq_depth", 2)),
+        use_rotation=bool(cfg.network_config.get("use_rotation", False)),
+        coupled_residual_grad=False,  # Must be False for chunking
+        proprio_noise_scale=float(
+            cfg.network_config.get("proprio_noise_scale", 0.0)
+        ),
+        use_continuous_latent=bool(
+            cfg.network_config.get("use_continuous_latent", False)
+        ),
+        continuous_latent_dim=int(
+            cfg.network_config.get("continuous_latent_dim", 4)
+        ),
+    )
+
+    make_policy = make_vq_chunked_inference_fn(ppo_network, commitment_horizon)
+    inference_fn = make_policy(policy_params, deterministic=deterministic)
+
+    def initial_chunk_state_fn():
+        return (jnp.array(0), jnp.array(0))
+
+    logging.info(
+        f"Created chunked inference fn (H={commitment_horizon}, "
+        f"deterministic={deterministic})"
+    )
+    return inference_fn, initial_chunk_state_fn
 
 
 def get_codebook(policy_params: tuple[Any, Any], depth: int = 0) -> jnp.ndarray:

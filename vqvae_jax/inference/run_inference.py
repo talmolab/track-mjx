@@ -52,6 +52,7 @@ from .h5_utils import RolloutData, save_rollout_h5
 sys.path.insert(0, str(VQVAE_DIR / "analysis"))
 from analysis.checkpoint_utils import (
     load_vq_checkpoint,
+    load_vq_chunked_inference_fn,
     load_vq_inference_fn,
     load_vq_inference_fn_with_stickiness,
     get_codebook,
@@ -182,6 +183,129 @@ def run_inference(
     return results
 
 
+def run_inference_chunked(
+    env: Any,
+    inference_fn: Any,
+    initial_chunk_state_fn: Any,
+    num_clips: int,
+    max_steps: int,
+    seed: int,
+    store_z_e: bool = False,
+    rvq_depth: int = 2,
+) -> list[RolloutData]:
+    """Run VQ-VAE inference with code-chunked (Semi-MDP) rollouts.
+
+    The inference_fn carries chunk_state (held_d0_idx, tau) through the
+    rollout, applying temporal commitment on the D0 code.
+
+    Args:
+        env: Environment with reset/step methods.
+        inference_fn: Chunked inference function with signature
+            (obs, chunk_state, rng) -> (action, extras, new_chunk_state).
+        initial_chunk_state_fn: Callable returning initial chunk_state tuple.
+        num_clips: Number of clips to process.
+        max_steps: Maximum steps per clip.
+        seed: Random seed.
+        store_z_e: Whether to store encoder outputs (z_e) before quantization.
+        rvq_depth: Number of RVQ depth levels for index tracking.
+
+    Returns:
+        List of RolloutData objects with tau field populated.
+    """
+    jit_reset = jax.jit(env.reset)
+    jit_step = jax.jit(env.step)
+
+    results = []
+    rng = jax.random.PRNGKey(seed)
+
+    for clip_idx in range(num_clips):
+        logging.info(
+            f"Running chunked inference on clip {clip_idx + 1}/{num_clips}..."
+        )
+
+        rng, reset_rng = jax.random.split(rng)
+        state = jit_reset(reset_rng)
+
+        code_indices = []
+        rvq_indices_per_depth = [[] for _ in range(rvq_depth)]
+        qpos_list = []
+        qvel_list = []
+        rewards = []
+        tau_list = []
+        z_e_list = [] if store_z_e else None
+        chunk_state = initial_chunk_state_fn()
+
+        for step in range(max_steps):
+            obs = flatten_obs_dict(state.obs)
+
+            rng, action_rng = jax.random.split(rng)
+            action, extras, chunk_state = inference_fn(
+                obs, chunk_state, action_rng
+            )
+
+            # Extract primary (L0) code index
+            code_idx = int(extras["indices"])
+            code_indices.append(code_idx)
+
+            # Track tau (timer value)
+            tau_val = int(extras.get("tau", 0))
+            tau_list.append(tau_val)
+
+            # Extract per-depth indices for RVQ
+            all_indices = extras.get("all_indices")
+            if all_indices is not None:
+                for d in range(rvq_depth):
+                    if isinstance(all_indices, tuple) and d < len(all_indices):
+                        rvq_indices_per_depth[d].append(int(all_indices[d]))
+                    elif d == 0:
+                        rvq_indices_per_depth[d].append(code_idx)
+            else:
+                rvq_indices_per_depth[0].append(code_idx)
+
+            # Store z_e if requested
+            if store_z_e and "z_e" in extras:
+                z_e_list.append(np.array(extras["z_e"]))
+
+            # Extract qpos/qvel
+            if hasattr(state, "data"):
+                qpos_list.append(np.array(state.data.qpos))
+                qvel_list.append(np.array(state.data.qvel))
+            elif hasattr(state, "pipeline_state"):
+                qpos_list.append(np.array(state.pipeline_state.q))
+                qvel_list.append(np.array(state.pipeline_state.qd))
+
+            # Step environment
+            next_state = jit_step(state, action)
+            rewards.append(float(next_state.reward))
+
+            if next_state.done:
+                break
+
+            state = next_state
+
+        # Build rvq_indices tuple
+        rvq_indices = None
+        if rvq_depth > 1 and rvq_indices_per_depth[0]:
+            rvq_indices = tuple(
+                np.array(rvq_indices_per_depth[d]) for d in range(rvq_depth)
+            )
+
+        z_e = np.stack(z_e_list) if z_e_list else None
+        result = RolloutData(
+            clip_idx=clip_idx,
+            code_indices=np.array(code_indices),
+            qpos=np.stack(qpos_list) if qpos_list else np.zeros((0, 0)),
+            qvel=np.stack(qvel_list) if qvel_list else np.zeros((0, 0)),
+            rewards=np.array(rewards),
+            z_e=z_e,
+            rvq_indices=rvq_indices,
+            tau=np.array(tau_list),
+        )
+        results.append(result)
+
+    return results
+
+
 def run_inference_pipeline(cfg: DictConfig) -> str:
     """Run the complete inference pipeline and save to H5.
 
@@ -220,14 +344,44 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
     )
     logging.info(f"  Checkpoint step: {step}")
 
-    # Create stickiness-aware inference function if needed
+    # Detect mode from checkpoint config
+    use_code_chunking = bool(
+        vq_cfg.network_config.get("use_code_chunking", False)
+    )
+    use_continuous_latent = bool(
+        vq_cfg.network_config.get("use_continuous_latent", False)
+    )
+    commitment_horizon = int(
+        vq_cfg.network_config.get("code_commitment_horizon", 10)
+    )
+    logging.info(f"  use_code_chunking: {use_code_chunking}")
+    logging.info(f"  use_continuous_latent: {use_continuous_latent}")
+
+    # Create appropriate inference function based on mode
     stickiness_bias = vq_cfg.network_config.get("stickiness_bias", 0.0)
     try:
         use_stickiness = any(float(b) > 0 for b in stickiness_bias)
     except TypeError:
         use_stickiness = float(stickiness_bias) > 0
 
-    if use_stickiness:
+    chunked_inference_fn = None
+    initial_chunk_state_fn = None
+
+    if use_code_chunking:
+        logging.info(
+            f"  Code chunking ENABLED (H={commitment_horizon}), "
+            f"using chunked inference"
+        )
+        chunked_inference_fn, initial_chunk_state_fn = (
+            load_vq_chunked_inference_fn(
+                vq_cfg,
+                policy_params,
+                commitment_horizon=commitment_horizon,
+                deterministic=True,
+            )
+        )
+        inference_fn = None  # Not used in chunked mode
+    elif use_stickiness:
         logging.info(f"  Stickiness bias: {stickiness_bias} (ENABLED)")
         inference_fn, _ = load_vq_inference_fn_with_stickiness(
             vq_cfg, policy_params, deterministic=True, get_activation=True
@@ -280,16 +434,28 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
     logging.info(f"  Seed: {cfg.inference.seed}")
     logging.info(f"  Store z_e: {cfg.inference.store_z_e}")
 
-    results = run_inference(
-        env=env,
-        inference_fn=inference_fn,
-        num_clips=num_clips,
-        max_steps=cfg.inference.max_steps,
-        seed=cfg.inference.seed,
-        store_z_e=cfg.inference.store_z_e,
-        use_stickiness=use_stickiness,
-        rvq_depth=rvq_depth,
-    )
+    if use_code_chunking:
+        results = run_inference_chunked(
+            env=env,
+            inference_fn=chunked_inference_fn,
+            initial_chunk_state_fn=initial_chunk_state_fn,
+            num_clips=num_clips,
+            max_steps=cfg.inference.max_steps,
+            seed=cfg.inference.seed,
+            store_z_e=cfg.inference.store_z_e,
+            rvq_depth=rvq_depth,
+        )
+    else:
+        results = run_inference(
+            env=env,
+            inference_fn=inference_fn,
+            num_clips=num_clips,
+            max_steps=cfg.inference.max_steps,
+            seed=cfg.inference.seed,
+            store_z_e=cfg.inference.store_z_e,
+            use_stickiness=use_stickiness,
+            rvq_depth=rvq_depth,
+        )
 
     # Prepare metadata
     metadata = {
@@ -307,6 +473,9 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
         "timestamp": datetime.now().isoformat(),
         "data_split": data_split,
         "train_subset_ratio": train_ratio,
+        "use_continuous_latent": use_continuous_latent,
+        "use_code_chunking": use_code_chunking,
+        "commitment_horizon": commitment_horizon if use_code_chunking else None,
     }
 
     # Save to H5 (auto-suffix path for train/test splits)

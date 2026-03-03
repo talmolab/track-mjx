@@ -137,7 +137,7 @@ network_config:
   # Continuous latent settings
   use_continuous_latent: false
   continuous_latent_dim: 4
-  kl_weight: 0.1
+  kl_weight: 0.3
 
   # Code chunking (Semi-MDP temporal commitment) — ENABLED
   use_code_chunking: true

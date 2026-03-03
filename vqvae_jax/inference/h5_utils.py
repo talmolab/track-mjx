@@ -26,6 +26,7 @@ class RolloutData:
         z_e: Optional encoder outputs before quantization, shape [T, latent_dim].
         rvq_indices: Optional per-depth indices for RVQ, tuple of D arrays
             each shape [T]. None for depth=1 models.
+        tau: Optional timer values for chunked mode, shape [T].
     """
 
     clip_idx: int
@@ -35,6 +36,7 @@ class RolloutData:
     rewards: np.ndarray
     z_e: np.ndarray | None = None
     rvq_indices: tuple[np.ndarray, ...] | None = None
+    tau: np.ndarray | None = None
 
 
 def save_rollout_h5(
@@ -126,6 +128,14 @@ def save_rollout_h5(
                         compression_opts=4,
                     )
 
+            if rollout.tau is not None:
+                group.create_dataset(
+                    "tau",
+                    data=rollout.tau,
+                    compression="gzip",
+                    compression_opts=4,
+                )
+
 
 def load_rollout_h5(
     path: str | Path,
@@ -187,6 +197,10 @@ def load_rollout_h5(
                 if depth_arrays:
                     rvq_indices = tuple(depth_arrays)
 
+            tau = None
+            if "tau" in group:
+                tau = np.array(group["tau"])
+
             rollout = RolloutData(
                 clip_idx=int(clip_idx),
                 code_indices=np.array(group["code_indices"]),
@@ -195,6 +209,7 @@ def load_rollout_h5(
                 rewards=np.array(group["rewards"]),
                 z_e=z_e,
                 rvq_indices=rvq_indices,
+                tau=tau,
             )
             rollouts.append(rollout)
 

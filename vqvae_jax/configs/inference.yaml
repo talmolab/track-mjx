@@ -8,7 +8,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260212_180855_952368/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260301_061919_970599/
   step: null  # Checkpoint step (null = latest)
 
 # =============================================================================

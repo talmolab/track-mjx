@@ -51,6 +51,7 @@ from track_mjx.config import utils as config_utils
 from analysis.checkpoint_utils import (
     get_all_codebooks,
     load_vq_checkpoint,
+    load_vq_chunked_inference_fn,
     load_vq_inference_fn_with_stickiness,
 )
 from analysis.correction_analysis import identify_null_code
@@ -100,6 +101,40 @@ class WrappingImitation(imitation.Imitation):
 # Setting all D0 codebook entries to the same vector forces that z_q regardless
 # of z_e.  L1 continues to operate normally on the residual.
 # =============================================================================
+
+
+def zero_continuous_encoder_params(
+    policy_params: tuple[Any, Any],
+) -> tuple[Any, Any]:
+    """Zero the continuous encoder head so z_e_sampled = 0.
+
+    When a checkpoint is trained with use_continuous_latent=True, the decoder
+    expects input [z_hat_st, z_e_sampled, proprioception]. For ablation we
+    want z_e_sampled = 0 so the only varying signal comes from D0 codes.
+
+    Zeroing the mean projection weights and bias ensures cont_mean = 0,
+    and in deterministic mode z_e_sampled = cont_mean = 0.
+
+    Args:
+        policy_params: Tuple of (normalizer_state, policy_params_dict).
+
+    Returns:
+        New policy_params with zeroed continuous mean projection.
+    """
+    normalizer, params = policy_params
+    encoder = params["params"]["encoder"]
+    if "continuous_mean" not in encoder:
+        return policy_params  # No-op if not a continuous latent model
+
+    new_encoder = dict(encoder)
+    new_encoder["continuous_mean"] = {
+        "kernel": jnp.zeros_like(encoder["continuous_mean"]["kernel"]),
+        "bias": jnp.zeros_like(encoder["continuous_mean"]["bias"]),
+    }
+    new_params = dict(params)
+    new_params["params"] = dict(params["params"])
+    new_params["params"]["encoder"] = new_encoder
+    return (normalizer, new_params)
 
 
 def make_null_d0_params(
@@ -325,6 +360,114 @@ def run_ablation_rollout(
         rvq_indices = None
         if rvq_depth > 1 and rvq_per_depth[0]:
             rvq_indices = tuple(np.array(rvq_per_depth[d]) for d in range(rvq_depth))
+
+        results.append(
+            InferenceResult(
+                clip_idx=i,
+                code_indices=np.array(code_indices),
+                qpos=np.stack(qpos_list) if qpos_list else np.zeros((0, 0)),
+                qvel=np.stack(qvel_list) if qvel_list else np.zeros((0, 0)),
+                rewards=np.array(rewards),
+                states=states,
+                rvq_indices=rvq_indices,
+            )
+        )
+
+    return results
+
+
+def run_ablation_rollout_chunked(
+    env: Any,
+    inference_fn: Any,
+    initial_chunk_state_fn: Any,
+    num_repeats: int,
+    max_steps: int,
+    seed: int,
+    rvq_depth: int,
+    num_render: int = 0,
+) -> list[InferenceResult]:
+    """Run ablation rollouts with code-chunked (Semi-MDP) temporal commitment.
+
+    Like run_ablation_rollout but carries chunk_state (held_d0_idx, tau)
+    through the rollout so D0 codes are held for H steps, matching the
+    training behavior of a code-chunked model.
+
+    Args:
+        env: Imitation environment (single clip).
+        inference_fn: Chunked inference function with signature
+            (obs, chunk_state, rng) -> (action, extras, new_chunk_state).
+        initial_chunk_state_fn: Callable returning initial chunk_state tuple.
+        num_repeats: Number of rollout repeats (different random seeds).
+        max_steps: Maximum steps per rollout.
+        seed: Base random seed.
+        rvq_depth: Number of RVQ depth levels.
+        num_render: Number of rollouts for which to store env states
+            (for video rendering).
+
+    Returns:
+        List of InferenceResult objects.
+    """
+    jit_reset = jax.jit(env.reset)
+    jit_step = jax.jit(env.step)
+
+    results = []
+    rng = jax.random.PRNGKey(seed)
+
+    for i in range(num_repeats):
+        rng, reset_rng = jax.random.split(rng)
+        state = jit_reset(reset_rng)
+
+        code_indices: list[int] = []
+        rvq_per_depth: list[list[int]] = [[] for _ in range(rvq_depth)]
+        qpos_list: list[np.ndarray] = []
+        qvel_list: list[np.ndarray] = []
+        rewards: list[float] = []
+        store_states = i < num_render
+        states: list[Any] | None = [] if store_states else None
+        chunk_state = initial_chunk_state_fn()
+
+        for step in range(max_steps):
+            obs = flatten_obs_dict(state.obs)
+            rng, action_rng = jax.random.split(rng)
+            action, extras, chunk_state = inference_fn(
+                obs, chunk_state, action_rng
+            )
+
+            code_idx = int(extras["indices"])
+            code_indices.append(code_idx)
+
+            all_idx = extras.get("all_indices")
+            if all_idx is not None:
+                for d in range(rvq_depth):
+                    if isinstance(all_idx, tuple) and d < len(all_idx):
+                        rvq_per_depth[d].append(int(all_idx[d]))
+                    elif d == 0:
+                        rvq_per_depth[d].append(code_idx)
+            else:
+                rvq_per_depth[0].append(code_idx)
+
+            if hasattr(state, "data"):
+                qpos_list.append(np.array(state.data.qpos))
+                qvel_list.append(np.array(state.data.qvel))
+            elif hasattr(state, "pipeline_state"):
+                qpos_list.append(np.array(state.pipeline_state.q))
+                qvel_list.append(np.array(state.pipeline_state.qd))
+
+            if store_states:
+                states.append(state)
+
+            next_state = jit_step(state, action)
+            rewards.append(float(next_state.reward))
+
+            if next_state.done:
+                break
+            state = next_state
+
+        rvq_indices = None
+        if rvq_depth > 1 and rvq_per_depth[0]:
+            rvq_indices = tuple(
+                np.array(rvq_per_depth[d]) for d in range(rvq_depth)
+            )
 
         results.append(
             InferenceResult(
@@ -979,10 +1122,47 @@ def main(cfg: DictConfig):
         f"  {num_codes} codes, {d0_codebook.shape[1]} dims, {rvq_depth} depth(s)"
     )
 
-    # --- Create normal inference fn ---
+    # --- Zero continuous encoder if present ---
+    # When the checkpoint has use_continuous_latent=True, the decoder expects
+    # [z_hat_st, z_e_sampled, proprioception]. For ablation we zero z_e_sampled
+    # so the only varying signal comes from D0 codes.
+    use_continuous_latent = bool(
+        vq_cfg.network_config.get("use_continuous_latent", False)
+    )
+    if use_continuous_latent:
+        logging.info("  Zeroing continuous encoder head for ablation")
+        policy_params = zero_continuous_encoder_params(policy_params)
+
+    # --- Detect chunked mode ---
+    use_code_chunking = bool(
+        vq_cfg.network_config.get("use_code_chunking", False)
+    )
+    commitment_horizon = int(
+        vq_cfg.network_config.get("code_commitment_horizon", 10)
+    )
+    if use_code_chunking:
+        logging.info(
+            f"  Code chunking ENABLED (H={commitment_horizon}), "
+            f"baseline will use chunked inference"
+        )
+
+    # --- Create normal inference fn (used for mutation experiments) ---
     inference_fn, _ = load_vq_inference_fn_with_stickiness(
         vq_cfg, policy_params, deterministic=True
     )
+
+    # --- Create chunked inference fn (used for baseline when chunking) ---
+    chunked_inference_fn = None
+    initial_chunk_state_fn = None
+    if use_code_chunking:
+        chunked_inference_fn, initial_chunk_state_fn = (
+            load_vq_chunked_inference_fn(
+                vq_cfg,
+                policy_params,
+                commitment_horizon=commitment_horizon,
+                deterministic=True,
+            )
+        )
 
     # --- Load reference clips and select starting poses ---
     logging.info("\nLoading reference clips and selecting starting poses...")
@@ -1046,15 +1226,27 @@ def main(cfg: DictConfig):
     baseline_results: dict[str, list[InferenceResult]] = {}
     for pose_name, env in pose_envs.items():
         logging.info(f"  Baseline on {pose_name}...")
-        results = run_ablation_rollout(
-            env=env,
-            inference_fn=inference_fn,
-            num_repeats=num_clips,
-            max_steps=max_steps,
-            seed=seed,
-            rvq_depth=rvq_depth,
-            num_render=num_render if render_enabled else 0,
-        )
+        if use_code_chunking:
+            results = run_ablation_rollout_chunked(
+                env=env,
+                inference_fn=chunked_inference_fn,
+                initial_chunk_state_fn=initial_chunk_state_fn,
+                num_repeats=num_clips,
+                max_steps=max_steps,
+                seed=seed,
+                rvq_depth=rvq_depth,
+                num_render=num_render if render_enabled else 0,
+            )
+        else:
+            results = run_ablation_rollout(
+                env=env,
+                inference_fn=inference_fn,
+                num_repeats=num_clips,
+                max_steps=max_steps,
+                seed=seed,
+                rvq_depth=rvq_depth,
+                num_render=num_render if render_enabled else 0,
+            )
         baseline_results[pose_name] = results
 
     # Identify null code and top-K from pooled baseline

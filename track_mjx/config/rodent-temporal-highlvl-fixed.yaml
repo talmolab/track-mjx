@@ -107,11 +107,11 @@ network_config:
 
   # Encoder (MLP - processes task_obs observations)
   encoder_layer_sizes: [2048, 1024, 1024]
-  intention_size: 16
+  intention_size: 64
 
   # Low-level recurrent policy (processes committed high-level latent only)
-  rnn_type: lstm                           # "simple", "gru", or "lstm"
-  rnn_hidden_sizes: [512, 256]            # Hidden sizes per RNN layer
+  rnn_type: simple                         # "simple", "gru", or "lstm"
+  rnn_hidden_sizes: [1024]                # Hidden sizes per RNN layer
   macro_horizon: 16                       # Fixed latent commitment horizon
   condition_value_on_latent: true         # Condition critic on committed latent
   horizon_ramp: false                     # Optionally ramp horizon from 1 -> macro_horizon
@@ -132,7 +132,7 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: temporal_fixed_highlvl_ppo
-  decoder_checkpoint_path: decoder_checkpoint
+  decoder_checkpoint_path: "260212_184836_101120"
   decoder_checkpoint_step: null
 
   checkpoint_to_restore: null
@@ -156,7 +156,7 @@ train_setup:
     num_updates_per_batch: 4              # Epochs per PPO update
     learning_rate: 1e-4
     grad_clip_threshold: 10.0
-    clipping_epsilon: 0.2
+    clipping_epsilon: 0.15
     discounting: 0.97
     gae_lambda: 0.97
     action_repeat: 1

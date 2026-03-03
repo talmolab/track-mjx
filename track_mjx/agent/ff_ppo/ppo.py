@@ -554,7 +554,9 @@ def train(
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
     if local_devices_to_use > 1 or use_pmap_on_reset:
         reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
+        logging.info("Initial env reset (data generation) starting...")
         env_state = reset_fn_(key_envs)
+        logging.info("Initial env reset (data generation) done.")
         reset_fn = jax.pmap(
             reset_fn_donated_env_state,
             axis_name=_PMAP_AXIS_NAME,
@@ -562,7 +564,9 @@ def train(
         )
     else:
         reset_fn_ = jax.jit(jax.vmap(env.reset))
+        logging.info("Initial env reset (data generation) starting...")
         env_state = reset_fn_(key_envs)
+        logging.info("Initial env reset (data generation) done.")
         reset_fn = jax.jit(
             reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
         )(key_envs)
@@ -856,7 +860,9 @@ def train(
             )(key_envs, key_envs.shape[1])
             # TODO: move extra reset logic to the AutoResetWrapper.
             if num_resets_per_eval > 0:
+                logging.info("Periodic env reset (data generation) starting at step %s...", current_step)
                 env_state = reset_fn((training_state, env_state), key_envs)
+                logging.info("Periodic env reset (data generation) done.")
 
         if process_id == 0:
             # Run evaluation rollout, logging and checkpointing.

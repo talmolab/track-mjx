@@ -60,7 +60,18 @@ _HIGHLVL_WRAPPER_KEYS = {
 
 
 def _resolve_decoder_checkpoint_path(checkpoint_path: str) -> Path:
-    """Resolves a decoder checkpoint path from config."""
+    """Resolves a decoder checkpoint path from config.
+
+    Note: checkpoint_path must be string-valued in the YAML config (quoted),
+    e.g. decoder_checkpoint_path: "260212_184836_101120". Unquoted values with
+    underscores are parsed as integers by YAML/Hydra.
+    """
+    if not isinstance(checkpoint_path, str):
+        raise TypeError(
+            f"decoder_checkpoint_path must be a quoted string in config, "
+            f"got {type(checkpoint_path).__name__}: {checkpoint_path}. "
+            f'Use decoder_checkpoint_path: "{checkpoint_path}" in your YAML.'
+        )
     path = Path(checkpoint_path)
     if path.is_absolute():
         return path

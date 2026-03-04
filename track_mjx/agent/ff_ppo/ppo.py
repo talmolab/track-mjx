@@ -376,7 +376,7 @@ def train(
         def convert_data(x: jnp.ndarray):
             if 0 in x.shape:
                 # Still reshape so leading dim matches num_minibatches for scan
-                return jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
+                return jnp.reshape(x, (num_minibatches, x.shape[0] // num_minibatches) + x.shape[1:])
             x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
             return x
@@ -422,7 +422,7 @@ def train(
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]),
+            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],) + x.shape[2:]),
             data,
         )
         assert data.discount.shape[1:] == (unroll_length,)

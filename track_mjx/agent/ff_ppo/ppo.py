@@ -720,7 +720,7 @@ def train(
     training_metrics = {}
     training_walltime = 0
     start_it += 1
-    current_step = 0
+    current_step = int(_unpmap(training_state.env_steps))
     for it in range(start_it, num_evals_after_init + start_it):
         logging.info("starting iteration %s %s", it, time.time() - xt)
         for _ in range(max(num_resets_per_eval, 1)):

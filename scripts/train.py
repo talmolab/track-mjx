@@ -15,6 +15,7 @@ import hydra
 import jax
 import orbax.checkpoint as ocp
 import wandb
+from ml_collections import config_dict
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
@@ -138,10 +139,16 @@ def main(cfg: DictConfig) -> None:
 
     # Prepare config BEFORE load_from_run_state so the config hash is consistent
     # between discovery and saving (prepare_config modifies cfg by adding paths)
-    cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
+    cfg, _, _ = utils.prepare_config(cfg)
 
     # Determine how to load from checkpoint
-    run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
+    cfg, run_id, checkpoint_path, existing_run_state = (
+        checkpointing.load_from_run_state(cfg)
+    )
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    env_cfg_ml = config_dict.ConfigDict(
+        OmegaConf.to_container(cfg.env_config, resolve=True)
+    )
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(

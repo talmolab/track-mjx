@@ -845,6 +845,92 @@ def discover_existing_run_state(cfg: DictConfig) -> dict[str, Any] | None:
         return None
 
 
+def discover_run_state_for_checkpoint(
+    checkpoint_path: Path | str,
+) -> dict[str, Any] | None:
+    """Discover saved run metadata for a specific checkpoint directory.
+
+    This supports manual checkpoint restoration when the job-scoped run state
+    filename is unknown but the checkpoint directory is known.
+
+    Args:
+        checkpoint_path: Path to a checkpoint directory.
+
+    Returns:
+        The newest matching run state dict with "latest_checkpoint_step" added,
+        or None if no valid run state metadata exists.
+    """
+    checkpoint_dir = Path(checkpoint_path).resolve()
+    state_dir = checkpoint_dir.parent
+    if not state_dir.exists():
+        return None
+
+    matches: list[dict[str, Any]] = []
+    for state_file_path in state_dir.glob("run_state_*.json"):
+        run_state = _read_json_with_lock(state_file_path)
+        if not run_state:
+            continue
+
+        raw_checkpoint_path = run_state.get("checkpoint_path")
+        if raw_checkpoint_path is None:
+            continue
+
+        try:
+            saved_checkpoint_path = Path(raw_checkpoint_path).resolve()
+        except OSError:
+            continue
+
+        if saved_checkpoint_path != checkpoint_dir:
+            continue
+
+        run_state = dict(run_state)
+        run_state["_state_file_path"] = str(state_file_path)
+        matches.append(run_state)
+
+    if not matches:
+        logging.info("No run state metadata found for checkpoint %s", checkpoint_dir)
+        return None
+
+    matches.sort(
+        key=lambda state: (
+            int(state.get("latest_checkpoint_step", -1)),
+            float(state.get("timestamp", 0.0)),
+        ),
+        reverse=True,
+    )
+    selected = matches[0]
+
+    try:
+        ckpt_mgr = ocp.CheckpointManager(
+            checkpoint_dir,
+            options=ocp.CheckpointManagerOptions(
+                create=False, step_prefix="PPONetwork"
+            ),
+        )
+        latest_step = ckpt_mgr.latest_step()
+        if latest_step is None:
+            logging.warning(
+                "Checkpoint directory %s has no valid checkpoints, ignoring matched run state",
+                checkpoint_dir,
+            )
+            return None
+        selected["latest_checkpoint_step"] = latest_step
+        logging.info(
+            "Matched checkpoint %s to run state %s at step %s",
+            checkpoint_dir,
+            selected.get("_state_file_path"),
+            latest_step,
+        )
+        return selected
+    except Exception as e:
+        logging.warning(
+            "Failed to validate checkpoint-backed run state for %s: %s",
+            checkpoint_dir,
+            e,
+        )
+        return None
+
+
 def save_run_state(
     cfg: DictConfig,
     run_id: str,
@@ -936,13 +1022,14 @@ def create_checkpoint_callback(
 
 def load_from_run_state(
     cfg: DictConfig,
-) -> tuple[str, str, dict[str, Any] | None]:
+) -> tuple[DictConfig, str, str, dict[str, Any] | None]:
     """Load or create run state, handling preemption and manual restoration.
 
-    This function handles three scenarios:
+    This function handles four scenarios:
     1. Automatic preemption recovery: Discovers existing run state for this job
     2. Manual restoration: Uses restore_from_run_state config path
-    3. Fresh start: Creates new run_id and checkpoint path
+    3. Manual checkpoint restoration: Uses checkpoint_to_restore directly
+    4. Fresh start: Creates new run_id and checkpoint path
 
     If restoring, loads the checkpoint's config and optionally updates
     num_timesteps from the submitted config.
@@ -951,9 +1038,10 @@ def load_from_run_state(
         cfg: Current configuration. May be modified to set checkpoint_to_restore.
 
     Returns:
-        Tuple of (run_id, checkpoint_path, existing_run_state).
+        Tuple of (effective_cfg, run_id, checkpoint_path, existing_run_state).
         existing_run_state is None for fresh starts.
     """
+    submitted_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     existing_run_state = discover_existing_run_state(cfg)
 
     # Case 1: Automatic preemption recovery
@@ -978,7 +1066,25 @@ def load_from_run_state(
         logging.info(f"Restoring from specified run state: {run_id}")
         cfg.train_setup.checkpoint_to_restore = checkpoint_path
 
-    # Case 3: Fresh start
+    # Case 3: Manual checkpoint restore without an explicit run state file
+    elif cfg.train_setup.checkpoint_to_restore is not None:
+        checkpoint_path = _resolve_path(cfg.train_setup.checkpoint_to_restore)
+        existing_run_state = discover_run_state_for_checkpoint(checkpoint_path)
+        if existing_run_state is not None:
+            run_id = existing_run_state["run_id"]
+            logging.info(
+                "Restoring checkpoint %s with matched run state %s",
+                checkpoint_path,
+                run_id,
+            )
+        else:
+            run_id = os.path.basename(checkpoint_path)
+            logging.info(
+                "Restoring checkpoint %s without saved run metadata", checkpoint_path
+            )
+        cfg.train_setup.checkpoint_to_restore = checkpoint_path
+
+    # Case 4: Fresh start
     else:
         run_id = datetime.now().strftime("%y%m%d_%H%M%S_%f")
         model_path = Path(cfg.logging_config.model_path)
@@ -989,11 +1095,12 @@ def load_from_run_state(
     # If restoring from checkpoint, load and merge configs
     if cfg.train_setup.checkpoint_to_restore is not None:
         checkpoint_to_restore = _resolve_path(cfg.train_setup.checkpoint_to_restore)
-        submitted_timesteps = cfg.train_setup.train_config.num_timesteps
+        submitted_timesteps = submitted_cfg.train_setup.train_config.num_timesteps
 
         # Load checkpoint config
         cfg = OmegaConf.create(load_config_from_checkpoint(checkpoint_to_restore))
         cfg.train_setup.checkpoint_to_restore = checkpoint_to_restore
+        cfg.logging_config.model_path = str(Path(checkpoint_to_restore).resolve().parent)
 
         # Allow overriding num_timesteps to extend training
         restored_timesteps = cfg.train_setup.train_config.num_timesteps
@@ -1004,12 +1111,13 @@ def load_from_run_state(
             cfg.train_setup.train_config.num_timesteps = submitted_timesteps
 
         checkpoint_path = checkpoint_to_restore
-        run_id = os.path.basename(checkpoint_path)
+        if existing_run_state is None:
+            run_id = os.path.basename(checkpoint_path)
 
     logging.info(f"Run ID: {run_id}")
     logging.info(f"Training checkpoint path: {checkpoint_path}")
 
-    return (run_id, checkpoint_path, existing_run_state)
+    return (cfg, run_id, checkpoint_path, existing_run_state)
 
 
 def _resolve_path(path: str | Path) -> str:

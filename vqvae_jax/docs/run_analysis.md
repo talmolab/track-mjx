@@ -41,3 +41,17 @@ Key overrides:
 - `ablation.experiments=[code_injection]` to run only code injection
 - `ablation.max_steps=1000` to extend rollout length
 - `ablation.data_split=train` to use train clips for starting poses
+
+## HMM Prior
+
+Fits a discrete HMM on D0 code sequences and generates free-loop behavior using only the decoder (no encoder). Validates temporal structure in the learned code space.
+
+```bash
+cd vqvae_jax
+WANDB_MODE=offline python -m hmm_prior.run_hmm_prior
+```
+
+Key overrides:
+- `hmm.num_states_sweep=[8,16]` to change sweep range
+- `free_loop.commitment_horizon=5` to change code holding duration
+- `free_loop.max_steps=2000` for longer rollouts

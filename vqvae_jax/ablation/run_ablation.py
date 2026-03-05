@@ -1255,7 +1255,7 @@ def main(cfg: DictConfig):
         import wandb
 
         if wandb_items and wandb.run is not None:
-            wandb.run.summary.update(wandb_items)
+            wandb.log(wandb_items)
         wandb.finish()
 
     print("\n" + "=" * 60)

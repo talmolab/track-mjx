@@ -1,25 +1,26 @@
 # =============================================================================
-# VQ-VAE Per-Clip Analysis Configuration
+# VQ-VAE Code Analysis Configuration
 # =============================================================================
-# Pipeline for analyzing VQ-VAE code patterns on a per-clip basis:
-# - Transition matrices and probability heatmaps per clip
-# - Interactive HTML viewer with slider navigation
-# - Video rendering with code timeline overlays
+# Pipeline for analyzing VQ-VAE code patterns:
+# - Global transition matrix and stationary distribution
+# - t-SNE/UMAP trajectory visualization
+# - Pose gallery for popular codes
+# - Kinematic profiles per code
 # =============================================================================
 
 # =============================================================================
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260212_180855_952368/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260301_061919_970599/
   step: null  # null = latest step
 
 # =============================================================================
 # WandB Configuration
 # =============================================================================
 wandb:
-  enabled: true          # Enable WandB logging for analysis session
-  project: "vqvae-analysis"
+  enabled: true          # Enable WandB logging
+  project: "vqvae-eval"
   entity: null            # WandB entity (team or username)
 
 # =============================================================================
@@ -30,93 +31,26 @@ wandb:
 data:
   h5_path: null  # Path to H5 file with rollout data (required)
   h5_path_train: null            # Path to train-split H5 (optional)
-  h5_path_test: ./outputs/rollout_rvq_32_test.h5  # Path to test-split H5
+  h5_path_test: ./outputs/rollout_vqvae_test.h5  # Path to test-split H5
   analysis_split: "test"     # "train", "test", or "combined"
   clip_length: 500               # Frames per clip (for environment setup)
 
 # =============================================================================
-# Transition Context Analysis Configuration
+# Pose Gallery Configuration
 # =============================================================================
-# Analyze whether top K codes serve the same function across different clips
-# by comparing their transition contexts (predecessor/successor distributions).
-transition_context:
-  enabled: false                 # Enable transition context analysis
-  top_k: 5                     # Number of top codes to analyze
-  min_clips: 3                  # Minimum clips a code must appear in
-  render_videos: true           # Render transition videos (pred → code → succ)
-  max_videos_per_code: 4        # Maximum videos per code
-  conditional:
-    enabled: true               # Enable qpos-conditioned transition analysis
-    qpos_threshold: 0.05        # Mean absolute difference threshold (radians)
-    max_videos: 4               # Maximum comparison videos per code (deprecated)
-    max_matched_videos: 4       # Videos with matching transitions
-    max_unmatched_videos: 4     # Videos with different transitions
-    match_window_size: 10        # Number of future frames to compare for matched/unmatched
-
-  # Popular code pose gallery - render where each popular code starts across clips
-  pose_gallery:
-    enabled: true               # Enable pose gallery rendering
-    top_k_codes: 5              # Number of popular codes to visualize
-    videos_per_code: 4          # Clips to sample per code
-    context_frames: 15          # Frames before/after code start
+# Render grid videos showing where each popular code starts across clips.
+pose_gallery:
+  enabled: true               # Enable pose gallery rendering
+  top_k_codes: 5              # Number of popular transitions to visualize
+  videos_per_code: 4          # Clips to sample per transition
+  transition_length: 3        # Number of consecutive code runs per transition n-gram
 
 # =============================================================================
-# RVQ Analysis Configuration
+# Kinematic Profile Configuration
 # =============================================================================
-# Multi-depth RVQ analyses: parent-child heatmap, intra-parent diversity,
-# hierarchical transition rates. Skipped automatically for depth=1 models.
-rvq_analysis:
+# Render kinematic profile line plots per code (root speed, height, hip/knee angles).
+kinematic_profile:
   enabled: true
-  parent_child_heatmap: true
-  intra_parent_diversity: true
-  hierarchical_transitions: true
-
-# =============================================================================
-# Correction Analysis Configuration
-# =============================================================================
-# Characterizes the codebook as a sparse correction signal:
-# - Burst detection (contiguous non-null code runs)
-# - Kinematic deltas (joint angle/velocity changes during correction bursts)
-# - Burst statistics (duration, inter-burst intervals, code co-occurrence)
-# - Correction PCA (latent-space correction vectors z_q - z_null)
-correction_analysis:
-  enabled: true
-  kinematic_deltas: true
-  burst_statistics: true
-  correction_pca: true
-
-# =============================================================================
-# Qpos+Code Determinism Analysis Configuration
-# =============================================================================
-# Test whether the same starting pose + same code progression produces similar
-# qpos trajectories. Computes Wasserstein-2 distance between trajectory pairs
-# that share code sequences and similar starting poses.
-qpos_code_determinism:
-  enabled: false
-  num_clips: 842               # Number of clips to analyze
-  min_k: 2                     # Minimum number of transitions
-  max_k: 8                     # Maximum number of transitions
-  grace_window: 10             # Boundary alignment tolerance (frames)
-  qpos_threshold: 0.05         # Max mean abs diff for starting qpos match
-
-# =============================================================================
-# Compositional Transition Analysis Configuration
-# =============================================================================
-# Analyze whether longer code transition sequences decompose into independently
-# observed shorter ones. Builds decomposition trees showing how k-transitions
-# break down into sub-sequences, with determinism scores at each level.
-compositional_transition:
-  enabled: false                 # ON for initial testing
-  num_clips: 842               # Number of clips to analyze
-  min_k: 2                     # Minimum number of transitions
-  max_k: 8                     # Maximum number of transitions
-  grace_window: 20             # Boundary alignment tolerance (frames)
-  qpos_threshold: 0.05         # Max mean abs diff for starting qpos match
-  top_n_sequences: 3           # Top N most popular distinct sequences per k
-  max_examples: 5              # Max example videos per top-level sequence
-  max_child_examples: 3        # Max example videos per decomposition child
-  max_overlap: 2               # Max boundary overlap (codes) before dedup
-  render_videos: true          # Render example videos in tree nodes
 
 # =============================================================================
 # t-SNE Skill-Space Trajectory Visualization
@@ -125,7 +59,7 @@ compositional_transition:
 # sequences (concatenated codebook vectors) into 2D via t-SNE. Creates a
 # synchronized HTML viewer with animated canvas + video playback.
 tsne_trajectory:
-  enabled: true                 # Enable t-SNE trajectory visualization
+  enabled: false                 # Enable t-SNE trajectory visualization
   n_clips: 2                    # Number of high-movement clips to compare
   k_transitions: 2              # Number of code transitions per t-SNE point
   tsne_perplexity: 50           # t-SNE perplexity parameter

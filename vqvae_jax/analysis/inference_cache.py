@@ -23,6 +23,8 @@ class InferenceResult:
         states: Optional list of environment states for rendering.
         rvq_indices: Optional per-depth code indices, tuple of D arrays each [T].
             rvq_indices[0] == code_indices for consistency.
+        reward_components: Optional per-term reward breakdown. Maps reward term
+            name (e.g. ``"root_pos"``) to per-frame values, shape [T].
     """
 
     clip_idx: int
@@ -32,3 +34,4 @@ class InferenceResult:
     rewards: np.ndarray
     states: list[Any] | None = None
     rvq_indices: tuple[np.ndarray, ...] | None = None
+    reward_components: dict[str, np.ndarray] | None = None

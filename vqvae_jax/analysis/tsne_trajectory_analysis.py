@@ -29,7 +29,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from .compositional_transition_analysis import extract_code_runs, CodeRun
+from .utils import extract_code_runs, CodeRun
 from .inference_cache import InferenceResult
 
 
@@ -520,7 +520,11 @@ def compute_umap_embedding(
     Returns:
         2D coordinates of shape [N_total, 2], or None if too few samples.
     """
-    import umap
+    try:
+        import umap
+    except ImportError:
+        logging.warning("  umap-learn not installed, skipping UMAP embedding")
+        return None
 
     embeddings = np.stack([t.embedding for t in all_transitions])
     n_samples = len(embeddings)

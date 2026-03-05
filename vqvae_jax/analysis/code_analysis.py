@@ -3,11 +3,9 @@
 Main entry point for analyzing VQ-VAE code semantics:
 
 1. Global transition matrix and stationary distribution
-2. RVQ analysis (parent-child heatmap, intra-parent diversity)
-3. Correction analysis (burst statistics, kinematic deltas, PCA)
-4. Transition context analysis (predecessor/successor patterns)
-5. Compositional transition analysis (decomposition trees)
-6. t-SNE/UMAP trajectory visualization
+2. t-SNE/UMAP trajectory visualization
+3. Pose gallery for popular codes
+4. Kinematic profiles per code
 
 Analysis requires pre-computed H5 rollout data. Use the inference module to
 generate H5 files:
@@ -56,23 +54,19 @@ from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 from track_mjx.config import utils as config_utils
 
 from .checkpoint_utils import load_vq_checkpoint, get_codebook, get_all_codebooks
-from .correction_analysis import run_correction_analysis
-from .compositional_transition_analysis import (
-    run_compositional_transition_analysis,
-    run_qpos_code_determinism_analysis,
-)
 from .tsne_trajectory_analysis import run_tsne_trajectory_analysis
 from .inference_cache import InferenceResult
-from .rvq_analysis import run_rvq_analysis
 from .transition_context_analysis import (
-    run_transition_context_analysis,
     compute_global_transition_matrix,
     compute_stationary_distribution,
     compute_code_popularity,
-    compute_pair_popularity,
     get_top_k_codes,
-    render_code_pose_gallery,
+    render_kinematic_profiles,
+    compute_transition_ngram_popularity,
+    get_top_k_transitions,
+    render_transition_pose_gallery,
 )
+from .utils import build_slider_html
 
 
 def load_rollouts_from_h5(h5_path: str | Path) -> tuple[list[InferenceResult], dict]:
@@ -139,26 +133,6 @@ def initialize_wandb_analysis(
         return False
 
 
-def log_to_wandb_immediately(key: str, value: Any, wandb_enabled: bool) -> None:
-    """Log a single item to WandB immediately if enabled.
-
-    Args:
-        key: WandB metric key.
-        value: Value to log (wandb.Html, wandb.Video, wandb.Image, etc.)
-        wandb_enabled: Whether WandB is enabled.
-    """
-    if not wandb_enabled:
-        return
-
-    try:
-        import wandb
-
-        if wandb.run is not None:
-            wandb.log({key: value})
-    except Exception as e:
-        logging.warning(f"Failed to log {key} to WandB: {e}")
-
-
 def generate_summary_report(
     output_dir: Path,
     cfg: DictConfig,
@@ -174,8 +148,6 @@ def generate_summary_report(
     checkpoint_step = h5_metadata.get("checkpoint_step", cfg.checkpoint.step)
     num_rollouts = h5_metadata.get("num_rollouts", "unknown")
 
-    tc_paths = all_paths.get("per_clip_context", {})
-
     lines = [
         "# VQ-VAE Code Analysis Report",
         "",
@@ -189,43 +161,9 @@ def generate_summary_report(
         f"- Num rollouts: {num_rollouts}",
         f"- Num codes: {num_codes}",
         "",
+        "## Output Files",
+        "",
     ]
-
-    if cfg.get("transition_context", {}).get("enabled", False):
-        tc_cfg = cfg.transition_context
-        lines.extend(
-            [
-                "## Transition Context Analysis",
-                "",
-                f"- Analyzed top {tc_cfg.get('top_k', 10)} most frequent codes",
-                f"- Compared predecessor/successor patterns across clips",
-                f"- Rendered transition videos: {tc_cfg.get('render_videos', True)}",
-                "",
-                "For each code, measures:",
-                "- Predecessor distribution similarity across clips",
-                "- Successor distribution similarity across clips",
-                "- Combined context similarity (indicates functional consistency)",
-                "",
-            ]
-        )
-
-    lines.extend(
-        [
-            "## Output Files",
-            "",
-        ]
-    )
-
-    if tc_paths:
-        lines.extend(
-            [
-                "### Per-Clip Context Analysis",
-                f"- Conditional HTML viewer: `{tc_paths.get('conditional_html', 'N/A')}`",
-                f"- Context stats JSON: `{tc_paths.get('json', 'N/A')}`",
-                f"- Context videos: `{output_dir}/per_clip_context/videos/`",
-                "",
-            ]
-        )
 
     with open(report_path, "w") as f:
         f.write("\n".join(lines))
@@ -241,9 +179,6 @@ def generate_summary_report(
             "num_rollouts": num_rollouts,
             "num_codes": num_codes,
         },
-        "transition_context": OmegaConf.to_container(
-            cfg.get("transition_context", {}), resolve=True
-        ),
         "output_paths": all_paths,
     }
 
@@ -305,6 +240,7 @@ def main(cfg: DictConfig):
 
     # Initialize WandB if enabled
     wandb_enabled = initialize_wandb_analysis(cfg, num_codes, h5_metadata)
+    wandb_items: dict[str, Any] = {}
 
     # Get camera name
     env_suffix = getattr(env, "_suffix", "-rodent")
@@ -313,7 +249,6 @@ def main(cfg: DictConfig):
     all_paths: dict[str, Any] = {}
 
     # === Section 1: Global Transition Matrix ===
-    # Compute and log immediately (before other analyses for context)
     logging.info("\n" + "=" * 40)
     logging.info("Computing global transition matrix...")
 
@@ -326,14 +261,10 @@ def main(cfg: DictConfig):
         global_matrix_dir / "transition_matrix.png", dpi=150, bbox_inches="tight"
     )
 
-    # Log to WandB immediately
     if wandb_enabled:
         import wandb
 
-        log_to_wandb_immediately(
-            "global/transition_matrix", wandb.Image(global_fig), wandb_enabled
-        )
-        logging.info("  Logged global transition matrix to WandB")
+        wandb_items["global/transition_matrix"] = wandb.Image(global_fig)
 
     import matplotlib.pyplot as plt
 
@@ -364,7 +295,6 @@ def main(cfg: DictConfig):
 
     # Save stationary analysis JSON
     stationary_dist = stationary_results["stationary_dist"]
-    empirical_dist = stationary_results["empirical_dist"]
 
     # Find top codes by stationary probability
     top_stationary_idx = np.argsort(stationary_dist)[::-1][:10]
@@ -389,153 +319,6 @@ def main(cfg: DictConfig):
     logging.info(
         f"  Top stationary codes: {[c['code'] for c in top_stationary_codes[:3]]}"
     )
-
-    # === Section 1c: RVQ Analysis ===
-    rvq_cfg = cfg.get("rvq_analysis", {})
-    if rvq_cfg.get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running RVQ analysis...")
-
-        rvq_dir = output_dir / "rvq_analysis"
-        rvq_paths = run_rvq_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=rvq_dir,
-            cfg=(
-                OmegaConf.to_container(rvq_cfg, resolve=True)
-                if hasattr(rvq_cfg, "_metadata")
-                else dict(rvq_cfg)
-            ),
-        )
-
-        if wandb_enabled and rvq_paths:
-            import wandb
-
-            for key, fig_path in rvq_paths.items():
-                log_to_wandb_immediately(
-                    f"rvq_analysis/{key}",
-                    wandb.Image(fig_path),
-                    wandb_enabled,
-                )
-            logging.info("  Logged RVQ analysis figures to WandB")
-
-        all_paths["rvq_analysis"] = rvq_paths
-
-    # === Section 1d: Correction Analysis ===
-    corr_cfg = cfg.get("correction_analysis", {})
-    if corr_cfg.get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running correction analysis...")
-
-        corr_dir = output_dir / "correction_analysis"
-        corr_codebooks = None
-        all_cbs = get_all_codebooks(ckpt["policy"])
-        if all_cbs:
-            corr_codebooks = [np.array(cb) for cb in all_cbs]
-
-        joint_names = list(cfg.get("walker_config", {}).get("joint_names", []))
-
-        corr_paths = run_correction_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=corr_dir,
-            codebooks=corr_codebooks,
-            joint_names=joint_names,
-            cfg=(
-                OmegaConf.to_container(corr_cfg, resolve=True)
-                if hasattr(corr_cfg, "_metadata")
-                else dict(corr_cfg)
-            ),
-        )
-
-        if wandb_enabled and corr_paths:
-            import wandb
-
-            for key, fig_path in corr_paths.items():
-                if fig_path.endswith(".png"):
-                    log_to_wandb_immediately(
-                        f"correction_analysis/{key}",
-                        wandb.Image(fig_path),
-                        wandb_enabled,
-                    )
-            logging.info("  Logged correction analysis figures to WandB")
-
-        all_paths["correction_analysis"] = corr_paths
-
-    # === Section 1e: Qpos+Code Determinism Analysis ===
-    determinism_cfg = cfg.get("qpos_code_determinism", {})
-    if determinism_cfg.get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running qpos+code determinism analysis...")
-
-        det_dir = output_dir / "qpos_code_determinism"
-        det_results = run_qpos_code_determinism_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=det_dir,
-            cfg=(
-                OmegaConf.to_container(determinism_cfg, resolve=True)
-                if hasattr(determinism_cfg, "_metadata")
-                else dict(determinism_cfg)
-            ),
-        )
-
-        if wandb_enabled:
-            import wandb
-
-            for key, fig_path in det_results.get("figure_paths", {}).items():
-                log_to_wandb_immediately(
-                    f"qpos_code_determinism/{key}",
-                    wandb.Image(fig_path),
-                    wandb_enabled,
-                )
-            logging.info("  Logged determinism figures to WandB")
-
-        all_paths["qpos_code_determinism"] = det_results.get("figure_paths", {})
-        all_paths["qpos_code_determinism"]["json"] = det_results.get("json_path")
-        logging.info(f"  Total determinism pairs: {det_results.get('total_pairs', 0)}")
-
-    # === Section 1g: Compositional Transition Analysis ===
-    comp_cfg = cfg.get("compositional_transition", {})
-    if comp_cfg.get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running compositional transition analysis...")
-
-        comp_dir = output_dir / "compositional_transition"
-        comp_results = run_compositional_transition_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=comp_dir,
-            cfg=(
-                OmegaConf.to_container(comp_cfg, resolve=True)
-                if hasattr(comp_cfg, "_metadata")
-                else dict(comp_cfg)
-            ),
-            env=env,
-            camera=camera_name,
-            width=cfg.render.get("width", 640),
-            height=cfg.render.get("height", 480),
-            fps=cfg.render.get("fps", 50),
-        )
-
-        if wandb_enabled:
-            import wandb
-
-            # Log HTML viewer
-            html_path = comp_results.get("html_path")
-            if html_path and Path(html_path).exists():
-                log_to_wandb_immediately(
-                    "compositional_transition/viewer",
-                    wandb.Html(open(html_path).read()),
-                    wandb_enabled,
-                )
-            logging.info("  Logged compositional analysis to WandB")
-
-        all_paths["compositional_transition"] = {
-            "html": comp_results.get("html_path"),
-            "json": comp_results.get("json_path"),
-        }
-        logging.info(f"  Total determinism pairs: {comp_results.get('total_pairs', 0)}")
 
     # === Section 1h: t-SNE Skill-Space Trajectory Analysis ===
     tsne_cfg = cfg.get("tsne_trajectory", {})
@@ -573,34 +356,26 @@ def main(cfg: DictConfig):
 
             html_path = tsne_results.get("html_path")
             if html_path and Path(html_path).exists():
-                log_to_wandb_immediately(
-                    "tsne_trajectory/viewer",
-                    wandb.Html(open(html_path).read()),
-                    wandb_enabled,
+                wandb_items["tsne_trajectory/viewer"] = wandb.Html(
+                    open(html_path).read()
                 )
 
             static_html_path = tsne_results.get("static_html_path")
             if static_html_path and Path(static_html_path).exists():
-                log_to_wandb_immediately(
-                    "tsne_trajectory/static_viewer",
-                    wandb.Html(open(static_html_path).read()),
-                    wandb_enabled,
+                wandb_items["tsne_trajectory/static_viewer"] = wandb.Html(
+                    open(static_html_path).read()
                 )
 
             umap_html_path = tsne_results.get("umap_html_path")
             if umap_html_path and Path(umap_html_path).exists():
-                log_to_wandb_immediately(
-                    "tsne_trajectory/umap_viewer",
-                    wandb.Html(open(umap_html_path).read()),
-                    wandb_enabled,
+                wandb_items["tsne_trajectory/umap_viewer"] = wandb.Html(
+                    open(umap_html_path).read()
                 )
 
             umap_static_path = tsne_results.get("umap_static_html_path")
             if umap_static_path and Path(umap_static_path).exists():
-                log_to_wandb_immediately(
-                    "tsne_trajectory/umap_static_viewer",
-                    wandb.Html(open(umap_static_path).read()),
-                    wandb_enabled,
+                wandb_items["tsne_trajectory/umap_static_viewer"] = wandb.Html(
+                    open(umap_static_path).read()
                 )
             logging.info("  Logged t-SNE/UMAP trajectory viewers to WandB")
 
@@ -612,160 +387,119 @@ def main(cfg: DictConfig):
             "json": tsne_results.get("json_path"),
         }
 
-    # === Section 2: Per-Clip Context Analysis ===
-    if cfg.get("transition_context", {}).get("enabled", False):
-        logging.info("\n" + "=" * 40)
-        logging.info("Running per-clip context analysis...")
-
-        tc_cfg = cfg.transition_context
-        tc_results = run_transition_context_analysis(
-            results=results,
-            num_codes=num_codes,
-            output_dir=output_dir / "per_clip_context",
-            top_k=tc_cfg.get("top_k", 10),
-            min_clips_for_comparison=tc_cfg.get("min_clips", 3),
-            render_videos=tc_cfg.get("render_videos", True),
-            env=env,
-            camera=camera_name,
-            width=cfg.render.get("width", 640),
-            height=cfg.render.get("height", 480),
-            fps=cfg.render.get("fps", 50),
-            max_videos_per_code=tc_cfg.get("max_videos_per_code", 4),
-            conditional_cfg=tc_cfg.get("conditional"),
-        )
-
-        all_paths["per_clip_context"] = {
-            "json": tc_results["json_path"],
-        }
-
-        # Log conditional transition HTML to WandB immediately
-        if tc_results.get("conditional_html_path"):
-            cond_html = tc_results["conditional_html_path"]
-            all_paths["per_clip_context"]["conditional_html"] = cond_html
-            if wandb_enabled:
-                import wandb
-
-                if Path(cond_html).exists():
-                    log_to_wandb_immediately(
-                        "conditional_transition/viewer",
-                        wandb.Html(open(cond_html).read()),
-                        wandb_enabled,
-                    )
-                logging.info("  Logged conditional transition analysis to WandB")
-
-    # === Section 4: Pose Gallery (Popular Code Start Positions) ===
-    pose_gallery_cfg = cfg.get("transition_context", {}).get("pose_gallery", {})
+    # === Section 4: Pose Gallery (Popular Code Transitions) ===
+    pose_gallery_cfg = cfg.get("pose_gallery", {})
     if pose_gallery_cfg.get("enabled", False):
         logging.info("\n" + "=" * 40)
-        logging.info("Rendering pose gallery for popular codes...")
+        logging.info("Rendering pose gallery for popular transitions...")
 
         gallery_dir = output_dir / "pose_gallery"
         gallery_dir.mkdir(parents=True, exist_ok=True)
 
         top_k_gallery = pose_gallery_cfg.get("top_k_codes", 8)
-        videos_per_code = pose_gallery_cfg.get("videos_per_code", 6)
-        context_frames = pose_gallery_cfg.get("context_frames", 15)
+        videos_per_code = pose_gallery_cfg.get("videos_per_code", 4)
+        transition_length = pose_gallery_cfg.get("transition_length", 3)
 
-        # Detect RVQ depth >= 2
-        has_rvq = any(
-            r.rvq_indices is not None and len(r.rvq_indices) >= 2 for r in results
+        # Compute transition n-gram popularity
+        ngram_counts = compute_transition_ngram_popularity(
+            results, num_codes, n=transition_length
         )
+        top_transitions = get_top_k_transitions(ngram_counts, top_k_gallery)
 
         pose_gallery_paths = {}
-        if has_rvq:
-            # Top K L0 codes, each with top K L1 children
-            pair_counts = compute_pair_popularity(results, num_codes)
-            frame_counts = compute_code_popularity(results, num_codes)
-            top_l0 = get_top_k_codes(frame_counts, top_k_gallery)
+        gallery_video_paths: list[str] = []
+        gallery_labels: list[str] = []
 
-            for l0, l0_count in top_l0:
-                # Gather L1 counts for this L0 parent
-                l1_counts = {l1: cnt for (p, l1), cnt in pair_counts.items() if p == l0}
-                top_l1 = sorted(l1_counts.items(), key=lambda x: x[1], reverse=True)[
-                    :top_k_gallery
-                ]
-
-                for l1, count in top_l1:
-                    logging.info(
-                        f"  Rendering pose gallery for pair L0={l0} L1={l1} "
-                        f"({count} frames)..."
-                    )
-                    video_path = gallery_dir / f"code_L0{l0:03d}_L1{l1:03d}_gallery.mp4"
-                    try:
-                        path = render_code_pose_gallery(
-                            results=results,
-                            code_idx=l0,
-                            num_codes=num_codes,
-                            env=env,
-                            output_path=video_path,
-                            n_clips=videos_per_code,
-                            context_frames=context_frames,
-                            camera=camera_name,
-                            width=cfg.render.get("width", 640),
-                            height=cfg.render.get("height", 480),
-                            fps=cfg.render.get("fps", 50),
-                            l1_code=l1,
-                        )
-                        if path:
-                            pose_gallery_paths[f"L0{l0}_L1{l1}"] = path
-                            if wandb_enabled:
-                                import wandb
-
-                                log_to_wandb_immediately(
-                                    f"pose_gallery/code_L0{l0}_L1{l1}",
-                                    wandb.Video(path, format="mp4"),
-                                    wandb_enabled,
-                                )
-                    except Exception as e:
-                        logging.warning(
-                            f"    Failed to render pose gallery for pair "
-                            f"L0={l0} L1={l1}: {e}"
-                        )
-        else:
-            # Fallback: rank by L0 code popularity
-            frame_counts = compute_code_popularity(results, num_codes)
-            top_codes = get_top_k_codes(frame_counts, top_k_gallery)
-
-            for code_idx, count in top_codes:
-                logging.info(
-                    f"  Rendering pose gallery for code {code_idx} "
-                    f"({count} frames)..."
+        for transition, count in top_transitions:
+            arrow_label = "\u2192".join(str(c) for c in transition)
+            logging.info(
+                f"  Rendering pose gallery for transition "
+                f"[{arrow_label}] ({count} occurrences)..."
+            )
+            fname = "_".join(str(c) for c in transition)
+            video_path = gallery_dir / f"transition_{fname}_gallery.mp4"
+            try:
+                path = render_transition_pose_gallery(
+                    results=results,
+                    transition=transition,
+                    num_codes=num_codes,
+                    env=env,
+                    output_path=video_path,
+                    n_clips=videos_per_code,
+                    camera=camera_name,
+                    width=1280,
+                    height=720,
+                    fps=cfg.render.get("fps", 50),
                 )
-                video_path = gallery_dir / f"code_{code_idx:03d}_gallery.mp4"
-                try:
-                    path = render_code_pose_gallery(
-                        results=results,
-                        code_idx=code_idx,
-                        num_codes=num_codes,
-                        env=env,
-                        output_path=video_path,
-                        n_clips=videos_per_code,
-                        context_frames=context_frames,
-                        camera=camera_name,
-                        width=cfg.render.get("width", 640),
-                        height=cfg.render.get("height", 480),
-                        fps=cfg.render.get("fps", 50),
+                if path:
+                    pose_gallery_paths[arrow_label] = path
+                    gallery_video_paths.append(str(path))
+                    gallery_labels.append(
+                        f"{arrow_label} ({count} occurrences)"
                     )
-                    if path:
-                        pose_gallery_paths[code_idx] = path
-                        if wandb_enabled:
-                            import wandb
+            except Exception as e:
+                logging.warning(
+                    f"    Failed to render pose gallery for transition "
+                    f"[{arrow_label}]: {e}"
+                )
 
-                            log_to_wandb_immediately(
-                                f"pose_gallery/code_{code_idx}",
-                                wandb.Video(path, format="mp4"),
-                                wandb_enabled,
-                            )
-                except Exception as e:
-                    logging.warning(
-                        f"    Failed to render pose gallery for code "
-                        f"{code_idx}: {e}"
-                    )
+        # Build slider HTML for pose gallery
+        if wandb_enabled and gallery_video_paths:
+            html = build_slider_html(
+                gallery_video_paths,
+                gallery_labels,
+                "Pose Gallery",
+                media_type="video",
+            )
+            wandb_items["pose_gallery/viewer"] = wandb.Html(html)
 
         all_paths["pose_gallery"] = pose_gallery_paths
         logging.info(f"  Rendered {len(pose_gallery_paths)} pose gallery videos")
-        if wandb_enabled:
-            logging.info("  Logged pose gallery videos to WandB")
+
+    # === Section 5: Kinematic Profiles per Code ===
+    if cfg.get("kinematic_profile", {}).get("enabled", False):
+        logging.info("\n" + "=" * 40)
+        logging.info("Rendering kinematic profiles per code...")
+
+        import matplotlib.pyplot as plt
+
+        kin_dir = output_dir / "kinematic_profiles"
+        kin_dir.mkdir(parents=True, exist_ok=True)
+
+        joint_names = list(cfg.get("walker_config", {}).get("joint_names", []))
+        frame_counts = compute_code_popularity(results, num_codes)
+        top_codes = get_top_k_codes(
+            frame_counts, cfg.get("pose_gallery", {}).get("top_k_codes", 5)
+        )
+
+        kin_paths = {}
+        kin_png_paths: list[str] = []
+        kin_labels: list[str] = []
+        for code_idx, count in top_codes:
+            logging.info(f"  Kinematic profile for code {code_idx} ({count} frames)...")
+            fig = render_kinematic_profiles(results, code_idx, joint_names)
+            fig_path = kin_dir / f"kinematic_code_{code_idx:03d}.png"
+            fig.savefig(fig_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+            kin_paths[code_idx] = str(fig_path)
+            kin_png_paths.append(str(fig_path))
+            kin_labels.append(f"Code {code_idx} ({count} frames)")
+
+        # Build slider HTML for kinematic profiles
+        if wandb_enabled and kin_png_paths:
+            import wandb
+
+            html = build_slider_html(
+                kin_png_paths,
+                kin_labels,
+                "Kinematic Profiles",
+                media_type="image",
+            )
+            wandb_items["kinematic_profile/viewer"] = wandb.Html(html)
+
+        all_paths["kinematic_profiles"] = kin_paths
+        logging.info(f"  Rendered {len(kin_paths)} kinematic profile plots")
 
     # === Section 6: Generate Summary Report ===
     logging.info("\n" + "=" * 40)
@@ -775,10 +509,12 @@ def main(cfg: DictConfig):
     )
     all_paths["report"] = report_path
 
-    # Finish WandB session
+    # Single WandB log call with all accumulated items, then finish
     if wandb_enabled:
         import wandb
 
+        if wandb_items and wandb.run is not None:
+            wandb.run.summary.update(wandb_items)
         wandb.finish()
 
     print("\n" + "=" * 60)
@@ -790,22 +526,6 @@ def main(cfg: DictConfig):
             print(
                 f"Stationary distribution: {all_paths['global']['stationary_distribution']}"
             )
-    if "correction_analysis" in all_paths:
-        n_corr = len(all_paths["correction_analysis"])
-        print(f"Correction analysis: {n_corr} outputs")
-    if "compositional_transition" in all_paths and all_paths[
-        "compositional_transition"
-    ].get("html"):
-        print(
-            f"Compositional tree viewer: "
-            f"{all_paths['compositional_transition']['html']}"
-        )
-    if "per_clip_context" in all_paths and all_paths["per_clip_context"].get(
-        "conditional_html"
-    ):
-        print(
-            f"Per-clip context viewer: {all_paths['per_clip_context']['conditional_html']}"
-        )
     if "tsne_trajectory" in all_paths:
         tp = all_paths["tsne_trajectory"]
         if tp.get("html"):

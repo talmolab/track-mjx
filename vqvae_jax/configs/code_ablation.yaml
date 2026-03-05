@@ -2,9 +2,8 @@
 # VQ-VAE Code Ablation Experiments
 # =============================================================================
 # Empirically test what each D0 code does via:
-# 1. Zero D0 — force z_q=0 (remove D0 channel entirely)
-# 2. Null code injection — force D0 = most frequent code (remove D0 variation)
-# 3. Code injection — force one D0 code at every step
+# 1. Code injection — force one D0 code at every step, zero D1
+# 2. D0-only — natural D0 selection via encoder, zero D1
 #
 # Each experiment runs from two starting poses (lowest/highest torso z).
 # =============================================================================
@@ -20,30 +19,12 @@ checkpoint:
 # Ablation Configuration
 # =============================================================================
 ablation:
-  experiments: [null_long_run, code_sequence_injection, zero_d0, null_code_injection, code_injection]
+  experiments: [code_injection, d0_only]
   num_clips: 10              # Clips per condition per starting pose
   max_steps: 500             # Steps per clip
   seed: 42
   data_split: "test"
-  top_k: 8                   # Top K non-null D0 codes for injection
-
-  # --- Null long-run config (STEP 4) ---
-  # NOT enabled by default — add "null_long_run" to experiments list above.
-  null_long_run:
-    max_steps: 2500
-    num_starting_positions: 3
-    num_render: 1
-
-  # --- Code sequence injection config (STEP 5) ---
-  # NOT enabled by default — add "code_sequence_injection" to experiments list above.
-  code_sequence_injection:
-    max_steps: 2500
-    num_starting_positions: 3
-    window_size: 50
-    null_prefix_steps: 0
-    modes: [uniform, transition_matrix]
-    num_sequences: 3
-    num_render: 3
+  top_k: 5                   # Top K non-null D0 codes for injection
 
   # Starting pose selection
   starting_poses:
@@ -55,13 +36,12 @@ ablation:
       description: "Rearing (highest torso z)"
 
 # =============================================================================
-# Logging Configuration
+# WandB Configuration
 # =============================================================================
-logging:
-  wandb_enabled: true
-  project_name: vqvae_ablation
-  group_name: ablation_experiments
-  run_name: null              # Auto-generated if null
+wandb:
+  enabled: true          # Enable WandB logging
+  project: "vqvae-eval"
+  entity: null            # WandB entity (team or username)
 
 # =============================================================================
 # Rendering Configuration

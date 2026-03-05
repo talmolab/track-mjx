@@ -26,7 +26,7 @@ inference:
 # Output Configuration
 # =============================================================================
 output:
-  path: ./outputs/rollout_rvq_32.h5  # Path to save H5 output file
+  path: ./outputs/rollout_vqvae_test.h5  # Path to save H5 output file
 
 # =============================================================================
 # Environment Configuration (inherited from training config)

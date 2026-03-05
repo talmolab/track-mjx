@@ -61,7 +61,11 @@ from analysis.checkpoint_utils import (
     load_vq_checkpoint,
 )
 from analysis.code_analysis import load_rollouts_from_h5
-from analysis.rendering import render_rollout_to_video
+from analysis.rendering import (
+    get_nature_colormap,
+    add_multi_line_overlay,
+    render_rollout_to_video,
+)
 from analysis.utils import build_slider_html
 
 
@@ -233,7 +237,8 @@ def fit_hmm_em(
     num_classes: int,
     num_iters: int = 200,
     seed: int = 0,
-) -> tuple[dict[str, np.ndarray], list[float]]:
+    test_observations: list[np.ndarray] | None = None,
+) -> tuple[dict[str, np.ndarray], list[float], list[float]]:
     """Fit a discrete HMM using Expectation-Maximization.
 
     Args:
@@ -242,10 +247,11 @@ def fit_hmm_em(
         num_classes: Number of emission classes C.
         num_iters: Number of EM iterations.
         seed: Random seed for initialization.
+        test_observations: Optional held-out sequences for tracking test LL.
 
     Returns:
-        Tuple of (params, log_likelihoods) where params has keys
-        "log_pi", "log_A", "log_B" and log_likelihoods is the EM curve.
+        Tuple of (params, train_log_likelihoods, test_log_likelihoods) where
+        params has keys "log_pi", "log_A", "log_B".
     """
     rng = np.random.RandomState(seed)
     K, C = num_states, num_classes
@@ -259,7 +265,8 @@ def fit_hmm_em(
     log_A = np.log(A)
     log_B = np.log(B)
 
-    log_likelihoods: list[float] = []
+    train_lls: list[float] = []
+    test_lls: list[float] = []
 
     for iteration in range(num_iters):
         # E-step
@@ -274,17 +281,30 @@ def fit_hmm_em(
             total_ll += ll
 
         avg_ll = total_ll / len(observations_list)
-        log_likelihoods.append(avg_ll)
+        train_lls.append(avg_ll)
+
+        # Evaluate on test set
+        if test_observations:
+            test_ll = np.mean([
+                hmm_marginal_log_prob(
+                    {"log_pi": log_pi, "log_A": log_A, "log_B": log_B}, seq
+                )
+                for seq in test_observations
+            ])
+            test_lls.append(float(test_ll))
 
         if iteration % 50 == 0:
-            logging.info(f"    EM iter {iteration}: avg log-likelihood = {avg_ll:.2f}")
+            msg = f"    EM iter {iteration}: train LL = {avg_ll:.2f}"
+            if test_lls:
+                msg += f", test LL = {test_lls[-1]:.2f}"
+            logging.info(msg)
 
         # M-step
         log_pi, log_A, log_B = hmm_m_step(
             gamma_list, xi_list, observations_list, C
         )
 
-    return {"log_pi": log_pi, "log_A": log_A, "log_B": log_B}, log_likelihoods
+    return {"log_pi": log_pi, "log_A": log_A, "log_B": log_B}, train_lls, test_lls
 
 
 def hmm_marginal_log_prob(
@@ -337,6 +357,50 @@ def hmm_sample(
     return states, emissions
 
 
+def hmm_sample_with_temperature(
+    params: dict[str, np.ndarray],
+    num_timesteps: int,
+    temperature: float = 1.0,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample from the HMM with temperature-scaled emission distribution.
+
+    Temperature controls diversity: T<1 = greedy (peaky), T=1 = original,
+    T>1 = more uniform (diverse).
+
+    Args:
+        params: HMM parameters with keys "log_pi", "log_A", "log_B".
+        num_timesteps: Length of sequence to generate.
+        temperature: Emission temperature. Applied as softmax(log_B / T).
+        seed: Random seed.
+
+    Returns:
+        Tuple of (hidden_states, emissions), each shape [num_timesteps].
+    """
+    rng = np.random.RandomState(seed)
+    pi = np.exp(params["log_pi"])
+    A = np.exp(params["log_A"])
+    log_B = params["log_B"]
+
+    # Temperature-scale the emission matrix
+    scaled_log_B = log_B / max(temperature, 1e-8)
+    # Softmax per row
+    B_temp = np.exp(scaled_log_B - scaled_log_B.max(axis=-1, keepdims=True))
+    B_temp = B_temp / B_temp.sum(axis=-1, keepdims=True)
+
+    states = np.zeros(num_timesteps, dtype=int)
+    emissions = np.zeros(num_timesteps, dtype=int)
+
+    states[0] = rng.choice(len(pi), p=pi)
+    emissions[0] = rng.choice(B_temp.shape[1], p=B_temp[states[0]])
+
+    for t in range(1, num_timesteps):
+        states[t] = rng.choice(len(pi), p=A[states[t - 1]])
+        emissions[t] = rng.choice(B_temp.shape[1], p=B_temp[states[t]])
+
+    return states, emissions
+
+
 # =============================================================================
 # STARTING POSE SELECTION (reused from ablation)
 # =============================================================================
@@ -374,6 +438,166 @@ def subset_clips(clips: ReferenceClips, idx: int) -> ReferenceClips:
         k: clips._data_arrays[k][idx : idx + 1] for k in clips._DATA_ARRAYS
     }
     return sub
+
+
+# =============================================================================
+# HMM VIDEO RENDERING
+# =============================================================================
+
+
+def _build_dual_bar(
+    width: int,
+    current_frame_idx: int,
+    hmm_state_indices: np.ndarray,
+    d0_indices: np.ndarray,
+    hmm_colors: np.ndarray,
+    code_colors: np.ndarray,
+    bar_height: int = 30,
+    separator_height: int = 2,
+    playhead_width: int = 3,
+) -> np.ndarray:
+    """Build a stacked bar with HMM state on top, VQ code on bottom.
+
+    Args:
+        width: Width of the bar in pixels.
+        current_frame_idx: Current frame index for playhead.
+        hmm_state_indices: HMM hidden state per frame, shape [T].
+        d0_indices: VQ D0 code per frame, shape [T].
+        hmm_colors: Colors for HMM states, shape [K, 3].
+        code_colors: Colors for VQ codes, shape [C, 3].
+        bar_height: Height of each bar in pixels.
+        separator_height: Height of separator between bars.
+        playhead_width: Width of playhead marker.
+
+    Returns:
+        Stacked bar image, shape [total_height, width, 3].
+    """
+    total_height = 2 * bar_height + separator_height
+    bar_img = np.ones((total_height, width, 3), dtype=np.uint8) * 255
+    num_frames = len(d0_indices)
+
+    rows = [
+        (0, hmm_state_indices, hmm_colors),
+        (bar_height + separator_height, d0_indices, code_colors),
+    ]
+
+    playhead_x = int(current_frame_idx * width / num_frames)
+    playhead_x = min(playhead_x, width - playhead_width)
+
+    for y_start, indices, colors in rows:
+        for j, idx in enumerate(indices):
+            x_start = int(j * width / num_frames)
+            x_end = int((j + 1) * width / num_frames)
+            bar_img[y_start : y_start + bar_height, x_start:x_end] = (
+                colors[int(idx) % len(colors)]
+            )
+
+        # Playhead
+        if playhead_x > 0:
+            bar_img[
+                y_start : y_start + bar_height, playhead_x - 1 : playhead_x
+            ] = [50, 50, 50]
+        bar_img[
+            y_start : y_start + bar_height,
+            playhead_x : playhead_x + playhead_width,
+        ] = [255, 255, 255]
+        if playhead_x + playhead_width < width:
+            bar_img[
+                y_start : y_start + bar_height,
+                playhead_x + playhead_width : playhead_x + playhead_width + 1,
+            ] = [50, 50, 50]
+
+    # Separator
+    bar_img[bar_height : bar_height + separator_height, :] = [50, 50, 50]
+
+    return bar_img
+
+
+def render_hmm_video(
+    env: Any,
+    rollout_states: list[Any],
+    output_path: str | Path,
+    camera: str | None,
+    width: int,
+    height: int,
+    fps: int,
+    d0_indices: np.ndarray,
+    hmm_state_indices: np.ndarray,
+    num_codes: int,
+    num_hmm_states: int,
+    rewards: np.ndarray | None = None,
+    bar_height: int = 30,
+) -> str:
+    """Render free-loop rollout with HMM state bar on top, VQ code bar below.
+
+    Args:
+        env: Environment with render method.
+        rollout_states: Sequence of environment states.
+        output_path: Path to save video.
+        camera: Camera name.
+        width: Video width.
+        height: Video height.
+        fps: Frames per second.
+        d0_indices: VQ D0 code per frame, shape [T].
+        hmm_state_indices: HMM hidden state per frame, shape [T].
+        num_codes: Number of VQ codes.
+        num_hmm_states: Number of HMM hidden states (K).
+        rewards: Optional rewards per frame.
+        bar_height: Height of each bar in pixels.
+
+    Returns:
+        Path to saved video.
+    """
+    import imageio
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logging.info(f"  Rendering {len(rollout_states)} frames...")
+    frames = env.render(rollout_states, camera=camera, height=height, width=width)
+
+    code_colors = get_nature_colormap(num_codes)
+    # Use a distinct colormap for HMM states so they're visually separate
+    hmm_colors = get_nature_colormap(num_hmm_states)
+
+    logging.info("  Adding HMM + VQ overlays...")
+    processed = []
+    for i, frame in enumerate(frames):
+        # Build dual bar (HMM state top, VQ code bottom)
+        bar = _build_dual_bar(
+            width=frame.shape[1],
+            current_frame_idx=i,
+            hmm_state_indices=hmm_state_indices,
+            d0_indices=d0_indices,
+            hmm_colors=hmm_colors,
+            code_colors=code_colors,
+            bar_height=bar_height,
+        )
+        frame = np.vstack([frame, bar])
+
+        # Text badge: HMM state + VQ code
+        lines = []
+        if i < len(hmm_state_indices):
+            lines.append(f"HMM:{int(hmm_state_indices[i])}")
+        if i < len(d0_indices):
+            lines.append(f"D0:{int(d0_indices[i])}")
+        if rewards is not None and i < len(rewards):
+            lines.append(f"R:{float(rewards[i]):.2f}")
+
+        if lines:
+            frame = add_multi_line_overlay(
+                frame, lines, start_position=(10, 10), font_size=16
+            )
+
+        processed.append(frame)
+
+    logging.info(f"  Writing video ({len(processed)} frames at {fps} fps)...")
+    with imageio.get_writer(str(output_path), fps=fps) as writer:
+        for frame in processed:
+            writer.append_data(frame)
+
+    logging.info(f"  Saved to {output_path}")
+    return str(output_path)
 
 
 # =============================================================================
@@ -471,6 +695,37 @@ def plot_em_curves(
     ax.set_xlabel("EM Iteration")
     ax.set_ylabel("Avg Log-Likelihood")
     ax.set_title("HMM EM Convergence")
+    ax.legend()
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)
+
+
+def plot_train_test_ll(
+    train_lls: list[float],
+    test_lls: list[float],
+    best_K: int,
+    output_path: Path,
+) -> str:
+    """Plot train and test log-likelihood curves over EM iterations.
+
+    Args:
+        train_lls: Per-iteration train log-likelihood.
+        test_lls: Per-iteration test log-likelihood.
+        best_K: The number of HMM states (for title).
+        output_path: Path to save PNG.
+
+    Returns:
+        Path to saved figure.
+    """
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(train_lls, label="Train", color="steelblue")
+    if test_lls:
+        ax.plot(test_lls, label="Test", color="darkorange")
+    ax.set_xlabel("EM Iteration")
+    ax.set_ylabel("Avg Log-Likelihood")
+    ax.set_title(f"HMM Train vs Test LL (K={best_K})")
     ax.legend()
     plt.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -695,22 +950,26 @@ def main(cfg: DictConfig):
     test_lls: dict[int, float] = {}
     all_params: dict[int, dict[str, np.ndarray]] = {}
 
+    all_train_curves: dict[int, list[float]] = {}
+    all_test_curves: dict[int, list[float]] = {}
+
     for K in cfg.hmm.num_states_sweep:
         logging.info(f"\n  Fitting K={K}...")
-        params, em_curve = fit_hmm_em(
+        params, train_curve, test_curve = fit_hmm_em(
             train_emissions,
             num_states=K,
             num_classes=num_codes,
             num_iters=cfg.hmm.num_em_iters,
             seed=cfg.hmm.seed + K,
+            test_observations=test_emissions,
         )
-        all_em_curves[K] = em_curve
+        all_em_curves[K] = train_curve
+        all_train_curves[K] = train_curve
+        all_test_curves[K] = test_curve
         all_params[K] = params
 
-        # Evaluate on test set
-        test_ll = np.mean([
-            hmm_marginal_log_prob(params, seq) for seq in test_emissions
-        ])
+        # Final test LL
+        test_ll = test_curve[-1] if test_curve else float(train_curve[-1])
         test_lls[K] = float(test_ll)
         logging.info(f"  K={K}: test log-likelihood = {test_ll:.2f}")
 
@@ -732,6 +991,12 @@ def main(cfg: DictConfig):
     )
     stat_path = plot_stationary_distribution(
         best_params, hmm_dir / "stationary_distribution.png"
+    )
+    train_test_path = plot_train_test_ll(
+        all_train_curves[best_K],
+        all_test_curves[best_K],
+        best_K,
+        hmm_dir / "train_test_ll.png",
     )
 
     # Save params as npz
@@ -787,6 +1052,7 @@ def main(cfg: DictConfig):
         wandb_items["hmm_prior/transition_matrix"] = wandb.Image(trans_path)
         wandb_items["hmm_prior/emission_matrix"] = wandb.Image(emit_path)
         wandb_items["hmm_prior/stationary_distribution"] = wandb.Image(stat_path)
+        wandb_items["hmm_prior/train_test_ll"] = wandb.Image(train_test_path)
 
     # ------------------------------------------------------------------
     # Step 7: Free-loop generative rollout
@@ -835,14 +1101,15 @@ def main(cfg: DictConfig):
             jit_reset = jax.jit(env.reset)
             jit_step = jax.jit(env.step)
 
-            # Sample HMM code sequence
+            # Sample HMM code sequence (keep hidden states for rendering)
             num_code_steps = max_steps // H + 1
-            _, sampled_codes = hmm_sample(
+            sampled_hmm_states, sampled_codes = hmm_sample(
                 best_params, num_code_steps, seed=free_seed
             )
             logging.info(
                 f"  Sampled {num_code_steps} codes from HMM "
-                f"(unique: {len(np.unique(sampled_codes))})"
+                f"(unique codes: {len(np.unique(sampled_codes))}, "
+                f"unique states: {len(np.unique(sampled_hmm_states))})"
             )
 
             # Run free-loop rollout
@@ -851,12 +1118,15 @@ def main(cfg: DictConfig):
             state = jit_reset(reset_rng)
 
             code_indices: list[int] = []
+            hmm_state_indices: list[int] = []
             states_for_render: list[Any] = []
             rewards: list[float] = []
 
             for t in range(max_steps):
                 code_t = int(sampled_codes[t // H])
+                hmm_state_t = int(sampled_hmm_states[t // H])
                 code_indices.append(code_t)
+                hmm_state_indices.append(hmm_state_t)
 
                 action = jit_decode(code_t, state.obs)
                 states_for_render.append(state)
@@ -878,12 +1148,18 @@ def main(cfg: DictConfig):
                 f"mean reward={mean_reward:.2f}"
             )
 
-            # Render video
+            # Render video with HMM state bar on top of VQ code bar
             d0_indices = np.array(code_indices)
-            d1_indices = np.zeros(len(code_indices), dtype=int)
+            hmm_states_arr = np.array(hmm_state_indices)
+
+            # Build extra_info to show HMM state in text overlay
+            extra_info = [
+                {"HMM state": int(hmm_states_arr[t])}
+                for t in range(len(code_indices))
+            ]
 
             video_path = video_dir / f"free_loop_{pose_name}.mp4"
-            render_rollout_to_video(
+            render_hmm_video(
                 env=env,
                 rollout_states=states_for_render,
                 output_path=video_path,
@@ -891,11 +1167,11 @@ def main(cfg: DictConfig):
                 width=cfg.render.width,
                 height=cfg.render.height,
                 fps=cfg.render.fps,
-                indices=d0_indices,
+                d0_indices=d0_indices,
+                hmm_state_indices=hmm_states_arr,
                 num_codes=num_codes,
+                num_hmm_states=best_K,
                 rewards=np.array(rewards),
-                indices_per_depth=[d0_indices, d1_indices],
-                d0_label="HMM",
             )
 
             all_video_paths.append(str(video_path))
@@ -924,7 +1200,134 @@ def main(cfg: DictConfig):
                 wandb_items["hmm_prior/free_loop/viewer"] = wandb.Html(html)
 
     # ------------------------------------------------------------------
-    # Step 8: Final WandB logging
+    # Step 8: Temperature sweep (low_height pose only)
+    # ------------------------------------------------------------------
+    temperatures = list(cfg.free_loop.get("temperatures", [0.1, 0.5, 1.0, 2.0]))
+    if cfg.render.get("enabled", True) and temperatures:
+        logging.info("\n[Step 8] Temperature sweep (low_height)...")
+
+        # Build env + decoder if Step 7 was skipped
+        try:
+            env_cfg_ml  # noqa: F841 — check if already defined
+        except NameError:
+            (_, cfg_dict, env_cfg_ml) = config_utils.prepare_config(cfg)
+            reference_clips = ReferenceClips(
+                data_path=vq_cfg.env_config.reference_data_path,
+                n_frames_per_clip=cfg.data.get("clip_length", 500),
+                keep_clips_idx=None,
+            )
+            decode_step, action_size = make_decoder_only_step_fn(
+                vq_cfg, policy_params
+            )
+            jit_decode = jax.jit(decode_step)
+            env_suffix = "-rodent"
+            camera_name = f"{cfg.render.camera}{env_suffix}"
+
+        # Use low_height clip
+        pose_clips = select_starting_clips(reference_clips)
+        low_clip_idx = pose_clips["low_height"]
+        sub_clips = subset_clips(reference_clips, low_clip_idx)
+        env = imitation.Imitation(config=env_cfg_ml, clips=sub_clips)
+        jit_reset = jax.jit(env.reset)
+        jit_step = jax.jit(env.step)
+
+        temp_dir = output_dir / "temperature_sweep"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        temp_video_paths: list[str] = []
+        temp_video_labels: list[str] = []
+        max_steps = cfg.free_loop.max_steps
+
+        for temp in temperatures:
+            logging.info(f"\n  Temperature T={temp}...")
+
+            num_code_steps = max_steps // H + 1
+            temp_seed = cfg.free_loop.seed + int(temp * 1000)
+            sampled_hmm_states, sampled_codes = hmm_sample_with_temperature(
+                best_params, num_code_steps, temperature=temp, seed=temp_seed
+            )
+            logging.info(
+                f"    Unique codes: {len(np.unique(sampled_codes))}, "
+                f"unique states: {len(np.unique(sampled_hmm_states))}"
+            )
+
+            # Run rollout
+            rng = jax.random.PRNGKey(temp_seed)
+            rng, reset_rng = jax.random.split(rng)
+            state = jit_reset(reset_rng)
+
+            code_indices: list[int] = []
+            hmm_state_indices: list[int] = []
+            states_for_render: list[Any] = []
+            rewards: list[float] = []
+
+            for t in range(max_steps):
+                code_t = int(sampled_codes[t // H])
+                hmm_state_t = int(sampled_hmm_states[t // H])
+                code_indices.append(code_t)
+                hmm_state_indices.append(hmm_state_t)
+
+                action = jit_decode(code_t, state.obs)
+                states_for_render.append(state)
+
+                next_state = jit_step(state, action)
+                rewards.append(float(next_state.reward))
+
+                if jnp.any(jnp.isnan(next_state.reward)):
+                    logging.info(f"    NaN at step {t}, stopping.")
+                    break
+                state = next_state
+
+            actual_steps = len(code_indices)
+            mean_reward = float(np.mean(rewards)) if rewards else 0.0
+            logging.info(
+                f"    T={temp}: {actual_steps} steps, mean_r={mean_reward:.2f}"
+            )
+
+            # Render
+            video_path = temp_dir / f"temp_{temp:.1f}.mp4"
+            render_hmm_video(
+                env=env,
+                rollout_states=states_for_render,
+                output_path=video_path,
+                camera=camera_name,
+                width=cfg.render.width,
+                height=cfg.render.height,
+                fps=cfg.render.fps,
+                d0_indices=np.array(code_indices),
+                hmm_state_indices=np.array(hmm_state_indices),
+                num_codes=num_codes,
+                num_hmm_states=best_K,
+                rewards=np.array(rewards),
+            )
+
+            temp_video_paths.append(str(video_path))
+            temp_video_labels.append(
+                f"T={temp} | {actual_steps} steps | "
+                f"mean_r={mean_reward:.1f} | "
+                f"unique_codes={len(np.unique(code_indices))}"
+            )
+
+        # Build slider HTML for temperature sweep
+        if temp_video_paths:
+            html = build_slider_html(
+                temp_video_paths,
+                temp_video_labels,
+                "HMM Temperature Sweep",
+                media_type="video",
+            )
+            html_path = temp_dir / "viewer.html"
+            with open(html_path, "w") as f:
+                f.write(html)
+            logging.info(f"  Temperature sweep HTML saved to {html_path}")
+
+            if wandb_enabled:
+                wandb_items["hmm_prior/temperature_sweep/viewer"] = wandb.Html(
+                    html
+                )
+
+    # ------------------------------------------------------------------
+    # Step 9: Final WandB logging
     # ------------------------------------------------------------------
     if wandb_enabled:
         import wandb

@@ -36,6 +36,7 @@ free_loop:
   commitment_horizon: 20  # H: each HMM code held for H sim steps
   max_steps: 5000         # total sim steps per rollout
   seed: 42
+  temperatures: [0.1, 0.5, 1.0, 2.0]  # emission temperature sweep
 
 # =============================================================================
 # WandB Configuration

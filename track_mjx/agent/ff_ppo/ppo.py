@@ -306,6 +306,9 @@ def train(
     )
     device_count = local_devices_to_use * process_count
 
+    # Treat num_envs as per-device; scale to total for internal use
+    num_envs = num_envs * device_count
+
     # The number of environment steps executed for every training step.
     env_step_per_training_step = (
         batch_size * unroll_length * num_minibatches * action_repeat

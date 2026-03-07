@@ -81,40 +81,21 @@ class TrainingState:
 
 
 def _unpmap(v: Any) -> Any:
-    """Extract first device's values from a pmap'd pytree.
-
-    Args:
-        v: Pytree with leading device axis from pmap.
-
-    Returns:
-        Pytree with device axis removed (values from first device).
-    """
-    return jax.tree_util.tree_map(lambda x: x[0], v)
+    """Extract first device's values from a pmap'd pytree."""
+    return jax.tree_util.tree_map(
+        lambda x: x.addressable_shards[0].data.squeeze(0), v
+    )
 
 
 def _strip_weak_type(tree: Any) -> Any:
     """Remove weak types from a pytree to prevent JIT recompilation.
 
-    Brax user code is sometimes ambiguous about weak_type, which can cause
-    unnecessary JIT recompilations.
-
-    Only creates a new array when the leaf actually has a weak type;
-    otherwise returns the original array to avoid unnecessary copies
-    that defeat donate_argnums buffer reuse.
-
-    Args:
-        tree: Input pytree potentially containing weak-typed arrays.
-
-    Returns:
-        Pytree with weak-typed arrays converted to their canonical dtype.
+    Always creates a new array to ensure fresh buffers for donate_argnums
+    buffer reuse in pmap.
     """
-
     def f(leaf):
         leaf = jnp.asarray(leaf)
-        if hasattr(leaf, "weak_type") and leaf.weak_type:
-            return leaf.astype(leaf.dtype)
-        return leaf
-
+        return jnp.astype(leaf, leaf.dtype)
     return jax.tree_util.tree_map(f, tree)
 
 
@@ -352,15 +333,24 @@ def train(
     ):
         optimizer_state, params, key, it = carry
         key, key_loss = jax.random.split(key)
-        (_, metrics), params, optimizer_state = gradient_update_fn(
-            params,
-            normalizer_params,
-            data,
-            key_loss,
-            it,
-            optimizer_state=optimizer_state,
-            params=params,
+        (_, metrics), grads = loss_and_pgrad_fn(
+            params, normalizer_params, data, key_loss, it
         )
+
+        # Track gradient norm (preserve custom diagnostic)
+        grad_norm = optax.global_norm(grads)
+        is_clipped = (grad_norm > grad_clip_threshold).astype(jnp.float32)
+        metrics = {
+            **metrics,
+            "grad_norm": grad_norm,
+            "grad_clipped": is_clipped,
+        }
+
+        # Apply gradients — use 3-arg form for adamw compatibility
+        params_update, optimizer_state = optimizer.update(
+            grads, optimizer_state, params
+        )
+        params = optax.apply_updates(params, params_update)
 
         return (optimizer_state, params, key, it), metrics
 
@@ -409,7 +399,7 @@ def train(
                 policy,
                 current_key,
                 unroll_length,
-                extra_fields=("truncation",),
+                extra_fields=("truncation", "episode_metrics", "episode_done"),
             )
             return (next_state, next_key), data
 
@@ -570,7 +560,7 @@ def train(
         logging.info("Initial env reset (data generation) done.")
         reset_fn = jax.jit(
             reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
-        )(key_envs)
+        )
 
     # Extract observation sizes from the dict observation
     obs_sizes = get_obs_sizes(env_state.obs)
@@ -740,13 +730,9 @@ def train(
                 )
             )
 
-    # gradient update function with the new optimizer and loss function
-    gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn,
-        optimizer,
-        pmap_axis_name=_PMAP_AXIS_NAME,
-        has_aux=True,
-        clip_threshold=grad_clip_threshold,
+    # loss + pmean gradient function (gradient application done in minibatch_step)
+    loss_and_pgrad_fn = gradients.loss_and_pgrad(
+        loss_fn, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
     )
 
     training_state = jax.device_put_replicated(
@@ -862,7 +848,7 @@ def train(
             # TODO: move extra reset logic to the AutoResetWrapper.
             if num_resets_per_eval > 0:
                 logging.info("Periodic env reset (data generation) starting at step %s...", current_step)
-                env_state = reset_fn((training_state, env_state), key_envs)
+                env_state = reset_fn(env_state, key_envs)
                 logging.info("Periodic env reset (data generation) done.")
 
         if process_id == 0:

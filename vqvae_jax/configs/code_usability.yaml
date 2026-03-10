@@ -1,88 +1,59 @@
 # =============================================================================
-# VQ-VAE Code Analysis Configuration
+# VQ-VAE Code Usability by Posture
 # =============================================================================
-# Pipeline for analyzing VQ-VAE code patterns:
-# - Global transition matrix and stationary distribution
-# - t-SNE/UMAP trajectory visualization
-# - Pose gallery for popular codes
-# - Kinematic profiles per code
+# Per-pose independent code ranking: for each starting posture (low/high z),
+# independently classify codes into preferred/medium/not-preferred by frequency
+# terciles, then compare via decoder-only injection.
+#
+# Usage:
+#     cd vqvae_jax
+#     WANDB_MODE=offline python -m ablation.run_code_usability
 # =============================================================================
 
 # =============================================================================
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260301_061816_996669/ #260301_061919_970599/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260301_061816_996669/
   step: null  # null = latest step
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  h5_path: ./outputs/rollout_vqvae_test_nocon.h5
+
+# =============================================================================
+# Usability Configuration
+# =============================================================================
+usability:
+  max_steps_per_code: 200   # Steps per decoder-only injection rollout
+  seed: 42
+  z_split: quartile         # "median", "quartile" (25th/75th), or [low_max, high_min]
 
 # =============================================================================
 # WandB Configuration
 # =============================================================================
 wandb:
-  enabled: true          # Enable WandB logging
-  project: "vqvae-eval"
-  entity: null            # WandB entity (team or username)
-
-# =============================================================================
-# Data Source Configuration
-# =============================================================================
-# Analysis loads pre-computed rollout data from H5 files.
-# Use `python -m inference.run_inference` to generate H5 files.
-data:
-  h5_path: null  # Path to H5 file with rollout data (required)
-  h5_path_train: null            # Path to train-split H5 (optional)
-  h5_path_test: ./outputs/rollout_vqvae_test_nocon.h5  # Path to test-split H5
-  analysis_split: "test"     # "train", "test", or "combined"
-  clip_length: 500               # Frames per clip (for environment setup)
-
-# =============================================================================
-# Pose Gallery Configuration
-# =============================================================================
-# Render grid videos showing where each popular code starts across clips.
-pose_gallery:
-  enabled: true               # Enable pose gallery rendering
-  top_k_codes: 5              # Number of popular transitions to visualize
-  videos_per_code: 4          # Clips to sample per transition
-  transition_length: 3        # Number of consecutive code runs per transition n-gram
-
-# =============================================================================
-# Kinematic Profile Configuration
-# =============================================================================
-# Render kinematic profile line plots per code (root speed, height, hip/knee angles).
-kinematic_profile:
   enabled: true
-
-# =============================================================================
-# t-SNE Skill-Space Trajectory Visualization
-# =============================================================================
-# Visualize how clips traverse the "skill space" by embedding k-transition
-# sequences (concatenated codebook vectors) into 2D via t-SNE. Creates a
-# synchronized HTML viewer with animated canvas + video playback.
-tsne_trajectory:
-  enabled: false                 # Enable t-SNE trajectory visualization
-  n_clips: 2                    # Number of high-movement clips to compare
-  k_transitions: 2              # Number of code transitions per t-SNE point
-  tsne_perplexity: 50           # t-SNE perplexity parameter
-  render_videos: true           # Render clip videos for synchronized viewer
-  umap_n_neighbors: 15          # UMAP n_neighbors (larger = more global)
-  umap_min_dist: 0.1            # UMAP min_dist (smaller = tighter clusters)
-  xy_vs_xyz:
-    n_clips_per_group: 1        # Clips per group in XY vs XYZ comparison
+  project: "vqvae-eval"
+  entity: null
 
 # =============================================================================
 # Rendering Configuration
 # =============================================================================
 render:
-  camera: close_profile     # Camera name (suffix will be added)
-  fps: 50                   # Frames per second for videos
-  width: 640                # Video width (high resolution)
-  height: 480               # Video height (high resolution)
+  enabled: true
+  camera: close_profile
+  fps: 50
+  width: 640
+  height: 480
 
 # =============================================================================
 # Output Configuration
 # =============================================================================
 output:
-  base_dir: ./outputs/code_analysis
+  base_dir: ./outputs/code_usability
 
 # =============================================================================
 # Environment Configuration
@@ -111,7 +82,7 @@ env_config:
   qvel_init: "zeros"
   keep_clips_idx: null
 
-  # Domain Randomization (disabled for analysis)
+  # Domain Randomization (disabled)
   domain_randomization:
     use_domain_randomization: false
     floor_friction: [0.7, 0.7]

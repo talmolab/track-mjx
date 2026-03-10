@@ -9,14 +9,14 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260301_061919_970599/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260301_061816_996669/ #260301_061919_970599/
   step: null  # null = latest step
 
 # =============================================================================
 # Data Configuration
 # =============================================================================
 data:
-  h5_path_test: ./outputs/rollout_vqvae_test.h5
+  h5_path_test: ./outputs/rollout_vqvae_test_nocon.h5
   analysis_split: "test"
   clip_length: 500
 
@@ -33,10 +33,22 @@ hmm:
 # Free-Loop Rollout Configuration
 # =============================================================================
 free_loop:
-  commitment_horizon: 20  # H: each HMM code held for H sim steps
+  commitment_horizon: 10  # H: each HMM code held for H sim steps
   max_steps: 5000         # total sim steps per rollout
   seed: 42
   temperatures: [0.1, 0.5, 1.0, 2.0]  # emission temperature sweep
+
+# =============================================================================
+# Control Experiments Configuration
+# =============================================================================
+controls:
+  random_null:
+    enabled: true
+    num_seeds: 5          # rollouts per condition per pose
+    max_steps: 5000       # same as free_loop
+  transition_analysis:
+    enabled: true
+    sparsity_threshold: 0.01
 
 # =============================================================================
 # WandB Configuration

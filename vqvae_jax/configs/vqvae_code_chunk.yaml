@@ -129,7 +129,7 @@ network_config:
   dead_code_threshold: 0.01
 
   # Residual VQ settings — MUST have depth >= 2, coupled_residual_grad = false
-  rvq_depth: 2
+  rvq_depth: 1
   use_rotation: true
   coupled_residual_grad: false        # MUST be false for chunking
   proprio_noise_scale: 0.15

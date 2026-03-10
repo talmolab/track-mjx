@@ -42,13 +42,34 @@ Key overrides:
 - `ablation.max_steps=1000` to extend rollout length
 - `ablation.data_split=train` to use train clips for starting poses
 
+## Code Usability by Posture
+
+For each starting posture (low/high torso z-height), independently classifies codes into preferred/medium/not-preferred by within-pose frequency terciles from inference H5 data, then compares them via decoder-only injection with tabbed HTML and quantitative metrics.
+
+```bash
+cd vqvae_jax
+python -m ablation.run_code_usability
+```
+
+Key overrides:
+- `usability.max_steps_per_code=300` to extend injection rollout length
+- `usability.z_split=0.05` to use an explicit z-height threshold instead of quartile
+- `render.enabled=false` to skip video rendering (metrics only)
+- `data.h5_path=./outputs/rollout_train.h5` to analyze train split
+
+WandB panels:
+- `code_usability/{low,high}_height/viewer` — tabbed HTML (preferred/medium/not-preferred)
+- `code_usability/metrics/cross_pose_scatter` — joint velocity scatter
+- `code_usability/metrics/bars_{pose}` — preferred vs not-preferred bar charts
+- `code_usability/metrics/activity_heatmap` — code x pose heatmap with per-pose rank
+, 
 ## HMM Prior
 
 Fits a discrete HMM on D0 code sequences and generates free-loop behavior using only the decoder (no encoder). Validates temporal structure in the learned code space.
 
 ```bash
 cd vqvae_jax
-WANDB_MODE=offline python -m hmm_prior.run_hmm_prior
+python -m hmm_prior.run_hmm_prior
 ```
 
 Key overrides:

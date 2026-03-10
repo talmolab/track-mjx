@@ -1,7 +1,7 @@
 """VQ-VAE Code Ablation Experiments.
 
-Empirically test what each D0 code does via codebook mutation:
-1. Code injection — force one D0 code at every timestep, zero D1
+Empirically test what each D0 code does:
+1. Code injection — decoder-only: hold one D0 code constant, no encoder
 2. D0-only — natural D0 selection via encoder, zero D1
 
 Each experiment runs from two starting poses (lowest/highest torso z-height).
@@ -18,6 +18,7 @@ import os
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
+import base64
 import copy
 import json
 import sys
@@ -48,11 +49,23 @@ from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.config import utils as config_utils
 
+from brax.training import distribution
+from brax.training.acme import running_statistics
+
 from analysis.checkpoint_utils import (
+    create_standalone_decoder,
     get_all_codebooks,
+    get_codebook,
+    get_decoder_params,
     load_vq_checkpoint,
     load_vq_chunked_inference_fn,
     load_vq_inference_fn_with_stickiness,
+)
+from analysis.code_analysis import load_rollouts_from_h5
+from analysis.transition_context_analysis import (
+    compute_code_popularity,
+    compute_transition_ngram_popularity,
+    get_top_k_transitions,
 )
 from analysis.utils import build_slider_html, identify_null_code
 from analysis.inference_cache import InferenceResult
@@ -60,7 +73,7 @@ from analysis.rendering import render_rollout_to_video
 
 
 # =============================================================================
-# D0 CODEBOOK MUTATION
+# D1 CODEBOOK MUTATION (for D0-only experiment)
 # =============================================================================
 
 
@@ -95,34 +108,6 @@ def zero_continuous_encoder_params(
     return (normalizer, new_params)
 
 
-def make_injection_d0_params(
-    policy_params: tuple[Any, Any],
-    target_embedding: jnp.ndarray,
-) -> tuple[Any, Any]:
-    """Set all D0 codebook entries to a single target embedding.
-
-    Args:
-        policy_params: Tuple of (normalizer_state, policy_params_dict).
-        target_embedding: Embedding vector to tile across all D0 entries.
-
-    Returns:
-        New policy_params with all D0 entries = target_embedding.
-    """
-    normalizer, params = policy_params
-    quantizer = params["params"]["quantizer"]
-    old_embeddings = quantizer["codebooks_0"]["embeddings"]
-    num_codes = old_embeddings.shape[0]
-    new_embeddings = jnp.tile(target_embedding[None, :], (num_codes, 1))
-    new_cb0 = dict(quantizer["codebooks_0"])
-    new_cb0["embeddings"] = new_embeddings
-    new_quantizer = dict(quantizer)
-    new_quantizer["codebooks_0"] = new_cb0
-    new_params = dict(params)
-    new_params["params"] = dict(params["params"])
-    new_params["params"]["quantizer"] = new_quantizer
-    return (normalizer, new_params)
-
-
 def make_zero_d1_params(
     policy_params: tuple[Any, Any],
 ) -> tuple[Any, Any]:
@@ -148,21 +133,453 @@ def make_zero_d1_params(
     return (normalizer, new_params)
 
 
-def make_injection_d0_zero_d1_params(
+# =============================================================================
+# DECODER-ONLY STEP FUNCTION (for code injection)
+# =============================================================================
+
+
+def make_decoder_only_step_fn(
+    cfg: DictConfig,
     policy_params: tuple[Any, Any],
-    target_embedding: jnp.ndarray,
-) -> tuple[Any, Any]:
-    """Set all D0 entries to target and zero D1.
+) -> tuple[Any, int]:
+    """Build a decoder-only function: (d0_code_index, obs) -> action.
+
+    The encoder is NOT used. D1 residual is zero by construction.
+    Continuous latent (if present) is zeroed.
 
     Args:
-        policy_params: Tuple of (normalizer_state, policy_params_dict).
-        target_embedding: Embedding vector for D0.
+        cfg: Checkpoint config with network_config section.
+        policy_params: Tuple of (normalizer_state, policy_params).
 
     Returns:
-        New policy_params with injected D0 and zeroed D1.
+        Tuple of (decode_step_fn, action_size).
     """
-    params = make_injection_d0_params(policy_params, target_embedding)
-    return make_zero_d1_params(params)
+    normalizer_state, _ = policy_params
+    codebook_0 = get_codebook(policy_params, depth=0)
+    decoder = create_standalone_decoder(cfg)
+    decoder_params = get_decoder_params(policy_params)
+
+    use_continuous = bool(
+        cfg.network_config.get("use_continuous_latent", False)
+    )
+    continuous_dim = int(
+        cfg.network_config.get("continuous_latent_dim", 4)
+    )
+    action_size = cfg.network_config.action_size
+    action_dist = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
+
+    latent_dim = codebook_0.shape[1]
+    logging.info(
+        f"  Decoder-only mode: latent_dim={latent_dim}, "
+        f"use_continuous={use_continuous}, "
+        f"continuous_dim={continuous_dim}"
+    )
+
+    def decode_step(d0_code_index: int, obs: dict) -> jnp.ndarray:
+        """Decode a single D0 code to an action."""
+        z_q = codebook_0[d0_code_index]
+
+        flat_obs = flatten_obs_dict(obs)
+        proprio_norm = running_statistics.normalize(
+            flat_obs["proprioception"],
+            normalizer_state.proprioception,
+        )
+
+        if use_continuous:
+            z_e_zeros = jnp.zeros(continuous_dim)
+            x = jnp.concatenate([z_q, z_e_zeros, proprio_norm], axis=-1)
+        else:
+            x = jnp.concatenate([z_q, proprio_norm], axis=-1)
+
+        action_params, _ = decoder.apply(
+            {"params": decoder_params}, x
+        )
+        return jnp.array(action_dist.mode(action_params))
+
+    return decode_step, action_size
+
+
+def run_decoder_only_rollout(
+    env: Any,
+    jit_decode: Any,
+    code_idx: int,
+    num_repeats: int,
+    max_steps: int,
+    seed: int,
+    num_render: int = 0,
+) -> list[InferenceResult]:
+    """Run decoder-only rollouts holding a single D0 code constant.
+
+    No encoder is involved — the code embedding is looked up directly
+    and fed to the decoder with proprioception.
+
+    Args:
+        env: Imitation environment (single clip).
+        jit_decode: JIT-compiled decoder step fn: (code_idx, obs) -> action.
+        code_idx: D0 code index to hold constant.
+        num_repeats: Number of rollout repeats.
+        max_steps: Maximum steps per rollout.
+        seed: Base random seed.
+        num_render: Number of rollouts to store env states for rendering.
+
+    Returns:
+        List of InferenceResult objects.
+    """
+    jit_reset = jax.jit(env.reset)
+    jit_step = jax.jit(env.step)
+
+    results = []
+    rng = jax.random.PRNGKey(seed)
+
+    for i in range(num_repeats):
+        rng, reset_rng = jax.random.split(rng)
+        state = jit_reset(reset_rng)
+
+        qpos_list: list[np.ndarray] = []
+        qvel_list: list[np.ndarray] = []
+        rewards: list[float] = []
+        store_states = i < num_render
+        states: list[Any] | None = [] if store_states else None
+
+        for step in range(max_steps):
+            action = jit_decode(code_idx, state.obs)
+
+            if hasattr(state, "data"):
+                qpos_list.append(np.array(state.data.qpos))
+                qvel_list.append(np.array(state.data.qvel))
+            elif hasattr(state, "pipeline_state"):
+                qpos_list.append(np.array(state.pipeline_state.q))
+                qvel_list.append(np.array(state.pipeline_state.qd))
+
+            if store_states:
+                states.append(state)
+
+            next_state = jit_step(state, action)
+            rewards.append(float(next_state.reward))
+
+            if next_state.done:
+                break
+            state = next_state
+
+        results.append(
+            InferenceResult(
+                clip_idx=i,
+                code_indices=np.full(len(rewards), code_idx, dtype=int),
+                qpos=(
+                    np.stack(qpos_list) if qpos_list
+                    else np.zeros((0, 0))
+                ),
+                qvel=(
+                    np.stack(qvel_list) if qvel_list
+                    else np.zeros((0, 0))
+                ),
+                rewards=np.array(rewards),
+                states=states,
+            )
+        )
+
+    return results
+
+
+# =============================================================================
+# MOVEMENT CLASSIFICATION & HTML HELPERS
+# =============================================================================
+
+
+def classify_codes_by_movement(
+    per_code_qpos: dict[int, np.ndarray],
+) -> dict[str, list[int]]:
+    """Classify codes into movement categories using data-driven thresholds.
+
+    For each code's H-step rollout qpos, computes:
+    - XY path length: cumulative euclidean distance in the XY plane
+    - Z range: max - min of root z-height
+
+    Splits at median of each metric across all codes.
+
+    Args:
+        per_code_qpos: Mapping from code index to qpos array [T, nq].
+
+    Returns:
+        Dict with keys "high_xy", "high_xyz", "high_z", "stationary",
+        each containing a list of code indices.
+    """
+    xy_paths = {}
+    z_ranges = {}
+    for code_idx, qpos in per_code_qpos.items():
+        if len(qpos) < 2:
+            xy_paths[code_idx] = 0.0
+            z_ranges[code_idx] = 0.0
+            continue
+        diffs = np.diff(qpos[:, :2], axis=0)
+        xy_paths[code_idx] = float(np.sum(np.linalg.norm(diffs, axis=1)))
+        z_ranges[code_idx] = float(np.max(qpos[:, 2]) - np.min(qpos[:, 2]))
+
+    all_xy = np.array(list(xy_paths.values()))
+    all_z = np.array(list(z_ranges.values()))
+    xy_median = float(np.median(all_xy))
+    z_median = float(np.median(all_z))
+
+    categories: dict[str, list[int]] = {
+        "high_xy": [],
+        "high_xyz": [],
+        "high_z": [],
+        "stationary": [],
+    }
+    for code_idx in per_code_qpos:
+        xy = xy_paths[code_idx]
+        z = z_ranges[code_idx]
+        if xy >= xy_median and z < z_median:
+            categories["high_xy"].append(code_idx)
+        elif xy >= xy_median and z >= z_median:
+            categories["high_xyz"].append(code_idx)
+        elif xy < xy_median and z >= z_median:
+            categories["high_z"].append(code_idx)
+        else:
+            categories["stationary"].append(code_idx)
+
+    return categories
+
+
+def plot_code_histogram(
+    code_counts: np.ndarray,
+    highlighted_codes: list[int],
+    title: str,
+    num_codes: int,
+    output_path: Path,
+) -> str:
+    """Bar chart of code usage with highlighted codes in color.
+
+    Args:
+        code_counts: Array of shape [num_codes] with frame counts.
+        highlighted_codes: Codes to highlight in color (rest greyed out).
+        title: Plot title.
+        num_codes: Total number of codes.
+        output_path: Path to save PNG.
+
+    Returns:
+        Path to saved figure.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(max(6, num_codes * 0.25), 2.5))
+
+    colors = ["#cccccc"] * num_codes
+    highlight_cmap = plt.cm.tab10
+    highlighted_set = set(highlighted_codes)
+    rank = 0
+    for c in range(num_codes):
+        if c in highlighted_set:
+            colors[c] = highlight_cmap(rank % 10)
+            rank += 1
+
+    ax.bar(range(num_codes), code_counts[:num_codes], color=colors, edgecolor="none")
+    ax.set_xlabel("Code Index", fontsize=9)
+    ax.set_ylabel("Frame Count", fontsize=9)
+    ax.set_title(title, fontsize=10, fontweight="bold")
+    ax.tick_params(labelsize=7)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)
+
+
+def _encode_file_b64(path: str, mime: str) -> str:
+    """Read a file and return a base64 data URI."""
+    with open(path, "rb") as f:
+        return f"data:{mime};base64,{base64.b64encode(f.read()).decode()}"
+
+
+# Category display metadata.
+_CATEGORY_LABELS = {
+    "high_xy": "Walking / Locomotion",
+    "high_xyz": "Combined Movement",
+    "high_z": "Rearing / Vertical",
+    "stationary": "Stationary / Low Movement",
+}
+
+_CATEGORY_COLORS = {
+    "high_xy": "#4CAF50",
+    "high_xyz": "#FF9800",
+    "high_z": "#2196F3",
+    "stationary": "#9E9E9E",
+}
+
+
+def build_code_injection_html(
+    categories: dict[str, list[int]],
+    per_code_videos: dict[int, str],
+    per_code_labels: dict[int, str],
+    histogram_paths: dict[str, str],
+    title: str,
+) -> str:
+    """Build static HTML with tabbed categories of code injection videos.
+
+    Each tab shows a video grid (small thumbnails) and a histogram below.
+    All media is base64-encoded.  Tab buttons toggle visibility via JS.
+
+    Args:
+        categories: Mapping from category name to list of code indices.
+        per_code_videos: Mapping from code index to video file path.
+        per_code_labels: Mapping from code index to label string.
+        histogram_paths: Mapping from category name to histogram PNG path.
+        title: Page title.
+
+    Returns:
+        HTML string.
+    """
+    # Pre-encode all videos and histograms
+    video_data: dict[int, str] = {}
+    for code_idx, path in per_code_videos.items():
+        video_data[code_idx] = _encode_file_b64(path, "video/mp4")
+    hist_data: dict[str, str] = {}
+    for cat, path in histogram_paths.items():
+        hist_data[cat] = _encode_file_b64(path, "image/png")
+
+    tab_buttons = []
+    tab_contents = []
+    for i, (cat, codes) in enumerate(categories.items()):
+        if not codes:
+            continue
+        label = _CATEGORY_LABELS.get(cat, cat)
+        color = _CATEGORY_COLORS.get(cat, "#666")
+        active = " active" if i == 0 else ""
+        display = "flex" if i == 0 else "none"
+
+        tab_buttons.append(
+            f'<button class="tab-btn{active}" '
+            f'onclick="showTab(\'{cat}\')" '
+            f'style="border-bottom: 3px solid {color}">'
+            f"{label} ({len(codes)})</button>"
+        )
+
+        # Video grid
+        grid_items = []
+        for code_idx in sorted(codes):
+            vid_src = video_data.get(code_idx, "")
+            lbl = per_code_labels.get(code_idx, f"Code {code_idx}")
+            grid_items.append(
+                f'<div class="vid-cell">'
+                f'<video src="{vid_src}" width="200" autoplay loop muted></video>'
+                f'<div class="vid-label">{lbl}</div>'
+                f"</div>"
+            )
+
+        hist_img = ""
+        if cat in hist_data:
+            hist_img = (
+                f'<img src="{hist_data[cat]}" '
+                f'style="max-width:100%; margin-top:12px;" />'
+            )
+
+        tab_contents.append(
+            f'<div class="tab-content" id="tab-{cat}" '
+            f'style="display:{display}; flex-wrap:wrap; gap:8px;">'
+            f'{"".join(grid_items)}'
+            f'<div style="width:100%">{hist_img}</div>'
+            f"</div>"
+        )
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{title}</title>
+<style>
+body {{ font-family: sans-serif; margin: 16px; background: #fafafa; }}
+h2 {{ margin-bottom: 8px; }}
+.tab-bar {{ display: flex; gap: 4px; margin-bottom: 12px; }}
+.tab-btn {{ padding: 8px 16px; cursor: pointer; background: #eee;
+            border: none; border-radius: 4px 4px 0 0; font-size: 13px; }}
+.tab-btn.active {{ background: #fff; font-weight: bold; }}
+.vid-cell {{ text-align: center; }}
+.vid-label {{ font-size: 11px; margin-top: 2px; }}
+</style>
+<script>
+function showTab(cat) {{
+  document.querySelectorAll('.tab-content').forEach(
+    el => el.style.display = 'none');
+  document.querySelectorAll('.tab-btn').forEach(
+    el => el.classList.remove('active'));
+  document.getElementById('tab-' + cat).style.display = 'flex';
+  event.target.classList.add('active');
+}}
+</script>
+</head><body>
+<h2>{title}</h2>
+<div class="tab-bar">{"".join(tab_buttons)}</div>
+{"".join(tab_contents)}
+</body></html>"""
+    return html
+
+
+def run_decoder_only_bigram_rollout(
+    env: Any,
+    jit_decode: Any,
+    code_a: int,
+    code_b: int,
+    H: int,
+    seed: int,
+    num_render: int = 1,
+) -> InferenceResult:
+    """Run code_a for H steps then code_b for H steps (decoder-only).
+
+    Args:
+        env: Imitation environment (single clip).
+        jit_decode: JIT-compiled decoder step fn.
+        code_a: First code index.
+        code_b: Second code index.
+        H: Commitment horizon (steps per code).
+        seed: Random seed.
+        num_render: Whether to store states (1=yes, 0=no).
+
+    Returns:
+        InferenceResult for the 2H-step trajectory.
+    """
+    jit_reset = jax.jit(env.reset)
+    jit_step = jax.jit(env.step)
+
+    rng = jax.random.PRNGKey(seed)
+    rng, reset_rng = jax.random.split(rng)
+    state = jit_reset(reset_rng)
+
+    qpos_list: list[np.ndarray] = []
+    qvel_list: list[np.ndarray] = []
+    rewards: list[float] = []
+    code_indices: list[int] = []
+    store_states = num_render > 0
+    states: list[Any] | None = [] if store_states else None
+
+    for step in range(2 * H):
+        code_idx = code_a if step < H else code_b
+        action = jit_decode(code_idx, state.obs)
+
+        if hasattr(state, "data"):
+            qpos_list.append(np.array(state.data.qpos))
+            qvel_list.append(np.array(state.data.qvel))
+        elif hasattr(state, "pipeline_state"):
+            qpos_list.append(np.array(state.pipeline_state.q))
+            qvel_list.append(np.array(state.pipeline_state.qd))
+
+        if store_states:
+            states.append(state)
+
+        code_indices.append(code_idx)
+        next_state = jit_step(state, action)
+        rewards.append(float(next_state.reward))
+
+        if next_state.done:
+            break
+        state = next_state
+
+    return InferenceResult(
+        clip_idx=0,
+        code_indices=np.array(code_indices),
+        qpos=np.stack(qpos_list) if qpos_list else np.zeros((0, 0)),
+        qvel=np.stack(qvel_list) if qvel_list else np.zeros((0, 0)),
+        rewards=np.array(rewards),
+        states=states,
+    )
 
 
 # =============================================================================
@@ -986,114 +1403,247 @@ def main(cfg: DictConfig):
                 )
 
     # ================================================================
-    # STEP 2: Code injection (top-K non-null D0 codes, D1 zeroed)
+    # STEP 2: Code injection — ALL codes, decoder-only, per-pose
     # ================================================================
     if "code_injection" in experiments:
         logging.info("\n" + "=" * 40)
-        logging.info("Running code injection experiments (D1 zeroed)...")
+        logging.info(
+            "Running code injection for ALL codes (decoder-only)..."
+        )
 
-        all_inj_videos: dict[int, dict[str, list[str]]] = {}
+        # Build decoder-only step function — encoder never runs
+        decode_step, _ = make_decoder_only_step_fn(vq_cfg, policy_params)
+        jit_decode = jax.jit(decode_step)
 
-        for code_idx, code_count in top_k_codes:
-            logging.info(
-                f"  Injecting code {code_idx} ({code_count} baseline frames)..."
-            )
-            target_embedding = jnp.array(d0_codebook[code_idx])
-            inj_params = make_injection_d0_zero_d1_params(
-                policy_params, target_embedding
-            )
+        # Steps per code injection rollout — match HMM gallery (H * 20)
+        H = commitment_horizon * 20 if use_code_chunking else max_steps
 
-            # Use chunked inference when checkpoint was trained with chunking
-            if use_code_chunking:
-                inj_chunked_fn, inj_chunk_state_fn = (
-                    load_vq_chunked_inference_fn(
-                        vq_cfg,
-                        inj_params,
-                        commitment_horizon=commitment_horizon,
-                        deterministic=True,
-                    )
+        for pose_name, env in pose_envs.items():
+            logging.info(f"\n  === Code injection on {pose_name} ===")
+
+            per_code_qpos: dict[int, np.ndarray] = {}
+            per_code_videos: dict[int, str] = {}
+            per_code_labels: dict[int, str] = {}
+
+            for code_idx in range(num_codes):
+                logging.info(f"    Injecting code {code_idx}/{num_codes}...")
+                results = run_decoder_only_rollout(
+                    env=env,
+                    jit_decode=jit_decode,
+                    code_idx=code_idx,
+                    num_repeats=1,
+                    max_steps=H,
+                    seed=seed,
+                    num_render=1 if render_enabled else 0,
                 )
-            else:
-                inj_fn, _ = load_vq_inference_fn_with_stickiness(
-                    vq_cfg, inj_params, deterministic=True
-                )
 
-            inj_videos: dict[str, list[str]] = {}
-            for pose_name, env in pose_envs.items():
-                logging.info(f"    Code {code_idx} on {pose_name}...")
-                if use_code_chunking:
-                    results = run_ablation_rollout_chunked(
-                        env=env,
-                        inference_fn=inj_chunked_fn,
-                        initial_chunk_state_fn=inj_chunk_state_fn,
-                        num_repeats=num_clips,
-                        max_steps=max_steps,
-                        seed=seed,
-                        rvq_depth=rvq_depth,
-                        num_render=num_render if render_enabled else 0,
-                        override_d0_index=code_idx,
-                    )
-                else:
-                    results = run_ablation_rollout(
-                        env=env,
-                        inference_fn=inj_fn,
-                        num_repeats=num_clips,
-                        max_steps=max_steps,
-                        seed=seed,
-                        rvq_depth=rvq_depth,
-                        num_render=num_render if render_enabled else 0,
-                        override_d0_index=code_idx,
-                    )
+                r = results[0]
+                per_code_qpos[code_idx] = r.qpos
 
+                # Compute metrics
                 key = f"inject_code_{code_idx}/{pose_name}"
                 metrics = compute_condition_metrics(results, null_code)
                 all_metrics[key] = metrics
-                logging.info(
-                    f"    {key}: reward={metrics['mean_reward']:.1f}, "
-                    f"displacement={metrics['mean_root_displacement']:.3f}"
+
+                # Render single video for this code
+                if render_enabled and r.states:
+                    vid_path = output_dir / f"inject_{pose_name}_c{code_idx}.mp4"
+                    render_rollout_to_video(
+                        env=env,
+                        rollout_states=r.states,
+                        output_path=vid_path,
+                        camera=camera_name,
+                        width=cfg.render.width,
+                        height=cfg.render.height,
+                        fps=cfg.render.fps,
+                        indices=r.code_indices,
+                        num_codes=num_codes,
+                        d0_label=f"D0:{code_idx}",
+                    )
+                    per_code_videos[code_idx] = str(vid_path)
+                    per_code_labels[code_idx] = f"Code {code_idx}"
+
+            # Classify codes by root movement
+            categories = classify_codes_by_movement(per_code_qpos)
+            for cat, codes in categories.items():
+                logging.info(f"    {cat}: {len(codes)} codes — {codes}")
+
+            # Build per-category histograms (baseline code counts)
+            histogram_paths: dict[str, str] = {}
+            for cat, codes in categories.items():
+                if not codes:
+                    continue
+                hist_path = (
+                    output_dir / f"hist_{pose_name}_{cat}.png"
                 )
-                if render_enabled:
-                    inj_videos[pose_name] = render_condition_videos(
-                        results,
-                        env,
-                        f"inject_code_{code_idx}",
-                        pose_name,
-                        output_dir,
-                        camera_name,
-                        num_codes,
-                        cfg,
-                        wandb_enabled,
-                        num_render,
-                    )
-            all_inj_videos[code_idx] = inj_videos
+                plot_code_histogram(
+                    code_counts=code_counts,
+                    highlighted_codes=codes,
+                    title=f"{_CATEGORY_LABELS.get(cat, cat)} — {pose_name}",
+                    num_codes=num_codes,
+                    output_path=hist_path,
+                )
+                histogram_paths[cat] = str(hist_path)
 
-        # Build HTML slider viewer for code injection
-        if render_enabled and all_inj_videos:
-            for pose_name in pose_envs:
-                vid_paths = []
-                vid_labels = []
-                for code_idx, _ in top_k_codes:
-                    vids = all_inj_videos.get(code_idx, {}).get(pose_name, [])
-                    if vids:
-                        vid_paths.append(vids[0])  # First video per code
-                        vid_labels.append(f"Code {code_idx}")
+            # Build tabbed HTML
+            if render_enabled and per_code_videos:
+                html = build_code_injection_html(
+                    categories=categories,
+                    per_code_videos=per_code_videos,
+                    per_code_labels=per_code_labels,
+                    histogram_paths=histogram_paths,
+                    title=f"Code Injection — {pose_name}",
+                )
+                html_path = (
+                    output_dir / f"code_injection_{pose_name}.html"
+                )
+                with open(html_path, "w") as f:
+                    f.write(html)
+                logging.info(f"    Saved HTML: {html_path}")
 
-                if vid_paths:
-                    html = build_slider_html(
-                        vid_paths,
-                        vid_labels,
-                        f"Code Injection - {pose_name}",
+                if wandb_enabled:
+                    import wandb
+
+                    wandb_items[
+                        f"ablation/code_injection/{pose_name}/viewer"
+                    ] = wandb.Html(html)
+
+    # ================================================================
+    # STEP 2b: Two-code bigram injection
+    # ================================================================
+    if "code_injection" in experiments:
+        h5_path = cfg.get("data", {}).get("h5_path_test", None)
+        top_bigrams_k = cfg.ablation.get("top_bigrams", 10)
+
+        if h5_path and Path(h5_path).exists():
+            logging.info("\n" + "=" * 40)
+            logging.info("Running bigram injection experiments...")
+
+            h5_results, _ = load_rollouts_from_h5(h5_path)
+            bigram_counts = compute_transition_ngram_popularity(
+                h5_results, num_codes, n=2
+            )
+            top_bigrams = get_top_k_transitions(bigram_counts, top_bigrams_k)
+            logging.info(
+                f"  Top {len(top_bigrams)} bigrams: "
+                f"{[(bg, cnt) for bg, cnt in top_bigrams]}"
+            )
+
+            # Build bigram frequency array for histograms
+            bigram_freq = np.zeros(num_codes * num_codes)
+            for (a, b), cnt in bigram_counts.items():
+                bigram_freq[a * num_codes + b] = cnt
+
+            # Each code in the bigram gets H*20 steps (same as single-code)
+            H_bigram = commitment_horizon * 20 if use_code_chunking else 250
+
+            for pose_name, env in pose_envs.items():
+                logging.info(f"\n  === Bigram injection on {pose_name} ===")
+
+                per_bigram_qpos: dict[int, np.ndarray] = {}
+                per_bigram_videos: dict[int, str] = {}
+                per_bigram_labels: dict[int, str] = {}
+
+                for bi, ((code_a, code_b), cnt) in enumerate(top_bigrams):
+                    logging.info(
+                        f"    Bigram {bi}: ({code_a},{code_b}) "
+                        f"count={cnt}..."
                     )
-                    html_path = output_dir / f"code_injection_{pose_name}.html"
+                    result = run_decoder_only_bigram_rollout(
+                        env=env,
+                        jit_decode=jit_decode,
+                        code_a=code_a,
+                        code_b=code_b,
+                        H=H_bigram,
+                        seed=seed,
+                        num_render=1 if render_enabled else 0,
+                    )
+
+                    per_bigram_qpos[bi] = result.qpos
+
+                    if render_enabled and result.states:
+                        vid_path = (
+                            output_dir
+                            / f"bigram_{pose_name}_{code_a}_{code_b}.mp4"
+                        )
+                        render_rollout_to_video(
+                            env=env,
+                            rollout_states=result.states,
+                            output_path=vid_path,
+                            camera=camera_name,
+                            width=cfg.render.width,
+                            height=cfg.render.height,
+                            fps=cfg.render.fps,
+                            indices=result.code_indices,
+                            num_codes=num_codes,
+                            d0_label=f"{code_a}->{code_b}",
+                        )
+                        per_bigram_videos[bi] = str(vid_path)
+                        per_bigram_labels[bi] = (
+                            f"({code_a},{code_b}) n={cnt}"
+                        )
+
+                # Classify bigrams by movement
+                bigram_categories = classify_codes_by_movement(
+                    per_bigram_qpos
+                )
+
+                # Build per-category bigram histograms
+                # Show which bigrams are highlighted (use flat index)
+                bigram_hist_paths: dict[str, str] = {}
+                for cat, idxs in bigram_categories.items():
+                    if not idxs:
+                        continue
+                    # Highlight the actual bigram code pairs
+                    highlighted = []
+                    for bi in idxs:
+                        if bi < len(top_bigrams):
+                            (a, b), _ = top_bigrams[bi]
+                            highlighted.extend([a, b])
+                    highlighted = list(set(highlighted))
+
+                    hist_path = (
+                        output_dir / f"hist_bigram_{pose_name}_{cat}.png"
+                    )
+                    plot_code_histogram(
+                        code_counts=code_counts,
+                        highlighted_codes=highlighted,
+                        title=(
+                            f"Bigram {_CATEGORY_LABELS.get(cat, cat)} "
+                            f"— {pose_name}"
+                        ),
+                        num_codes=num_codes,
+                        output_path=hist_path,
+                    )
+                    bigram_hist_paths[cat] = str(hist_path)
+
+                # Build tabbed HTML for bigrams
+                if render_enabled and per_bigram_videos:
+                    html = build_code_injection_html(
+                        categories=bigram_categories,
+                        per_code_videos=per_bigram_videos,
+                        per_code_labels=per_bigram_labels,
+                        histogram_paths=bigram_hist_paths,
+                        title=f"Bigram Injection — {pose_name}",
+                    )
+                    html_path = (
+                        output_dir / f"code_bigram_{pose_name}.html"
+                    )
                     with open(html_path, "w") as f:
                         f.write(html)
+                    logging.info(f"    Saved bigram HTML: {html_path}")
 
                     if wandb_enabled:
                         import wandb
 
                         wandb_items[
-                            f"ablation/code_injection/{pose_name}_viewer"
+                            f"ablation/code_bigram/{pose_name}/viewer"
                         ] = wandb.Html(html)
+        else:
+            logging.warning(
+                f"  Skipping bigram injection: H5 path not found "
+                f"({h5_path})"
+            )
 
     # ================================================================
     # STEP 3: D0-only (natural D0, zeroed D1)

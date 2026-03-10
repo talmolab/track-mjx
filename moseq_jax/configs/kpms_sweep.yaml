@@ -14,7 +14,6 @@
 data:
   reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
   balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
-  xml_path: null  # auto-detect from vnl_playground
 
 sweep:
   num_states: [10, 20, 30, 50]

@@ -40,11 +40,6 @@ sys.path.insert(0, str(REPO_ROOT))
 import yaml
 
 from moseq_jax.kpms.config import KPMSHyperparams
-from moseq_jax.kpms.keypoint_loader import (
-    DEFAULT_KP_NAMES,
-    setup_mujoco_model,
-    qpos_to_keypoints,
-)
 from moseq_jax.kpms.fit_kpms import fit_kpms_keypoints
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -59,19 +54,30 @@ def _load_config(config_path: str | None = None) -> dict:
         return yaml.safe_load(f)
 
 
-def _load_reference_data(
+def _load_keypoints(
     data_path: str,
     balanced_split_path: str | None = None,
-) -> np.ndarray:
-    """Load qpos from reference clips, optionally filtered by balanced split.
+    n_frames_per_clip: int = 250,
+) -> tuple[np.ndarray, list[str]]:
+    """Load pre-computed keypoints from reference clips H5.
+
+    The H5 file stores ``marker_sites`` as ``[N_total_frames, K, 3]``
+    and ``kp_names`` as ``[K]``.  This function reshapes to
+    ``[N_clips, T, K, 3]`` and optionally filters to balanced clips.
 
     Returns:
-        qpos array, shape ``[N, T, nq]``.
+        ``(keypoints, kp_names)`` where keypoints has shape ``[N, T, K, 3]``.
     """
     import h5py
 
     with h5py.File(data_path, "r") as f:
-        qpos = f["qpos"][:]
+        marker_flat = f["marker_sites"][:]  # [N_total_frames, K, 3]
+        kp_names = [n.decode() for n in f["kp_names"][:]]
+
+    # Reshape from flat [N_total_frames, K, 3] to [N_clips, T, K, 3]
+    n_total = marker_flat.shape[0]
+    n_clips = n_total // n_frames_per_clip
+    keypoints = marker_flat.reshape(n_clips, n_frames_per_clip, *marker_flat.shape[1:])
 
     if balanced_split_path and Path(balanced_split_path).exists():
         with open(balanced_split_path) as f:
@@ -79,20 +85,10 @@ def _load_reference_data(
         train_idx = splits["balanced"]["train_indices"]
         test_idx = splits["balanced"]["test_indices"]
         all_idx = sorted(set(train_idx) | set(test_idx))
-        qpos = qpos[all_idx]
+        keypoints = keypoints[all_idx]
         log.info(f"Using {len(all_idx)} balanced clips (train+test)")
 
-    return qpos
-
-
-def _get_xml_path(cfg: dict) -> str:
-    """Resolve XML path from config or auto-detect."""
-    xml_path = cfg["data"].get("xml_path")
-    if xml_path and Path(xml_path).exists():
-        return xml_path
-    from vnl_playground.tasks.rodent import consts
-
-    return str(consts.RODENT_XML_PATH)
+    return keypoints, kp_names
 
 
 def _compute_metrics(
@@ -149,21 +145,12 @@ def run_sweep(cfg: dict) -> dict:
     output_dir = Path(cfg["output"]["base_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load data
-    qpos = _load_reference_data(
+    # Load pre-computed keypoints directly from H5
+    keypoints, kp_names = _load_keypoints(
         cfg["data"]["reference_data_path"],
         cfg["data"].get("balanced_split_path"),
     )
-    log.info(f"Loaded qpos: {qpos.shape}")
-
-    # Convert to keypoints
-    xml_path = _get_xml_path(cfg)
-    mjx_model, mjx_data, site_ids, kp_names = setup_mujoco_model(
-        xml_path, DEFAULT_KP_NAMES
-    )
-    log.info(f"Computing keypoints for {qpos.shape[0]} clips...")
-    keypoints = qpos_to_keypoints(qpos, mjx_model, mjx_data, site_ids)
-    log.info(f"Keypoints shape: {keypoints.shape}")
+    log.info(f"Loaded keypoints: {keypoints.shape}, {len(kp_names)} keypoints")
 
     # Grid
     grid = list(

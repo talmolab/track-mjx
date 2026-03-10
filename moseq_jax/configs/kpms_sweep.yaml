@@ -1,0 +1,33 @@
+# =============================================================================
+# KPMS Hyperparameter Sweep Configuration
+# =============================================================================
+# Grid search over KPMS settings to find the best syllable model.
+#
+# IMPORTANT: This sweep MUST run in a separate process from RL training
+# because keypoint_moseq requires jax_enable_x64=True (process-global).
+#
+# Usage:
+#   cd moseq_jax
+#   python -m sweep.run_sweep
+# =============================================================================
+
+data:
+  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+  xml_path: null  # auto-detect from vnl_playground
+
+sweep:
+  num_states: [10, 20, 30, 50]
+  kappa: [1.0e+3, 1.0e+4, 1.0e+5, 1.0e+6]
+  latent_dim: [5, 10]
+  model_type: ["arhmm", "slds"]
+  seeds_per_setting: 3
+  ar_iters: 50
+  full_iters: 300
+
+output:
+  base_dir: moseq_jax/outputs/kpms_sweep
+
+wandb:
+  project: moseq_experiments
+  group: kpms_sweep

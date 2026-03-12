@@ -54,7 +54,8 @@ cd moseq_jax
 python -m codegen.generate_codes \
     --sweep-results outputs/kpms_sweep/sweep_results.json \
     --balanced-split ../data/rodent/rodent_balanced_splits.json \
-    --output outputs/kpms_sweep/best_codes.npz
+    --output outputs/kpms_sweep/best_codes.npz \
+    --wandb-project moseq_experiments
 ```
 
 Output `.npz` contains:

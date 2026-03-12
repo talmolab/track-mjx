@@ -132,7 +132,7 @@ network_config:
   rvq_depth: 1
   use_rotation: true
   coupled_residual_grad: false        # MUST be false for chunking
-  proprio_noise_scale: 0.15
+  proprio_noise_scale: 0.20
 
   # Continuous latent settings
   use_continuous_latent: false
@@ -141,7 +141,7 @@ network_config:
 
   # Code chunking (Semi-MDP temporal commitment) — ENABLED
   use_code_chunking: true
-  code_commitment_horizon: 10         # H=10 -> 0.2s at 50Hz, 4 windows per unroll
+  code_commitment_horizon: 15         # H=10 -> 0.2s at 50Hz, 4 windows per unroll
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false

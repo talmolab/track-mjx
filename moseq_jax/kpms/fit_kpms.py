@@ -92,7 +92,7 @@ def fit_kpms_keypoints(
         fix_heading=True,
         bodyparts=kp_names,
         skeleton=[],
-        fps=50,
+        fps=30,
         overwrite=True,
     )
 

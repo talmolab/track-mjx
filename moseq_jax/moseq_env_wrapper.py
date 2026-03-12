@@ -1,76 +1,50 @@
-"""Environment wrapper that injects pre-computed KPMS codes into observations.
+"""Imitation environment subclass that includes pre-computed KPMS codes.
 
-Wraps an imitation environment to add a ``kpms_code`` key to the observation
-dictionary at each step.  The code is looked up from a pre-computed table
-indexed by (reference_clip, current_frame).
+Subclasses ``Imitation`` to inject ``kpms_code`` directly in ``_get_obs``,
+so the obs pytree structure is consistent from the very start.  This avoids
+the pitfalls of an env *wrapper* approach where:
+
+* ``BraxDomainRandomizationVmapWrapper`` bypasses wrappers via ``env.unwrapped``
+* ``EpisodeWrapper.step``'s ``jax.lax.scan`` requires carry-in / carry-out to
+  have identical pytree structure, but the base env's ``_get_obs`` would strip
+  the extra key.
+
+By producing ``kpms_code`` inside ``_get_obs``, every wrapper (Vmap, DR,
+Episode, AutoReset) sees a consistent 3-key ``OrderedDict`` at all times.
 """
 
-from typing import Any
+from typing import Any, Mapping
 
 import jax.numpy as jnp
+from mujoco import mjx
+from vnl_playground.tasks.rodent.imitation import Imitation
+from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 
-class MoSeqCodeWrapper:
-    """Injects pre-computed KPMS syllable codes into the observation dict.
+class MoSeqImitation(Imitation):
+    """Imitation env whose observations include pre-computed KPMS syllable codes.
 
     Attributes:
-        env: Wrapped environment instance.
+        _kpms_codes: Pre-computed code array ``[n_clips, n_frames]``.
     """
 
-    def __init__(self, env: Any, kpms_codes: jnp.ndarray):
-        """Initialize the wrapper.
-
-        Args:
-            env: Base imitation environment.
-            kpms_codes: Pre-computed code array, shape ``[n_clips, n_frames]``
-                with integer syllable labels.
-        """
-        self.env = env
+    def __init__(
+        self,
+        config: Any,
+        clips: ReferenceClips,
+        kpms_codes: jnp.ndarray,
+    ):
+        super().__init__(config=config, clips=clips)
         self._kpms_codes = jnp.asarray(kpms_codes, dtype=jnp.int32)
 
     # ------------------------------------------------------------------
-    # Core env methods
+    # Override _get_obs to append kpms_code
     # ------------------------------------------------------------------
 
-    def _lookup_code(self, data: Any, info: dict) -> jnp.ndarray:
-        """Look up the KPMS code for the current (clip, frame)."""
-        frame = self.env.unwrapped._get_cur_frame(data, info)
+    def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
+        obs = super()._get_obs(data, info)
+        frame = self._get_cur_frame(data, info)
         frame = jnp.clip(frame, 0, self._kpms_codes.shape[1] - 1)
-        return self._kpms_codes[info["reference_clip"], frame]
-
-    def _inject_code(self, obs: dict, code: jnp.ndarray) -> dict:
-        """Add ``kpms_code`` (shape ``[..., 1]``, float32) to *obs*."""
-        return {**obs, "kpms_code": code[..., None].astype(jnp.float32)}
-
-    def reset(self, rng, **kwargs):
-        state = self.env.reset(rng, **kwargs)
-        code = self._lookup_code(state.data, state.info)
-        return state.replace(obs=self._inject_code(state.obs, code))
-
-    def step(self, state, action):
-        state = self.env.step(state, action)
-        code = self._lookup_code(state.data, state.info)
-        return state.replace(obs=self._inject_code(state.obs, code))
-
-    # ------------------------------------------------------------------
-    # Forwarded properties / methods
-    # ------------------------------------------------------------------
-
-    @property
-    def unwrapped(self):
-        return self.env.unwrapped
-
-    @property
-    def observation_size(self):
-        return self.env.observation_size
-
-    @property
-    def action_size(self):
-        return self.env.action_size
-
-    @property
-    def proprioceptive_obs_size(self):
-        return self.env.proprioceptive_obs_size
-
-    def __getattr__(self, name: str):
-        return getattr(self.env, name)
+        code = self._kpms_codes[info["reference_clip"], frame]
+        obs["kpms_code"] = code[..., None].astype(jnp.float32)
+        return obs

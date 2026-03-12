@@ -35,7 +35,6 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from track_mjx.config import utils
@@ -44,7 +43,7 @@ from track_mjx.agent.domain_randomization import domain_randomization_maker
 
 from moseq_ppo_networks import make_moseq_decoder_ppo_networks
 from moseq_ppo import train as moseq_train
-from moseq_env_wrapper import MoSeqCodeWrapper
+from moseq_env_wrapper import MoSeqImitation
 
 
 def _setup_environment() -> None:
@@ -175,7 +174,7 @@ def moseq_rollout_logging_fn(
         import mujoco
 
         try:
-            from analysis.rendering import render_rollout_to_video
+            from vqvae_jax.analysis.rendering import render_rollout_to_video
 
             render_fps = cfg.render_config.render_fps
             num_videos = min(
@@ -301,12 +300,13 @@ def main(cfg: DictConfig) -> None:
         train_codes = rng.randint(0, num_codes, size=(n_train, n_frames))
         test_codes = rng.randint(0, num_codes, size=(n_test, n_frames))
 
-    # Create environments with MoSeqCodeWrapper
-    train_env_base = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    test_env_base = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
-
-    env = MoSeqCodeWrapper(train_env_base, kpms_codes=train_codes)
-    test_env = MoSeqCodeWrapper(test_env_base, kpms_codes=test_codes)
+    # Use MoSeqImitation (subclass of Imitation) which injects kpms_code
+    # directly in _get_obs. This ensures the obs pytree structure is consistent
+    # from the start — no wrapper needed, no pytree mismatches in jax.lax.scan.
+    env = MoSeqImitation(config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes)
+    test_env = MoSeqImitation(
+        config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes
+    )
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -401,8 +401,9 @@ def main(cfg: DictConfig) -> None:
     # Rollout env for logging
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env_base = imitation.Imitation(config=rollout_cfg, clips=test_clips)
-    rollout_env = MoSeqCodeWrapper(rollout_env_base, kpms_codes=test_codes)
+    rollout_env = MoSeqImitation(
+        config=rollout_cfg, clips=test_clips, kpms_codes=test_codes
+    )
 
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)

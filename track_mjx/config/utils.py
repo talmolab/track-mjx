@@ -8,7 +8,6 @@ import json
 import logging
 import subprocess
 from importlib.metadata import distribution
-from pathlib import Path
 from typing import Any
 
 from ml_collections import config_dict
@@ -52,21 +51,6 @@ def _get_package_commit(package_name: str) -> str:
 
 
 from track_mjx.config.walker_registry import get_walker_defaults, WALKER_DEFAULTS
-
-# Project root directory (track-mjx/)
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
-
-
-def _resolve_data_path(relative_path: str) -> str:
-    """Resolve a relative data path to an absolute path from the project root.
-
-    Args:
-        relative_path: Path relative to the project root (e.g., "data/rodent/file.h5").
-
-    Returns:
-        Absolute path as a string.
-    """
-    return str(_PROJECT_ROOT / relative_path)
 
 
 def prepare_config(

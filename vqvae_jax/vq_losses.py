@@ -543,9 +543,7 @@ def compute_vq_ppo_loss(
     if logvar is not None:
         continuous_mean, continuous_logvar = logvar
         # Discrete z_e stats
-        metrics["discrete_latent/z_e_l2_norm"] = jnp.mean(
-            jnp.linalg.norm(z_e, axis=-1)
-        )
+        metrics["discrete_latent/z_e_l2_norm"] = jnp.mean(jnp.linalg.norm(z_e, axis=-1))
         # Continuous head stats
         z_e_l2_norm = jnp.mean(jnp.linalg.norm(continuous_mean, axis=-1))
         z_e_mean_abs = jnp.mean(jnp.abs(continuous_mean))
@@ -589,6 +587,7 @@ def compute_vq_chunked_ppo_loss(
     codebook_entropy_weight: float = 0.0,
     codebook_entropy_temperature: float = 1.0,
     kl_weight: float = 0.0,
+    rvq_depth: int = 2,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss with D0 temporal commitment (code chunking).
 
@@ -666,7 +665,7 @@ def compute_vq_chunked_ppo_loss(
     episode_mask = jnp.concatenate([first_mask, continues[:-1]], axis=0)
 
     # Forward pass through chunked VQ policy
-    (policy_logits, z_e, all_indices, logvar, tau) = (
+    policy_logits, z_e, all_indices, logvar, tau = (
         policy_network.apply_temporal_chunked(
             normalizer_params,
             params.policy,
@@ -679,12 +678,15 @@ def compute_vq_chunked_ppo_loss(
         )
     )
 
-    d0_indices, d1_indices = all_indices
+    d0_indices = all_indices[0]
 
     # Value function with augmented inputs (D0 code + tau)
     baseline = value_apply(
-        normalizer_params, params.value, data.observation,
-        d0_code_idx=d0_indices, tau=tau,
+        normalizer_params,
+        params.value,
+        data.observation,
+        d0_code_idx=d0_indices,
+        tau=tau,
     )
 
     # Bootstrap value: use last step's D0 code, advance tau by 1
@@ -692,62 +694,81 @@ def compute_vq_chunked_ppo_loss(
     bootstrap_d0_idx = d0_indices[-1]
     bootstrap_tau = (tau[-1] + 1) % commitment_horizon
     bootstrap_value = value_apply(
-        normalizer_params, params.value, last_next_obs,
-        d0_code_idx=bootstrap_d0_idx, tau=bootstrap_tau,
+        normalizer_params,
+        params.value,
+        last_next_obs,
+        d0_code_idx=bootstrap_d0_idx,
+        tau=bootstrap_tau,
     )
 
     # Extract codebooks from param tree
     quantizer_params = params.policy["params"]["quantizer"]
     codebook_0 = quantizer_params["codebooks_0"]["embeddings"]
-    codebook_1 = quantizer_params["codebooks_1"]["embeddings"]
 
     # Reconstruct z_q for loss computation
     d0_z_q = codebook_0[d0_indices]  # [T, B, D]
-    d1_z_q = codebook_1[d1_indices]  # [T, B, D]
 
     # D0 commitment loss: masked to manager steps only (tau == 0)
     is_manager_step = (tau == 0).astype(jnp.float32)  # [T, B]
     n_manager = jnp.sum(is_manager_step) + 1e-8
 
-    d0_commitment = jnp.sum(
-        jnp.mean((z_e - jax.lax.stop_gradient(d0_z_q)) ** 2, axis=-1)
-        * is_manager_step
-    ) / n_manager
-    d0_codebook = jnp.sum(
-        jnp.mean((jax.lax.stop_gradient(z_e) - d0_z_q) ** 2, axis=-1)
-        * is_manager_step
-    ) / n_manager
+    d0_commitment = (
+        jnp.sum(
+            jnp.mean((z_e - jax.lax.stop_gradient(d0_z_q)) ** 2, axis=-1)
+            * is_manager_step
+        )
+        / n_manager
+    )
+    d0_codebook = (
+        jnp.sum(
+            jnp.mean((jax.lax.stop_gradient(z_e) - d0_z_q) ** 2, axis=-1)
+            * is_manager_step
+        )
+        / n_manager
+    )
 
     # D1 commitment loss: every step (D1 is always fresh)
-    d1_residual = z_e - jax.lax.stop_gradient(d0_z_q)
-    d1_commitment = jnp.mean(
-        (d1_residual - jax.lax.stop_gradient(d1_z_q)) ** 2
-    )
-    d1_codebook = jnp.mean(
-        (jax.lax.stop_gradient(d1_residual) - d1_z_q) ** 2
-    )
+    if rvq_depth >= 2:
+        d1_indices = all_indices[1]
+        codebook_1 = quantizer_params["codebooks_1"]["embeddings"]
+        d1_z_q = codebook_1[d1_indices]
+        d1_residual = z_e - jax.lax.stop_gradient(d0_z_q)
+        d1_commitment = jnp.mean((d1_residual - jax.lax.stop_gradient(d1_z_q)) ** 2)
+        d1_codebook = jnp.mean((jax.lax.stop_gradient(d1_residual) - d1_z_q) ** 2)
+    else:
+        d1_indices = None
+        d1_commitment = jnp.array(0.0)
+        d1_codebook = jnp.array(0.0)
 
-    # Combined VQ losses (1/2 scaling for 2 levels)
-    commitment_loss = 0.5 * (d0_commitment + d1_commitment)
-    codebook_loss = 0.5 * (d0_codebook + d1_codebook)
+    # Combined VQ losses (1/D scaling)
+    depth_scale = 1.0 / rvq_depth
+    commitment_loss = depth_scale * (d0_commitment + d1_commitment)
+    codebook_loss = depth_scale * (d0_codebook + d1_codebook)
     scaled_vq_loss = (
-        commitment_cost * commitment_loss
-        + codebook_loss_weight * codebook_loss
+        commitment_cost * commitment_loss + codebook_loss_weight * codebook_loss
     )
 
     # Codebook health metrics
-    perplexity_d0, utilization_d0, codes_used_d0 = (
-        _compute_single_codebook_metrics(d0_indices, num_codes)
+    perplexity_d0, utilization_d0, codes_used_d0 = _compute_single_codebook_metrics(
+        d0_indices, num_codes
     )
-    perplexity_d1, utilization_d1, codes_used_d1 = (
-        _compute_single_codebook_metrics(d1_indices, num_codes)
-    )
+    if rvq_depth >= 2:
+        perplexity_d1, utilization_d1, codes_used_d1 = _compute_single_codebook_metrics(
+            d1_indices, num_codes
+        )
+    else:
+        perplexity_d1 = jnp.array(0.0)
+        utilization_d1 = jnp.array(0.0)
+        codes_used_d1 = jnp.array(0.0)
 
     # Codebook entropy regularization
     if codebook_entropy_weight > 0.0:
-        codebooks = (codebook_0, codebook_1)
-        # Reconstruct residuals for entropy computation
-        all_residuals = (z_e, d1_residual, d1_residual - jax.lax.stop_gradient(d1_z_q))
+        if rvq_depth >= 2:
+            codebooks = (codebook_0, codebook_1)
+            all_residuals = (z_e, d1_residual)
+        else:
+            codebooks = (codebook_0,)
+            all_residuals = (z_e,)
         neg_entropy, entropy_metrics = compute_codebook_entropy_loss(
             z_e=z_e,
             codebooks=codebooks,
@@ -840,9 +861,12 @@ def compute_vq_chunked_ppo_loss(
         valid_mask = data.discount[:-1] * (1 - truncation[:-1])
         num_valid = jnp.sum(valid_mask) + 1e-8
         d0_changed = (d0_indices[1:] != d0_indices[:-1]).astype(jnp.float32)
-        d1_changed = (d1_indices[1:] != d1_indices[:-1]).astype(jnp.float32)
         d0_transition_rate = jnp.sum(d0_changed * valid_mask) / num_valid
-        d1_transition_rate = jnp.sum(d1_changed * valid_mask) / num_valid
+        if d1_indices is not None:
+            d1_changed = (d1_indices[1:] != d1_indices[:-1]).astype(jnp.float32)
+            d1_transition_rate = jnp.sum(d1_changed * valid_mask) / num_valid
+        else:
+            d1_transition_rate = jnp.array(0.0)
         transition_rate = d0_transition_rate
     else:
         d0_transition_rate = jnp.array(0.0)
@@ -898,9 +922,7 @@ def compute_vq_chunked_ppo_loss(
     if logvar is not None:
         continuous_mean, continuous_logvar = logvar
         # Discrete z_e stats
-        metrics["discrete_latent/z_e_l2_norm"] = jnp.mean(
-            jnp.linalg.norm(z_e, axis=-1)
-        )
+        metrics["discrete_latent/z_e_l2_norm"] = jnp.mean(jnp.linalg.norm(z_e, axis=-1))
         # Continuous head stats
         z_e_l2_norm = jnp.mean(jnp.linalg.norm(continuous_mean, axis=-1))
         z_e_mean_abs = jnp.mean(jnp.abs(continuous_mean))

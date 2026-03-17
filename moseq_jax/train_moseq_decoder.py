@@ -279,19 +279,22 @@ def main(cfg: DictConfig) -> None:
 
     # Load or generate KPMS codes
     codes_path = cfg.kpms_config.get("codes_path", None)
-    num_codes = int(cfg.network_config.num_codes)
 
     if codes_path and Path(codes_path).exists():
         codes_data = np.load(codes_path)
         train_codes = codes_data["train_codes"]
         test_codes = codes_data["test_codes"]
+        # Derive num_codes from the actual KPMS data
+        num_codes = int(np.max([train_codes.max(), test_codes.max()])) + 1
         logging.info(
-            f"Loaded KPMS codes: train {train_codes.shape}, test {test_codes.shape}"
+            f"Loaded KPMS codes: train {train_codes.shape}, test {test_codes.shape}, "
+            f"num_codes={num_codes} (from data)"
         )
     else:
         # Generate random codes for smoke testing
+        num_codes = int(cfg.network_config.num_codes)
         logging.warning(
-            "No KPMS codes found — generating random codes for smoke testing"
+            f"No KPMS codes found — generating random codes ({num_codes}) for smoke testing"
         )
         n_train = train_clips.qpos.shape[0]
         n_test = test_clips.qpos.shape[0]

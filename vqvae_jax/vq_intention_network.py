@@ -97,9 +97,7 @@ class VQEncoder(nn.Module):
             # Discrete head: goes to VQ (reuses 'latent_projection' for compat)
             z_e_discrete = nn.Dense(self.latent_dim, name="latent_projection")(x)
             # Continuous head: separate dimension
-            cont_mean = nn.Dense(
-                self.continuous_latent_dim, name="continuous_mean"
-            )(x)
+            cont_mean = nn.Dense(self.continuous_latent_dim, name="continuous_mean")(x)
             cont_logvar = nn.Dense(
                 self.continuous_latent_dim, name="continuous_logvar"
             )(x)
@@ -616,9 +614,7 @@ class VQIntentionNetwork(nn.Module):
                 z_hat_st, all_indices, all_z_q, all_residuals = self.quantizer(
                     z_e, prev_indices=prev_indices
                 )
-                concatenated = jnp.concatenate(
-                    [z_hat_st, egocentric_obs], axis=-1
-                )
+                concatenated = jnp.concatenate([z_hat_st, egocentric_obs], axis=-1)
                 action, decoder_activations = self.decoder(
                     concatenated, get_activation=True
                 )
@@ -644,9 +640,7 @@ class VQIntentionNetwork(nn.Module):
                 z_hat_st, all_indices, _, _ = self.quantizer(
                     z_e, prev_indices=prev_indices
                 )
-                concatenated = jnp.concatenate(
-                    [z_hat_st, egocentric_obs], axis=-1
-                )
+                concatenated = jnp.concatenate([z_hat_st, egocentric_obs], axis=-1)
                 action, _ = self.decoder(concatenated)
                 return action, z_e, all_indices, None
 
@@ -661,7 +655,7 @@ class VQIntentionNetwork(nn.Module):
     ) -> tuple[
         jnp.ndarray,
         jnp.ndarray,
-        tuple[jnp.ndarray, jnp.ndarray],
+        tuple[jnp.ndarray, ...],
         tuple[jnp.ndarray, jnp.ndarray] | None,
         tuple[jnp.ndarray, jnp.ndarray],
     ]:
@@ -678,7 +672,7 @@ class VQIntentionNetwork(nn.Module):
         Returns:
             action_params: Shape [B, action_size*2].
             z_e_or_mean: Shape [B, latent_dim].
-            all_indices: Tuple of (d0_idx, d1_idx), each shape [B].
+            all_indices: D-tuple of index arrays, each shape [B].
             logvar: Shape [B, latent_dim] or None.
             new_chunk_state: Tuple of (new_held_d0, new_tau), each shape [B].
         """
@@ -716,7 +710,7 @@ class VQIntentionNetwork(nn.Module):
             z_e_sampled = None
 
         codebook_0 = self.quantizer.codebooks[0].embeddings
-        codebook_1 = self.quantizer.codebooks[1].embeddings
+        has_d1 = self.rvq_depth >= 2
 
         # Manager vs worker
         is_manager = tau == 0  # [B]
@@ -742,33 +736,31 @@ class VQIntentionNetwork(nn.Module):
 
         # STE for D0
         z_q_st_d0 = (
-            vq_input
-            - jax.lax.stop_gradient(vq_input)
-            + jax.lax.stop_gradient(d0_z_q)
+            vq_input - jax.lax.stop_gradient(vq_input) + jax.lax.stop_gradient(d0_z_q)
         )
 
-        # D1: always fresh
-        residual = vq_input - jax.lax.stop_gradient(d0_z_q)
-        _, d1_idx, z_q_st_d1 = _quantize_single_level(
-            z_e=residual,
-            codebook=codebook_1,
-            num_codes=self.num_codes,
-            latent_dim=self.latent_dim,
-            stickiness_bias=0.0,
-            prev_indices=None,
-            use_rotation=self.quantizer.use_rotation,
-        )
-
-        # Decode
-        z_hat_st = z_q_st_d0 + z_q_st_d1
+        if has_d1:
+            # D1: always fresh
+            codebook_1 = self.quantizer.codebooks[1].embeddings
+            residual = vq_input - jax.lax.stop_gradient(d0_z_q)
+            _, d1_idx, z_q_st_d1 = _quantize_single_level(
+                z_e=residual,
+                codebook=codebook_1,
+                num_codes=self.num_codes,
+                latent_dim=self.latent_dim,
+                stickiness_bias=0.0,
+                prev_indices=None,
+                use_rotation=self.quantizer.use_rotation,
+            )
+            z_hat_st = z_q_st_d0 + z_q_st_d1
+        else:
+            z_hat_st = z_q_st_d0
         if self.use_continuous_latent:
             concatenated = jnp.concatenate(
                 [z_hat_st, z_e_sampled, egocentric_obs], axis=-1
             )
         else:
-            concatenated = jnp.concatenate(
-                [z_hat_st, egocentric_obs], axis=-1
-            )
+            concatenated = jnp.concatenate([z_hat_st, egocentric_obs], axis=-1)
         action, _ = self.decoder(concatenated)
 
         # Update chunk state
@@ -776,10 +768,11 @@ class VQIntentionNetwork(nn.Module):
         new_held_d0 = d0_idx
 
         logvar = (cont_mean, cont_logvar) if self.use_continuous_latent else None
+        all_indices = (d0_idx, d1_idx) if has_d1 else (d0_idx,)
         return (
             action,
             vq_input,
-            (d0_idx, d1_idx),
+            all_indices,
             logvar,
             (new_held_d0, new_tau),
         )
@@ -801,8 +794,8 @@ class VQIntentionNetwork(nn.Module):
     ]:
         """Forward pass with D0 temporal commitment (code chunking).
 
-        D0 codes are held constant for commitment_horizon steps while D1 codes
-        change freely every step. Requires rvq_depth >= 2.
+        D0 codes are held constant for commitment_horizon steps. When
+        rvq_depth >= 2, D1 codes change freely every step.
 
         Args:
             obs: Dictionary observation with keys:
@@ -820,8 +813,7 @@ class VQIntentionNetwork(nn.Module):
         Returns:
             action_params: Shape [T, B, action_size*2].
             z_e_or_mean: Shape [T, B, latent_dim].
-            all_indices: Tuple of 2 arrays (d0_indices, d1_indices),
-                each shape [T, B].
+            all_indices: D-tuple of index arrays, each shape [T, B].
             logvar: Shape [T, B, latent_dim] when continuous=True, else None.
             tau: Timer values, shape [T, B].
         """
@@ -859,9 +851,9 @@ class VQIntentionNetwork(nn.Module):
             cont_logvar = None
             z_e_sampled = None
 
-        # Get codebooks for D0 and D1
+        # Get codebook(s)
         codebook_0 = self.quantizer.codebooks[0].embeddings
-        codebook_1 = self.quantizer.codebooks[1].embeddings
+        has_d1 = self.rvq_depth >= 2
 
         # Prepare episode start mask: True = episode start
         if episode_mask is not None:
@@ -946,25 +938,26 @@ class VQIntentionNetwork(nn.Module):
         # --- Step 4: Look up D0 vectors and compute STE ---
         d0_z_q = codebook_0[d0_indices]  # [T, B, D]
         z_q_st_d0 = (
-            vq_input
-            - jax.lax.stop_gradient(vq_input)
-            + jax.lax.stop_gradient(d0_z_q)
+            vq_input - jax.lax.stop_gradient(vq_input) + jax.lax.stop_gradient(d0_z_q)
         )
 
-        # --- Step 5: Vectorized D1 over all [T, B] at once ---
-        residual = vq_input - jax.lax.stop_gradient(d0_z_q)
-        _, d1_indices, z_q_st_d1 = _quantize_single_level(
-            z_e=residual,
-            codebook=codebook_1,
-            num_codes=self.num_codes,
-            latent_dim=self.latent_dim,
-            stickiness_bias=0.0,
-            prev_indices=None,
-            use_rotation=self.quantizer.use_rotation,
-        )
-
-        # --- Step 6: Combine ---
-        z_hat_st = z_q_st_d0 + z_q_st_d1
+        if has_d1:
+            # --- Step 5: Vectorized D1 over all [T, B] at once ---
+            codebook_1 = self.quantizer.codebooks[1].embeddings
+            residual = vq_input - jax.lax.stop_gradient(d0_z_q)
+            _, d1_indices, z_q_st_d1 = _quantize_single_level(
+                z_e=residual,
+                codebook=codebook_1,
+                num_codes=self.num_codes,
+                latent_dim=self.latent_dim,
+                stickiness_bias=0.0,
+                prev_indices=None,
+                use_rotation=self.quantizer.use_rotation,
+            )
+            # --- Step 6: Combine ---
+            z_hat_st = z_q_st_d0 + z_q_st_d1
+        else:
+            z_hat_st = z_q_st_d0
 
         # Decode all timesteps in parallel
         if self.use_continuous_latent:
@@ -972,12 +965,10 @@ class VQIntentionNetwork(nn.Module):
                 [z_hat_st, z_e_sampled, egocentric_obs], axis=-1
             )
         else:
-            concatenated = jnp.concatenate(
-                [z_hat_st, egocentric_obs], axis=-1
-            )
+            concatenated = jnp.concatenate([z_hat_st, egocentric_obs], axis=-1)
         action, _ = self.decoder(concatenated)
 
-        all_indices = (d0_indices, d1_indices)
+        all_indices = (d0_indices, d1_indices) if has_d1 else (d0_indices,)
         logvar = (cont_mean, cont_logvar) if self.use_continuous_latent else None
         return action, vq_input, all_indices, logvar, tau
 
@@ -986,7 +977,12 @@ class VQIntentionNetwork(nn.Module):
         obs: Mapping[str, jnp.ndarray],
         episode_mask: jnp.ndarray | None = None,
         key: jax.Array | None = None,
-    ) -> tuple[jnp.ndarray, jnp.ndarray, tuple[jnp.ndarray, ...], tuple[jnp.ndarray, jnp.ndarray] | None]:
+    ) -> tuple[
+        jnp.ndarray,
+        jnp.ndarray,
+        tuple[jnp.ndarray, ...],
+        tuple[jnp.ndarray, jnp.ndarray] | None,
+    ]:
         """Forward pass with temporal stickiness bias using sequential processing.
 
         Processes a sequence of observations where each timestep's code selection
@@ -1050,17 +1046,13 @@ class VQIntentionNetwork(nn.Module):
 
         # If no bias, process in parallel (faster)
         if not self._has_stickiness:
-            z_hat_st, all_indices, _, _ = self.quantizer(
-                vq_input, prev_indices=None
-            )
+            z_hat_st, all_indices, _, _ = self.quantizer(vq_input, prev_indices=None)
             if self.use_continuous_latent:
                 concatenated = jnp.concatenate(
                     [z_hat_st, z_e_sampled, egocentric_obs], axis=-1
                 )
             else:
-                concatenated = jnp.concatenate(
-                    [z_hat_st, egocentric_obs], axis=-1
-                )
+                concatenated = jnp.concatenate([z_hat_st, egocentric_obs], axis=-1)
             action, _ = self.decoder(concatenated)
             logvar = (cont_mean, cont_logvar) if self.use_continuous_latent else None
             return action, vq_input, all_indices, logvar
@@ -1175,9 +1167,7 @@ class VQIntentionNetwork(nn.Module):
                 [z_hat_st, z_e_sampled, egocentric_obs], axis=-1
             )
         else:
-            concatenated = jnp.concatenate(
-                [z_hat_st, egocentric_obs], axis=-1
-            )
+            concatenated = jnp.concatenate([z_hat_st, egocentric_obs], axis=-1)
         action, _ = self.decoder(concatenated)
 
         logvar = (cont_mean, cont_logvar) if self.use_continuous_latent else None
@@ -1348,7 +1338,7 @@ def make_vq_intention_policy(
         Returns:
             action_params: Shape [T, B, action_size*2].
             z_e_or_mean: Shape [T, B, latent_dim].
-            all_indices: Tuple of 2 arrays (d0, d1), each [T, B].
+            all_indices: D-tuple of index arrays, each [T, B].
             logvar: Shape [T, B, latent_dim] or None.
             tau: Timer values, shape [T, B].
         """
@@ -1379,7 +1369,7 @@ def make_vq_intention_policy(
         Returns:
             action_params: Shape [B, action_size*2].
             z_e_or_mean: Shape [B, latent_dim].
-            all_indices: Tuple of (d0_idx, d1_idx), each [B].
+            all_indices: D-tuple of index arrays, each [B].
             logvar: Shape [B, latent_dim] or None.
             new_chunk_state: Tuple of (new_held_d0, new_tau), each [B].
         """

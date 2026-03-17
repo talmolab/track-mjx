@@ -76,7 +76,7 @@ python train_moseq_decoder.py \
 To test the pipeline without running the KPMS sweep first:
 
 ```bash
-python train_moseq_decoder.py \
+no \
     kpms_config.codes_path=null \
     train_setup.train_config.num_timesteps=5_000_000
 ```

@@ -97,14 +97,12 @@ def make_vq_inference_fn(
             activations = None
 
             if get_activation:
-                logits, z_e, all_indices, logvar, activations = (
-                    policy_network.apply(
-                        *params,
-                        observations,
-                        key_network,
-                        deterministic=deterministic,
-                        get_activation=True,
-                    )
+                logits, z_e, all_indices, logvar, activations = policy_network.apply(
+                    *params,
+                    observations,
+                    key_network,
+                    deterministic=deterministic,
+                    get_activation=True,
                 )
             else:
                 logits, z_e, all_indices, logvar = policy_network.apply(
@@ -325,20 +323,14 @@ def make_vq_augmented_value_network(
             tau_normalized = tau.astype(jnp.float32) / commitment_horizon
             # Expand tau to match batch dims
             tau_expanded = jnp.expand_dims(tau_normalized, axis=-1)
-            augmented = jnp.concatenate(
-                [flat_obs, code_one_hot, tau_expanded], axis=-1
-            )
+            augmented = jnp.concatenate([flat_obs, code_one_hot, tau_expanded], axis=-1)
         else:
             # Pad with zeros for backward compat / edge cases
             zeros_code = jnp.zeros(
                 flat_obs.shape[:-1] + (num_codes,), dtype=flat_obs.dtype
             )
-            zeros_tau = jnp.zeros(
-                flat_obs.shape[:-1] + (1,), dtype=flat_obs.dtype
-            )
-            augmented = jnp.concatenate(
-                [flat_obs, zeros_code, zeros_tau], axis=-1
-            )
+            zeros_tau = jnp.zeros(flat_obs.shape[:-1] + (1,), dtype=flat_obs.dtype)
+            augmented = jnp.concatenate([flat_obs, zeros_code, zeros_tau], axis=-1)
 
         return base_value_network.apply((), value_params, augmented)
 
@@ -384,24 +376,23 @@ def make_vq_chunked_ppo_networks(
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
         value_hidden_layer_sizes: MLP layer sizes for value network.
         stickiness_bias: Per-level stickiness bias. Float or tuple.
-        rvq_depth: Number of RVQ depth levels. Must be >= 2.
+        rvq_depth: Number of RVQ depth levels (>= 1).
         use_rotation: If True, use Householder rotation-augmented STE.
         coupled_residual_grad: If True, couple depth gradients. Must be False
-            for chunking (to avoid zero-gradient at intermediate steps).
+            when rvq_depth >= 2 with chunking (to avoid zero-gradient at
+            intermediate steps).
         proprio_noise_scale: Gaussian noise std on normalized proprio.
         use_continuous_latent: If True, encoder outputs (mean, logvar).
 
     Returns:
         VQPPOImitationNetworks containing policy and augmented value network.
     """
-    assert rvq_depth >= 2, (
-        f"Code chunking requires rvq_depth >= 2, got {rvq_depth}"
-    )
-    assert not coupled_residual_grad, (
-        "coupled_residual_grad must be False when using code chunking. "
-        "Coupled gradients through held D0 codes produce zero D1 gradients "
-        "at worker steps ((H-1)/H of all steps)."
-    )
+    if rvq_depth >= 2:
+        assert not coupled_residual_grad, (
+            "coupled_residual_grad must be False when using code chunking. "
+            "Coupled gradients through held D0 codes produce zero D1 gradients "
+            "at worker steps ((H-1)/H of all steps)."
+        )
 
     parametric_action_distribution = distribution.NormalTanhDistribution(
         event_size=action_size
@@ -491,7 +482,7 @@ def make_vq_chunked_inference_fn(
                 )
             )
 
-            d0_idx, d1_idx = all_indices
+            d0_idx = all_indices[0]
 
             if deterministic:
                 action = jnp.array(parametric_action_distribution.mode(logits))
@@ -578,7 +569,7 @@ def make_vq_chunked_logging_inference_fn(
                 )
             )
 
-            d0_idx, d1_idx = all_indices
+            d0_idx = all_indices[0]
 
             if deterministic:
                 return (

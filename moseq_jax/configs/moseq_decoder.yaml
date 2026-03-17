@@ -104,8 +104,8 @@ kpms_config:
 network_config:
   arch_name: moseq_decoder
 
-  # Code embedding
-  num_codes: 32
+  # Code embedding (KPMS best_codes.npz has 50 unique codes: 0-49)
+  num_codes: 50
   code_embed_dim: 16
 
   # Decoder MLP (same sizes as VQ-VAE decoder)

@@ -36,7 +36,6 @@ from vq_losses import (
     reinit_dead_codes,
 )
 
-
 # ---------------------------------------------------------------------------
 # Chunked rollout helpers
 # ---------------------------------------------------------------------------
@@ -237,7 +236,9 @@ def train(
                 codebook_entropy_weight=codebook_entropy_weight,
                 codebook_entropy_temperature=codebook_entropy_temperature,
                 kl_weight=kl_weight,
+                rvq_depth=rvq_depth,
             )
+
     else:
 
         def vq_compute_ppo_loss(

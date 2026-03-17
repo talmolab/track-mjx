@@ -186,6 +186,63 @@ def make_decoder_only_step_fn(
     return decode_step, action_size
 
 
+def make_decoder_d0d1_step_fn(
+    cfg: DictConfig,
+    policy_params: tuple[Any, Any],
+) -> tuple[Any, int]:
+    """Build a decoder function using both D0 and D1 codes: (d0, d1, obs) -> action.
+
+    The encoder is NOT used. The decoder input is the residual sum of D0 and D1
+    codebook embeddings, matching what the decoder sees during training.
+    Continuous latent (if present) is zeroed.
+
+    Args:
+        cfg: Checkpoint config with network_config section.
+        policy_params: Tuple of (normalizer_state, policy_params).
+
+    Returns:
+        Tuple of (decode_step_fn, action_size).
+    """
+    normalizer_state, _ = policy_params
+    codebook_0 = get_codebook(policy_params, depth=0)
+    codebook_1 = get_codebook(policy_params, depth=1)
+    decoder = create_standalone_decoder(cfg)
+    decoder_params = get_decoder_params(policy_params)
+
+    use_continuous = bool(cfg.network_config.get("use_continuous_latent", False))
+    continuous_dim = int(cfg.network_config.get("continuous_latent_dim", 4))
+    action_size = cfg.network_config.action_size
+    action_dist = distribution.NormalTanhDistribution(event_size=action_size)
+
+    latent_dim = codebook_0.shape[1]
+    logging.info(
+        f"  Decoder D0+D1 mode: latent_dim={latent_dim}, "
+        f"use_continuous={use_continuous}, "
+        f"continuous_dim={continuous_dim}"
+    )
+
+    def decode_step(d0_code_index: int, d1_code_index: int, obs: dict) -> jnp.ndarray:
+        """Decode D0+D1 codes to an action (residual sum)."""
+        z_q = codebook_0[d0_code_index] + codebook_1[d1_code_index]
+
+        flat_obs = flatten_obs_dict(obs)
+        proprio_norm = running_statistics.normalize(
+            flat_obs["proprioception"],
+            normalizer_state.proprioception,
+        )
+
+        if use_continuous:
+            z_e_zeros = jnp.zeros(continuous_dim)
+            x = jnp.concatenate([z_q, z_e_zeros, proprio_norm], axis=-1)
+        else:
+            x = jnp.concatenate([z_q, proprio_norm], axis=-1)
+
+        action_params, _ = decoder.apply({"params": decoder_params}, x)
+        return jnp.array(action_dist.mode(action_params))
+
+    return decode_step, action_size
+
+
 def run_decoder_only_rollout(
     env: Any,
     jit_decode: Any,

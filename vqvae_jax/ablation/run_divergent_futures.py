@@ -63,6 +63,7 @@ from analysis.rendering import (
 )
 
 from ablation.run_ablation import (
+    make_decoder_d0d1_step_fn,
     make_decoder_only_step_fn,
     subset_clips,
     zero_continuous_encoder_params,
@@ -565,6 +566,90 @@ def run_decoder_condition(
     return results
 
 
+def run_decoder_condition_d0d1(
+    env: Any,
+    jit_decode_d0d1: Any,
+    jit_reset: Any,
+    jit_step: Any,
+    code_sequence_pairs: list[tuple[np.ndarray, np.ndarray]],
+    max_steps: int,
+    seed: int,
+    initial_qpos: np.ndarray | None = None,
+) -> list[dict]:
+    """Run decoder-only rollouts with both D0 and D1 codes.
+
+    Same structure as run_decoder_condition but feeds paired (D0, D1) codes
+    to the D0+D1 decoder.
+
+    Args:
+        env: Imitation environment.
+        jit_decode_d0d1: JIT-compiled (d0_code, d1_code, obs) -> action.
+        jit_reset: JIT-compiled env.reset.
+        jit_step: JIT-compiled env.step.
+        code_sequence_pairs: List of K (d0_codes, d1_codes) tuples.
+        max_steps: Maximum rollout steps.
+        seed: Random seed.
+        initial_qpos: If provided, override reset qpos.
+
+    Returns:
+        List of K dicts with keys: qpos [T, nq], rewards [T],
+        code_indices [T] (D0), d1_code_indices [T], survival (int).
+    """
+    from mujoco import mjx as mjx_lib
+
+    rng = jax.random.PRNGKey(seed)
+    results = []
+
+    for i, (d0_codes, d1_codes) in enumerate(code_sequence_pairs):
+        rng, reset_rng = jax.random.split(rng)
+        state = jit_reset(reset_rng)
+
+        if initial_qpos is not None:
+            new_data = state.data.replace(qpos=jnp.array(initial_qpos))
+            new_data = mjx_lib.forward(env.mjx_model, new_data)
+            obs = env._get_obs(new_data, state.info)
+            state = state.replace(data=new_data, obs=obs)
+
+        qpos_list = []
+        rewards = []
+        d0_list = []
+        d1_list = []
+        steps_survived = 0
+
+        for t in range(min(max_steps, len(d0_codes), len(d1_codes))):
+            d0_idx = int(d0_codes[t])
+            d1_idx = int(d1_codes[t])
+
+            if hasattr(state, "data"):
+                qpos_list.append(np.array(state.data.qpos))
+            elif hasattr(state, "pipeline_state"):
+                qpos_list.append(np.array(state.pipeline_state.q))
+
+            action = jit_decode_d0d1(d0_idx, d1_idx, state.obs)
+            next_state = jit_step(state, action)
+            rewards.append(float(next_state.reward))
+            d0_list.append(d0_idx)
+            d1_list.append(d1_idx)
+            steps_survived += 1
+
+            if jnp.any(jnp.isnan(next_state.reward)):
+                logging.info(f"  NaN at step {t} for rollout {i}, stopping.")
+                break
+            state = next_state
+
+        results.append(
+            {
+                "qpos": np.stack(qpos_list) if qpos_list else np.zeros((0, 74)),
+                "rewards": np.array(rewards),
+                "code_indices": np.array(d0_list),
+                "d1_code_indices": np.array(d1_list),
+                "survival": steps_survived,
+            }
+        )
+
+    return results
+
+
 # =============================================================================
 # CODE SEQUENCE GENERATION FOR CONDITIONS
 # =============================================================================
@@ -605,6 +690,53 @@ def make_correct_code_sequences(
         else:
             codes = codes[:max_steps]
         sequences.append(codes)
+    return sequences
+
+
+def make_correct_code_sequences_d0d1(
+    rollouts: list[InferenceResult],
+    clip_indices: list[int],
+    start_frames: list[int],
+    max_steps: int,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Extract paired (D0, D1) code sequences from H5 rollouts.
+
+    Args:
+        rollouts: Full H5 inference results.
+        clip_indices: Selected clip indices.
+        start_frames: Starting frame per clip.
+        max_steps: Max sequence length.
+
+    Returns:
+        List of K tuples, each (d0_codes, d1_codes).
+    """
+    sequences = []
+    for clip_idx, start_frame in zip(clip_indices, start_frames):
+        r = rollouts[clip_idx]
+        if r.rvq_indices is None or len(r.rvq_indices) < 2:
+            raise ValueError(
+                f"Clip {clip_idx} has no D1 codes (rvq_indices depth < 2). "
+                "D0+D1 mode requires RVQ depth >= 2."
+            )
+
+        d0 = np.array(r.rvq_indices[0][start_frame:])
+        d1 = np.array(r.rvq_indices[1][start_frame:])
+
+        # Pad each independently with last code
+        if len(d0) < max_steps:
+            d0 = np.concatenate(
+                [d0, np.full(max_steps - len(d0), d0[-1] if len(d0) > 0 else 0)]
+            )
+        else:
+            d0 = d0[:max_steps]
+        if len(d1) < max_steps:
+            d1 = np.concatenate(
+                [d1, np.full(max_steps - len(d1), d1[-1] if len(d1) > 0 else 0)]
+            )
+        else:
+            d1 = d1[:max_steps]
+
+        sequences.append((d0, d1))
     return sequences
 
 
@@ -807,6 +939,84 @@ def _make_code_bar(
 
         # Left-side trajectory color marker
         img[y0 : y0 + bar_height, :3] = colors[ki]
+
+    return img
+
+
+def _make_dual_code_bar(
+    width: int,
+    d0_sequences: list[np.ndarray],
+    d1_sequences: list[np.ndarray],
+    frame_idx: int,
+    colors: list[tuple[int, int, int]],
+    code_colors: np.ndarray,
+    bar_height: int = 20,
+    gap: int = 2,
+    section_sep: int = 2,
+) -> np.ndarray:
+    """Build stacked D0 + D1 code timeline bars for K trajectories.
+
+    Top section: D0 bars (full saturation).
+    Bottom section: D1 bars (lighter, blended toward white).
+
+    Args:
+        width: Image width.
+        d0_sequences: K D0 code arrays.
+        d1_sequences: K D1 code arrays.
+        frame_idx: Current playhead position.
+        colors: Trajectory colors (for border).
+        code_colors: Code colormap [num_codes, 3].
+        bar_height: Height of each individual bar.
+        gap: Gap between bars within a section.
+        section_sep: Separator height between D0 and D1 sections.
+
+    Returns:
+        Bar image, shape [total_h, width, 3].
+    """
+    K = len(d0_sequences)
+    section_h = K * bar_height + (K - 1) * gap
+    label_w = 24  # Width reserved for "D0"/"D1" labels
+    total_h = section_h * 2 + section_sep
+    img = np.ones((total_h, width, 3), dtype=np.uint8) * 40
+
+    # Lighter D1 colors: blend toward white
+    d1_colors = np.clip(code_colors.astype(np.int32) * 128 // 255 + 128, 0, 255).astype(
+        np.uint8
+    )
+
+    def _draw_section(sequences, y_offset, cmap):
+        for ki, codes in enumerate(sequences):
+            y0 = y_offset + ki * (bar_height + gap)
+            num_frames = len(codes)
+            for t, code_idx in enumerate(codes):
+                x0 = max(label_w, int(t * width / num_frames))
+                x1 = int((t + 1) * width / num_frames)
+                if x1 > x0:
+                    img[y0 : y0 + bar_height, x0:x1] = cmap[int(code_idx) % len(cmap)]
+
+            # Playhead
+            if frame_idx < num_frames:
+                px = max(label_w, int(frame_idx * width / num_frames))
+                px = min(px, width - 2)
+                img[y0 : y0 + bar_height, px : px + 2] = [255, 255, 255]
+
+            # Left-side trajectory color marker
+            img[y0 : y0 + bar_height, label_w : label_w + 3] = colors[ki]
+
+    # D0 section (top)
+    _draw_section(d0_sequences, 0, code_colors)
+    # D0 label
+    img[2:14, 2 : label_w - 2] = [200, 200, 200]
+
+    # Separator
+    sep_y = section_h
+    img[sep_y : sep_y + section_sep, :] = [80, 80, 80]
+
+    # D1 section (bottom)
+    _draw_section(d1_sequences, section_h + section_sep, d1_colors)
+    # D1 label
+    d1_label_y = section_h + section_sep + 2
+    img[d1_label_y : d1_label_y + 12, 2 : label_w - 2] = [180, 180, 220]
 
     return img
 
@@ -1387,7 +1597,8 @@ def render_multi_panel_video(
         env: Base environment (for model spec).
         panels: List of dicts, each with keys:
             - "trajectories": list of K qpos arrays [T, nq]
-            - "codes": list of K code index arrays [T]
+            - "codes": list of K code index arrays [T] (D0)
+            - "d1_codes": list of K D1 code arrays [T] (optional)
             - "label": str label for the panel
         trajectory_colors: RGBA per trajectory.
         output_path: Output video path.
@@ -1475,15 +1686,36 @@ def render_multi_panel_video(
 
             # Build code bar (appended below, not overlaid)
             if code_colors is not None:
-                bar = _make_code_bar(
-                    panel_w, panel["codes"], t, bar_colors, code_colors
-                )
+                if panel.get("d1_codes") is not None:
+                    bar = _make_dual_code_bar(
+                        panel_w,
+                        panel["codes"],
+                        panel["d1_codes"],
+                        t,
+                        bar_colors,
+                        code_colors,
+                    )
+                else:
+                    bar = _make_code_bar(
+                        panel_w, panel["codes"], t, bar_colors, code_colors
+                    )
                 panel_bars.append(bar)
 
         # Concatenate panels horizontally, then append code bars below
         render_row = np.concatenate(panel_frames, axis=1)
         if panel_bars:
-            bar_row = np.concatenate(panel_bars, axis=1)
+            # Pad bars to same height (dual bars are taller than single)
+            max_bar_h = max(b.shape[0] for b in panel_bars)
+            padded_bars = []
+            for b in panel_bars:
+                if b.shape[0] < max_bar_h:
+                    pad = (
+                        np.ones((max_bar_h - b.shape[0], b.shape[1], 3), dtype=np.uint8)
+                        * 40
+                    )
+                    b = np.concatenate([b, pad], axis=0)
+                padded_bars.append(b)
+            bar_row = np.concatenate(padded_bars, axis=1)
             combined = np.concatenate([render_row, bar_row], axis=0)
         else:
             combined = render_row
@@ -1669,7 +1901,10 @@ def run_killer_demo(
     max_steps: int,
     test_clips: Any,
     anchor_z_frac_override: float | None = None,
+    anchor_qpos_override: np.ndarray | None = None,
     demo_label: str = "Killer Demo",
+    use_d0d1: bool = False,
+    jit_decode_d0d1: Any = None,
 ) -> dict[str, Any] | None:
     """Run killer demo: same starting pose, 3 code conditions side by side.
 
@@ -1681,7 +1916,7 @@ def run_killer_demo(
     Args:
         all_posture_results: Results from run_posture_experiment per posture.
         rollouts: H5 inference results.
-        jit_decode: JIT-compiled decoder step.
+        jit_decode: JIT-compiled decoder step (D0-only).
         cfg: Full Hydra config.
         vq_cfg: VQ-VAE training config.
         code_colors: Code colormap.
@@ -1690,6 +1925,9 @@ def run_killer_demo(
         seed: Random seed.
         max_steps: Max rollout steps.
         test_clips: Test reference clips.
+        use_d0d1: If True, use D0+D1 decoder with paired code sequences.
+        jit_decode_d0d1: JIT-compiled (d0, d1, obs) -> action (required
+            when use_d0d1=True).
 
     Returns:
         Dict with video_path, plot_path, html_str, or None if prerequisites
@@ -1705,35 +1943,41 @@ def run_killer_demo(
     killer_demo_cfg = cfg.experiment.get("killer_demo", {})
     killer_K = int(killer_demo_cfg.get("K", 10))
 
-    # Pick a moderate rearing anchor pose. Compute target Z as a fraction
-    # between global standing height and peak rearing height, then find the
-    # closest qpos across all clips. This avoids clips that start fully reared.
-    anchor_z_frac = (
-        anchor_z_frac_override
-        if anchor_z_frac_override is not None
-        else float(killer_demo_cfg.get("anchor_z_fraction", 0.5))
-    )
-    # Global standing Z = median root Z at frame 0 across clips
-    standing_z = float(np.median([r.qpos[0, 2] for r in rollouts]))
-    peak_z = float(
-        np.max([np.max(r.qpos[:, 2]) for r in rollouts if len(r.qpos) > 0])
-    )
-    target_z = standing_z + anchor_z_frac * (peak_z - standing_z)
-    # Search all clips for the frame closest to target_z
-    best_clip, best_frame, best_diff = 0, 0, float("inf")
-    for i, r in enumerate(rollouts):
-        diffs = np.abs(r.qpos[:, 2] - target_z)
-        t = int(np.argmin(diffs))
-        if diffs[t] < best_diff:
-            best_clip, best_frame, best_diff = i, t, diffs[t]
-    anchor_clip_idx = best_clip
-    anchor_frame = best_frame
-    anchor_h5_qpos = rollouts[anchor_clip_idx].qpos[anchor_frame]
-    logging.info(
-        f"  [killer_demo] Anchor: clip {anchor_clip_idx}, frame {anchor_frame} "
-        f"(z={anchor_h5_qpos[2]:.4f}, target={target_z:.4f}, "
-        f"frac={anchor_z_frac}, standing={standing_z:.4f}, peak={peak_z:.4f})"
-    )
+    if anchor_qpos_override is not None:
+        # Use the provided qpos directly (e.g. from a posture experiment)
+        anchor_h5_qpos = anchor_qpos_override
+        anchor_clip_idx = -1
+        anchor_frame = -1
+        anchor_z_frac = -1.0
+        logging.info(
+            f"  [{demo_label}] Anchor: override qpos " f"(z={anchor_h5_qpos[2]:.4f})"
+        )
+    else:
+        # Pick anchor by Z-fraction between standing and peak rearing
+        anchor_z_frac = (
+            anchor_z_frac_override
+            if anchor_z_frac_override is not None
+            else float(killer_demo_cfg.get("anchor_z_fraction", 0.5))
+        )
+        standing_z = float(np.median([r.qpos[0, 2] for r in rollouts]))
+        peak_z = float(
+            np.max([np.max(r.qpos[:, 2]) for r in rollouts if len(r.qpos) > 0])
+        )
+        target_z = standing_z + anchor_z_frac * (peak_z - standing_z)
+        best_clip, best_frame, best_diff = 0, 0, float("inf")
+        for i, r in enumerate(rollouts):
+            diffs = np.abs(r.qpos[:, 2] - target_z)
+            t = int(np.argmin(diffs))
+            if diffs[t] < best_diff:
+                best_clip, best_frame, best_diff = i, t, diffs[t]
+        anchor_clip_idx = best_clip
+        anchor_frame = best_frame
+        anchor_h5_qpos = rollouts[anchor_clip_idx].qpos[anchor_frame]
+        logging.info(
+            f"  [{demo_label}] Anchor: clip {anchor_clip_idx}, "
+            f"frame {anchor_frame} (z={anchor_h5_qpos[2]:.4f}, "
+            f"target={target_z:.4f}, frac={anchor_z_frac})"
+        )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1777,24 +2021,46 @@ def run_killer_demo(
         )
 
         logging.info(f"  Running {killer_K} {posture_key} codes from rearing pose...")
-        results = run_decoder_condition(
-            env=rearing_env,
-            jit_decode=jit_decode,
-            jit_reset=jit_reset,
-            jit_step=jit_step,
-            code_sequences=code_seqs,
-            max_steps=max_steps,
-            seed=seed,
-            initial_qpos=anchor_h5_qpos,
-        )
+
+        if use_d0d1:
+            # Extract paired (D0, D1) code sequences
+            d0d1_pairs = make_correct_code_sequences_d0d1(
+                rollouts, clip_idxs, start_frs, max_steps
+            )
+            results = run_decoder_condition_d0d1(
+                env=rearing_env,
+                jit_decode_d0d1=jit_decode_d0d1,
+                jit_reset=jit_reset,
+                jit_step=jit_step,
+                code_sequence_pairs=d0d1_pairs,
+                max_steps=max_steps,
+                seed=seed,
+                initial_qpos=anchor_h5_qpos,
+            )
+        else:
+            results = run_decoder_condition(
+                env=rearing_env,
+                jit_decode=jit_decode,
+                jit_reset=jit_reset,
+                jit_step=jit_step,
+                code_sequences=code_seqs,
+                max_steps=max_steps,
+                seed=seed,
+                initial_qpos=anchor_h5_qpos,
+            )
 
         trajs = [r["qpos"] for r in results]
         code_arrs = [r["code_indices"] for r in results]
         metrics = compute_divergence_metrics(results)
 
-        panels_for_video.append(
-            {"trajectories": trajs, "codes": code_arrs, "label": label}
-        )
+        panel_dict = {
+            "trajectories": trajs,
+            "codes": code_arrs,
+            "label": label,
+        }
+        if use_d0d1:
+            panel_dict["d1_codes"] = [r["d1_code_indices"] for r in results]
+        panels_for_video.append(panel_dict)
         conditions_for_plot.append((label, results))
         all_panel_metrics.append((label, metrics))
 
@@ -1838,6 +2104,7 @@ def run_killer_demo(
     plot_path = plot_killer_demo_displacement(
         conditions=conditions_for_plot,
         output_path=output_dir / "root_displacement.png",
+        title=f"Root Motion: {demo_label}",
     )
 
     # Build summary HTML
@@ -1983,6 +2250,14 @@ def main(cfg: DictConfig):
     decode_step, action_size = make_decoder_only_step_fn(vq_cfg, policy_params)
     jit_decode = jax.jit(decode_step)
 
+    # --- Build D0+D1 decoder step fn (if RVQ depth >= 2) ---
+    has_d1 = len(codebooks) >= 2
+    jit_decode_d0d1 = None
+    if has_d1:
+        logging.info("Building D0+D1 decoder step function...")
+        decode_step_d0d1, _ = make_decoder_d0d1_step_fn(vq_cfg, policy_params)
+        jit_decode_d0d1 = jax.jit(decode_step_d0d1)
+
     # --- Prepare test clips (shared across postures) ---
     reference_clips = ReferenceClips(
         data_path=vq_cfg.env_config.reference_data_path,
@@ -2025,9 +2300,6 @@ def main(cfg: DictConfig):
     killer_results = {}  # key → result dict
     killer_demo_cfg = cfg.experiment.get("killer_demo", {})
     if killer_demo_cfg.get("enabled", True):
-        anchor_frac = float(killer_demo_cfg.get("anchor_z_fraction", 0.5))
-        low_frac = float(killer_demo_cfg.get("low_anchor_z_fraction", 0.1))
-
         killer_demo_args = dict(
             all_posture_results=all_posture_results,
             rollouts=rollouts,
@@ -2042,6 +2314,7 @@ def main(cfg: DictConfig):
         )
 
         # Moderate rearing start
+        anchor_frac = float(killer_demo_cfg.get("anchor_z_fraction", 0.5))
         killer_results["rear"] = run_killer_demo(
             **killer_demo_args,
             output_dir=output_dir / "killer_demo_rear",
@@ -2049,13 +2322,35 @@ def main(cfg: DictConfig):
             demo_label="Killer Demo (Rearing Start)",
         )
 
-        # Low / standing start
-        killer_results["low"] = run_killer_demo(
-            **killer_demo_args,
-            output_dir=output_dir / "killer_demo_low",
-            anchor_z_frac_override=low_frac,
-            demo_label="Killer Demo (Low Start)",
-        )
+        # Grooming start — use actual grooming experiment anchor pose
+        if "grooming" in all_posture_results:
+            grooming_anchor = all_posture_results["grooming"]["anchor_h5_qpos"]
+            killer_results["groom"] = run_killer_demo(
+                **killer_demo_args,
+                output_dir=output_dir / "killer_demo_groom",
+                anchor_qpos_override=grooming_anchor,
+                demo_label="Killer Demo (Grooming Start)",
+            )
+
+        # D0+D1 variants (only if RVQ depth >= 2)
+        if has_d1:
+            killer_results["rear_d0d1"] = run_killer_demo(
+                **killer_demo_args,
+                output_dir=output_dir / "killer_demo_rear_d0d1",
+                anchor_z_frac_override=anchor_frac,
+                use_d0d1=True,
+                jit_decode_d0d1=jit_decode_d0d1,
+                demo_label="Killer Demo D0+D1 (Rearing Start)",
+            )
+            if "grooming" in all_posture_results:
+                killer_results["groom_d0d1"] = run_killer_demo(
+                    **killer_demo_args,
+                    output_dir=output_dir / "killer_demo_groom_d0d1",
+                    anchor_qpos_override=grooming_anchor,
+                    use_d0d1=True,
+                    jit_decode_d0d1=jit_decode_d0d1,
+                    demo_label="Killer Demo D0+D1 (Grooming Start)",
+                )
 
     # --- Save JSON summary ---
     summary = {
@@ -2112,9 +2407,7 @@ def main(cfg: DictConfig):
             wandb_items[f"{prefix}/reference_verification"] = wandb.Video(
                 kr["ref_video_path"], format="mp4"
             )
-            wandb_items[f"{prefix}/root_displacement"] = wandb.Image(
-                kr["plot_path"]
-            )
+            wandb_items[f"{prefix}/root_displacement"] = wandb.Image(kr["plot_path"])
             wandb_items[f"{prefix}/summary"] = wandb.Html(kr["html_str"])
 
         if wandb_items and wandb.run is not None:

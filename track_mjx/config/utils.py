@@ -51,9 +51,7 @@ def _get_package_commit(package_name: str) -> str:
     return "unknown"
 
 
-from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
-from vnl_playground.tasks.mouse import consts as mouse_consts
-from vnl_playground.tasks.rodent import consts as rodent_consts
+from track_mjx.config.walker_registry import get_walker_defaults, WALKER_DEFAULTS
 
 # Project root directory (track-mjx/)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -76,9 +74,17 @@ def prepare_config(
 ) -> tuple[DictConfig, dict[str, Any], config_dict.ConfigDict]:
     """Prepare configuration by resolving walker-specific paths and creating config variants.
 
-    Takes a Hydra/OmegaConf configuration and resolves walker-specific XML and
-    reference data paths based on the walker_name. Updates the env_config section
-    with these paths and walker settings, then returns multiple config formats.
+    Resolves walker XML, arena XML, and reference data paths using a two-step
+    process:
+    1. Look up defaults from the walker registry based on walker_name
+    2. Override any path explicitly set in walker_config (walker_xml_path,
+       arena_xml_path, reference_data_path)
+
+    This allows YAML configs to use custom XML files:
+        walker_config:
+          walker_name: "rodent"
+          walker_xml_path: "/path/to/custom_rodent.xml"  # optional override
+          arena_xml_path: "/path/to/custom_arena.xml"    # optional override
 
     Args:
         cfg: The root OmegaConf configuration containing walker_config and env_config.
@@ -91,36 +97,58 @@ def prepare_config(
 
     Raises:
         ValueError: If walker_name is not recognized.
-        NotImplementedError: If the specified walker is not yet fully implemented.
+        NotImplementedError: If the walker is not yet implemented and required
+            paths are not provided as overrides.
     """
     walker_name = cfg.walker_config.walker_name
+    logging.info(f"Using {walker_name} walker")
 
-    if walker_name == "rodent":
-        logging.info("Using rodent walker")
-        walker_xml_path = str(rodent_consts.RODENT_XML_PATH)
-        arena_xml_path = str(rodent_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path(
-            "data/rodent/rodent_reference_clips.h5"
-        )
-    elif walker_name == "fruitfly":
-        logging.info("Using fruitfly walker")
-        walker_xml_path = str(fruitfly_consts.FRUITFLY_XML_PATH)
-        arena_xml_path = str(fruitfly_consts.ARENA_XML_PATH)
-        reference_data_path = _resolve_data_path("data/fruitfly/fly_reference_clip.h5")
-    elif walker_name == "celegans":
-        logging.info("Using celegans walker")
-        raise NotImplementedError("Celegans walker not implemented yet.")
-    elif walker_name == "mouse":
-        logging.info("Using mouse walker")
-        walker_xml_path = str(mouse_consts.MOUSE_XML_PATH)
-        raise NotImplementedError(
-            "Mouse arena and reference data paths not implemented yet."
-        )
-    elif walker_name == "stickbug":
-        logging.info("Using stickbug walker")
-        raise NotImplementedError("Stickbug walker not implemented yet.")
-    else:
-        raise ValueError(f"Unknown walker name: {walker_name}")
+    # Check for YAML overrides (explicit `is not None` to avoid falsy-value bugs)
+    walker_xml_override = OmegaConf.select(
+        cfg, "walker_config.walker_xml_path", default=None
+    )
+    arena_xml_override = OmegaConf.select(
+        cfg, "walker_config.arena_xml_path", default=None
+    )
+    ref_data_override = OmegaConf.select(
+        cfg, "walker_config.reference_data_path", default=None
+    )
+
+    # Try to get registry defaults; handle not-implemented walkers
+    try:
+        defaults = get_walker_defaults(walker_name)
+    except NotImplementedError:
+        # Allow not-implemented walkers if ALL paths are provided as overrides
+        if (
+            walker_xml_override is not None
+            and arena_xml_override is not None
+            and ref_data_override is not None
+        ):
+            defaults = WALKER_DEFAULTS[walker_name]
+        else:
+            raise
+
+    # Resolve paths: YAML override > registry default
+    walker_xml_path = (
+        walker_xml_override
+        if walker_xml_override is not None
+        else defaults["walker_xml_path"]
+    )
+    arena_xml_path = (
+        arena_xml_override
+        if arena_xml_override is not None
+        else defaults["arena_xml_path"]
+    )
+    reference_data_path = (
+        ref_data_override
+        if ref_data_override is not None
+        else defaults["reference_data_path"]
+    )
+
+    if walker_xml_path:
+        logging.info(f"Walker XML: {walker_xml_path}")
+    if arena_xml_path:
+        logging.info(f"Arena XML: {arena_xml_path}")
 
     # Update env_config with resolved paths and walker settings
     OmegaConf.set_struct(cfg.env_config, False)

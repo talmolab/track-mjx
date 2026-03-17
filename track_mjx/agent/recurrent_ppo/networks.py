@@ -167,6 +167,7 @@ class RecurrentDecoder(nn.Module):
         self,
         x: jnp.ndarray,
         hidden: HiddenState | list[HiddenState],
+        get_activation: bool = False,
     ) -> tuple[jnp.ndarray, list[HiddenState]]:
         """Forward pass for single timestep.
 
@@ -174,15 +175,20 @@ class RecurrentDecoder(nn.Module):
             x: Input tensor [batch, input_dim] (concatenated [z, proprioception]).
             hidden: Hidden state(s) from previous timestep. For single layer,
                 can be a single HiddenState. For multiple layers, list of states.
+            get_activation: If True, return layer activations in a dict.
 
         Returns:
             Tuple of (output [batch, output_size], new_hidden_states).
+            If get_activation, returns (output, new_hidden_states, activations).
         """
         # Handle single vs multiple layer hidden states
         if self.num_rnn_layers == 1 and not isinstance(hidden, list):
             hidden_list = [hidden]
         else:
             hidden_list = hidden
+
+        if get_activation:
+            activations = {}
 
         new_hidden_list = []
         rnn_input = x
@@ -195,10 +201,14 @@ class RecurrentDecoder(nn.Module):
                 rnn_input = new_h[1]  # h from (c, h) carry tuple
             else:
                 rnn_input = new_h
+            if get_activation:
+                activations[f"rnn_layer_{i}"] = rnn_input
 
         # Final output layer (no activation)
         output = self.final_layer(rnn_input)
 
+        if get_activation:
+            return output, new_hidden_list, activations
         return output, new_hidden_list
 
 
@@ -215,6 +225,8 @@ class RecurrentIntentionNetwork(nn.Module):
         latents: Dimension of latent intention space.
         rnn_hidden_sizes: Hidden sizes for each RNN layer, e.g. [512, 256].
         cell_type: Type of RNN cell ('simple', 'gru', 'lstm').
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            decoder proprioception input during stochastic training passes.
     """
 
     output_size: int
@@ -222,6 +234,7 @@ class RecurrentIntentionNetwork(nn.Module):
     latents: int = 60
     rnn_hidden_sizes: Sequence[int] = (256,)
     cell_type: RNNCellType = "gru"
+    proprioception_noise_std: float = 0.0
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
@@ -238,6 +251,7 @@ class RecurrentIntentionNetwork(nn.Module):
         hidden: HiddenState | list[HiddenState],
         key: jax.Array,
         deterministic: bool = False,
+        get_activation: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, list[HiddenState]]:
         """Forward pass for single timestep.
 
@@ -248,9 +262,12 @@ class RecurrentIntentionNetwork(nn.Module):
                 for all samples) or [batch_size, 2] (per-sample keys for
                 deterministic replay).
             deterministic: If True, use latent mean instead of sampling.
+            get_activation: If True, return activations dict as 5th element.
 
         Returns:
             Tuple of (action_params, latent_mean, latent_logvar, new_hidden).
+            If get_activation, returns
+            (action_params, latent_mean, latent_logvar, new_hidden, activations).
         """
         # Encode trajectory observations to latent distribution
         traj = obs["imitation_target"]
@@ -262,15 +279,33 @@ class RecurrentIntentionNetwork(nn.Module):
         # Handle key splitting based on both key shape AND observation shape
         if key.ndim == 1:
             # Single key - split for encoder
-            _, encoder_rng = jax.random.split(key)
+            encoder_rng, noise_rng = jax.random.split(key)
         elif not obs_is_batched:
             # Per-sample keys but unbatched observation - use first key
-            _, encoder_rng = jax.random.split(key[0])
+            encoder_rng, noise_rng = jax.random.split(key[0])
         else:
             # Per-sample keys [batch_size, 2] - vmap split over batch
-            _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
 
-        latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
+        if not deterministic and self.proprioception_noise_std > 0.0:
+            if noise_rng.ndim == 1:
+                noise = jax.random.normal(noise_rng, egocentric_obs.shape)
+            elif not obs_is_batched:
+                noise = jax.random.normal(noise_rng[0], egocentric_obs.shape)
+            else:
+                noise = jax.vmap(
+                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
+                )(noise_rng, egocentric_obs)
+            egocentric_obs = egocentric_obs * (
+                1.0 + self.proprioception_noise_std * noise
+            )
+
+        if get_activation:
+            (latent_mean, latent_logvar), encoder_activations = self.encoder(
+                traj, get_activation=True
+            )
+        else:
+            latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
 
         # Sample or use mean
         if deterministic:
@@ -280,9 +315,21 @@ class RecurrentIntentionNetwork(nn.Module):
 
         # Decode with RNN
         decoder_input = jnp.concatenate([z, egocentric_obs], axis=-1)
-        action_params, new_hidden = self.decoder(decoder_input, hidden)
-
-        return action_params, latent_mean, latent_logvar, new_hidden
+        if get_activation:
+            action_params, new_hidden, decoder_activations = self.decoder(
+                decoder_input, hidden, get_activation=True
+            )
+            activations = {
+                "encoder": encoder_activations,
+                "decoder": decoder_activations,
+                "egocentric_obs": egocentric_obs,
+                "traj_obs": traj,
+                "intention": z,
+            }
+            return action_params, latent_mean, latent_logvar, new_hidden, activations
+        else:
+            action_params, new_hidden = self.decoder(decoder_input, hidden)
+            return action_params, latent_mean, latent_logvar, new_hidden
 
 
 @dataclasses.dataclass
@@ -340,12 +387,14 @@ def make_inference_fn(
     def make_policy(
         params: types.PolicyParams,
         deterministic: bool = False,
+        get_activation: bool = False,
     ) -> Callable:
         """Create a recurrent policy function with fixed parameters.
 
         Args:
             params: Tuple of (normalizer_params, policy_params).
             deterministic: If True, return mode of action distribution.
+            get_activation: If True, include network activations in extras.
 
         Returns:
             Policy function: (obs, hidden, key) -> (action, extras, new_hidden).
@@ -363,7 +412,9 @@ def make_inference_fn(
             key_sample, key_network = jax.random.split(key_sample)
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
-            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            # Get first leaf array from nested observation structure
+            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys for deterministic replay
                 batch_size = obs_leaf.shape[0]
@@ -372,13 +423,26 @@ def make_inference_fn(
                 # Unbatched observation - use single key
                 per_sample_keys = key_network
 
-            logits, latent_mean, latent_logvar, new_hidden = policy_network.apply(
-                *params,
-                observations,
-                hidden,
-                per_sample_keys,
-                deterministic=deterministic,
-            )
+            if get_activation:
+                logits, latent_mean, latent_logvar, new_hidden, activations = (
+                    policy_network.apply(
+                        *params,
+                        observations,
+                        hidden,
+                        per_sample_keys,
+                        deterministic=deterministic,
+                        get_activation=True,
+                    )
+                )
+            else:
+                logits, latent_mean, latent_logvar, new_hidden = policy_network.apply(
+                    *params,
+                    observations,
+                    hidden,
+                    per_sample_keys,
+                    deterministic=deterministic,
+                )
+                activations = None
 
             if deterministic:
                 action = jnp.array(parametric_action_distribution.mode(logits))
@@ -386,6 +450,8 @@ def make_inference_fn(
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
+                if get_activation:
+                    extras["activations"] = activations
                 return action, extras, new_hidden
 
             # Sample action from distribution
@@ -397,16 +463,20 @@ def make_inference_fn(
                 raw_actions
             )
 
+            extras = {
+                "latent_mean": latent_mean,
+                "latent_logvar": latent_logvar,
+                "log_prob": log_prob,
+                "raw_action": raw_actions,
+                "logits": logits,
+                "policy_rng": per_sample_keys,
+            }
+            if get_activation:
+                extras["activations"] = activations
+
             return (
                 jnp.array(postprocessed_actions),
-                {
-                    "latent_mean": latent_mean,
-                    "latent_logvar": latent_logvar,
-                    "log_prob": log_prob,
-                    "raw_action": raw_actions,
-                    "logits": logits,
-                    "policy_rng": per_sample_keys,
-                },
+                extras,
                 new_hidden,
             )
 
@@ -524,6 +594,7 @@ def make_recurrent_intention_ppo_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     rnn_type: RNNCellType = "gru",
     rnn_hidden_sizes: Sequence[int] = (256,),
+    proprioception_noise_std: float = 0.0,
     value_hidden_layer_sizes: Sequence[int] = (1024, 1024),
 ) -> RecurrentPPONetworks:
     """Create recurrent intention-based PPO networks.
@@ -540,6 +611,8 @@ def make_recurrent_intention_ppo_networks(
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         rnn_type: Type of RNN cell ('simple', 'gru', 'lstm').
         rnn_hidden_sizes: Hidden sizes for each RNN layer, e.g. (512, 256).
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            decoder proprioception input during stochastic training passes.
         value_hidden_layer_sizes: MLP layer sizes for value network.
 
     Returns:
@@ -557,6 +630,7 @@ def make_recurrent_intention_ppo_networks(
         latents=intention_latent_size,
         rnn_hidden_sizes=rnn_hidden_sizes,
         cell_type=rnn_type,
+        proprioception_noise_std=proprioception_noise_std,
     )
 
     def policy_apply(
@@ -566,6 +640,7 @@ def make_recurrent_intention_ppo_networks(
         hidden: HiddenState | list[HiddenState],
         key: jax.Array,
         deterministic: bool = False,
+        get_activation: bool = False,
     ):
         """Apply policy with observation normalization."""
         obs = normalize_dict_obs(obs, processor_params)
@@ -575,6 +650,7 @@ def make_recurrent_intention_ppo_networks(
             hidden=hidden,
             key=key,
             deterministic=deterministic,
+            get_activation=get_activation,
         )
 
     def policy_apply_sequence(

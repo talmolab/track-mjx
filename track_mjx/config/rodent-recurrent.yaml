@@ -106,6 +106,7 @@ network_config:
   # Decoder (RNN - processes latent + proprioception)
   rnn_type: gru                           # "simple", "gru", or "lstm"
   rnn_hidden_sizes: [512, 256]            # Hidden sizes per RNN layer
+  proprioception_noise_std: 0.1           # Multiplicative decoder state noise std
 
   # Value network (MLP)
   critic_layer_sizes: [2048, 1024, 1024, 1024, 1024, 512]

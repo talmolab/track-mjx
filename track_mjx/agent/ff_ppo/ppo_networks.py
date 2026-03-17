@@ -86,10 +86,11 @@ def make_inference_fn(
             key_sample: PRNGKey,
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_network = jax.random.split(key_sample)
-            activations = None
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
-            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            # Get first leaf array from nested observation structure
+            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys for deterministic replay
                 batch_size = obs_leaf.shape[0]
@@ -110,6 +111,7 @@ def make_inference_fn(
                 logits, latent_mean, latent_logvar = policy_network.apply(
                     *params, observations, per_sample_keys, deterministic=deterministic
                 )
+                activations = None
 
             if deterministic:
                 action = jnp.array(parametric_action_distribution.mode(logits))
@@ -181,7 +183,9 @@ def make_logging_inference_fn(
             key_sample, key_network = jax.random.split(key_sample)
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
-            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            # Get first leaf array from nested observation structure
+            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys
                 batch_size = obs_leaf.shape[0]
@@ -272,6 +276,7 @@ def make_intention_ppo_networks(
     intention_latent_size: int = 60,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    proprioception_noise_std: float = 0.0,
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
 ) -> PPOImitationNetworks:
     """Create intention-based PPO networks for imitation learning.
@@ -287,6 +292,8 @@ def make_intention_ppo_networks(
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            decoder proprioception input during stochastic training passes.
         value_hidden_layer_sizes: MLP layer sizes for value network.
 
     Returns:
@@ -302,6 +309,7 @@ def make_intention_ppo_networks(
         obs_sizes=obs_sizes,
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        proprioception_noise_std=proprioception_noise_std,
     )
 
     value_network = make_dict_value_network(

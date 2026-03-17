@@ -7,6 +7,8 @@ Key components:
 - DictRunningStatisticsState: Holds separate running stats for each observation key
 - Normalizer functions: init, update, and normalize for dict observations
 - Flattening utilities for nested observation structures
+- normalizer_select: Extracts per-key running statistics from a pytree-structured normalizer
+- get_obs_sizes / get_obs_shape: Extract observation metadata from example observations
 """
 
 from typing import Mapping, Any
@@ -16,6 +18,34 @@ import jax
 import jax.numpy as jnp
 from brax.training.acme import running_statistics, specs
 from jax import flatten_util
+
+
+def normalizer_select(
+    processor_params: running_statistics.RunningStatisticsState,
+    obs_key: str,
+) -> running_statistics.RunningStatisticsState:
+    """Extract per-key running statistics from a pytree-structured normalizer.
+
+    When running_statistics.init_state is called with a pytree observation shape,
+    the resulting RunningStatisticsState has pytree-structured mean, std, etc.
+    This function extracts the statistics for a specific top-level key.
+
+    Args:
+        processor_params: RunningStatisticsState with pytree-structured fields
+            (mean, std, summed_variance are dicts keyed by observation keys).
+        obs_key: Top-level key to extract (e.g., 'state' or 'privileged_state').
+
+    Returns:
+        RunningStatisticsState with statistics for just the specified key.
+    """
+    return running_statistics.RunningStatisticsState(
+        count=processor_params.count,
+        mean=processor_params.mean[obs_key],
+        summed_variance=processor_params.summed_variance[obs_key],
+        std=processor_params.std[obs_key],
+        std_eps=processor_params.std_eps,
+        mode=processor_params.mode,
+    )
 
 
 def _flatten_nested_obs(nested: Any) -> jnp.ndarray:
@@ -256,6 +286,32 @@ def get_obs_sizes(obs: Mapping[str, Any]) -> dict[str, int]:
         # Skip batch dims: vision shape is (..., H, W, C)
         result["vision"] = int(jnp.prod(jnp.array(vision_shape[-3:])))
     return result
+
+
+def get_obs_shape(
+    obs: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Mapping[str, specs.Array]]:
+    """Extract observation shapes as a pytree for running_statistics.init_state.
+
+    Preserves the container types (e.g. OrderedDict) of the input so that the
+    resulting normalizer pytree is compatible with environment observations in
+    ``jax.tree_util.tree_map`` calls.
+
+    Args:
+        obs: Example observation dict with flat leaf arrays.
+
+    Returns:
+        Nested mapping matching obs structure, with specs.Array for each leaf.
+    """
+
+    def get_specs(inner_obs: Mapping[str, Any]) -> Mapping[str, specs.Array]:
+        specs_dict = {
+            key: specs.Array((val.shape[-1],), jnp.dtype("float32"))
+            for key, val in inner_obs.items()
+        }
+        return type(inner_obs)(specs_dict)
+
+    return type(obs)({key: get_specs(inner) for key, inner in obs.items()})
 
 
 def convert_flat_to_dict_normalizer(

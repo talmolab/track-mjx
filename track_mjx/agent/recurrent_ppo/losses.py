@@ -44,6 +44,20 @@ class RecurrentPPONetworkParams:
     value: Params
 
 
+def _extract_single_hidden(h: HiddenState) -> HiddenState:
+    """Extract initial timestep from a single hidden state.
+
+    Handles both array (GRU/SimpleCell) and tuple (LSTM) hidden states.
+    """
+    if isinstance(h, tuple):
+        # LSTM: tuple of (cell_state, hidden_state)
+        c, hidden = h
+        return (c[0] if c.ndim > 2 else c, hidden[0] if hidden.ndim > 2 else hidden)
+    else:
+        # GRU/SimpleCell: single array
+        return h[0] if h.ndim > 2 else h
+
+
 def _extract_initial_hidden(
     stored_hidden: HiddenState | list[HiddenState],
 ) -> list[HiddenState]:
@@ -59,7 +73,7 @@ def _extract_initial_hidden(
         Initial hidden state(s) at t=0.
     """
     hidden_list = stored_hidden if isinstance(stored_hidden, list) else [stored_hidden]
-    return [h[0] if h.ndim > 2 else h for h in hidden_list]
+    return [_extract_single_hidden(h) for h in hidden_list]
 
 
 def compute_recurrent_ppo_loss(

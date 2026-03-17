@@ -412,6 +412,8 @@ class VisionIntentionNetwork(nn.Module):
         latents: Dimension of the latent intention space.
         vision_feature_size: Output dimension of the vision encoder CNN.
         vision_channels: Channel sizes for each conv layer in the vision encoder.
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            decoder proprioception input during stochastic training passes.
     """
 
     encoder_layers: Sequence[int]
@@ -419,6 +421,7 @@ class VisionIntentionNetwork(nn.Module):
     latents: int = 60
     vision_feature_size: int = 8
     vision_channels: Sequence[int] = (2, 4, 8, 16)
+    proprioception_noise_std: float = 0.0
 
     def setup(self):
         """Initialize vision encoder, encoder, and decoder submodules."""
@@ -451,11 +454,24 @@ class VisionIntentionNetwork(nn.Module):
         # Key handling (same as IntentionNetwork)
         obs_is_batched = traj.ndim >= 2
         if key.ndim == 1:
-            _, encoder_rng = jax.random.split(key)
+            encoder_rng, noise_rng = jax.random.split(key)
         elif not obs_is_batched:
-            _, encoder_rng = jax.random.split(key[0])
+            encoder_rng, noise_rng = jax.random.split(key[0])
         else:
-            _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+
+        if not deterministic and self.proprioception_noise_std > 0.0:
+            if noise_rng.ndim == 1:
+                noise = jax.random.normal(noise_rng, egocentric_obs.shape)
+            elif not obs_is_batched:
+                noise = jax.random.normal(noise_rng[0], egocentric_obs.shape)
+            else:
+                noise = jax.vmap(
+                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
+                )(noise_rng, egocentric_obs)
+            egocentric_obs = egocentric_obs * (
+                1.0 + self.proprioception_noise_std * noise
+            )
 
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
@@ -634,6 +650,7 @@ def make_vision_intention_policy(
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     vision_feature_size: int = 8,
     vision_channels: Sequence[int] = (2, 4, 8, 16),
+    proprioception_noise_std: float = 0.0,
 ) -> networks.FeedForwardNetwork:
     """Create a vision-enabled intention-based policy network.
 
@@ -653,6 +670,8 @@ def make_vision_intention_policy(
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
         vision_feature_size: Output dimension of the vision encoder CNN.
         vision_channels: Channel sizes for each conv layer in the vision encoder.
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            decoder proprioception input during stochastic training passes.
 
     Returns:
         FeedForwardNetwork with init and apply methods. The apply function
@@ -665,6 +684,7 @@ def make_vision_intention_policy(
         latents=latent_size,
         vision_feature_size=vision_feature_size,
         vision_channels=vision_channels,
+        proprioception_noise_std=proprioception_noise_std,
     )
 
     def apply(

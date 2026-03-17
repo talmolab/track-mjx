@@ -76,3 +76,42 @@ Key overrides:
 - `hmm.num_states_sweep=[8,16]` to change sweep range
 - `free_loop.commitment_horizon=5` to change code holding duration
 - `free_loop.max_steps=2000` for longer rollouts
+
+## Divergent Futures
+
+Demonstrates that D0 codes encode categorically different motor plans (not just quality modulators). Finds clips with similar initial rearing poses but divergent D0 code futures from inference H5, then runs 3 decoder-only conditions from the same starting state: correct codes (A), random step-excluded codes (B), and random trajectory-excluded codes (C). Renders overlaid ghost-body videos and quantifies trajectory divergence.
+
+### Prerequisites
+
+Generate rollout H5 data first (see [Analysis](#analysis) step 1).
+
+### Run
+
+```bash
+cd vqvae_jax
+python -m ablation.run_divergent_futures
+```
+
+Key overrides:
+- `experiment.K=5` to compare more trajectories (default: 3)
+- `experiment.max_steps=1000` for longer rollouts
+- `experiment.pose_selection.z_percentile=80` to relax rearing threshold
+- `experiment.pose_selection.joint_distance_threshold=2.0` to allow more pose variation
+- `experiment.pose_selection.min_code_divergence=0.5` to relax code divergence filter
+- `render.camera=close_profile` for a tighter camera angle (default: `top`)
+- `render.enabled=false` to skip video rendering (metrics only)
+
+### Outputs
+
+All saved to `./outputs/divergent_futures/` (configurable via `output.base_dir`):
+- `divergent_futures.html` — single-page summary with embedded videos, divergence plot, and metrics table
+- `reference_trajectories.mp4` — overlaid ghost video of the selected H5 reference clips
+- `condition_a_correct.mp4` / `condition_b_step-excluded.mp4` / `condition_c_traj-excluded.mp4` — ghost videos per condition
+- `divergence_curves.png` — mean pairwise joint L2 over time for all 3 conditions
+- `divergent_futures_summary.json` — machine-readable metrics
+
+WandB panels (under `divergent/`):
+- `divergent/reference_trajectories` — reference video
+- `divergent/a_correct`, `b_step-excluded`, `c_traj-excluded` — condition videos
+- `divergent/divergence_curves` — divergence plot
+- `divergent/summary` — full HTML report

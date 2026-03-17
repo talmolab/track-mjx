@@ -12,7 +12,7 @@
 # Checkpoint Configuration
 # =============================================================================
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260301_061816_996669/ #260301_061919_970599/
+  path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260312_081359_853010/
   step: null  # null = latest step
 
 # =============================================================================
@@ -31,7 +31,7 @@ wandb:
 data:
   h5_path: null  # Path to H5 file with rollout data (required)
   h5_path_train: null            # Path to train-split H5 (optional)
-  h5_path_test: ./outputs/rollout_vqvae_test_nocon.h5  # Path to test-split H5
+  h5_path_test: ./outputs/rollout_vqvae_rvq_test.h5  # Path to test-split H5
   analysis_split: "test"     # "train", "test", or "combined"
   clip_length: 500               # Frames per clip (for environment setup)
 

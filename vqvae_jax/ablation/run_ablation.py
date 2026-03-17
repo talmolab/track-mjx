@@ -61,16 +61,9 @@ from analysis.checkpoint_utils import (
     load_vq_chunked_inference_fn,
     load_vq_inference_fn_with_stickiness,
 )
-from analysis.code_analysis import load_rollouts_from_h5
-from analysis.transition_context_analysis import (
-    compute_code_popularity,
-    compute_transition_ngram_popularity,
-    get_top_k_transitions,
-)
 from analysis.utils import build_slider_html, identify_null_code
 from analysis.inference_cache import InferenceResult
 from analysis.rendering import render_rollout_to_video
-
 
 # =============================================================================
 # D1 CODEBOOK MUTATION (for D0-only experiment)
@@ -159,16 +152,10 @@ def make_decoder_only_step_fn(
     decoder = create_standalone_decoder(cfg)
     decoder_params = get_decoder_params(policy_params)
 
-    use_continuous = bool(
-        cfg.network_config.get("use_continuous_latent", False)
-    )
-    continuous_dim = int(
-        cfg.network_config.get("continuous_latent_dim", 4)
-    )
+    use_continuous = bool(cfg.network_config.get("use_continuous_latent", False))
+    continuous_dim = int(cfg.network_config.get("continuous_latent_dim", 4))
     action_size = cfg.network_config.action_size
-    action_dist = distribution.NormalTanhDistribution(
-        event_size=action_size
-    )
+    action_dist = distribution.NormalTanhDistribution(event_size=action_size)
 
     latent_dim = codebook_0.shape[1]
     logging.info(
@@ -193,9 +180,7 @@ def make_decoder_only_step_fn(
         else:
             x = jnp.concatenate([z_q, proprio_norm], axis=-1)
 
-        action_params, _ = decoder.apply(
-            {"params": decoder_params}, x
-        )
+        action_params, _ = decoder.apply({"params": decoder_params}, x)
         return jnp.array(action_dist.mode(action_params))
 
     return decode_step, action_size
@@ -267,14 +252,8 @@ def run_decoder_only_rollout(
             InferenceResult(
                 clip_idx=i,
                 code_indices=np.full(len(rewards), code_idx, dtype=int),
-                qpos=(
-                    np.stack(qpos_list) if qpos_list
-                    else np.zeros((0, 0))
-                ),
-                qvel=(
-                    np.stack(qvel_list) if qvel_list
-                    else np.zeros((0, 0))
-                ),
+                qpos=(np.stack(qpos_list) if qpos_list else np.zeros((0, 0))),
+                qvel=(np.stack(qvel_list) if qvel_list else np.zeros((0, 0))),
                 rewards=np.array(rewards),
                 states=states,
             )
@@ -451,7 +430,7 @@ def build_code_injection_html(
 
         tab_buttons.append(
             f'<button class="tab-btn{active}" '
-            f'onclick="showTab(\'{cat}\')" '
+            f"onclick=\"showTab('{cat}')\" "
             f'style="border-bottom: 3px solid {color}">'
             f"{label} ({len(codes)})</button>"
         )
@@ -511,75 +490,6 @@ function showTab(cat) {{
 {"".join(tab_contents)}
 </body></html>"""
     return html
-
-
-def run_decoder_only_bigram_rollout(
-    env: Any,
-    jit_decode: Any,
-    code_a: int,
-    code_b: int,
-    H: int,
-    seed: int,
-    num_render: int = 1,
-) -> InferenceResult:
-    """Run code_a for H steps then code_b for H steps (decoder-only).
-
-    Args:
-        env: Imitation environment (single clip).
-        jit_decode: JIT-compiled decoder step fn.
-        code_a: First code index.
-        code_b: Second code index.
-        H: Commitment horizon (steps per code).
-        seed: Random seed.
-        num_render: Whether to store states (1=yes, 0=no).
-
-    Returns:
-        InferenceResult for the 2H-step trajectory.
-    """
-    jit_reset = jax.jit(env.reset)
-    jit_step = jax.jit(env.step)
-
-    rng = jax.random.PRNGKey(seed)
-    rng, reset_rng = jax.random.split(rng)
-    state = jit_reset(reset_rng)
-
-    qpos_list: list[np.ndarray] = []
-    qvel_list: list[np.ndarray] = []
-    rewards: list[float] = []
-    code_indices: list[int] = []
-    store_states = num_render > 0
-    states: list[Any] | None = [] if store_states else None
-
-    for step in range(2 * H):
-        code_idx = code_a if step < H else code_b
-        action = jit_decode(code_idx, state.obs)
-
-        if hasattr(state, "data"):
-            qpos_list.append(np.array(state.data.qpos))
-            qvel_list.append(np.array(state.data.qvel))
-        elif hasattr(state, "pipeline_state"):
-            qpos_list.append(np.array(state.pipeline_state.q))
-            qvel_list.append(np.array(state.pipeline_state.qd))
-
-        if store_states:
-            states.append(state)
-
-        code_indices.append(code_idx)
-        next_state = jit_step(state, action)
-        rewards.append(float(next_state.reward))
-
-        if next_state.done:
-            break
-        state = next_state
-
-    return InferenceResult(
-        clip_idx=0,
-        code_indices=np.array(code_indices),
-        qpos=np.stack(qpos_list) if qpos_list else np.zeros((0, 0)),
-        qvel=np.stack(qvel_list) if qvel_list else np.zeros((0, 0)),
-        rewards=np.array(rewards),
-        states=states,
-    )
 
 
 # =============================================================================
@@ -684,9 +594,7 @@ def run_ablation_rollout(
             action, extras = inference_fn(obs, action_rng, prev_indices)
 
             raw_d0 = int(extras["indices"])
-            code_idx = (
-                override_d0_index if override_d0_index is not None else raw_d0
-            )
+            code_idx = override_d0_index if override_d0_index is not None else raw_d0
             code_indices.append(code_idx)
 
             all_idx = extras.get("all_indices")
@@ -730,14 +638,10 @@ def run_ablation_rollout(
 
         rvq_indices = None
         if rvq_depth > 1 and rvq_per_depth[0]:
-            rvq_indices = tuple(
-                np.array(rvq_per_depth[d]) for d in range(rvq_depth)
-            )
+            rvq_indices = tuple(np.array(rvq_per_depth[d]) for d in range(rvq_depth))
 
         reward_components = (
-            {t: np.array(v) for t, v in comp_lists.items()}
-            if comp_lists
-            else None
+            {t: np.array(v) for t, v in comp_lists.items()} if comp_lists else None
         )
 
         results.append(
@@ -813,14 +717,10 @@ def run_ablation_rollout_chunked(
         for step in range(max_steps):
             obs = flatten_obs_dict(state.obs)
             rng, action_rng = jax.random.split(rng)
-            action, extras, chunk_state = inference_fn(
-                obs, chunk_state, action_rng
-            )
+            action, extras, chunk_state = inference_fn(obs, chunk_state, action_rng)
 
             raw_d0 = int(extras["indices"])
-            code_idx = (
-                override_d0_index if override_d0_index is not None else raw_d0
-            )
+            code_idx = override_d0_index if override_d0_index is not None else raw_d0
             code_indices.append(code_idx)
 
             all_idx = extras.get("all_indices")
@@ -862,14 +762,10 @@ def run_ablation_rollout_chunked(
 
         rvq_indices = None
         if rvq_depth > 1 and rvq_per_depth[0]:
-            rvq_indices = tuple(
-                np.array(rvq_per_depth[d]) for d in range(rvq_depth)
-            )
+            rvq_indices = tuple(np.array(rvq_per_depth[d]) for d in range(rvq_depth))
 
         reward_components = (
-            {t: np.array(v) for t, v in comp_lists.items()}
-            if comp_lists
-            else None
+            {t: np.array(v) for t, v in comp_lists.items()} if comp_lists else None
         )
 
         results.append(
@@ -1235,12 +1131,8 @@ def main(cfg: DictConfig):
         policy_params = zero_continuous_encoder_params(policy_params)
 
     # --- Detect chunked mode ---
-    use_code_chunking = bool(
-        vq_cfg.network_config.get("use_code_chunking", False)
-    )
-    commitment_horizon = int(
-        vq_cfg.network_config.get("code_commitment_horizon", 10)
-    )
+    use_code_chunking = bool(vq_cfg.network_config.get("use_code_chunking", False))
+    commitment_horizon = int(vq_cfg.network_config.get("code_commitment_horizon", 10))
     if use_code_chunking:
         logging.info(
             f"  Code chunking ENABLED (H={commitment_horizon}), "
@@ -1256,18 +1148,16 @@ def main(cfg: DictConfig):
     chunked_inference_fn = None
     initial_chunk_state_fn = None
     if use_code_chunking:
-        chunked_inference_fn, initial_chunk_state_fn = (
-            load_vq_chunked_inference_fn(
-                vq_cfg,
-                policy_params,
-                commitment_horizon=commitment_horizon,
-                deterministic=True,
-            )
+        chunked_inference_fn, initial_chunk_state_fn = load_vq_chunked_inference_fn(
+            vq_cfg,
+            policy_params,
+            commitment_horizon=commitment_horizon,
+            deterministic=True,
         )
 
     # --- Load reference clips and select starting poses ---
     logging.info("\nLoading reference clips and selecting starting poses...")
-    (_, cfg_dict, env_cfg_ml) = config_utils.prepare_config(cfg)
+    _, cfg_dict, env_cfg_ml = config_utils.prepare_config(cfg)
 
     data_split = cfg.ablation.get("data_split", "test")
     if data_split in ("train", "test"):
@@ -1407,9 +1297,7 @@ def main(cfg: DictConfig):
     # ================================================================
     if "code_injection" in experiments:
         logging.info("\n" + "=" * 40)
-        logging.info(
-            "Running code injection for ALL codes (decoder-only)..."
-        )
+        logging.info("Running code injection for ALL codes (decoder-only)...")
 
         # Build decoder-only step function — encoder never runs
         decode_step, _ = make_decoder_only_step_fn(vq_cfg, policy_params)
@@ -1473,9 +1361,7 @@ def main(cfg: DictConfig):
             for cat, codes in categories.items():
                 if not codes:
                     continue
-                hist_path = (
-                    output_dir / f"hist_{pose_name}_{cat}.png"
-                )
+                hist_path = output_dir / f"hist_{pose_name}_{cat}.png"
                 plot_code_histogram(
                     code_counts=code_counts,
                     highlighted_codes=codes,
@@ -1494,9 +1380,7 @@ def main(cfg: DictConfig):
                     histogram_paths=histogram_paths,
                     title=f"Code Injection — {pose_name}",
                 )
-                html_path = (
-                    output_dir / f"code_injection_{pose_name}.html"
-                )
+                html_path = output_dir / f"code_injection_{pose_name}.html"
                 with open(html_path, "w") as f:
                     f.write(html)
                 logging.info(f"    Saved HTML: {html_path}")
@@ -1504,146 +1388,9 @@ def main(cfg: DictConfig):
                 if wandb_enabled:
                     import wandb
 
-                    wandb_items[
-                        f"ablation/code_injection/{pose_name}/viewer"
-                    ] = wandb.Html(html)
-
-    # ================================================================
-    # STEP 2b: Two-code bigram injection
-    # ================================================================
-    if "code_injection" in experiments:
-        h5_path = cfg.get("data", {}).get("h5_path_test", None)
-        top_bigrams_k = cfg.ablation.get("top_bigrams", 10)
-
-        if h5_path and Path(h5_path).exists():
-            logging.info("\n" + "=" * 40)
-            logging.info("Running bigram injection experiments...")
-
-            h5_results, _ = load_rollouts_from_h5(h5_path)
-            bigram_counts = compute_transition_ngram_popularity(
-                h5_results, num_codes, n=2
-            )
-            top_bigrams = get_top_k_transitions(bigram_counts, top_bigrams_k)
-            logging.info(
-                f"  Top {len(top_bigrams)} bigrams: "
-                f"{[(bg, cnt) for bg, cnt in top_bigrams]}"
-            )
-
-            # Build bigram frequency array for histograms
-            bigram_freq = np.zeros(num_codes * num_codes)
-            for (a, b), cnt in bigram_counts.items():
-                bigram_freq[a * num_codes + b] = cnt
-
-            # Each code in the bigram gets H*20 steps (same as single-code)
-            H_bigram = commitment_horizon * 20 if use_code_chunking else 250
-
-            for pose_name, env in pose_envs.items():
-                logging.info(f"\n  === Bigram injection on {pose_name} ===")
-
-                per_bigram_qpos: dict[int, np.ndarray] = {}
-                per_bigram_videos: dict[int, str] = {}
-                per_bigram_labels: dict[int, str] = {}
-
-                for bi, ((code_a, code_b), cnt) in enumerate(top_bigrams):
-                    logging.info(
-                        f"    Bigram {bi}: ({code_a},{code_b}) "
-                        f"count={cnt}..."
+                    wandb_items[f"ablation/code_injection/{pose_name}/viewer"] = (
+                        wandb.Html(html)
                     )
-                    result = run_decoder_only_bigram_rollout(
-                        env=env,
-                        jit_decode=jit_decode,
-                        code_a=code_a,
-                        code_b=code_b,
-                        H=H_bigram,
-                        seed=seed,
-                        num_render=1 if render_enabled else 0,
-                    )
-
-                    per_bigram_qpos[bi] = result.qpos
-
-                    if render_enabled and result.states:
-                        vid_path = (
-                            output_dir
-                            / f"bigram_{pose_name}_{code_a}_{code_b}.mp4"
-                        )
-                        render_rollout_to_video(
-                            env=env,
-                            rollout_states=result.states,
-                            output_path=vid_path,
-                            camera=camera_name,
-                            width=cfg.render.width,
-                            height=cfg.render.height,
-                            fps=cfg.render.fps,
-                            indices=result.code_indices,
-                            num_codes=num_codes,
-                            d0_label=f"{code_a}->{code_b}",
-                        )
-                        per_bigram_videos[bi] = str(vid_path)
-                        per_bigram_labels[bi] = (
-                            f"({code_a},{code_b}) n={cnt}"
-                        )
-
-                # Classify bigrams by movement
-                bigram_categories = classify_codes_by_movement(
-                    per_bigram_qpos
-                )
-
-                # Build per-category bigram histograms
-                # Show which bigrams are highlighted (use flat index)
-                bigram_hist_paths: dict[str, str] = {}
-                for cat, idxs in bigram_categories.items():
-                    if not idxs:
-                        continue
-                    # Highlight the actual bigram code pairs
-                    highlighted = []
-                    for bi in idxs:
-                        if bi < len(top_bigrams):
-                            (a, b), _ = top_bigrams[bi]
-                            highlighted.extend([a, b])
-                    highlighted = list(set(highlighted))
-
-                    hist_path = (
-                        output_dir / f"hist_bigram_{pose_name}_{cat}.png"
-                    )
-                    plot_code_histogram(
-                        code_counts=code_counts,
-                        highlighted_codes=highlighted,
-                        title=(
-                            f"Bigram {_CATEGORY_LABELS.get(cat, cat)} "
-                            f"— {pose_name}"
-                        ),
-                        num_codes=num_codes,
-                        output_path=hist_path,
-                    )
-                    bigram_hist_paths[cat] = str(hist_path)
-
-                # Build tabbed HTML for bigrams
-                if render_enabled and per_bigram_videos:
-                    html = build_code_injection_html(
-                        categories=bigram_categories,
-                        per_code_videos=per_bigram_videos,
-                        per_code_labels=per_bigram_labels,
-                        histogram_paths=bigram_hist_paths,
-                        title=f"Bigram Injection — {pose_name}",
-                    )
-                    html_path = (
-                        output_dir / f"code_bigram_{pose_name}.html"
-                    )
-                    with open(html_path, "w") as f:
-                        f.write(html)
-                    logging.info(f"    Saved bigram HTML: {html_path}")
-
-                    if wandb_enabled:
-                        import wandb
-
-                        wandb_items[
-                            f"ablation/code_bigram/{pose_name}/viewer"
-                        ] = wandb.Html(html)
-        else:
-            logging.warning(
-                f"  Skipping bigram injection: H5 path not found "
-                f"({h5_path})"
-            )
 
     # ================================================================
     # STEP 3: D0-only (natural D0, zeroed D1)
@@ -1770,9 +1517,7 @@ def main(cfg: DictConfig):
             if wandb_enabled:
                 import wandb
 
-                wandb_items["ablation/d0_only/reward_curves"] = wandb.Html(
-                    html
-                )
+                wandb_items["ablation/d0_only/reward_curves"] = wandb.Html(html)
 
     # ================================================================
     # STEP 4: Comparison plots and summary

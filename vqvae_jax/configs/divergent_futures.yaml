@@ -1,11 +1,10 @@
 # =============================================================================
-# VQ-VAE Code Ablation Experiments
+# Divergent Futures Experiment
 # =============================================================================
-# Empirically test what each D0 code does via:
-# 1. Code injection — force one D0 code at every step, zero D1
-# 2. D0-only — natural D0 selection via encoder, zero D1
-#
-# Each experiment runs from two starting poses (lowest/highest torso z).
+# Demonstrates that D0 codes encode categorically different motor plans by
+# finding clips with similar initial poses but divergent futures, then testing
+# 3 decoder-only conditions: correct codes, random step-excluded, random
+# trajectory-excluded.
 # =============================================================================
 
 # =============================================================================
@@ -13,7 +12,7 @@
 # =============================================================================
 checkpoint:
   path: /home/jovyan/vast/kaiwen/track-mjx/vqvae_jax/model_checkpoints/260312_081359_853010/
-  step: null  # null = latest step
+  step: null
 
 # =============================================================================
 # Data Configuration
@@ -22,49 +21,54 @@ data:
   h5_path_test: ./outputs/rollout_vqvae_rvq_test.h5
 
 # =============================================================================
-# Ablation Configuration
+# Experiment Configuration
 # =============================================================================
-ablation:
-  experiments: [code_injection, d0_only]
-  num_clips: 10              # Clips per condition per starting pose
-  max_steps: 500             # Steps per clip
+experiment:
+  K: 3
+  max_steps: 500
   seed: 42
-  data_split: "test"
-  top_k: 5                   # Top K non-null D0 codes for injection
-
-  # Starting pose selection
-  starting_poses:
-    low_height:
-      enabled: true
-      description: "Walking/grooming (lowest torso z)"
-    high_height:
-      enabled: true
-      description: "Rearing (highest torso z)"
-
-# =============================================================================
-# WandB Configuration
-# =============================================================================
-wandb:
-  enabled: true          # Enable WandB logging
-  project: "vqvae-eval"
-  entity: null            # WandB entity (team or username)
+  postures: ["rearing", "walking", "grooming"]
+  killer_demo:
+    enabled: true
+    K: 10
+    anchor_z_fraction: 0.5  # 0=standing, 1=peak rear, 0.5=midway
+  pose_selection:
+    z_percentile: 90
+    joint_distance_threshold: 1.5
+    min_code_divergence: 0.7
+    search_window_frames: 40
+    min_rollout_length: 450
+    score_percentile: 75
 
 # =============================================================================
 # Rendering Configuration
 # =============================================================================
 render:
   enabled: true
-  num_videos: 3               # Videos per condition
-  camera: close_profile
   fps: 50
-  width: 640
-  height: 480
+  width: 800
+  height: 600
+  ghost_alpha: 0.35
+  # Fixed world camera for ghost overlay (3/4 angled view)
+  camera_distance: 0.8       # distance from origin
+  camera_elevation: -30.0    # degrees (negative = looking down)
+  camera_azimuth: 135.0      # degrees
+  camera_fovy: 60.0          # vertical field of view
+  killer_demo_camera_distance: 0.8  # match normal experiment camera
+
+# =============================================================================
+# WandB Configuration
+# =============================================================================
+wandb:
+  enabled: true
+  project: vqvae-eval
+  entity: null
 
 # =============================================================================
 # Output Configuration
 # =============================================================================
 output:
-  base_dir: ./outputs/ablation
+  base_dir: ./outputs/divergent_futures
 
 # =============================================================================
 # Environment Configuration
@@ -72,7 +76,6 @@ output:
 env_config:
   mujoco_impl: "jax"
 
-  # Physics Solver Settings
   solver: "newton"
   iterations: 5
   ls_iterations: 5
@@ -80,12 +83,10 @@ env_config:
   njmax: 128
   noslip_iterations: 0
 
-  # Timing Configuration
   sim_dt: 0.002
   ctrl_dt: 0.01
   mocap_hz: 50
 
-  # Reference Clip Settings
   clip_length: 250
   clip_set: "all"
   reference_length: 5
@@ -93,7 +94,6 @@ env_config:
   qvel_init: "zeros"
   keep_clips_idx: null
 
-  # Domain Randomization (disabled for ablation)
   domain_randomization:
     use_domain_randomization: false
     floor_friction: [0.7, 0.7]
@@ -104,7 +104,6 @@ env_config:
     torso_mass_jitter: [0.0, 0.0]
     qpos0_jitter: [0.0, 0.0]
 
-  # Reward Terms
   reward_terms:
     root_pos:
       exp_scale: 0.035
@@ -135,7 +134,6 @@ env_config:
       max_value: 50.0
       weight: 0.01
 
-  # Termination Criteria
   termination_criteria:
     root_too_far:
       max_distance: 0.15

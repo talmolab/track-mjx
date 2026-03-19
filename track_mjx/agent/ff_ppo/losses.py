@@ -183,6 +183,8 @@ def compute_ppo_loss(
     vf_coefficient: float = 0.5,
     latent_kl_schedule: Callable[[int], float] | None = None,
     latent_ar1_schedule: Callable[[int], float] | None = None,
+    prior_residual_weight: float = 0.0,
+    prior_residual_schedule: Callable[[int], float] | None = None,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss with VAE KL divergence for intention networks.
 
@@ -327,7 +329,19 @@ def compute_ppo_loss(
     ar1_loss_weighted = current_ar1_weight * ar1_loss
     latent_loss = kl_gaussian_weighted + ar1_loss_weighted
 
-    total_loss = policy_loss + v_loss + entropy_loss + latent_loss
+    # Prior residual penalty: penalizes policy action (residual) magnitude.
+    # Uses data.action (post-tanh) which is the actual residual sent to
+    # PriorHighLevelWrapper, NOT raw_action (pre-tanh Gaussian sample).
+    # Decaying this over training allows the prior to kickstart the policy
+    # early, then gradually release control for more exploration freedom.
+    current_prior_residual_weight = prior_residual_weight
+    if prior_residual_schedule is not None:
+        current_prior_residual_weight = prior_residual_schedule(step)
+    actions = data.action  # post-tanh residual sent to PriorHighLevelWrapper
+    residual_l2 = jnp.mean(jnp.sum(jnp.square(actions), axis=-1))
+    prior_residual_loss = current_prior_residual_weight * residual_l2
+
+    total_loss = policy_loss + v_loss + entropy_loss + latent_loss + prior_residual_loss
 
     return total_loss, {
         "total_loss": total_loss,
@@ -339,6 +353,9 @@ def compute_ppo_loss(
         "entropy_loss": entropy_loss,
         "latent_kl_weight": current_kl_weight,
         "latent_ar1_weight": current_ar1_weight,
+        "prior_residual_loss": prior_residual_loss,
+        "prior_residual_weight": current_prior_residual_weight,
+        "prior_residual_l2": residual_l2,
     }
 
 
@@ -424,6 +441,8 @@ def compute_shared_vision_ppo_loss(
     vf_coefficient: float = 0.5,
     latent_kl_schedule: Callable[[int], float] | None = None,
     latent_ar1_schedule: Callable[[int], float] | None = None,
+    prior_residual_weight: float = 0.0,
+    prior_residual_schedule: Callable[[int], float] | None = None,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """PPO loss with shared CNN between policy and value heads.
 
@@ -537,7 +556,19 @@ def compute_shared_vision_ppo_loss(
     ar1_loss_weighted = current_ar1_weight * ar1_loss
     latent_loss = kl_gaussian_weighted + ar1_loss_weighted
 
-    total_loss = policy_loss + v_loss + entropy_loss + latent_loss
+    # Prior residual penalty: penalizes policy action (residual) magnitude.
+    # Uses data.action (post-tanh) which is the actual residual sent to
+    # PriorHighLevelWrapper, NOT raw_action (pre-tanh Gaussian sample).
+    # Decaying this over training allows the prior to kickstart the policy
+    # early, then gradually release control for more exploration freedom.
+    current_prior_residual_weight = prior_residual_weight
+    if prior_residual_schedule is not None:
+        current_prior_residual_weight = prior_residual_schedule(step)
+    actions = data.action  # post-tanh residual sent to PriorHighLevelWrapper
+    residual_l2 = jnp.mean(jnp.sum(jnp.square(actions), axis=-1))
+    prior_residual_loss = current_prior_residual_weight * residual_l2
+
+    total_loss = policy_loss + v_loss + entropy_loss + latent_loss + prior_residual_loss
 
     return total_loss, {
         "total_loss": total_loss,
@@ -549,4 +580,7 @@ def compute_shared_vision_ppo_loss(
         "entropy_loss": entropy_loss,
         "latent_kl_weight": current_kl_weight,
         "latent_ar1_weight": current_ar1_weight,
+        "prior_residual_loss": prior_residual_loss,
+        "prior_residual_weight": current_prior_residual_weight,
+        "prior_residual_l2": residual_l2,
     }

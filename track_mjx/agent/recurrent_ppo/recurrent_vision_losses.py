@@ -22,6 +22,8 @@ The data flow in the loss:
 - ``data.discount`` -- 0 when episode ends, 1 otherwise
 """
 
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 from brax.training import types
@@ -56,6 +58,8 @@ def compute_recurrent_shared_vision_ppo_loss(
     clipping_epsilon: float = 0.2,
     normalize_advantage: bool = True,
     vf_coefficient: float = 0.5,
+    prior_residual_weight: float = 0.0,
+    prior_residual_schedule: Callable[[int], float] | None = None,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss for recurrent shared-vision networks.
 
@@ -237,11 +241,26 @@ def compute_recurrent_shared_vision_ppo_loss(
     )
     entropy_loss = entropy_cost * -entropy
 
-    total_loss = policy_loss + v_loss + entropy_loss
+    # Prior residual penalty: penalizes policy action (residual) magnitude.
+    # Uses data.action (post-tanh) which is the actual residual sent to
+    # PriorHighLevelWrapper, NOT raw_action (pre-tanh Gaussian sample).
+    # Decaying this over training allows the prior to kickstart the policy
+    # early, then gradually release control for more exploration freedom.
+    current_prior_residual_weight = prior_residual_weight
+    if prior_residual_schedule is not None:
+        current_prior_residual_weight = prior_residual_schedule(step)
+    actions = data.action  # post-tanh residual sent to PriorHighLevelWrapper
+    residual_l2 = jnp.mean(jnp.sum(jnp.square(actions), axis=-1))
+    prior_residual_loss = current_prior_residual_weight * residual_l2
+
+    total_loss = policy_loss + v_loss + entropy_loss + prior_residual_loss
 
     return total_loss, {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
         "v_loss": v_loss,
         "entropy_loss": entropy_loss,
+        "prior_residual_loss": prior_residual_loss,
+        "prior_residual_weight": current_prior_residual_weight,
+        "prior_residual_l2": residual_l2,
     }

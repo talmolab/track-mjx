@@ -32,6 +32,7 @@ experiment:
     enabled: true
     K: 10
     anchor_z_fraction: 0.5    # 0=standing, 1=peak rear, 0.5=midway
+    frame0_variant: false     # if true, also run frame-0 code extraction variants
   pose_selection:
     z_percentile: 90
     joint_distance_threshold: 1.5

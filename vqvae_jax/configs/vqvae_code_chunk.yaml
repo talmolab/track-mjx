@@ -116,7 +116,7 @@ network_config:
   latent_dim: 16
 
   # VQ-VAE specific settings
-  num_codes: 64
+  num_codes: 32
   commitment_cost: 0.1
   codebook_loss_weight: 1.0
   codebook_entropy_weight: 0.1
@@ -129,7 +129,7 @@ network_config:
   dead_code_threshold: 0.01
 
   # Residual VQ settings — coupled_residual_grad must be false for chunking
-  rvq_depth: 1
+  rvq_depth: 2
   use_rotation: true
   coupled_residual_grad: false        # MUST be false for chunking
   proprio_noise_scale: 0.20

@@ -1905,6 +1905,7 @@ def run_killer_demo(
     demo_label: str = "Killer Demo",
     use_d0d1: bool = False,
     jit_decode_d0d1: Any = None,
+    start_from_frame0: bool = False,
 ) -> dict[str, Any] | None:
     """Run killer demo: same starting pose, 3 code conditions side by side.
 
@@ -1928,6 +1929,9 @@ def run_killer_demo(
         use_d0d1: If True, use D0+D1 decoder with paired code sequences.
         jit_decode_d0d1: JIT-compiled (d0, d1, obs) -> action (required
             when use_d0d1=True).
+        start_from_frame0: If True, override start frames to 0 and
+            re-extract code sequences from frame 0 instead of the
+            characteristic frame.
 
     Returns:
         Dict with video_path, plot_path, html_str, or None if prerequisites
@@ -2019,6 +2023,13 @@ def run_killer_demo(
         clip_idxs, start_frs, code_seqs = _select_top_clips_for_posture(
             rollouts, posture_key, killer_K, cfg
         )
+
+        # Override to start from frame 0 when requested
+        if start_from_frame0:
+            start_frs = [0] * len(clip_idxs)
+            code_seqs = make_correct_code_sequences(
+                rollouts, clip_idxs, start_frs, max_steps
+            )
 
         logging.info(f"  Running {killer_K} {posture_key} codes from rearing pose...")
 
@@ -2181,6 +2192,459 @@ groom, and sustained rearing clips rear.</p>
 
 
 # =============================================================================
+# CODE SEQUENCE SIMILARITY ANALYSIS
+# =============================================================================
+
+
+def _code_frequency_histogram(codes: np.ndarray, num_codes: int) -> np.ndarray:
+    """Compute normalized frequency histogram over code indices."""
+    hist = np.zeros(num_codes)
+    for c in codes:
+        hist[int(c)] += 1
+    total = hist.sum()
+    if total > 0:
+        hist /= total
+    return hist
+
+
+def _compress_runs(codes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Compress consecutive duplicate codes into (unique_codes, run_lengths).
+
+    Args:
+        codes: Raw code sequence, e.g. [8,8,8,31,31,23,23,23,8].
+
+    Returns:
+        Tuple of (unique_codes, run_lengths). For the example above:
+        ([8, 31, 23, 8], [3, 2, 3, 1]).
+    """
+    if len(codes) == 0:
+        return np.array([], dtype=int), np.array([], dtype=int)
+    change_mask = np.concatenate([[True], codes[1:] != codes[:-1]])
+    unique_codes = codes[change_mask]
+    # Run lengths: diff of change indices, plus final run
+    change_indices = np.where(change_mask)[0]
+    run_lengths = np.diff(np.concatenate([change_indices, [len(codes)]]))
+    return unique_codes, run_lengths
+
+
+def _code_bigram_matrix(unique_codes: np.ndarray, num_codes: int) -> np.ndarray:
+    """Build normalized bigram transition matrix from compressed code sequence.
+
+    Args:
+        unique_codes: Run-compressed code sequence (no consecutive duplicates).
+        num_codes: Total number of codes (matrix dimension).
+
+    Returns:
+        Normalized transition matrix [num_codes, num_codes]. Entry (i, j) is
+        the fraction of transitions that go from code i to code j.
+    """
+    mat = np.zeros((num_codes, num_codes))
+    for t in range(len(unique_codes) - 1):
+        mat[int(unique_codes[t]), int(unique_codes[t + 1])] += 1
+    total = mat.sum()
+    if total > 0:
+        mat /= total
+    return mat
+
+
+def _code_duration_profile(
+    unique_codes: np.ndarray,
+    run_lengths: np.ndarray,
+    num_codes: int,
+) -> np.ndarray:
+    """Compute mean run duration per code.
+
+    Args:
+        unique_codes: Run-compressed codes.
+        run_lengths: Duration of each run.
+        num_codes: Total number of codes.
+
+    Returns:
+        Array [num_codes] with mean run length per code (0 if code never used).
+    """
+    durations = np.zeros(num_codes)
+    counts = np.zeros(num_codes)
+    for code, length in zip(unique_codes, run_lengths):
+        durations[int(code)] += length
+        counts[int(code)] += 1
+    mask = counts > 0
+    durations[mask] /= counts[mask]
+    return durations
+
+
+def classify_clips_by_behavior(
+    rollouts: list[InferenceResult],
+    cfg: DictConfig,
+) -> dict[str, list[int]]:
+    """Assign each clip to rearing/walking/grooming using posture scoring.
+
+    Uses _score_clip_for_posture with percentile thresholds.
+    Priority: rearing > walking > grooming.
+
+    Args:
+        rollouts: H5 inference results.
+        cfg: Config with pose_selection params.
+
+    Returns:
+        Dict mapping behavior name to list of clip indices.
+    """
+    sel = cfg.experiment.pose_selection
+    search_window = int(sel.search_window_frames)
+    min_length = int(sel.get("min_rollout_length", 450))
+
+    # Score all clips for each posture
+    scores: dict[str, list[float]] = {"rearing": [], "walking": [], "grooming": []}
+    valid_indices: list[int] = []
+
+    for i, r in enumerate(rollouts):
+        if len(r.qpos) < min_length:
+            continue
+        valid_indices.append(i)
+        for posture in scores:
+            _, score = _score_clip_for_posture(r.qpos, posture, search_window)
+            scores[posture].append(score)
+
+    # Percentile thresholds
+    categories: dict[str, list[int]] = {"rearing": [], "walking": [], "grooming": []}
+    assigned: set[int] = set()
+
+    rear_scores = np.array(scores["rearing"])
+    rear_thresh = float(np.percentile(rear_scores, 75))
+
+    walk_scores = np.array(scores["walking"])
+    walk_thresh = float(np.percentile(walk_scores, 75))
+
+    # Priority: rearing > walking > grooming
+    for j, idx in enumerate(valid_indices):
+        if rear_scores[j] >= rear_thresh:
+            categories["rearing"].append(idx)
+            assigned.add(idx)
+
+    for j, idx in enumerate(valid_indices):
+        if idx in assigned:
+            continue
+        if walk_scores[j] >= walk_thresh:
+            categories["walking"].append(idx)
+            assigned.add(idx)
+
+    for j, idx in enumerate(valid_indices):
+        if idx not in assigned:
+            categories["grooming"].append(idx)
+
+    logging.info(
+        f"  Clip classification: rearing={len(categories['rearing'])}, "
+        f"walking={len(categories['walking'])}, "
+        f"grooming={len(categories['grooming'])}"
+    )
+    return categories
+
+
+def compute_code_sequence_similarity(
+    rollouts: list[InferenceResult],
+    categories: dict[str, list[int]],
+    num_codes: int,
+    max_steps: int,
+) -> dict[str, Any]:
+    """Compute pairwise code similarity across clips grouped by behavior.
+
+    Computes:
+    - Per-clip bigram transition matrices -> pairwise cosine similarity
+      (temporal-aware: captures which code follows which)
+    - Per-clip mean code durations (how long each code is held)
+    - Per-clip code frequency histograms (for the usage heatmap only)
+
+    Args:
+        rollouts: H5 inference results.
+        categories: Behavior -> clip indices mapping.
+        num_codes: Number of D0 codes.
+        max_steps: Max code sequence length to consider.
+
+    Returns:
+        Dict with bigram cosine matrix, within/across stats,
+        per_behavior histograms/transitions/durations, clip ordering info.
+    """
+    # Flatten clips in order: rearing, walking, grooming
+    ordered_clips: list[int] = []
+    ordered_labels: list[str] = []
+    for behavior in ["rearing", "walking", "grooming"]:
+        for idx in categories.get(behavior, []):
+            ordered_clips.append(idx)
+            ordered_labels.append(behavior)
+
+    N = len(ordered_clips)
+    if N == 0:
+        return {"clip_indices": [], "clip_labels": []}
+
+    # Extract code sequences, histograms, bigrams, durations
+    histograms = []
+    bigram_matrices = []
+    duration_profiles = []
+    for idx in ordered_clips:
+        r = rollouts[idx]
+        if r.rvq_indices is not None and len(r.rvq_indices) > 0:
+            codes = np.array(r.rvq_indices[0][:max_steps])
+        else:
+            codes = np.array(r.code_indices[:max_steps])
+        histograms.append(_code_frequency_histogram(codes, num_codes))
+        unique_codes, run_lengths = _compress_runs(codes)
+        bigram_matrices.append(_code_bigram_matrix(unique_codes, num_codes))
+        duration_profiles.append(
+            _code_duration_profile(unique_codes, run_lengths, num_codes)
+        )
+
+    # Pairwise cosine similarity on flattened bigram transition matrices
+    bigram_cosine_matrix = np.zeros((N, N))
+    for i in range(N):
+        flat_i = bigram_matrices[i].ravel()
+        norm_i = np.linalg.norm(flat_i)
+        for j in range(N):
+            flat_j = bigram_matrices[j].ravel()
+            norm_j = np.linalg.norm(flat_j)
+            if norm_i > 0 and norm_j > 0:
+                bigram_cosine_matrix[i, j] = np.dot(flat_i, flat_j) / (norm_i * norm_j)
+
+    # Group within-behavior and across-behavior pairs
+    within_bigram: list[float] = []
+    across_bigram: list[float] = []
+    for i in range(N):
+        for j in range(i + 1, N):
+            if ordered_labels[i] == ordered_labels[j]:
+                within_bigram.append(bigram_cosine_matrix[i, j])
+            else:
+                across_bigram.append(bigram_cosine_matrix[i, j])
+
+    # Per-behavior aggregates
+    per_behavior_histograms: dict[str, np.ndarray] = {}
+    per_behavior_transitions: dict[str, np.ndarray] = {}
+    per_behavior_durations: dict[str, np.ndarray] = {}
+    for behavior in ["rearing", "walking", "grooming"]:
+        indices = [k for k, lbl in enumerate(ordered_labels) if lbl == behavior]
+        if indices:
+            behavior_hists = np.stack([histograms[k] for k in indices])
+            per_behavior_histograms[behavior] = np.mean(behavior_hists, axis=0)
+            behavior_bigrams = np.stack([bigram_matrices[k] for k in indices])
+            per_behavior_transitions[behavior] = np.mean(behavior_bigrams, axis=0)
+            behavior_durs = np.stack([duration_profiles[k] for k in indices])
+            per_behavior_durations[behavior] = np.mean(behavior_durs, axis=0)
+
+    logging.info(
+        f"  Code similarity: {N} clips, "
+        f"bigram cosine within={np.mean(within_bigram):.3f} "
+        f"(n={len(within_bigram)}), "
+        f"across={np.mean(across_bigram):.3f} "
+        f"(n={len(across_bigram)})"
+    )
+
+    return {
+        "clip_indices": ordered_clips,
+        "clip_labels": ordered_labels,
+        "bigram_cosine_matrix": bigram_cosine_matrix,
+        "within_bigram": np.array(within_bigram),
+        "across_bigram": np.array(across_bigram),
+        "per_behavior_histograms": per_behavior_histograms,
+        "per_behavior_transitions": per_behavior_transitions,
+        "per_behavior_durations": per_behavior_durations,
+    }
+
+
+def _add_behavior_labels(
+    ax: Any,
+    labels: list[str],
+    boundaries: list[int],
+    N: int,
+) -> None:
+    """Add behavior group labels to the side of a heatmap."""
+    starts = [0] + boundaries
+    ends = boundaries + [N]
+    for start, end in zip(starts, ends):
+        mid = (start + end - 1) / 2
+        behavior = labels[start]
+        ax.annotate(
+            behavior[:4].upper(),
+            xy=(0, mid),
+            xytext=(-10, 0),
+            textcoords="offset points",
+            ha="right",
+            va="center",
+            fontsize=8,
+            fontweight="bold",
+        )
+
+
+def plot_code_similarity_analysis(
+    results: dict[str, Any],
+    output_dir: Path,
+    num_codes: int,
+) -> dict[str, str]:
+    """Generate code similarity analysis plots.
+
+    Generates:
+    1. Bigram transition cosine similarity heatmap (clips x clips)
+    2. Bar chart: within vs across behavior bigram cosine
+    3. Per-behavior transition matrices (32x32 heatmaps)
+    4. Per-behavior mean code duration profile
+    5. Per-code usage heatmap (rows=behaviors, columns=codes)
+
+    Args:
+        results: Output from compute_code_sequence_similarity.
+        output_dir: Directory to save plots.
+        num_codes: Number of D0 codes.
+
+    Returns:
+        Dict mapping plot name to file path.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_paths: dict[str, str] = {}
+
+    labels = results.get("clip_labels", [])
+    N = len(labels)
+    if N == 0:
+        return plot_paths
+
+    # Find behavior boundaries for separator lines
+    boundaries = []
+    for i in range(1, N):
+        if labels[i] != labels[i - 1]:
+            boundaries.append(i)
+
+    # --- 1. Bigram transition cosine similarity heatmap ---
+    fig, ax = plt.subplots(figsize=(10, 8))
+    im = ax.imshow(results["bigram_cosine_matrix"], cmap="RdYlBu_r", vmin=0, vmax=1)
+    for b in boundaries:
+        ax.axhline(b - 0.5, color="white", linewidth=2)
+        ax.axvline(b - 0.5, color="white", linewidth=2)
+    ax.set_title(
+        "Code Transition (Bigram) Cosine Similarity",
+        fontsize=13,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Clip (grouped by behavior)")
+    ax.set_ylabel("Clip (grouped by behavior)")
+    fig.colorbar(im, ax=ax, shrink=0.8)
+    _add_behavior_labels(ax, labels, boundaries, N)
+    fig.tight_layout()
+    path = str(output_dir / "bigram_cosine_heatmap.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    plot_paths["bigram_cosine_heatmap"] = path
+
+    # --- 2. Within vs across bar chart (bigram cosine) ---
+    within_bg = results["within_bigram"]
+    across_bg = results["across_bigram"]
+    fig, ax = plt.subplots(figsize=(5, 5))
+    means = [
+        np.mean(within_bg) if len(within_bg) > 0 else 0,
+        np.mean(across_bg) if len(across_bg) > 0 else 0,
+    ]
+    stds = [
+        np.std(within_bg) if len(within_bg) > 0 else 0,
+        np.std(across_bg) if len(across_bg) > 0 else 0,
+    ]
+    ax.bar(
+        ["Within\nBehavior", "Across\nBehavior"],
+        means,
+        yerr=stds,
+        color=["#1E88E5", "#E53935"],
+        capsize=5,
+        alpha=0.8,
+    )
+    ax.set_ylabel("Cosine Similarity")
+    ax.set_title(
+        "Code Transition Similarity\n(Within vs Across Behavior)",
+        fontweight="bold",
+    )
+    ax.set_ylim(0, 1)
+    fig.tight_layout()
+    path = str(output_dir / "within_vs_across_bar.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    plot_paths["within_vs_across_bar"] = path
+
+    # --- 3. Per-behavior transition matrices ---
+    per_trans = results.get("per_behavior_transitions", {})
+    if per_trans:
+        behaviors = [b for b in ["rearing", "walking", "grooming"] if b in per_trans]
+        n_beh = len(behaviors)
+        fig, axes = plt.subplots(1, n_beh, figsize=(6 * n_beh, 5))
+        if n_beh == 1:
+            axes = [axes]
+        for ax, behavior in zip(axes, behaviors):
+            mat = per_trans[behavior]
+            im = ax.imshow(mat, cmap="hot", aspect="equal")
+            ax.set_title(f"{behavior.capitalize()}", fontsize=12, fontweight="bold")
+            ax.set_xlabel("To code")
+            ax.set_ylabel("From code")
+            fig.colorbar(im, ax=ax, shrink=0.7)
+        fig.suptitle(
+            "Mean Code Transition Matrices (Bigrams)",
+            fontsize=13,
+            fontweight="bold",
+        )
+        fig.tight_layout()
+        path = str(output_dir / "transition_matrices.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        plot_paths["transition_matrices"] = path
+
+    # --- 4. Per-behavior mean code duration profile ---
+    per_dur = results.get("per_behavior_durations", {})
+    if per_dur:
+        behaviors = [b for b in ["rearing", "walking", "grooming"] if b in per_dur]
+        fig, ax = plt.subplots(figsize=(14, 4))
+        x = np.arange(num_codes)
+        bar_width = 0.25
+        colors = {"rearing": "#E53935", "walking": "#1E88E5", "grooming": "#43A047"}
+        for i, behavior in enumerate(behaviors):
+            ax.bar(
+                x + i * bar_width,
+                per_dur[behavior],
+                bar_width,
+                label=behavior.capitalize(),
+                color=colors.get(behavior, "#999"),
+                alpha=0.8,
+            )
+        ax.set_xlabel("Code Index")
+        ax.set_ylabel("Mean Run Length (steps)")
+        ax.set_title(
+            "Mean Code Duration per Behavior",
+            fontsize=13,
+            fontweight="bold",
+        )
+        ax.set_xticks(x + bar_width)
+        ax.set_xticklabels(range(num_codes), fontsize=7)
+        ax.legend()
+        ax.grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        path = str(output_dir / "code_duration_profile.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        plot_paths["code_duration_profile"] = path
+
+    # --- 5. Per-code usage heatmap ---
+    per_beh = results.get("per_behavior_histograms", {})
+    if per_beh:
+        behaviors = [b for b in ["rearing", "walking", "grooming"] if b in per_beh]
+        usage_matrix = np.stack([per_beh[b] for b in behaviors])
+        fig, ax = plt.subplots(figsize=(14, 3))
+        im = ax.imshow(usage_matrix, aspect="auto", cmap="viridis")
+        ax.set_yticks(range(len(behaviors)))
+        ax.set_yticklabels([b.capitalize() for b in behaviors])
+        ax.set_xlabel("Code Index")
+        ax.set_xticks(range(num_codes))
+        ax.set_title("Per-Behavior Code Usage", fontsize=13, fontweight="bold")
+        fig.colorbar(im, ax=ax, shrink=0.8, label="Normalized Frequency")
+        fig.tight_layout()
+        path = str(output_dir / "code_usage_heatmap.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        plot_paths["code_usage_heatmap"] = path
+
+    logging.info(f"  Wrote {len(plot_paths)} similarity plots to {output_dir}")
+    return plot_paths
+
+
+# =============================================================================
 # MAIN PIPELINE
 # =============================================================================
 
@@ -2296,6 +2760,17 @@ def main(cfg: DictConfig):
         )
         all_posture_results[posture] = result
 
+    # --- Code sequence similarity analysis ---
+    logging.info("\nRunning code sequence similarity analysis...")
+    similarity_dir = output_dir / "code_similarity"
+    categories = classify_clips_by_behavior(rollouts, cfg)
+    similarity_results = compute_code_sequence_similarity(
+        rollouts, categories, num_codes, max_steps
+    )
+    similarity_plots = plot_code_similarity_analysis(
+        similarity_results, similarity_dir, num_codes
+    )
+
     # --- Killer demos (two starting heights) ---
     killer_results = {}  # key → result dict
     killer_demo_cfg = cfg.experiment.get("killer_demo", {})
@@ -2352,6 +2827,53 @@ def main(cfg: DictConfig):
                     demo_label="Killer Demo D0+D1 (Grooming Start)",
                 )
 
+        # Frame-0 killer demos (codes extracted from clip start, not
+        # characteristic frame) — opt-in via config
+        if killer_demo_cfg.get("frame0_variant", False):
+            killer_results["rear_frame0"] = run_killer_demo(
+                **killer_demo_args,
+                output_dir=output_dir / "killer_demo_rear_frame0",
+                anchor_z_frac_override=anchor_frac,
+                demo_label="Killer Demo (Rearing Start, Frame-0 Codes)",
+                start_from_frame0=True,
+            )
+
+            if "grooming" in all_posture_results:
+                killer_results["groom_frame0"] = run_killer_demo(
+                    **killer_demo_args,
+                    output_dir=output_dir / "killer_demo_groom_frame0",
+                    anchor_qpos_override=all_posture_results["grooming"][
+                        "anchor_h5_qpos"
+                    ],
+                    demo_label="Killer Demo (Grooming Start, Frame-0 Codes)",
+                    start_from_frame0=True,
+                )
+
+            if has_d1:
+                killer_results["rear_d0d1_frame0"] = run_killer_demo(
+                    **killer_demo_args,
+                    output_dir=output_dir / "killer_demo_rear_d0d1_frame0",
+                    anchor_z_frac_override=anchor_frac,
+                    use_d0d1=True,
+                    jit_decode_d0d1=jit_decode_d0d1,
+                    demo_label="Killer Demo D0+D1 (Rearing Start, Frame-0 Codes)",
+                    start_from_frame0=True,
+                )
+                if "grooming" in all_posture_results:
+                    killer_results["groom_d0d1_frame0"] = run_killer_demo(
+                        **killer_demo_args,
+                        output_dir=output_dir / "killer_demo_groom_d0d1_frame0",
+                        anchor_qpos_override=all_posture_results["grooming"][
+                            "anchor_h5_qpos"
+                        ],
+                        use_d0d1=True,
+                        jit_decode_d0d1=jit_decode_d0d1,
+                        demo_label=(
+                            "Killer Demo D0+D1 (Grooming Start, Frame-0 Codes)"
+                        ),
+                        start_from_frame0=True,
+                    )
+
     # --- Save JSON summary ---
     summary = {
         "timestamp": datetime.now().isoformat(),
@@ -2396,6 +2918,12 @@ def main(cfg: DictConfig):
                 wandb_items[f"{prefix}/{safe}"] = wandb.Image(path)
 
             wandb_items[f"{prefix}/summary"] = wandb.Html(result["html_str"])
+
+        # Log similarity analysis plots
+        for plot_name, plot_path in similarity_plots.items():
+            wandb_items[f"divergent_code_similarity/{plot_name}"] = wandb.Image(
+                plot_path
+            )
 
         for demo_key, kr in killer_results.items():
             if kr is None:

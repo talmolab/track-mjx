@@ -41,7 +41,10 @@ from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.domain_randomization import domain_randomization_maker
 
-from moseq_ppo_networks import make_moseq_decoder_ppo_networks
+from moseq_ppo_networks import (
+    make_moseq_decoder_ppo_networks,
+    make_moseq_recurrent_decoder_ppo_networks,
+)
 from moseq_ppo import train as moseq_train
 from moseq_env_wrapper import MoSeqImitation
 
@@ -88,6 +91,9 @@ def moseq_rollout_logging_fn(
     all_rollout_states: list[list] = []
     all_rollout_rewards: list[list] = []
 
+    # Determine if RNN mode (logging fn returns 3-tuple with hidden)
+    use_rnn = bool(cfg.network_config.get("use_rnn_decoder", False))
+
     for rollout_i in range(n_rollouts):
         key, subkey = jax.random.split(key)
         state = jit_reset(subkey)
@@ -96,9 +102,25 @@ def moseq_rollout_logging_fn(
         rollout_indices = []
         rollout_rewards = []
 
+        # Initialize RNN hidden state for this rollout
+        if use_rnn and ppo_network is not None:
+            hidden = ppo_network.policy_network.init_hidden(1)
+        else:
+            hidden = None
+
         for _ in range(episode_length):
             key, subkey = jax.random.split(key)
-            action, extras = jit_logging_inference_fn(params, state.obs, subkey, None)
+
+            if hidden is not None:
+                # RNN mode: logging fn carries hidden state
+                action, extras, hidden = jit_logging_inference_fn(
+                    params, state.obs, hidden, subkey
+                )
+            else:
+                # Feedforward mode
+                action, extras = jit_logging_inference_fn(
+                    params, state.obs, subkey, None
+                )
 
             if "code_idx" in extras:
                 rollout_indices.append(int(extras["code_idx"]))
@@ -110,6 +132,9 @@ def moseq_rollout_logging_fn(
             rollout_rewards.append(float(state.reward))
 
             if state.done:
+                # Reset hidden state on episode end
+                if hidden is not None and ppo_network is not None:
+                    hidden = ppo_network.policy_network.init_hidden(1)
                 break
 
         all_rollout_indices.append(np.array(rollout_indices))
@@ -340,17 +365,62 @@ def main(cfg: DictConfig) -> None:
     continuous_latent_dim = int(cfg.network_config.get("continuous_latent_dim", 16))
     kl_weight = float(cfg.network_config.get("kl_weight", 0.0))
 
-    # Network factory
-    network_factory = functools.partial(
-        make_moseq_decoder_ppo_networks,
-        num_codes=num_codes,
-        code_embed_dim=int(cfg.network_config.code_embed_dim),
-        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-        value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-        use_continuous_encoder=use_continuous_encoder,
-        encoder_layer_sizes=encoder_layer_sizes,
-        continuous_latent_dim=continuous_latent_dim,
+    # RNN decoder config
+    use_rnn_decoder = bool(cfg.network_config.get("use_rnn_decoder", False))
+    rnn_hidden_sizes = tuple(cfg.network_config.get("rnn_hidden_sizes", [256]))
+    rnn_cell_type = str(cfg.network_config.get("rnn_cell_type", "gru"))
+
+    # z_e annealing config
+    z_e_anneal = bool(cfg.network_config.get("z_e_anneal", False))
+    z_e_anneal_start_frac = float(cfg.network_config.get("z_e_anneal_start_frac", 0.3))
+    z_e_anneal_end_frac = float(cfg.network_config.get("z_e_anneal_end_frac", 0.7))
+
+    num_evals_total = int(
+        cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
     )
+
+    z_e_scale_fn = None
+    if z_e_anneal and use_continuous_encoder:
+        _start = z_e_anneal_start_frac * num_evals_total
+        _end = z_e_anneal_end_frac * num_evals_total
+        _range = max(_end - _start, 1.0)
+
+        def z_e_scale_fn(step, _s=_start, _r=_range, _e=_end):
+            frac = jnp.clip((step - _s) / _r, 0.0, 1.0)
+            return jnp.where(step < _s, 1.0, jnp.where(step > _e, 0.0, 1.0 - frac))
+
+        logging.info(
+            f"z_e annealing: start_step={_start:.0f}, end_step={_end:.0f} "
+            f"(of {num_evals_total} evals)"
+        )
+
+    # Network factory
+    if use_rnn_decoder:
+        network_factory = functools.partial(
+            make_moseq_recurrent_decoder_ppo_networks,
+            num_codes=num_codes,
+            code_embed_dim=int(cfg.network_config.code_embed_dim),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            use_continuous_encoder=use_continuous_encoder,
+            encoder_layer_sizes=encoder_layer_sizes,
+            continuous_latent_dim=continuous_latent_dim,
+            rnn_hidden_sizes=rnn_hidden_sizes,
+            rnn_cell_type=rnn_cell_type,
+        )
+        logging.info(
+            f"Using RNN decoder: cell={rnn_cell_type}, hidden={rnn_hidden_sizes}"
+        )
+    else:
+        network_factory = functools.partial(
+            make_moseq_decoder_ppo_networks,
+            num_codes=num_codes,
+            code_embed_dim=int(cfg.network_config.code_embed_dim),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            use_continuous_encoder=use_continuous_encoder,
+            encoder_layer_sizes=encoder_layer_sizes,
+            continuous_latent_dim=continuous_latent_dim,
+        )
 
     # WandB
     wandb_logging.initialize_wandb_logging(
@@ -360,17 +430,32 @@ def main(cfg: DictConfig) -> None:
         existing_run_state=existing_run_state,
     )
 
+    if use_rnn_decoder:
+        arch_name = (
+            "moseq_rnn_encoder_decoder"
+            if use_continuous_encoder
+            else "moseq_rnn_decoder"
+        )
+    else:
+        arch_name = (
+            "moseq_encoder_decoder" if use_continuous_encoder else "moseq_decoder"
+        )
+
     wandb.config.update(
         {
-            "arch": (
-                "moseq_encoder_decoder" if use_continuous_encoder else "moseq_decoder"
-            ),
+            "arch": arch_name,
             "num_codes": num_codes,
             "code_embed_dim": int(cfg.network_config.code_embed_dim),
             "codes_path": str(codes_path) if codes_path else "random",
             "use_continuous_encoder": use_continuous_encoder,
             "continuous_latent_dim": continuous_latent_dim,
             "kl_weight": kl_weight,
+            "use_rnn_decoder": use_rnn_decoder,
+            "rnn_hidden_sizes": list(rnn_hidden_sizes) if use_rnn_decoder else None,
+            "rnn_cell_type": rnn_cell_type if use_rnn_decoder else None,
+            "z_e_anneal": z_e_anneal,
+            "z_e_anneal_start_frac": z_e_anneal_start_frac if z_e_anneal else None,
+            "z_e_anneal_end_frac": z_e_anneal_end_frac if z_e_anneal else None,
         }
     )
 
@@ -424,6 +509,9 @@ def main(cfg: DictConfig) -> None:
         num_codes=num_codes,
         code_embed_dim=int(cfg.network_config.code_embed_dim),
         kl_weight=kl_weight,
+        use_rnn_decoder=use_rnn_decoder,
+        rnn_hidden_sizes=rnn_hidden_sizes,
+        z_e_scale_fn=z_e_scale_fn,
     )
 
     # Rollout env for logging

@@ -135,6 +135,9 @@ network_config:
   continuous_latent_dim: 4          # Dimension of continuous head (mean/logvar)
   kl_weight: 0.0                   # KL regularization weight (0 = no KL loss)
 
+  # Reference-direct encoder input (state-independent codes)
+  use_ref_direct_encoder: false
+
   # Code chunking (Semi-MDP temporal commitment)
   use_code_chunking: false
   code_commitment_horizon: 0

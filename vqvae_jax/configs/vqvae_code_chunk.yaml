@@ -135,13 +135,16 @@ network_config:
   proprio_noise_scale: 0.20
 
   # Continuous latent settings
-  use_continuous_latent: false
+  use_continuous_latent: true
   continuous_latent_dim: 4
-  kl_weight: 0.3
+  kl_weight: 0.2
+
+  # Reference-direct encoder input (state-independent codes)
+  use_ref_direct_encoder: true
 
   # Code chunking (Semi-MDP temporal commitment) — ENABLED
   use_code_chunking: true
-  code_commitment_horizon: 15         # H=10 -> 0.2s at 50Hz, 4 windows per unroll
+  code_commitment_horizon: 15         # H=15 -> 0.3s at 50Hz, 4 windows per unroll
 
   # Disable KL schedule (not used in VQ-VAE)
   kl_schedule: false
@@ -181,7 +184,7 @@ train_setup:
     entropy_cost: 1e-2
     reward_scaling: 1
     normalize_observations: true
-    unroll_length: 40                 # 4 windows of H=10 -> 3 D0 transitions per unroll
+    unroll_length: 60                 # 4 windows of H=15 -> 3 D0 transitions per unroll
     seed: 0
     get_activation: false
     deterministic_eval: true

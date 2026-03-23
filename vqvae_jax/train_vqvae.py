@@ -37,6 +37,8 @@ from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
+from ref_direct_imitation import RefDirectImitation
+
 # Import from main codebase
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
@@ -507,8 +509,12 @@ def main(cfg: DictConfig) -> None:
         )
 
     # Create environments (dict observations, no flattening)
-    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
+    use_ref_direct = bool(cfg.network_config.get("use_ref_direct_encoder", False))
+    EnvClass = RefDirectImitation if use_ref_direct else imitation.Imitation
+    if use_ref_direct:
+        logging.info("Using RefDirectImitation (state-independent encoder input)")
+    env = EnvClass(config=env_cfg_ml, clips=train_clips)
+    test_env = EnvClass(config=env_cfg_ml, clips=test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -719,7 +725,7 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = imitation.Imitation(config=rollout_cfg, clips=test_clips)
+    rollout_env = EnvClass(config=rollout_cfg, clips=test_clips)
 
     # Define jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

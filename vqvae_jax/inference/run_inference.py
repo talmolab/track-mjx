@@ -46,6 +46,9 @@ from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.config import utils as config_utils
 
+sys.path.insert(0, str(VQVAE_DIR))
+from ref_direct_imitation import RefDirectImitation
+
 from .h5_utils import RolloutData, save_rollout_h5
 
 # Import checkpoint utils from analysis module
@@ -354,8 +357,12 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
     commitment_horizon = int(
         vq_cfg.network_config.get("code_commitment_horizon", 10)
     )
+    use_ref_direct = bool(
+        vq_cfg.network_config.get("use_ref_direct_encoder", False)
+    )
     logging.info(f"  use_code_chunking: {use_code_chunking}")
     logging.info(f"  use_continuous_latent: {use_continuous_latent}")
+    logging.info(f"  use_ref_direct_encoder: {use_ref_direct}")
 
     # Create appropriate inference function based on mode
     stickiness_bias = vq_cfg.network_config.get("stickiness_bias", 0.0)
@@ -425,7 +432,8 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
         clips = reference_clips
         num_clips = cfg.inference.num_clips
 
-    env = imitation.Imitation(config=env_cfg_ml, clips=clips)
+    EnvClass = RefDirectImitation if use_ref_direct else imitation.Imitation
+    env = EnvClass(config=env_cfg_ml, clips=clips)
 
     # Run inference
     logging.info("\nRunning inference...")

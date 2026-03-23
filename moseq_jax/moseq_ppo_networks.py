@@ -24,7 +24,7 @@ from track_mjx.agent.observation_utils import (
     normalize_dict_obs,
 )
 
-from moseq_decoder_network import MoSeqDecoderNetwork
+from moseq_decoder_network import MoSeqEncoderDecoderNetwork
 
 # ---------------------------------------------------------------------------
 # Network container
@@ -78,13 +78,17 @@ def make_moseq_inference_fn(
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_net = jax.random.split(key_sample)
 
-            action_params, code_idx = policy_network.apply(
+            action_params, code_idx, cont_mean, cont_logvar = policy_network.apply(
                 *params, observations, key_net, deterministic=deterministic
             )
 
+            extras = {"code_idx": code_idx}
+            if cont_mean is not None:
+                extras["cont_mean"] = cont_mean
+
             if deterministic:
                 action = jnp.array(action_dist.mode(action_params))
-                return action, {"code_idx": code_idx}
+                return action, extras
 
             raw_actions = action_dist.sample_no_postprocessing(
                 action_params, key_sample
@@ -92,11 +96,9 @@ def make_moseq_inference_fn(
             log_prob = action_dist.log_prob(action_params, raw_actions)
             action = action_dist.postprocess(raw_actions)
 
-            return jnp.array(action), {
-                "code_idx": code_idx,
-                "log_prob": log_prob,
-                "raw_action": raw_actions,
-            }
+            extras["log_prob"] = log_prob
+            extras["raw_action"] = raw_actions
+            return jnp.array(action), extras
 
         return policy
 
@@ -126,13 +128,17 @@ def make_moseq_logging_inference_fn(
         ) -> tuple[types.Action, types.Extra]:
             key_sample, key_net = jax.random.split(key_sample)
 
-            action_params, code_idx = policy_network.apply(
+            action_params, code_idx, cont_mean, cont_logvar = policy_network.apply(
                 *params, observations, key_net, deterministic=deterministic
             )
 
+            extras = {"code_idx": code_idx, "indices": code_idx}
+            if cont_mean is not None:
+                extras["cont_mean"] = cont_mean
+
             if deterministic:
                 action = jnp.array(action_dist.mode(action_params))
-                return action, {"code_idx": code_idx, "indices": code_idx}
+                return action, extras
 
             raw_actions = action_dist.sample_no_postprocessing(
                 action_params, key_sample
@@ -140,12 +146,9 @@ def make_moseq_logging_inference_fn(
             log_prob = action_dist.log_prob(action_params, raw_actions)
             action = action_dist.postprocess(raw_actions)
 
-            return jnp.array(action), {
-                "code_idx": code_idx,
-                "indices": code_idx,
-                "log_prob": log_prob,
-                "raw_action": raw_actions,
-            }
+            extras["log_prob"] = log_prob
+            extras["raw_action"] = raw_actions
+            return jnp.array(action), extras
 
         return logging_policy
 
@@ -158,7 +161,7 @@ def make_moseq_logging_inference_fn(
 
 
 def _make_moseq_policy_network(
-    module: MoSeqDecoderNetwork,
+    module: MoSeqEncoderDecoderNetwork,
     obs_sizes: Mapping[str, int],
 ) -> networks.FeedForwardNetwork:
     """Build a FeedForwardNetwork that normalizes obs and forwards to *module*.
@@ -278,6 +281,9 @@ def make_moseq_decoder_ppo_networks(
     code_embed_dim: int = 16,
     decoder_hidden_layer_sizes: tuple[int, ...] = (512, 512, 256, 256),
     value_hidden_layer_sizes: tuple[int, ...] = (512, 512, 256, 256),
+    use_continuous_encoder: bool = False,
+    encoder_layer_sizes: tuple[int, ...] = (256, 128),
+    continuous_latent_dim: int = 16,
 ) -> MoSeqPPONetworks:
     """Create MoSeq decoder PPO networks for imitation learning.
 
@@ -288,19 +294,23 @@ def make_moseq_decoder_ppo_networks(
         code_embed_dim: Code embedding dimension.
         decoder_hidden_layer_sizes: Decoder MLP layer sizes.
         value_hidden_layer_sizes: Value MLP layer sizes.
+        use_continuous_encoder: Whether to add a continuous encoder.
+        encoder_layer_sizes: Encoder MLP layer sizes.
+        continuous_latent_dim: Continuous latent dimension (= code_embed_dim).
 
     Returns:
         MoSeqPPONetworks containing policy, value, and action distribution.
     """
     action_dist = distribution.NormalTanhDistribution(event_size=action_size)
 
-    # Build dummy obs_sizes dict for the decoder module (needs proprio size)
-    # The module itself only uses proprioception + kpms_code
-    module = MoSeqDecoderNetwork(
+    module = MoSeqEncoderDecoderNetwork(
         num_codes=num_codes,
         code_embed_dim=code_embed_dim,
         decoder_layer_sizes=decoder_hidden_layer_sizes,
         action_param_size=action_dist.param_size,
+        use_continuous_encoder=use_continuous_encoder,
+        encoder_layer_sizes=encoder_layer_sizes,
+        continuous_latent_dim=continuous_latent_dim,
     )
 
     # Build the obs_sizes dict for init (include kpms_code)

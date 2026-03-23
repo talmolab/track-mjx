@@ -12,7 +12,6 @@ import imageio
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-
 # =============================================================================
 # FONT LOADING
 # =============================================================================
@@ -92,7 +91,11 @@ def get_code_colormap(num_codes: int) -> np.ndarray:
 
 
 def get_nature_colormap(num_codes: int) -> np.ndarray:
-    """Generate a Nature-style colormap with muted, professional colors.
+    """Generate a colormap with visually distinct, compression-resistant colors.
+
+    Uses qualitative colormaps (tab10/tab20 cycled) instead of continuous
+    gradients (viridis) so that adjacent codes have clearly different colors
+    and MP4 compression cannot smear one code's color into another's.
 
     Args:
         num_codes: Number of codes in the codebook.
@@ -105,15 +108,32 @@ def get_nature_colormap(num_codes: int) -> np.ndarray:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    # Use a perceptually uniform colormap with better aesthetics
     if num_codes <= 10:
-        cmap = plt.cm.Set3
+        cmap = plt.cm.tab10
+        colors = [cmap(i / max(num_codes - 1, 1)) for i in range(num_codes)]
     elif num_codes <= 20:
         cmap = plt.cm.tab20
+        colors = [cmap(i / max(num_codes - 1, 1)) for i in range(num_codes)]
     else:
-        cmap = plt.cm.viridis
+        # Cycle tab20 colors with hue shifts to cover any number of codes.
+        # This guarantees bold, distinct colors that survive MP4 compression,
+        # unlike viridis which maps adjacent codes to near-identical colors.
+        base = plt.cm.tab20
+        base_colors = [base(i / 20) for i in range(20)]
+        colors = []
+        for i in range(num_codes):
+            c = base_colors[i % 20]
+            # For cycles beyond the first 20, shift brightness to distinguish
+            cycle = i // 20
+            if cycle > 0:
+                # Darken or lighten by mixing toward black/white
+                factor = 0.7 if cycle % 2 == 1 else 1.0
+                shift = 0.15 * ((cycle + 1) // 2)
+                c = tuple(
+                    min(1.0, max(0.0, c[ch] * factor + shift)) for ch in range(3)
+                ) + (c[3],)
+            colors.append(c)
 
-    colors = [cmap(i / max(num_codes - 1, 1)) for i in range(num_codes)]
     return np.array(
         [[int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)] for c in colors]
     )

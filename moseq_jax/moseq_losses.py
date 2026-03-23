@@ -97,6 +97,7 @@ def compute_moseq_ppo_loss(
     clipping_epsilon: float = 0.3,
     normalize_advantage: bool = True,
     vf_coefficient: float = 0.5,
+    kl_weight: float = 0.0,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute standard PPO loss for the MoSeq decoder policy.
 
@@ -127,7 +128,7 @@ def compute_moseq_ppo_loss(
     data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
     # Forward pass through decoder policy
-    policy_logits, code_idx = policy_network.apply(
+    policy_logits, code_idx, cont_mean, cont_logvar = policy_network.apply(
         normalizer_params, params.policy, data.observation, policy_key
     )
 
@@ -171,7 +172,17 @@ def compute_moseq_ppo_loss(
     entropy = jnp.mean(action_dist.entropy(policy_logits, entropy_key))
     entropy_loss = entropy_cost * -entropy
 
-    total_loss = policy_loss + v_loss + entropy_loss
+    # KL loss for continuous encoder
+    if cont_mean is not None and kl_weight > 0:
+        kl_loss = 0.5 * jnp.mean(
+            jnp.exp(cont_logvar) + cont_mean**2 - 1.0 - cont_logvar
+        )
+        scaled_kl_loss = kl_weight * kl_loss
+    else:
+        kl_loss = jnp.array(0.0)
+        scaled_kl_loss = jnp.array(0.0)
+
+    total_loss = policy_loss + v_loss + entropy_loss + scaled_kl_loss
 
     # Code transition rate (diagnostic only)
     if code_idx.shape[0] > 1:
@@ -210,8 +221,8 @@ def compute_moseq_ppo_loss(
         "scaled_ce_stickiness_loss": jnp.array(0.0),
         "prob_of_prev_code": jnp.array(0.0),
         "scaled_codebook_entropy_reg": jnp.array(0.0),
-        "kl_loss": jnp.array(0.0),
-        "scaled_kl_loss": jnp.array(0.0),
+        "kl_loss": kl_loss,
+        "scaled_kl_loss": scaled_kl_loss,
     }
 
     return total_loss, metrics

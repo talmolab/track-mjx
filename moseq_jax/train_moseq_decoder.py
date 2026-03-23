@@ -280,6 +280,12 @@ def main(cfg: DictConfig) -> None:
     # Load or generate KPMS codes
     codes_path = cfg.kpms_config.get("codes_path", None)
 
+    # Resolve relative paths against the repo root (Hydra may change CWD)
+    if codes_path and not Path(codes_path).is_absolute():
+        resolved = REPO_ROOT / codes_path
+        if resolved.exists():
+            codes_path = str(resolved)
+
     if codes_path and Path(codes_path).exists():
         codes_data = np.load(codes_path)
         train_codes = codes_data["train_codes"]
@@ -324,6 +330,16 @@ def main(cfg: DictConfig) -> None:
 
     logging.info("Using MoSeq Decoder PPO Pipeline")
 
+    # Continuous encoder config
+    use_continuous_encoder = bool(
+        cfg.network_config.get("use_continuous_encoder", False)
+    )
+    encoder_layer_sizes = tuple(
+        cfg.network_config.get("encoder_layer_sizes", [256, 128])
+    )
+    continuous_latent_dim = int(cfg.network_config.get("continuous_latent_dim", 16))
+    kl_weight = float(cfg.network_config.get("kl_weight", 0.0))
+
     # Network factory
     network_factory = functools.partial(
         make_moseq_decoder_ppo_networks,
@@ -331,6 +347,9 @@ def main(cfg: DictConfig) -> None:
         code_embed_dim=int(cfg.network_config.code_embed_dim),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        use_continuous_encoder=use_continuous_encoder,
+        encoder_layer_sizes=encoder_layer_sizes,
+        continuous_latent_dim=continuous_latent_dim,
     )
 
     # WandB
@@ -343,10 +362,15 @@ def main(cfg: DictConfig) -> None:
 
     wandb.config.update(
         {
-            "arch": "moseq_decoder",
+            "arch": (
+                "moseq_encoder_decoder" if use_continuous_encoder else "moseq_decoder"
+            ),
             "num_codes": num_codes,
             "code_embed_dim": int(cfg.network_config.code_embed_dim),
             "codes_path": str(codes_path) if codes_path else "random",
+            "use_continuous_encoder": use_continuous_encoder,
+            "continuous_latent_dim": continuous_latent_dim,
+            "kl_weight": kl_weight,
         }
     )
 
@@ -399,6 +423,7 @@ def main(cfg: DictConfig) -> None:
         ),
         num_codes=num_codes,
         code_embed_dim=int(cfg.network_config.code_embed_dim),
+        kl_weight=kl_weight,
     )
 
     # Rollout env for logging

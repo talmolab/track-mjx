@@ -69,6 +69,7 @@ def train(
     # MoSeq-specific (kept for interface parity with vq_ppo.train)
     num_codes: int = 32,
     code_embed_dim: int = 16,
+    kl_weight: float = 0.0,
 ):
     """Train a MoSeq decoder PPO agent.
 
@@ -83,6 +84,9 @@ def train(
     original_make_logging_inference_fn = original_ppo_networks.make_logging_inference_fn
 
     # Build wrapped loss with same signature as compute_ppo_loss
+    # Capture kl_weight from outer scope
+    _kl_weight = kl_weight
+
     def moseq_loss_wrapper(
         params,
         normalizer_params,
@@ -91,7 +95,7 @@ def train(
         step,
         ppo_network,
         entropy_cost=1e-4,
-        latent_kl_weight=1e-3,  # ignored
+        latent_kl_weight=1e-3,  # ignored (using _kl_weight from closure)
         latent_ar1_weight=1e-3,  # ignored
         discounting=0.9,
         reward_scaling=1.0,
@@ -116,6 +120,7 @@ def train(
             clipping_epsilon=clipping_epsilon,
             normalize_advantage=normalize_advantage,
             vf_coefficient=vf_coefficient,
+            kl_weight=_kl_weight,
         )
 
     # Monkey-patch

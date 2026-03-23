@@ -157,7 +157,7 @@ def create_rollout_generator(
             )
 
         if not is_recurrent:
-            init_carry = (init_state, jax.random.PRNGKey(0))
+            init_carry = (init_state, act_rng)
             (_, _), (
                 states,
                 ctrls,
@@ -167,7 +167,7 @@ def create_rollout_generator(
             ) = jax.lax.scan(_step_fn_mlp, init_carry, None, length=num_steps)
         else:
             hidden = jax.tree.map(lambda x: x[0], init_hidden_fn(1))
-            init_carry = (init_state, jax.random.PRNGKey(0), hidden)
+            init_carry = (init_state, act_rng, hidden)
             (_, _, _), (
                 states,
                 ctrls,

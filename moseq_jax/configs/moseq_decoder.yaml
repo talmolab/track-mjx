@@ -118,8 +118,8 @@ network_config:
   continuous_latent_dim: 4       # compact continuous latent
   kl_weight: 0.05               # KL regularization weight (weaker)
 
-  # RNN Decoder (optional, default: feedforward MLP)
-  use_rnn_decoder: false
+  # RNN Decoder (GRU-based recurrent decoder for temporal coherence)
+  use_rnn_decoder: true
   rnn_cell_type: gru
   rnn_hidden_sizes: [256]
 

@@ -4,10 +4,11 @@ This guide covers both single-run training and full hyperparameter sweeps.
 
 ## Overview
 
-Pipeline A trains a **decoder-only** policy where behavioral codes come from
-**Keypoint-MoSeq (KPMS)** instead of the VQ-VAE encoder. This enables comparing
-a pre-computed tokenizer (KPMS) against the learned tokenizer (VQ-VAE) for
-motor control.
+Pipeline A trains an **RNN decoder** policy where behavioral codes come from
+**Keypoint-MoSeq (KPMS)** instead of the VQ-VAE encoder. The GRU-based
+recurrent decoder maintains hidden state across timesteps, enabling temporally
+coherent control within a syllable. An optional continuous encoder (z_e) acts
+as a training scaffold that can be annealed to zero.
 
 ```
 KPMS Sweep → Code Generation → Decoder RL Training
@@ -54,6 +55,10 @@ sweep:
 decoder:
   continuous_latent_dims: [2, 4]      # encoder bottleneck size
   kl_weights: [0.01, 0.1]            # KL regularization
+  use_rnn_decoder: true               # GRU-based recurrent decoder (default)
+  rnn_hidden_sizes: [256]             # GRU hidden dimensions
+  use_continuous_encoder: true        # reference trajectory -> z_e
+  z_e_anneal: false                   # gradually reduce z_e contribution
   num_timesteps: 500_000_000          # training budget per run
 ```
 
@@ -131,14 +136,26 @@ python train_moseq_decoder.py \
     kpms_config.codes_path=outputs/kpms_sweep/best_codes.npz
 ```
 
+By default this uses the **RNN decoder** (`use_rnn_decoder: true` in
+`moseq_decoder.yaml`).
+
 #### Config Overrides
 
 ```bash
-# Continuous encoder settings
+# RNN decoder is the default — override hidden sizes or disable
+python train_moseq_decoder.py \
+    network_config.rnn_hidden_sizes="[512]"
+
+# Fall back to feedforward MLP decoder
+python train_moseq_decoder.py \
+    network_config.use_rnn_decoder=false
+
+# Continuous encoder + z_e annealing
 python train_moseq_decoder.py \
     network_config.use_continuous_encoder=true \
     network_config.continuous_latent_dim=4 \
-    network_config.kl_weight=0.1
+    network_config.kl_weight=0.1 \
+    network_config.z_e_anneal=true
 
 # Shorter run for testing
 python train_moseq_decoder.py \
@@ -187,20 +204,24 @@ search ranges.
 
 | Parameter | Effect | Recommended Range |
 |-----------|--------|-------------------|
+| `use_rnn_decoder` | Use GRU recurrent decoder (default `true`). | `true` / `false` |
+| `rnn_hidden_sizes` | GRU hidden dimensions per layer. | `[256]` or `[256, 256]` |
 | `continuous_latent_dim` | Encoder bottleneck. Smaller = more compressed. | 2–8 |
 | `kl_weight` | KL penalty on continuous latent. Higher = more regularized. | 0.01–0.5 |
 | `code_embed_dim` | Discrete code embedding size. | 8–32 |
-| `decoder_layer_sizes` | Decoder MLP width/depth. | Default `[512,512,256,256]` |
+| `z_e_anneal` | Gradually reduce z_e scale to 0 during training. | `true` / `false` |
+| `z_e_anneal_start_frac` | Fraction of training when annealing starts. | 0.3 |
+| `z_e_anneal_end_frac` | Fraction of training when z_e reaches 0. | 0.7 |
 
 ---
 
 ## Architecture
 
-### Policy Network (with continuous encoder)
+### RNN Decoder Policy (default, `use_rnn_decoder: true`)
 
 ```
 obs["imitation_target"]
-    → MLP encoder → (mean, logvar) → reparameterize → z_e
+    → MLP encoder → (mean, logvar) → reparameterize → z_e   (optional)
 
 obs["kpms_code"] (float)
     → round → Embed(num_codes, embed_dim) → code_emb
@@ -208,6 +229,22 @@ obs["kpms_code"] (float)
 obs["proprioception"]
     → flatten → proprio
 
+concat(code_emb, z_e * z_e_scale, proprio)
+    → GRU(hidden_state) → new_hidden_state
+    → Dense → action_params
+
+Hidden state is carried across timesteps within an episode and reset on
+episode boundaries. During training, `apply_sequence` uses `jax.lax.scan`
+to replay the full unroll with hidden state threading.
+
+z_e_scale can be annealed from 1.0 → 0.0 during training to gradually
+remove the encoder scaffold, forcing the decoder to rely on code_emb +
+hidden state alone.
+```
+
+### Feedforward Decoder Policy (`use_rnn_decoder: false`)
+
+```
 concat(code_emb, z_e, proprio)
     → Dense → SiLU → LayerNorm  ×4
     → Dense → action_params
@@ -229,7 +266,9 @@ concat(flat_obs, code_emb)
 ### Loss
 
 Standard PPO (clipped surrogate + value + entropy) + KL on continuous latent.
-No VQ-VAE auxiliary losses.
+No VQ-VAE auxiliary losses. For the RNN decoder, the loss recomputes the forward
+pass via `apply_sequence` (scan) to thread hidden state, with stored PRNG keys
+for deterministic z_e replay.
 
 ---
 
@@ -242,6 +281,9 @@ No VQ-VAE auxiliary losses.
 | `moseq/eval_transition_rate` | Fraction of steps with code changes |
 | `moseq/code_sequence` | Timeline visualization of code usage |
 | `kl_loss` | KL divergence of continuous latent |
+| `hidden_state_norm` | Mean GRU hidden state norm (RNN decoder only) |
+| `z_e_scale` | Current z_e multiplier (tracks annealing progress) |
+| `z_e_norm` | Mean L2 norm of continuous latent |
 
 ---
 

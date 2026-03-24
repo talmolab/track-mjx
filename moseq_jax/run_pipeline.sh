@@ -87,6 +87,17 @@ KL_WEIGHTS=$(read_yaml decoder.kl_weights)
 NUM_TIMESTEPS=$(read_yaml decoder.num_timesteps)
 EVAL_EVERY=$(read_yaml decoder.eval_every)
 
+# RNN decoder config
+USE_RNN_DECODER=$(read_yaml decoder.use_rnn_decoder)
+RNN_HIDDEN_SIZES=$(read_yaml decoder.rnn_hidden_sizes)
+RNN_CELL_TYPE=$(read_yaml decoder.rnn_cell_type)
+USE_CONTINUOUS_ENCODER=$(read_yaml decoder.use_continuous_encoder)
+
+# z_e annealing
+Z_E_ANNEAL=$(read_yaml decoder.z_e_anneal)
+Z_E_ANNEAL_START=$(read_yaml decoder.z_e_anneal_start_frac)
+Z_E_ANNEAL_END=$(read_yaml decoder.z_e_anneal_end_frac)
+
 # WandB
 WANDB_PROJECT=$(read_yaml wandb.project)
 WANDB_GROUP=$(read_yaml wandb.group)
@@ -99,6 +110,8 @@ echo "Sweep output:    $SWEEP_OUTPUT"
 echo "Codes output:    $CODES_OUTPUT"
 echo "Latent dims:     $LATENT_DIMS"
 echo "KL weights:      $KL_WEIGHTS"
+echo "RNN decoder:     $USE_RNN_DECODER (hidden=$RNN_HIDDEN_SIZES, cell=$RNN_CELL_TYPE)"
+echo "z_e annealing:   $Z_E_ANNEAL"
 echo "Timesteps/run:   $NUM_TIMESTEPS"
 echo "Skip KPMS:       $SKIP_KPMS"
 echo "Skip codegen:    $SKIP_CODEGEN"
@@ -271,7 +284,13 @@ print(m['$setting']['num_codes'])
                 network_config.num_codes="$NUM_CODES" \
                 network_config.continuous_latent_dim="$latent_dim" \
                 network_config.kl_weight="$kl_weight" \
-                network_config.use_continuous_encoder=true \
+                network_config.use_continuous_encoder="$USE_CONTINUOUS_ENCODER" \
+                network_config.use_rnn_decoder="$USE_RNN_DECODER" \
+                network_config.rnn_hidden_sizes="[$RNN_HIDDEN_SIZES]" \
+                network_config.rnn_cell_type="$RNN_CELL_TYPE" \
+                network_config.z_e_anneal="$Z_E_ANNEAL" \
+                network_config.z_e_anneal_start_frac="$Z_E_ANNEAL_START" \
+                network_config.z_e_anneal_end_frac="$Z_E_ANNEAL_END" \
                 train_setup.run_name="$RUN_NAME" \
                 train_setup.train_config.num_timesteps="$NUM_TIMESTEPS" \
                 train_setup.eval_every="$EVAL_EVERY" \

@@ -39,6 +39,18 @@ codegen:
 decoder:
   continuous_latent_dims: [2, 4]
   kl_weights: [0.01, 0.1]
+
+  # RNN decoder (GRU-based recurrent decoder for temporal coherence)
+  use_rnn_decoder: true
+  rnn_hidden_sizes: [256]
+  rnn_cell_type: gru
+  use_continuous_encoder: true
+
+  # z_e annealing (gradually reduce encoder contribution)
+  z_e_anneal: false
+  z_e_anneal_start_frac: 0.3
+  z_e_anneal_end_frac: 0.7
+
   # Training budget per run (shorter for sweep, increase for final runs)
   num_timesteps: 500_000_000
   eval_every: 50_000_000

@@ -234,13 +234,28 @@ def get_obs_sizes(obs: Mapping[str, Any]) -> dict[str, int]:
     Handles nested observations by flattening to determine sizes.
     Works with any set of observation keys (not just the two normalizer keys).
 
+    For flat arrays (jnp.ndarray), uses shape[-1] directly to avoid
+    _flatten_nested_obs collapsing multiple batch dimensions (e.g., from
+    pmap/vmap wrapping) into the feature dimension. For nested dicts,
+    delegates to _flatten_nested_obs which correctly detects batch dims.
+
     Args:
         obs: Example observation dict with flat or nested arrays.
+            May have leading batch dimensions from vmapping.
 
     Returns:
         Dict mapping observation keys to their flattened sizes.
     """
-    return {key: _flatten_nested_obs(obs[key]).shape[-1] for key in obs}
+
+    def _feature_dim(value: Any) -> int:
+        if isinstance(value, jnp.ndarray):
+            # Flat array: last dim is always the feature dim, regardless
+            # of how many batch dims precede it.
+            return value.shape[-1]
+        # Nested dict/pytree: flatten to determine total feature size.
+        return _flatten_nested_obs(value).shape[-1]
+
+    return {key: _feature_dim(obs[key]) for key in obs}
 
 
 def convert_flat_to_dict_normalizer(

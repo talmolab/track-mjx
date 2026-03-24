@@ -184,7 +184,7 @@ train_setup:
     entropy_cost: 1e-2
     reward_scaling: 1
     normalize_observations: true
-    unroll_length: 60                 # 4 windows of H=15 -> 3 D0 transitions per unroll
+    unroll_length: 40                 # 3 windows of H=15 -> 3 D0 transitions per unroll
     seed: 0
     get_activation: false
     deterministic_eval: true

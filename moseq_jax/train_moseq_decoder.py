@@ -57,42 +57,26 @@ def _setup_environment() -> None:
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
-def moseq_rollout_logging_fn(
+def _run_eval_rollouts(
     env,
     jit_reset,
     jit_step,
-    cfg,
-    model_path,
-    current_step,
     jit_logging_inference_fn,
     params,
-    policy_params_fn_key,
-    render_video=True,
-    ppo_network=None,
+    key,
+    episode_length,
+    n_rollouts,
+    use_rnn,
+    ppo_network,
 ):
-    """Rollout logging with MoSeq code metrics and video rendering."""
-    import matplotlib
+    """Run eval rollouts and return raw data (no logging).
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    num_codes = cfg.network_config.num_codes
-
-    physics_steps_per_ctrl = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
-    steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
-        cfg.env_config.sim_dt * physics_steps_per_ctrl
-    )
-    episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
-
-    n_rollouts = cfg.render_config.get("eval_rollouts_for_transition", 16)
-
-    key = policy_params_fn_key
+    Returns:
+        ``(all_indices, all_states, all_rewards, final_key)``
+    """
     all_rollout_indices: list[np.ndarray] = []
     all_rollout_states: list[list] = []
     all_rollout_rewards: list[list] = []
-
-    # Determine if RNN mode (logging fn returns 3-tuple with hidden)
-    use_rnn = bool(cfg.network_config.get("use_rnn_decoder", False))
 
     for rollout_i in range(n_rollouts):
         key, subkey = jax.random.split(key)
@@ -102,7 +86,6 @@ def moseq_rollout_logging_fn(
         rollout_indices = []
         rollout_rewards = []
 
-        # Initialize RNN hidden state for this rollout
         if use_rnn and ppo_network is not None:
             hidden = ppo_network.policy_network.init_hidden(1)
         else:
@@ -112,18 +95,15 @@ def moseq_rollout_logging_fn(
             key, subkey = jax.random.split(key)
 
             if hidden is not None:
-                # RNN mode: batch-wrap unbatched obs for GRU (expects 2D)
                 batched_obs = jax.tree_util.tree_map(lambda x: x[None], state.obs)
                 action, extras, hidden = jit_logging_inference_fn(
                     params, batched_obs, hidden, subkey
                 )
-                # Squeeze batch dim from action
                 action = jax.tree_util.tree_map(lambda x: x[0], action)
                 extras = jax.tree_util.tree_map(
                     lambda x: x[0] if hasattr(x, "shape") else x, extras
                 )
             else:
-                # Feedforward mode
                 action, extras = jit_logging_inference_fn(
                     params, state.obs, subkey, None
                 )
@@ -138,7 +118,6 @@ def moseq_rollout_logging_fn(
             rollout_rewards.append(float(state.reward))
 
             if state.done:
-                # Reset hidden state on episode end
                 if hidden is not None and ppo_network is not None:
                     hidden = ppo_network.policy_network.init_hidden(1)
                 break
@@ -147,11 +126,53 @@ def moseq_rollout_logging_fn(
         all_rollout_states.append(rollout_states)
         all_rollout_rewards.append(rollout_rewards)
 
-    # Use first rollout for metrics and video
+    return all_rollout_indices, all_rollout_states, all_rollout_rewards, key
+
+
+def _log_eval_metrics(
+    all_rollout_indices,
+    all_rollout_states,
+    all_rollout_rewards,
+    env,
+    cfg,
+    model_path,
+    current_step,
+    num_codes,
+    render_video,
+    metric_prefix="moseq",
+    video_prefix="videos",
+):
+    """Log metrics, code plots, and videos from eval rollouts.
+
+    Returns:
+        ``episode_reward_mean`` (float) for reward gap computation.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # Episode reward stats
+    episode_rewards = [sum(r) for r in all_rollout_rewards if len(r) > 0]
+    episode_lengths = [len(r) for r in all_rollout_rewards if len(r) > 0]
+
+    reward_mean = float(np.mean(episode_rewards)) if episode_rewards else 0.0
+    reward_std = float(np.std(episode_rewards)) if episode_rewards else 0.0
+    length_mean = float(np.mean(episode_lengths)) if episode_lengths else 0.0
+
+    wandb.log(
+        {
+            f"{metric_prefix}/episode_reward_mean": reward_mean,
+            f"{metric_prefix}/episode_reward_std": reward_std,
+            f"{metric_prefix}/episode_length_mean": length_mean,
+        },
+        commit=False,
+    )
+
+    # Code metrics from first rollout
     indices_array = all_rollout_indices[0] if all_rollout_indices else None
 
     if indices_array is not None and len(indices_array) > 0:
-        # Code utilization metrics
         code_counts = np.bincount(indices_array, minlength=num_codes)
         probs = code_counts / (code_counts.sum() + 1e-8)
         perplexity = float(np.exp(-np.sum(probs * np.log(probs + 1e-8))))
@@ -163,12 +184,12 @@ def moseq_rollout_logging_fn(
 
         wandb.log(
             {
-                "moseq/perplexity": perplexity,
-                "moseq/codebook_utilization": utilization,
-                "moseq/codes_used": codes_used,
-                "moseq/eval_transition_rate": transition_rate,
-                "moseq/eval_transitions": code_transitions,
-                "moseq/eval_steps": len(indices_array),
+                f"{metric_prefix}/perplexity": perplexity,
+                f"{metric_prefix}/codebook_utilization": utilization,
+                f"{metric_prefix}/codes_used": codes_used,
+                f"{metric_prefix}/eval_transition_rate": transition_rate,
+                f"{metric_prefix}/eval_transitions": code_transitions,
+                f"{metric_prefix}/eval_steps": len(indices_array),
             },
             commit=False,
         )
@@ -180,7 +201,8 @@ def moseq_rollout_logging_fn(
         axes[0].set_xlabel("Code Index")
         axes[0].set_ylabel("Count")
         axes[0].set_title(
-            f"Code Usage (perplexity={perplexity:.2f}, used={codes_used}/{num_codes})"
+            f"Code Usage (perplexity={perplexity:.2f}, "
+            f"used={codes_used}/{num_codes})"
         )
         axes[0].set_xlim(-0.5, num_codes - 0.5)
 
@@ -197,17 +219,16 @@ def moseq_rollout_logging_fn(
         axes[1].set_ylim(-0.5, num_codes - 0.5)
 
         plt.tight_layout()
-        wandb.log({"moseq/code_sequence": wandb.Image(fig)}, commit=False)
+        wandb.log({f"{metric_prefix}/code_sequence": wandb.Image(fig)}, commit=False)
         plt.close(fig)
 
-    # Render video from first rollout
+    # Render video
     if render_video and all_rollout_states:
-        import mujoco
-
         try:
             from vqvae_jax.analysis.rendering import render_rollout_to_video
 
             render_fps = cfg.render_config.render_fps
+            n_rollouts = len(all_rollout_states)
             num_videos = min(
                 int(cfg.render_config.get("num_eval_rollout_videos", 1)),
                 n_rollouts,
@@ -220,7 +241,9 @@ def moseq_rollout_logging_fn(
                     if vid_i < len(all_rollout_indices)
                     else None
                 )
-                video_path = f"{model_path}/{current_step}_vid{vid_i}.mp4"
+                video_path = (
+                    f"{model_path}/{current_step}_{metric_prefix}_vid{vid_i}.mp4"
+                )
 
                 render_rollout_to_video(
                     env=env,
@@ -236,12 +259,110 @@ def moseq_rollout_logging_fn(
                 )
 
                 wandb.log(
-                    {f"videos/rollout_{vid_i}": wandb.Video(video_path, format="mp4")},
+                    {
+                        f"{video_prefix}/{metric_prefix}_rollout_{vid_i}": wandb.Video(
+                            video_path, format="mp4"
+                        )
+                    },
                     commit=False,
                 )
 
         except Exception as e:
-            logging.warning(f"Failed to render video: {e}")
+            logging.warning(f"Failed to render {metric_prefix} video: {e}")
+
+    return reward_mean
+
+
+def moseq_rollout_logging_fn(
+    env,
+    jit_reset,
+    jit_step,
+    cfg,
+    model_path,
+    current_step,
+    jit_logging_inference_fn,
+    params,
+    policy_params_fn_key,
+    render_video=True,
+    ppo_network=None,
+    jit_decoder_only_inference_fn=None,
+):
+    """Rollout logging with MoSeq code metrics and video rendering.
+
+    Runs full eval (z_e=1) and optionally decoder-only eval (z_e=0).
+    """
+    num_codes = cfg.network_config.num_codes
+
+    physics_steps_per_ctrl = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
+    steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
+        cfg.env_config.sim_dt * physics_steps_per_ctrl
+    )
+    episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
+    n_rollouts = cfg.render_config.get("eval_rollouts_for_transition", 16)
+    use_rnn = bool(cfg.network_config.get("use_rnn_decoder", False))
+
+    key = policy_params_fn_key
+
+    # --- Full eval (z_e=1.0) ---
+    all_indices, all_states, all_rewards, key = _run_eval_rollouts(
+        env,
+        jit_reset,
+        jit_step,
+        jit_logging_inference_fn,
+        params,
+        key,
+        episode_length,
+        n_rollouts,
+        use_rnn,
+        ppo_network,
+    )
+    full_reward = _log_eval_metrics(
+        all_indices,
+        all_states,
+        all_rewards,
+        env,
+        cfg,
+        model_path,
+        current_step,
+        num_codes,
+        render_video,
+        metric_prefix="moseq",
+        video_prefix="videos",
+    )
+
+    # --- Decoder-only eval (z_e=0.0) ---
+    if jit_decoder_only_inference_fn is not None:
+        do_indices, do_states, do_rewards, key = _run_eval_rollouts(
+            env,
+            jit_reset,
+            jit_step,
+            jit_decoder_only_inference_fn,
+            params,
+            key,
+            episode_length,
+            n_rollouts,
+            use_rnn,
+            ppo_network,
+        )
+        decoder_only_reward = _log_eval_metrics(
+            do_indices,
+            do_states,
+            do_rewards,
+            env,
+            cfg,
+            model_path,
+            current_step,
+            num_codes,
+            render_video,
+            metric_prefix="decoder_only",
+            video_prefix="videos",
+        )
+
+        # Reward gap: how much performance is lost without z_e
+        wandb.log(
+            {"decoder_only/reward_gap": full_reward - decoder_only_reward},
+            commit=False,
+        )
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="moseq_decoder")
@@ -530,6 +651,9 @@ def main(cfg: DictConfig) -> None:
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
 
+    # Cache for decoder-only inference fn (created lazily once ppo_network available)
+    _decoder_only_fn_cache = {}
+
     def _policy_params_fn_wrapper(
         current_step,
         jit_logging_inference_fn,
@@ -538,6 +662,27 @@ def main(cfg: DictConfig) -> None:
         render_video=True,
         ppo_network=None,
     ):
+        # Create decoder-only inference fn (z_e=0) from ppo_network
+        jit_decoder_only_fn = None
+        if use_continuous_encoder and ppo_network is not None:
+            if "fn" not in _decoder_only_fn_cache:
+                from moseq_ppo_networks import (
+                    make_moseq_recurrent_logging_inference_fn,
+                    make_moseq_logging_inference_fn,
+                )
+
+                if use_rnn_decoder:
+                    make_logging = make_moseq_recurrent_logging_inference_fn(
+                        ppo_network
+                    )
+                else:
+                    make_logging = make_moseq_logging_inference_fn(ppo_network)
+
+                _decoder_only_fn_cache["fn"] = jax.jit(
+                    make_logging(deterministic=True, z_e_scale=0.0)
+                )
+            jit_decoder_only_fn = _decoder_only_fn_cache["fn"]
+
         return moseq_rollout_logging_fn(
             rollout_env,
             jit_reset,
@@ -550,6 +695,7 @@ def main(cfg: DictConfig) -> None:
             policy_params_fn_key=policy_params_fn_key,
             render_video=render_video,
             ppo_network=ppo_network,
+            jit_decoder_only_inference_fn=jit_decoder_only_fn,
         )
 
     make_inference_fn, params, _ = train_fn(

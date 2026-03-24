@@ -121,7 +121,9 @@ def make_moseq_logging_inference_fn(
         Where ``logging_policy_fn(params, obs, key, prev_indices) -> (action, extras)``
     """
 
-    def make_logging_policy(deterministic: bool = False) -> Callable:
+    def make_logging_policy(
+        deterministic: bool = False, z_e_scale: float = 1.0
+    ) -> Callable:
         policy_network = ppo_networks.policy_network
         action_dist = ppo_networks.parametric_action_distribution
 
@@ -134,7 +136,11 @@ def make_moseq_logging_inference_fn(
             key_sample, key_net = jax.random.split(key_sample)
 
             action_params, code_idx, cont_mean, cont_logvar = policy_network.apply(
-                *params, observations, key_net, deterministic=deterministic
+                *params,
+                observations,
+                key_net,
+                deterministic=deterministic,
+                z_e_scale=z_e_scale,
             )
 
             extras = {"code_idx": code_idx, "indices": code_idx}
@@ -201,8 +207,13 @@ def _make_moseq_policy_network(
         if raw_code is not None:
             normalized["kpms_code"] = raw_code
 
+        z_e_scale = kwargs.get("z_e_scale", 1.0)
         return module.apply(
-            policy_params, normalized, key=key, deterministic=deterministic
+            policy_params,
+            normalized,
+            key=key,
+            deterministic=deterministic,
+            z_e_scale=z_e_scale,
         )
 
     return networks.FeedForwardNetwork(init=init, apply=apply)
@@ -542,7 +553,9 @@ def make_moseq_recurrent_logging_inference_fn(
         Where ``logging_policy(params, obs, hidden, key) -> (action, extras, new_hidden)``
     """
 
-    def make_logging_policy(deterministic: bool = False) -> Callable:
+    def make_logging_policy(
+        deterministic: bool = False, z_e_scale: float = 1.0
+    ) -> Callable:
         policy_network = ppo_networks.policy_network
         action_dist = ppo_networks.parametric_action_distribution
 
@@ -561,7 +574,12 @@ def make_moseq_recurrent_logging_inference_fn(
                 cont_logvar,
                 new_hidden,
             ) = policy_network.apply(
-                *params, observations, hidden, key_net, deterministic=deterministic
+                *params,
+                observations,
+                hidden,
+                key_net,
+                deterministic=deterministic,
+                z_e_scale=z_e_scale,
             )
 
             extras = {"code_idx": code_idx, "indices": code_idx}

@@ -62,6 +62,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
         obs: dict[str, jnp.ndarray],
         key=None,
         deterministic: bool = False,
+        z_e_scale: float = 1.0,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None]:
         """Forward pass.
 
@@ -73,6 +74,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
             key: PRNG key for reparameterization (used when
                 ``use_continuous_encoder=True`` and ``deterministic=False``).
             deterministic: If True, use mean (no sampling) for continuous latent.
+            z_e_scale: Multiplier on z_e (1.0 = full, 0.0 = decoder-only).
 
         Returns:
             Tuple of ``(action_params, code_idx, mean, logvar)``.
@@ -118,8 +120,9 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
                 eps = jax.random.normal(key, mean.shape)
                 z_e = mean + jnp.exp(0.5 * logvar) * eps
 
-            # Decoder input: code_emb + z_e + proprio
-            x = jnp.concatenate([code_emb, z_e, proprio], axis=-1)
+            # Decoder input: code_emb + z_e_scaled + proprio
+            z_e_scaled = z_e * z_e_scale
+            x = jnp.concatenate([code_emb, z_e_scaled, proprio], axis=-1)
         else:
             mean = None
             logvar = None

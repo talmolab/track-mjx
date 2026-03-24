@@ -112,9 +112,15 @@ def moseq_rollout_logging_fn(
             key, subkey = jax.random.split(key)
 
             if hidden is not None:
-                # RNN mode: logging fn carries hidden state
+                # RNN mode: batch-wrap unbatched obs for GRU (expects 2D)
+                batched_obs = jax.tree_util.tree_map(lambda x: x[None], state.obs)
                 action, extras, hidden = jit_logging_inference_fn(
-                    params, state.obs, hidden, subkey
+                    params, batched_obs, hidden, subkey
+                )
+                # Squeeze batch dim from action
+                action = jax.tree_util.tree_map(lambda x: x[0], action)
+                extras = jax.tree_util.tree_map(
+                    lambda x: x[0] if hasattr(x, "shape") else x, extras
                 )
             else:
                 # Feedforward mode

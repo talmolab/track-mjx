@@ -238,15 +238,25 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             else:
                 if key is None:
                     key = self.make_rng("params")
-                # Handle per-sample keys [B, 2] vs single key [2]
+                # Split key before reparameterization (matches reference
+                # RecurrentIntentionNetwork pattern for PRNG hygiene)
                 if key.ndim > 1:
+                    # Per-sample keys [B, 2]: vmap split, use second half
+                    _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
 
                     def _reparam(k, m, lv):
                         return m + jnp.exp(0.5 * lv) * jax.random.normal(k, m.shape)
 
-                    z_e = jax.vmap(_reparam)(key, mean, logvar)
+                    z_e = jax.vmap(_reparam)(encoder_rng, mean, logvar)
+                elif mean.ndim == 1:
+                    # Per-sample key but unbatched obs: use first key
+                    _, encoder_rng = jax.random.split(key[0])
+                    eps = jax.random.normal(encoder_rng, mean.shape)
+                    z_e = mean + jnp.exp(0.5 * logvar) * eps
                 else:
-                    eps = jax.random.normal(key, mean.shape)
+                    # Single key [2]: split for encoder
+                    _, encoder_rng = jax.random.split(key)
+                    eps = jax.random.normal(encoder_rng, mean.shape)
                     z_e = mean + jnp.exp(0.5 * logvar) * eps
 
             z_e_scaled = z_e * z_e_scale
@@ -336,6 +346,16 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         def _reset_hidden(hidden_list, done_t):
             done_expanded = done_t[..., None]
             return [jnp.where(done_expanded, 0.0, h) for h in hidden_list]
+
+        # Validate stored_keys shape if provided
+        if stored_keys is not None:
+            ref_obs = jax.tree_util.tree_leaves(obs_seq)[0]
+            expected_shape = (ref_obs.shape[0], ref_obs.shape[1], 2)
+            if stored_keys.shape != expected_shape:
+                raise ValueError(
+                    f"stored_keys has shape {stored_keys.shape}, expected "
+                    f"{expected_shape}. stored_keys must have shape [T, B, 2]."
+                )
 
         if stored_keys is not None:
 

@@ -477,6 +477,7 @@ class VQIntentionNetwork(nn.Module):
     proprio_noise_scale: float = 0.0
     use_continuous_latent: bool = False
     continuous_latent_dim: int = 4
+    use_ref_joints_encoder: bool = False
 
     def setup(self):
         """Initialize encoder, quantizer, and decoder submodules."""
@@ -536,7 +537,11 @@ class VQIntentionNetwork(nn.Module):
             (optional) extras: Dict of activations if get_activation=True
                 (appended as 5th element).
         """
-        traj = obs["imitation_target"]
+        traj = (
+            obs["ref_joints"]
+            if self.use_ref_joints_encoder
+            else obs["imitation_target"]
+        )
         egocentric_obs = obs["proprioception"]
 
         # PRNG key management
@@ -676,7 +681,11 @@ class VQIntentionNetwork(nn.Module):
             logvar: Shape [B, latent_dim] or None.
             new_chunk_state: Tuple of (new_held_d0, new_tau), each shape [B].
         """
-        traj = obs["imitation_target"]
+        traj = (
+            obs["ref_joints"]
+            if self.use_ref_joints_encoder
+            else obs["imitation_target"]
+        )
         egocentric_obs = obs["proprioception"]
         H = commitment_horizon
 
@@ -817,7 +826,11 @@ class VQIntentionNetwork(nn.Module):
             logvar: Shape [T, B, latent_dim] when continuous=True, else None.
             tau: Timer values, shape [T, B].
         """
-        traj = obs["imitation_target"]  # [T, B, traj_dim]
+        traj = (
+            obs["ref_joints"]
+            if self.use_ref_joints_encoder
+            else obs["imitation_target"]
+        )  # [T, B, traj_dim]
         egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
         T, B = traj.shape[0], traj.shape[1]
         H = commitment_horizon
@@ -1004,7 +1017,11 @@ class VQIntentionNetwork(nn.Module):
             all_indices: Tuple of D arrays, each shape [T, B].
             logvar: Shape [T, B, latent_dim] when continuous=True, else None.
         """
-        traj = obs["imitation_target"]  # [T, B, traj_dim]
+        traj = (
+            obs["ref_joints"]
+            if self.use_ref_joints_encoder
+            else obs["imitation_target"]
+        )  # [T, B, traj_dim]
         egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
 
         # PRNG key management for temporal path
@@ -1232,6 +1249,7 @@ def make_vq_intention_policy(
     proprio_noise_scale: float = 0.0,
     use_continuous_latent: bool = False,
     continuous_latent_dim: int = 4,
+    use_ref_joints_encoder: bool = False,
 ) -> VQPolicyNetwork:
     """Create a VQ-VAE intention-based policy network.
 
@@ -1249,6 +1267,8 @@ def make_vq_intention_policy(
         use_rotation: If True, use Householder rotation-augmented STE.
         coupled_residual_grad: If True and use_rotation, couple depth
             gradients through the rotation transform (STAR-style).
+        use_ref_joints_encoder: If True, encoder reads obs["ref_joints"]
+            instead of obs["imitation_target"].
 
     Returns:
         VQPolicyNetwork with init, apply, and apply_temporal methods.
@@ -1269,6 +1289,7 @@ def make_vq_intention_policy(
         proprio_noise_scale=proprio_noise_scale,
         use_continuous_latent=use_continuous_latent,
         continuous_latent_dim=continuous_latent_dim,
+        use_ref_joints_encoder=use_ref_joints_encoder,
     )
 
     def apply(
@@ -1289,7 +1310,10 @@ def make_vq_intention_policy(
             logvar: logvar when use_continuous_latent=True, else None.
             (optional) extras: Dict of activations if get_activation=True.
         """
+        ref_joints = obs.get("ref_joints")
         obs = normalize_dict_obs(obs, processor_params)
+        if ref_joints is not None:
+            obs["ref_joints"] = ref_joints
         return policy_module.apply(
             policy_params,
             obs=obs,
@@ -1314,7 +1338,10 @@ def make_vq_intention_policy(
             all_indices: Tuple of D arrays, each shape [T, B].
             logvar: Shape [T, B, latent_dim] or None.
         """
+        ref_joints = obs.get("ref_joints")
         obs = normalize_dict_obs(obs, processor_params)
+        if ref_joints is not None:
+            obs["ref_joints"] = ref_joints
         return policy_module.apply(
             policy_params,
             obs=obs,
@@ -1342,7 +1369,10 @@ def make_vq_intention_policy(
             logvar: Shape [T, B, latent_dim] or None.
             tau: Timer values, shape [T, B].
         """
+        ref_joints = obs.get("ref_joints")
         obs = normalize_dict_obs(obs, processor_params)
+        if ref_joints is not None:
+            obs["ref_joints"] = ref_joints
         return policy_module.apply(
             policy_params,
             obs=obs,
@@ -1373,7 +1403,10 @@ def make_vq_intention_policy(
             logvar: Shape [B, latent_dim] or None.
             new_chunk_state: Tuple of (new_held_d0, new_tau), each [B].
         """
+        ref_joints = obs.get("ref_joints")
         obs = normalize_dict_obs(obs, processor_params)
+        if ref_joints is not None:
+            obs["ref_joints"] = ref_joints
         return policy_module.apply(
             policy_params,
             obs=obs,
@@ -1390,6 +1423,8 @@ def make_vq_intention_policy(
         "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
+    if use_ref_joints_encoder and "ref_joints" in obs_sizes:
+        dummy_obs["ref_joints"] = jnp.zeros((1, obs_sizes["ref_joints"]))
     dummy_key = jax.random.PRNGKey(0)
 
     return VQPolicyNetwork(

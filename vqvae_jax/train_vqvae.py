@@ -37,7 +37,7 @@ from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
-from ref_direct_imitation import RefDirectImitation
+from ref_joints_imitation import RefJointsImitation
 
 # Import from main codebase
 from track_mjx.config import utils
@@ -457,7 +457,7 @@ def main(cfg: DictConfig) -> None:
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
 
     # Prepare config
-    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
+    cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
@@ -509,10 +509,12 @@ def main(cfg: DictConfig) -> None:
         )
 
     # Create environments (dict observations, no flattening)
-    use_ref_direct = bool(cfg.network_config.get("use_ref_direct_encoder", False))
-    EnvClass = RefDirectImitation if use_ref_direct else imitation.Imitation
-    if use_ref_direct:
-        logging.info("Using RefDirectImitation (state-independent encoder input)")
+    use_ref_joints_encoder = bool(
+        cfg.network_config.get("use_ref_joints_encoder", False)
+    )
+    EnvClass = RefJointsImitation if use_ref_joints_encoder else imitation.Imitation
+    if use_ref_joints_encoder:
+        logging.info("Using RefJointsImitation (raw ref_joints encoder input)")
     env = EnvClass(config=env_cfg_ml, clips=train_clips)
     test_env = EnvClass(config=env_cfg_ml, clips=test_clips)
 
@@ -602,6 +604,7 @@ def main(cfg: DictConfig) -> None:
             proprio_noise_scale=proprio_noise_scale,
             use_continuous_latent=use_continuous_latent,
             continuous_latent_dim=continuous_latent_dim,
+            use_ref_joints_encoder=use_ref_joints_encoder,
         )
     else:
         network_factory = functools.partial(
@@ -622,6 +625,7 @@ def main(cfg: DictConfig) -> None:
             proprio_noise_scale=proprio_noise_scale,
             use_continuous_latent=use_continuous_latent,
             continuous_latent_dim=continuous_latent_dim,
+            use_ref_joints_encoder=use_ref_joints_encoder,
         )
 
     # Initialize wandb

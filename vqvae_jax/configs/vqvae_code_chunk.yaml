@@ -139,8 +139,8 @@ network_config:
   continuous_latent_dim: 4
   kl_weight: 0.2
 
-  # Reference-direct encoder input (state-independent codes)
-  use_ref_direct_encoder: true
+  # Reference-joints encoder input (state-independent codes)
+  use_ref_joints_encoder: true
 
   # Code chunking (Semi-MDP temporal commitment) — ENABLED
   use_code_chunking: true

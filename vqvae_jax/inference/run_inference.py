@@ -47,7 +47,7 @@ from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.config import utils as config_utils
 
 sys.path.insert(0, str(VQVAE_DIR))
-from ref_direct_imitation import RefDirectImitation
+from ref_joints_imitation import RefJointsImitation
 
 from .h5_utils import RolloutData, save_rollout_h5
 
@@ -222,9 +222,7 @@ def run_inference_chunked(
     rng = jax.random.PRNGKey(seed)
 
     for clip_idx in range(num_clips):
-        logging.info(
-            f"Running chunked inference on clip {clip_idx + 1}/{num_clips}..."
-        )
+        logging.info(f"Running chunked inference on clip {clip_idx + 1}/{num_clips}...")
 
         rng, reset_rng = jax.random.split(rng)
         state = jit_reset(reset_rng)
@@ -242,9 +240,7 @@ def run_inference_chunked(
             obs = flatten_obs_dict(state.obs)
 
             rng, action_rng = jax.random.split(rng)
-            action, extras, chunk_state = inference_fn(
-                obs, chunk_state, action_rng
-            )
+            action, extras, chunk_state = inference_fn(obs, chunk_state, action_rng)
 
             # Extract primary (L0) code index
             code_idx = int(extras["indices"])
@@ -348,21 +344,18 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
     logging.info(f"  Checkpoint step: {step}")
 
     # Detect mode from checkpoint config
-    use_code_chunking = bool(
-        vq_cfg.network_config.get("use_code_chunking", False)
-    )
+    use_code_chunking = bool(vq_cfg.network_config.get("use_code_chunking", False))
     use_continuous_latent = bool(
         vq_cfg.network_config.get("use_continuous_latent", False)
     )
-    commitment_horizon = int(
-        vq_cfg.network_config.get("code_commitment_horizon", 10)
-    )
-    use_ref_direct = bool(
-        vq_cfg.network_config.get("use_ref_direct_encoder", False)
+    commitment_horizon = int(vq_cfg.network_config.get("code_commitment_horizon", 10))
+    use_ref_joints_encoder = bool(
+        vq_cfg.network_config.get("use_ref_joints_encoder", False)
+        or vq_cfg.network_config.get("use_ref_direct_encoder", False)
     )
     logging.info(f"  use_code_chunking: {use_code_chunking}")
     logging.info(f"  use_continuous_latent: {use_continuous_latent}")
-    logging.info(f"  use_ref_direct_encoder: {use_ref_direct}")
+    logging.info(f"  use_ref_joints_encoder: {use_ref_joints_encoder}")
 
     # Create appropriate inference function based on mode
     stickiness_bias = vq_cfg.network_config.get("stickiness_bias", 0.0)
@@ -379,13 +372,11 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
             f"  Code chunking ENABLED (H={commitment_horizon}), "
             f"using chunked inference"
         )
-        chunked_inference_fn, initial_chunk_state_fn = (
-            load_vq_chunked_inference_fn(
-                vq_cfg,
-                policy_params,
-                commitment_horizon=commitment_horizon,
-                deterministic=True,
-            )
+        chunked_inference_fn, initial_chunk_state_fn = load_vq_chunked_inference_fn(
+            vq_cfg,
+            policy_params,
+            commitment_horizon=commitment_horizon,
+            deterministic=True,
         )
         inference_fn = None  # Not used in chunked mode
     elif use_stickiness:
@@ -401,7 +392,7 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
 
     # Create environment
     logging.info("\nCreating environment...")
-    (_, cfg_dict, env_cfg_ml) = config_utils.prepare_config(cfg)
+    _, cfg_dict, env_cfg_ml = config_utils.prepare_config(cfg)
 
     # Split-aware clip selection
     data_split = cfg.inference.get("data_split", "all")
@@ -432,7 +423,7 @@ def run_inference_pipeline(cfg: DictConfig) -> str:
         clips = reference_clips
         num_clips = cfg.inference.num_clips
 
-    EnvClass = RefDirectImitation if use_ref_direct else imitation.Imitation
+    EnvClass = RefJointsImitation if use_ref_joints_encoder else imitation.Imitation
     env = EnvClass(config=env_cfg_ml, clips=clips)
 
     # Run inference

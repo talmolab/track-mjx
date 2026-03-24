@@ -232,6 +232,7 @@ def get_obs_sizes(obs: Mapping[str, Any]) -> dict[str, int]:
     """Extract observation sizes from an example observation dict.
 
     Handles nested observations by flattening to determine sizes.
+    Works with any set of observation keys (not just the two normalizer keys).
 
     Args:
         obs: Example observation dict with flat or nested arrays.
@@ -239,11 +240,7 @@ def get_obs_sizes(obs: Mapping[str, Any]) -> dict[str, int]:
     Returns:
         Dict mapping observation keys to their flattened sizes.
     """
-    flat_obs = flatten_obs_dict(obs)
-    return {
-        "imitation_target": flat_obs["imitation_target"].shape[-1],
-        "proprioception": flat_obs["proprioception"].shape[-1],
-    }
+    return {key: _flatten_nested_obs(obs[key]).shape[-1] for key in obs}
 
 
 def convert_flat_to_dict_normalizer(

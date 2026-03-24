@@ -358,6 +358,7 @@ def make_vq_chunked_ppo_networks(
     proprio_noise_scale: float = 0.0,
     use_continuous_latent: bool = False,
     continuous_latent_dim: int = 4,
+    use_ref_joints_encoder: bool = False,
 ) -> VQPPOImitationNetworks:
     """Create VQ-VAE PPO networks with D0 temporal commitment (code chunking).
 
@@ -383,6 +384,7 @@ def make_vq_chunked_ppo_networks(
             intermediate steps).
         proprio_noise_scale: Gaussian noise std on normalized proprio.
         use_continuous_latent: If True, encoder outputs (mean, logvar).
+        use_ref_joints_encoder: If True, encoder reads ref_joints obs key.
 
     Returns:
         VQPPOImitationNetworks containing policy and augmented value network.
@@ -414,10 +416,14 @@ def make_vq_chunked_ppo_networks(
         proprio_noise_scale=proprio_noise_scale,
         use_continuous_latent=use_continuous_latent,
         continuous_latent_dim=continuous_latent_dim,
+        use_ref_joints_encoder=use_ref_joints_encoder,
     )
 
+    # Value network only sees imitation_target + proprioception (not ref_joints)
+    value_obs_sizes = {k: v for k, v in obs_sizes.items() if k != "ref_joints"}
+
     value_network = make_vq_augmented_value_network(
-        obs_sizes=obs_sizes,
+        obs_sizes=value_obs_sizes,
         num_codes=num_codes,
         commitment_horizon=commitment_horizon,
         hidden_layer_sizes=value_hidden_layer_sizes,
@@ -625,6 +631,7 @@ def make_vq_intention_ppo_networks(
     proprio_noise_scale: float = 0.0,
     use_continuous_latent: bool = False,
     continuous_latent_dim: int = 4,
+    use_ref_joints_encoder: bool = False,
 ) -> VQPPOImitationNetworks:
     """Create VQ-VAE intention-based PPO networks for imitation learning.
 
@@ -642,6 +649,7 @@ def make_vq_intention_ppo_networks(
         rvq_depth: Number of RVQ depth levels. 1 = vanilla VQ.
         use_rotation: If True, use Householder rotation-augmented STE.
         coupled_residual_grad: If True and use_rotation, couple depth gradients.
+        use_ref_joints_encoder: If True, encoder reads ref_joints obs key.
 
     Returns:
         VQPPOImitationNetworks containing policy, value, and action distribution.
@@ -666,10 +674,14 @@ def make_vq_intention_ppo_networks(
         proprio_noise_scale=proprio_noise_scale,
         use_continuous_latent=use_continuous_latent,
         continuous_latent_dim=continuous_latent_dim,
+        use_ref_joints_encoder=use_ref_joints_encoder,
     )
 
+    # Value network only sees imitation_target + proprioception (not ref_joints)
+    value_obs_sizes = {k: v for k, v in obs_sizes.items() if k != "ref_joints"}
+
     value_network = make_vq_dict_value_network(
-        obs_sizes=obs_sizes,
+        obs_sizes=value_obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
     )
 

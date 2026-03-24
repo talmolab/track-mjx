@@ -80,10 +80,18 @@ def _get_obs_sizes_from_cfg(cfg: DictConfig) -> dict[str, int]:
     # Convert to new format
     if hasattr(net_cfg, "observation_size") and hasattr(net_cfg, "reference_obs_size"):
         proprio_size = net_cfg.observation_size - net_cfg.reference_obs_size
-        return {
+        obs_sizes = {
             "imitation_target": net_cfg.reference_obs_size,
             "proprioception": proprio_size,
         }
+        # Add ref_joints size if encoder uses it
+        use_ref_joints = bool(
+            net_cfg.get("use_ref_joints_encoder", False)
+            or net_cfg.get("use_ref_direct_encoder", False)
+        )
+        if use_ref_joints and hasattr(net_cfg, "ref_joints_size"):
+            obs_sizes["ref_joints"] = net_cfg.ref_joints_size
+        return obs_sizes
 
     raise ValueError(
         "Config must have either 'obs_sizes' or both "
@@ -121,6 +129,11 @@ def make_vq_ppo_network_from_cfg(
     except TypeError:
         stickiness_bias = float(stickiness_bias)
 
+    use_ref_joints_encoder = bool(
+        cfg.network_config.get("use_ref_joints_encoder", False)
+        or cfg.network_config.get("use_ref_direct_encoder", False)
+    )
+
     return make_vq_intention_ppo_networks(
         obs_sizes=obs_sizes,
         action_size=cfg.network_config.action_size,
@@ -140,9 +153,8 @@ def make_vq_ppo_network_from_cfg(
         use_continuous_latent=bool(
             cfg.network_config.get("use_continuous_latent", False)
         ),
-        continuous_latent_dim=int(
-            cfg.network_config.get("continuous_latent_dim", 4)
-        ),
+        continuous_latent_dim=int(cfg.network_config.get("continuous_latent_dim", 4)),
+        use_ref_joints_encoder=use_ref_joints_encoder,
     )
 
 
@@ -469,6 +481,11 @@ def load_vq_chunked_inference_fn(
     except TypeError:
         stickiness_bias = float(stickiness_bias)
 
+    use_ref_joints_encoder = bool(
+        cfg.network_config.get("use_ref_joints_encoder", False)
+        or cfg.network_config.get("use_ref_direct_encoder", False)
+    )
+
     ppo_network = make_vq_chunked_ppo_networks(
         obs_sizes=obs_sizes,
         action_size=cfg.network_config.action_size,
@@ -484,15 +501,12 @@ def load_vq_chunked_inference_fn(
         rvq_depth=int(cfg.network_config.get("rvq_depth", 2)),
         use_rotation=bool(cfg.network_config.get("use_rotation", False)),
         coupled_residual_grad=False,  # Must be False for chunking
-        proprio_noise_scale=float(
-            cfg.network_config.get("proprio_noise_scale", 0.0)
-        ),
+        proprio_noise_scale=float(cfg.network_config.get("proprio_noise_scale", 0.0)),
         use_continuous_latent=bool(
             cfg.network_config.get("use_continuous_latent", False)
         ),
-        continuous_latent_dim=int(
-            cfg.network_config.get("continuous_latent_dim", 4)
-        ),
+        continuous_latent_dim=int(cfg.network_config.get("continuous_latent_dim", 4)),
+        use_ref_joints_encoder=use_ref_joints_encoder,
     )
 
     make_policy = make_vq_chunked_inference_fn(ppo_network, commitment_horizon)

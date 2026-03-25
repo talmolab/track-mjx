@@ -300,6 +300,7 @@ def make_moseq_decoder_ppo_networks(
     use_continuous_encoder: bool = False,
     encoder_layer_sizes: tuple[int, ...] = (256, 128),
     continuous_latent_dim: int = 16,
+    z_e_dropout_rate: float = 0.0,
 ) -> MoSeqPPONetworks:
     """Create MoSeq decoder PPO networks for imitation learning.
 
@@ -313,6 +314,7 @@ def make_moseq_decoder_ppo_networks(
         use_continuous_encoder: Whether to add a continuous encoder.
         encoder_layer_sizes: Encoder MLP layer sizes.
         continuous_latent_dim: Continuous latent dimension (= code_embed_dim).
+        z_e_dropout_rate: Probability of zeroing z_e per timestep during training.
 
     Returns:
         MoSeqPPONetworks containing policy, value, and action distribution.
@@ -327,6 +329,7 @@ def make_moseq_decoder_ppo_networks(
         use_continuous_encoder=use_continuous_encoder,
         encoder_layer_sizes=encoder_layer_sizes,
         continuous_latent_dim=continuous_latent_dim,
+        z_e_dropout_rate=z_e_dropout_rate,
     )
 
     # Build the obs_sizes dict for init (include kpms_code)
@@ -688,6 +691,7 @@ def make_moseq_recurrent_decoder_ppo_networks(
     continuous_latent_dim: int = 16,
     rnn_hidden_sizes: tuple[int, ...] = (256,),
     rnn_cell_type: str = "gru",
+    z_e_dropout_rate: float = 0.0,
 ) -> MoSeqRecurrentPPONetworks:
     """Create recurrent MoSeq decoder PPO networks.
 
@@ -702,6 +706,7 @@ def make_moseq_recurrent_decoder_ppo_networks(
         continuous_latent_dim: Continuous latent dimension.
         rnn_hidden_sizes: GRU hidden sizes per layer.
         rnn_cell_type: Only ``"gru"`` is supported.
+        z_e_dropout_rate: Probability of zeroing z_e per timestep during training.
 
     Returns:
         MoSeqRecurrentPPONetworks with recurrent policy + FF value network.
@@ -720,6 +725,7 @@ def make_moseq_recurrent_decoder_ppo_networks(
         use_continuous_encoder=use_continuous_encoder,
         encoder_layer_sizes=encoder_layer_sizes,
         continuous_latent_dim=continuous_latent_dim,
+        z_e_dropout_rate=z_e_dropout_rate,
     )
 
     init_obs_sizes = {**obs_sizes}

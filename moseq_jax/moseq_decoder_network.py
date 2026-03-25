@@ -49,6 +49,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
     use_continuous_encoder: bool = False
     encoder_layer_sizes: Sequence[int] = (256, 128)
     continuous_latent_dim: int = 16
+    z_e_dropout_rate: float = 0.0
 
     def setup(self):
         self.code_embedding = nn.Embed(
@@ -122,6 +123,15 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
 
             # Decoder input: code_emb + z_e_scaled + proprio
             z_e_scaled = z_e * z_e_scale
+
+            # z_e dropout (training only)
+            if not deterministic and self.z_e_dropout_rate > 0 and key is not None:
+                _, _, dropout_key = jax.random.split(key, 3)
+                keep = jax.random.bernoulli(
+                    dropout_key, 1.0 - self.z_e_dropout_rate, shape=mean.shape[:1]
+                ).astype(z_e_scaled.dtype)
+                z_e_scaled = z_e_scaled * keep[..., None]
+
             x = jnp.concatenate([code_emb, z_e_scaled, proprio], axis=-1)
         else:
             mean = None
@@ -172,6 +182,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
     use_continuous_encoder: bool = False
     encoder_layer_sizes: Sequence[int] = (256, 128)
     continuous_latent_dim: int = 16
+    z_e_dropout_rate: float = 0.0
 
     def setup(self):
         self.code_embedding = nn.Embed(
@@ -263,6 +274,21 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     z_e = mean + jnp.exp(0.5 * logvar) * eps
 
             z_e_scaled = z_e * z_e_scale
+
+            # z_e dropout: zero out entire z_e with prob p per sample (training only)
+            if not deterministic and self.z_e_dropout_rate > 0 and key is not None:
+                if key.ndim > 1:
+                    # Per-sample keys [B, 2]: derive dropout key per sample
+                    dropout_keys = jax.vmap(lambda k: jax.random.split(k, 3)[2])(key)
+                else:
+                    # Single key: split for dropout
+                    dropout_keys = jax.random.split(key, 3)[2]
+                # Bernoulli mask: shape [B] (or scalar), broadcast over latent dim
+                keep = jax.random.bernoulli(
+                    dropout_keys, 1.0 - self.z_e_dropout_rate, shape=mean.shape[:1]
+                ).astype(z_e_scaled.dtype)
+                z_e_scaled = z_e_scaled * keep[..., None]
+
             decoder_input = jnp.concatenate([code_emb, z_e_scaled, proprio], axis=-1)
         else:
             mean = None

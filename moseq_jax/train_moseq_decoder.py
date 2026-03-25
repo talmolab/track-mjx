@@ -491,6 +491,7 @@ def main(cfg: DictConfig) -> None:
     )
     continuous_latent_dim = int(cfg.network_config.get("continuous_latent_dim", 16))
     kl_weight = float(cfg.network_config.get("kl_weight", 0.0))
+    z_e_dropout_rate = float(cfg.network_config.get("z_e_dropout_rate", 0.0))
 
     # RNN decoder config
     use_rnn_decoder = bool(cfg.network_config.get("use_rnn_decoder", False))
@@ -531,6 +532,7 @@ def main(cfg: DictConfig) -> None:
             use_continuous_encoder=use_continuous_encoder,
             encoder_layer_sizes=encoder_layer_sizes,
             continuous_latent_dim=continuous_latent_dim,
+            z_e_dropout_rate=z_e_dropout_rate,
             rnn_hidden_sizes=rnn_hidden_sizes,
             rnn_cell_type=rnn_cell_type,
         )
@@ -547,6 +549,7 @@ def main(cfg: DictConfig) -> None:
             use_continuous_encoder=use_continuous_encoder,
             encoder_layer_sizes=encoder_layer_sizes,
             continuous_latent_dim=continuous_latent_dim,
+            z_e_dropout_rate=z_e_dropout_rate,
         )
 
     # WandB

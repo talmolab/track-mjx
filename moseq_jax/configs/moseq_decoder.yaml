@@ -116,12 +116,13 @@ network_config:
   use_continuous_encoder: true
   encoder_layer_sizes: [512, 256, 256]
   continuous_latent_dim: 4       # compact continuous latent
-  kl_weight: 0.2               # KL regularization weight (weaker)
+  kl_weight: 0.05               # KL regularization weight (weaker)
+  z_e_dropout_rate: 0.01         # prob of zeroing z_e per timestep (0 = off)
 
   # RNN Decoder (GRU-based recurrent decoder for temporal coherence)
   use_rnn_decoder: true
   rnn_cell_type: gru
-  rnn_hidden_sizes: [256]
+  rnn_hidden_sizes: [512, 512, 256, 256]
 
   # z_e Annealing (gradually reduce encoder contribution, default off)
   z_e_anneal: true

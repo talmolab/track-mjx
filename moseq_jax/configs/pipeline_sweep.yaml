@@ -15,9 +15,9 @@
 # =============================================================================
 
 data:
-  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
-  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
-  stac_xml_path: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
+  reference_data_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_reference_clips.h5
+  balanced_split_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_balanced_splits.json
+  stac_xml_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/stac-mjx/models/rodent.xml
 
 # --- Stage 1: KPMS fitting ---
 sweep:
@@ -32,7 +32,7 @@ sweep:
 # --- Stage 2: code generation (auto) ---
 codegen:
   sweep_results: outputs/pipeline_sweep/kpms/sweep_results.json
-  balanced_split: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+  balanced_split: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_balanced_splits.json
   output_dir: outputs/pipeline_sweep/codes
 
 # --- Stage 3: decoder RL training ---
@@ -51,8 +51,9 @@ decoder:
   z_e_anneal_start_frac: 0.3
   z_e_anneal_end_frac: 0.7
 
-  # Training budget per run (shorter for sweep, increase for final runs)
-  num_timesteps: 500_000_000
+  # Training budget per run
+  num_timesteps: 4_000_000_000
+  num_envs: 2048
   eval_every: 50_000_000
 
 output:

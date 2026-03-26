@@ -12,9 +12,9 @@
 # =============================================================================
 
 data:
-  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
-  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
-  stac_xml_path: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
+  reference_data_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_reference_clips.h5
+  balanced_split_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_balanced_splits.json
+  stac_xml_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/stac-mjx/models/rodent.xml
 
 sweep:
   num_states: [10, 20, 30, 50]
@@ -30,7 +30,7 @@ output:
 
 codegen:
   sweep_results: outputs/kpms_sweep/sweep_results.json
-  balanced_split: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+  balanced_split: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_balanced_splits.json
   output: outputs/kpms_sweep/best_codes.npz
 
 wandb:

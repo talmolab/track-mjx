@@ -35,7 +35,8 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.imitation import ReferenceClips
+from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
@@ -464,9 +465,19 @@ def main(cfg: DictConfig) -> None:
     # Use MoSeqImitation (subclass of Imitation) which injects kpms_code
     # directly in _get_obs. This ensures the obs pytree structure is consistent
     # from the start — no wrapper needed, no pytree mismatches in jax.lax.scan.
-    env = MoSeqImitation(config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes)
-    test_env = MoSeqImitation(
-        config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes
+    # MoSeqImitation injects kpms_code into obs["state"], then
+    # TrackMjxObsWrapper flattens nested obs values into 1D arrays, and
+    # LegacyObsWrapper strips the "state" hierarchy so the network receives
+    # flat {"task_obs": ..., "proprioception": ..., "kpms_code": ...}.
+    env = rodent_wrappers.LegacyObsWrapper(
+        rodent_wrappers.TrackMjxObsWrapper(
+            MoSeqImitation(config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes)
+        )
+    )
+    test_env = rodent_wrappers.LegacyObsWrapper(
+        rodent_wrappers.TrackMjxObsWrapper(
+            MoSeqImitation(config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes)
+        )
     )
 
     logging.info(f"Environment config: {cfg.env_config}")
@@ -644,8 +655,10 @@ def main(cfg: DictConfig) -> None:
     # Rollout env for logging
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = MoSeqImitation(
-        config=rollout_cfg, clips=test_clips, kpms_codes=test_codes
+    rollout_env = rodent_wrappers.LegacyObsWrapper(
+        rodent_wrappers.TrackMjxObsWrapper(
+            MoSeqImitation(config=rollout_cfg, clips=test_clips, kpms_codes=test_codes)
+        )
     )
 
     jit_reset = jax.jit(rollout_env.reset)

@@ -85,8 +85,8 @@ def flatten_obs_dict(obs: Mapping[str, Any]) -> dict[str, jnp.ndarray]:
         (obs_size,) for unbatched input or (batch_size, obs_size) for batched.
     """
     return {
-        "imitation_target": _flatten_nested_obs(obs["imitation_target"]),
-        "proprioception": _flatten_nested_obs(obs["proprioception"]),
+        key: val if isinstance(val, jnp.ndarray) else _flatten_nested_obs(val)
+        for key, val in obs.items()
     }
 
 
@@ -104,33 +104,44 @@ class DictRunningStatisticsState:
 
 def init_dict_normalizer(
     obs: Mapping[str, Any],
-) -> DictRunningStatisticsState:
+) -> DictRunningStatisticsState | dict:
     """Initialize running statistics state from an example observation dict.
 
     Handles nested observations by flattening to determine sizes.
+    Returns DictRunningStatisticsState for legacy 2-key obs (imitation_target +
+    proprioception), or a plain dict for arbitrary keys.
 
     Args:
         obs: Example observation dict with flat or nested arrays at each key.
 
     Returns:
-        Initialized DictRunningStatisticsState with proper shapes.
+        Initialized normalizer state with proper shapes.
     """
-    flat_obs = flatten_obs_dict(obs)
-    return DictRunningStatisticsState(
-        imitation_target=running_statistics.init_state(
-            specs.Array(flat_obs["imitation_target"].shape[-1:], jnp.dtype("float32"))
-        ),
-        proprioception=running_statistics.init_state(
-            specs.Array(flat_obs["proprioception"].shape[-1:], jnp.dtype("float32"))
-        ),
-    )
+    # Extract feature size from last dim (obs may be batched from vmap)
+    # Exclude kpms_code from normalizer — it's a discrete code, not continuous obs
+    obs_sizes = {k: v for k, v in get_obs_sizes(obs).items() if k != "kpms_code"}
+    if set(obs_sizes.keys()) == {"imitation_target", "proprioception"}:
+        return DictRunningStatisticsState(
+            imitation_target=running_statistics.init_state(
+                specs.Array((obs_sizes["imitation_target"],), jnp.dtype("float32"))
+            ),
+            proprioception=running_statistics.init_state(
+                specs.Array((obs_sizes["proprioception"],), jnp.dtype("float32"))
+            ),
+        )
+    return {
+        key: running_statistics.init_state(
+            specs.Array((size,), jnp.dtype("float32"))
+        )
+        for key, size in obs_sizes.items()
+    }
 
 
 def update_dict_normalizer(
-    state: DictRunningStatisticsState,
+    state: DictRunningStatisticsState | dict,
     obs: Mapping[str, Any],
     pmap_axis_name: str | None = None,
-) -> DictRunningStatisticsState:
+) -> DictRunningStatisticsState | dict:
     """Update running statistics from an observation dict.
 
     Handles nested observations by flattening before updating.
@@ -141,72 +152,58 @@ def update_dict_normalizer(
         pmap_axis_name: Axis name for pmap aggregation (optional).
 
     Returns:
-        Updated DictRunningStatisticsState.
+        Updated normalizer state.
     """
     flat_obs = flatten_obs_dict(obs)
-    return DictRunningStatisticsState(
-        imitation_target=running_statistics.update(
-            state.imitation_target,
-            flat_obs["imitation_target"],
-            pmap_axis_name=pmap_axis_name,
-        ),
-        proprioception=running_statistics.update(
-            state.proprioception,
-            flat_obs["proprioception"],
-            pmap_axis_name=pmap_axis_name,
-        ),
-    )
+    if isinstance(state, DictRunningStatisticsState):
+        return DictRunningStatisticsState(
+            imitation_target=running_statistics.update(
+                state.imitation_target,
+                flat_obs["imitation_target"],
+                pmap_axis_name=pmap_axis_name,
+            ),
+            proprioception=running_statistics.update(
+                state.proprioception,
+                flat_obs["proprioception"],
+                pmap_axis_name=pmap_axis_name,
+            ),
+        )
+    return {
+        key: running_statistics.update(
+            state[key], flat_obs[key], pmap_axis_name=pmap_axis_name,
+        )
+        for key in state
+    }
 
 
 def normalize_dict_obs(
     obs: Mapping[str, Any] | jnp.ndarray,
-    state: DictRunningStatisticsState,
+    state: DictRunningStatisticsState | dict,
 ) -> dict[str, jnp.ndarray]:
     """Normalize observation dict using running statistics.
 
     Handles nested observations by flattening each key before normalizing.
-    Also handles flat observations by splitting them using normalizer state shapes.
+    Works with arbitrary observation keys.
 
     Args:
-        obs: Observation dict with flat or nested arrays at each key,
-            or a flat JAX array (will be split using normalizer state shapes).
-        state: Running statistics state for normalization.
+        obs: Observation dict with flat or nested arrays at each key.
+        state: Running statistics state for normalization (DictRunningStatisticsState
+            or plain dict mapping keys to RunningStatisticsState).
 
     Returns:
         Dict with normalized flat observation arrays.
     """
-    # Check if obs is already a flat array (not a dict)
-    if not (hasattr(obs, "get") or isinstance(obs, Mapping)):
-        # obs is a flat JAX array - split it using normalizer state shapes
-        imitation_size = state.imitation_target.mean.shape[-1]
-        proprio_size = state.proprioception.mean.shape[-1]
-
-        # Handle both batched and unbatched observations
-        if obs.ndim == 1:
-            imitation_target = obs[:imitation_size]
-            proprioception = obs[imitation_size : imitation_size + proprio_size]
-        else:
-            imitation_target = obs[..., :imitation_size]
-            proprioception = obs[..., imitation_size : imitation_size + proprio_size]
-
-        return {
-            "imitation_target": running_statistics.normalize(
-                imitation_target, state.imitation_target
-            ),
-            "proprioception": running_statistics.normalize(
-                proprioception, state.proprioception
-            ),
-        }
-
-    # Flatten nested observations first
     flat_obs = flatten_obs_dict(obs)
+
+    def _get_state(key):
+        if isinstance(state, dict):
+            return state[key]
+        return getattr(state, key)
+
     return {
-        "imitation_target": running_statistics.normalize(
-            flat_obs["imitation_target"], state.imitation_target
-        ),
-        "proprioception": running_statistics.normalize(
-            flat_obs["proprioception"], state.proprioception
-        ),
+        key: running_statistics.normalize(flat_obs[key], _get_state(key))
+        for key in flat_obs
+        if (key in state if isinstance(state, dict) else hasattr(state, key))
     }
 
 
@@ -225,7 +222,7 @@ def concat_flat_dict_obs(obs: Mapping[str, jnp.ndarray]) -> jnp.ndarray:
     Returns:
         Single flat array with all observations concatenated.
     """
-    return jnp.concatenate([obs["imitation_target"], obs["proprioception"]], axis=-1)
+    return jnp.concatenate([obs[key] for key in sorted(obs.keys())], axis=-1)
 
 
 def get_obs_sizes(obs: Mapping[str, Any]) -> dict[str, int]:

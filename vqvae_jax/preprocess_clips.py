@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.imitation import ReferenceClips
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 

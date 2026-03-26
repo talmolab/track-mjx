@@ -15,7 +15,7 @@ env_config:
   solver: "newton"
   iterations: 5
   ls_iterations: 5
-  nconmax: 256
+  naconmax: 131072
   njmax: 128
   noslip_iterations: 0
 
@@ -26,10 +26,11 @@ env_config:
   clip_length: 250
   clip_set: "all"
   reference_length: 5
+  reference_stride: 1
   start_frame_range: [0, 20]
   qvel_init: "zeros"
   keep_clips_idx: null
-  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+  balanced_split_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_balanced_splits.json
 
   domain_randomization:
     use_domain_randomization: true
@@ -96,7 +97,7 @@ render_config:
 # =============================================================================
 kpms_config:
   # Path to pre-computed KPMS codes (.npz file from generate_codes.py)
-  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
+  codes_path: null  # overridden per-run by submit_pipeline.py
 
 # =============================================================================
 # Network Architecture - MoSeq Decoder-Only
@@ -171,7 +172,7 @@ logging_config:
   group_name: decoder_rl
   exp_name: moseq_decoder
   clip_id: 0
-  model_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints
+  model_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/moseq_jax/model_checkpoints
 
 # =============================================================================
 # Walker Configuration (same as vqvae_minimal.yaml)

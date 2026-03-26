@@ -18,7 +18,7 @@ from typing import Any, Mapping
 import jax.numpy as jnp
 from mujoco import mjx
 from vnl_playground.tasks.rodent.imitation import Imitation
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.imitation import ReferenceClips
 
 
 class MoSeqImitation(Imitation):
@@ -46,5 +46,7 @@ class MoSeqImitation(Imitation):
         frame = self._get_cur_frame(data, info)
         frame = jnp.clip(frame, 0, self._kpms_codes.shape[1] - 1)
         code = self._kpms_codes[info["reference_clip"], frame]
-        obs["kpms_code"] = code[..., None].astype(jnp.float32)
+        # Inject kpms_code into the "state" sub-dict (vnl-playground now nests
+        # obs under {"state": {"task_obs": ..., "proprioception": ...}})
+        obs["state"]["kpms_code"] = code[..., None].astype(jnp.float32)
         return obs

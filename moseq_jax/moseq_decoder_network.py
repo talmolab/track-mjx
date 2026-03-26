@@ -2,7 +2,7 @@
 
 The network receives a pre-computed syllable code (integer, passed as float in
 ``obs["kpms_code"]``), the agent's proprioception, and optionally the reference
-trajectory (``obs["imitation_target"]``). It embeds the code via a learned
+trajectory (``obs["task_obs"]``). It embeds the code via a learned
 embedding table, optionally encodes the reference trajectory into a continuous
 latent, and feeds the concatenation through a decoder to produce action
 parameters.
@@ -91,7 +91,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
 
         # Continuous encoder (optional)
         if self.use_continuous_encoder:
-            imitation_target = obs["imitation_target"]
+            imitation_target = obs["task_obs"]
 
             # Encoder MLP
             h = imitation_target
@@ -225,7 +225,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         proprio = obs["proprioception"]
 
         if self.use_continuous_encoder:
-            imitation_target = obs["imitation_target"]
+            imitation_target = obs["task_obs"]
 
             h = imitation_target
             for dense, ln in zip(self.enc_layers, self.enc_lns):

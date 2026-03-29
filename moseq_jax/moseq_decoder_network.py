@@ -278,15 +278,18 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             # z_e dropout: zero out entire z_e with prob p per sample (training only)
             if not deterministic and self.z_e_dropout_rate > 0 and key is not None:
                 if key.ndim > 1:
-                    # Per-sample keys [B, 2]: derive dropout key per sample
+                    # Per-sample keys [B, 2]: vmap bernoulli over batch
                     dropout_keys = jax.vmap(lambda k: jax.random.split(k, 3)[2])(key)
+                    keep = jax.vmap(
+                        lambda k: jax.random.bernoulli(k, 1.0 - self.z_e_dropout_rate)
+                    )(dropout_keys).astype(z_e_scaled.dtype)
                 else:
-                    # Single key: split for dropout
-                    dropout_keys = jax.random.split(key, 3)[2]
-                # Bernoulli mask: shape [B] (or scalar), broadcast over latent dim
-                keep = jax.random.bernoulli(
-                    dropout_keys, 1.0 - self.z_e_dropout_rate, shape=mean.shape[:1]
-                ).astype(z_e_scaled.dtype)
+                    _, _, dropout_key = jax.random.split(key, 3)
+                    keep = jax.random.bernoulli(
+                        dropout_key,
+                        1.0 - self.z_e_dropout_rate,
+                        shape=mean.shape[:1],
+                    ).astype(z_e_scaled.dtype)
                 z_e_scaled = z_e_scaled * keep[..., None]
 
             decoder_input = jnp.concatenate([code_emb, z_e_scaled, proprio], axis=-1)

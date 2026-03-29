@@ -116,18 +116,19 @@ network_config:
   use_continuous_encoder: true
   encoder_layer_sizes: [512, 256, 256]
   continuous_latent_dim: 4       # compact continuous latent
-  kl_weight: 0.05               # KL regularization weight (weaker)
-  z_e_dropout_rate: 0.01         # prob of zeroing z_e per timestep (0 = off)
+  kl_weight: 0.2                # KL regularization (stronger to limit z_e info)
+  z_e_dropout_rate: 0.5          # prob of zeroing z_e per timestep (forces code usage)
 
   # RNN Decoder (GRU-based recurrent decoder for temporal coherence)
   use_rnn_decoder: true
   rnn_cell_type: gru
   rnn_hidden_sizes: [512, 512, 256, 256]
 
-  # z_e Annealing (gradually reduce encoder contribution, default off)
+  # z_e Annealing: REVERSE direction (0→1, codes first then add z_e refinement)
   z_e_anneal: true
-  z_e_anneal_start_frac: 0.3    # fraction of training to start annealing
-  z_e_anneal_end_frac: 0.7      # fraction of training where z_e reaches 0
+  z_e_anneal_direction: "up"    # "up" = 0→1 (codes first), "down" = 1→0 (original)
+  z_e_anneal_start_frac: 0.0    # start from beginning
+  z_e_anneal_end_frac: 0.3      # z_e reaches full strength at 30% of training
 
 # =============================================================================
 # Training Setup

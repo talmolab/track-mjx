@@ -502,6 +502,7 @@ def main(cfg: DictConfig) -> None:
     z_e_anneal = bool(cfg.network_config.get("z_e_anneal", False))
     z_e_anneal_start_frac = float(cfg.network_config.get("z_e_anneal_start_frac", 0.3))
     z_e_anneal_end_frac = float(cfg.network_config.get("z_e_anneal_end_frac", 0.7))
+    z_e_anneal_direction = str(cfg.network_config.get("z_e_anneal_direction", "down"))
 
     num_evals_total = int(
         cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
@@ -513,14 +514,26 @@ def main(cfg: DictConfig) -> None:
         _end = z_e_anneal_end_frac * num_evals_total
         _range = max(_end - _start, 1.0)
 
-        def z_e_scale_fn(step, _s=_start, _r=_range, _e=_end):
-            frac = jnp.clip((step - _s) / _r, 0.0, 1.0)
-            return jnp.where(step < _s, 1.0, jnp.where(step > _e, 0.0, 1.0 - frac))
+        if z_e_anneal_direction == "up":
+            # Reverse anneal: 0→1 (codes first, then add z_e refinement)
+            def z_e_scale_fn(step, _s=_start, _r=_range, _e=_end):
+                frac = jnp.clip((step - _s) / _r, 0.0, 1.0)
+                return jnp.where(step < _s, 0.0, jnp.where(step > _e, 1.0, frac))
 
-        logging.info(
-            f"z_e annealing: start_step={_start:.0f}, end_step={_end:.0f} "
-            f"(of {num_evals_total} evals)"
-        )
+            logging.info(
+                f"z_e annealing UP (0→1): start_step={_start:.0f}, "
+                f"end_step={_end:.0f} (of {num_evals_total} evals)"
+            )
+        else:
+            # Original: 1→0 (gradually remove z_e)
+            def z_e_scale_fn(step, _s=_start, _r=_range, _e=_end):
+                frac = jnp.clip((step - _s) / _r, 0.0, 1.0)
+                return jnp.where(step < _s, 1.0, jnp.where(step > _e, 0.0, 1.0 - frac))
+
+            logging.info(
+                f"z_e annealing DOWN (1→0): start_step={_start:.0f}, "
+                f"end_step={_end:.0f} (of {num_evals_total} evals)"
+            )
 
     # Network factory
     if use_rnn_decoder:

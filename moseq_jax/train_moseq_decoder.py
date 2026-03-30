@@ -598,21 +598,47 @@ def main(cfg: DictConfig) -> None:
             "moseq_encoder_decoder" if use_continuous_encoder else "moseq_decoder"
         )
 
+    # Read KPMS model provenance (kappa, num_states) from sweep results
+    kpms_kappa = None
+    kpms_num_states = None
+    kpms_model_type = None
+    kpms_mean_duration = None
+    if codes_path:
+        sweep_results_path = Path(codes_path).parent / "sweep_results.json"
+        if sweep_results_path.exists():
+            try:
+                with open(sweep_results_path) as f:
+                    sweep_results = json.load(f)
+                best = sweep_results.get("best_model", {})
+                kpms_kappa = best.get("kappa")
+                kpms_num_states = best.get("n_states")
+                kpms_model_type = best.get("model_type")
+                kpms_mean_duration = best.get("mean_duration")
+                logging.info(
+                    f"KPMS provenance: kappa={kpms_kappa}, n_states={kpms_num_states}, "
+                    f"model={kpms_model_type}, mean_duration={kpms_mean_duration:.1f}"
+                )
+            except Exception as e:
+                logging.warning(f"Could not read KPMS sweep results: {e}")
+
     wandb.config.update(
         {
             "arch": arch_name,
             "num_codes": num_codes,
             "code_embed_dim": int(cfg.network_config.code_embed_dim),
             "codes_path": str(codes_path) if codes_path else "random",
+            "kpms_kappa": kpms_kappa,
+            "kpms_num_states": kpms_num_states,
+            "kpms_model_type": kpms_model_type,
+            "kpms_mean_duration": kpms_mean_duration,
             "use_continuous_encoder": use_continuous_encoder,
             "continuous_latent_dim": continuous_latent_dim,
             "kl_weight": kl_weight,
+            "kl_schedule": kl_schedule,
             "use_rnn_decoder": use_rnn_decoder,
             "rnn_hidden_sizes": list(rnn_hidden_sizes) if use_rnn_decoder else None,
             "rnn_cell_type": rnn_cell_type if use_rnn_decoder else None,
-            "z_e_anneal": z_e_anneal,
-            "z_e_anneal_start_frac": z_e_anneal_start_frac if z_e_anneal else None,
-            "z_e_anneal_end_frac": z_e_anneal_end_frac if z_e_anneal else None,
+            "z_e_dropout_rate": z_e_dropout_rate,
         }
     )
 
@@ -729,11 +755,37 @@ def main(cfg: DictConfig) -> None:
             jit_decoder_only_inference_fn=jit_decoder_only_fn,
         )
 
+    # Wrap wandb_progress to add `/`-prefixed metric groups for WandB panels
+    def _grouped_wandb_progress(num_steps: int, metrics: dict) -> None:
+        grouped = {}
+        for k, v in metrics.items():
+            if k in ("total_loss", "policy_loss", "v_loss", "entropy_loss"):
+                grouped[f"losses/{k}"] = v
+            elif k in ("kl_loss", "scaled_kl_loss", "z_e_norm", "z_e_std", "z_e_scale"):
+                grouped[f"z_e/{k}"] = v
+            elif k in ("transition_rate", "perplexity", "codebook_utilization", "codes_used"):
+                grouped[f"codes/{k}"] = v
+            elif k in ("hidden_state_norm",):
+                grouped[f"rnn/{k}"] = v
+            # Keep originals for backward compat with shared code
+            grouped[k] = v
+        wandb_logging.wandb_progress(num_steps, grouped)
+
     make_inference_fn, params, _ = train_fn(
         environment=env,
-        progress_fn=wandb_logging.wandb_progress,
+        progress_fn=_grouped_wandb_progress,
         policy_params_fn=_policy_params_fn_wrapper,
     )
+
+    # Log final summary for sweep filtering
+    try:
+        wandb.run.summary.update({
+            "training_completed": True,
+            "kpms_kappa": kpms_kappa,
+            "kpms_num_states": kpms_num_states,
+        })
+    except Exception:
+        pass
 
     try:
         checkpointing.cleanup_run_state(cfg)

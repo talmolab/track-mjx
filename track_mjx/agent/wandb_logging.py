@@ -123,14 +123,22 @@ def _log_rollout_video(
     video_path = f"{model_path}/{current_step}.mp4"
 
     # Log per-step reward breakdowns
-    metric_names = [f"rewards/{k}" for k in env._config.reward_terms.keys()]
+    reward_names = [f"rewards/{k}" for k in env._config.reward_terms.keys()]
+    metric_names = cfg.logging_config.get(
+        "rollout_metrics", reward_names
+    )
     for metric in metric_names:
-        log_lineplot_to_wandb(
-            name=f"eval/rollout_{metric}",
-            metric_name=metric,
-            data=list(enumerate([s.metrics[metric] for s in rollout])),
-            title=f"{metric} per rollout frame",
-        )
+        if metric in rollout[0].metrics:
+            log_lineplot_to_wandb(
+                name=f"eval/rollout_{metric}",
+                metric_name=metric,
+                data=list(enumerate([s.metrics[metric] for s in rollout])),
+                title=f"{metric} per rollout frame",
+            )
+        else:
+            logging.warning(
+                f"Rollout metric '{metric}' not found in environment metrics."
+            )
 
     try:
         with imageio.get_writer(video_path, fps=render_fps) as writer:
@@ -183,6 +191,27 @@ def log_lineplot_to_wandb(
 
     wandb.log(
         {name: wandb.plot.line(table, "frame", metric_name, title=title)},
+        commit=False,
+    )
+
+def log_histogram_to_wandb(name: str, metric_name: str, data: list[float], title: str) -> None:
+    """Log a histogram to Weights & Biases.
+
+    Args:
+        name: Wandb log key (e.g., "eval/latent_means_histogram").
+        metric_name: Name for the histogram metric.
+        data: List of values to include in the histogram.
+        title: Title displayed on the wandb plot.
+
+    Note:
+        Logged with commit=False; caller should batch with other logs.
+    """
+    table = wandb.Table(
+        data=enumerate(data),
+        columns=["index", metric_name],
+    )
+    wandb.log(
+        {name: wandb.plot.histogram(table, value=metric_name, title=title)},  # type: ignore
         commit=False,
     )
 

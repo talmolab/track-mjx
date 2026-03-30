@@ -22,6 +22,7 @@ from typing import Any, Callable
 import jax
 import orbax.checkpoint as ocp
 from brax.training.acme import running_statistics, specs
+from brax.training.distribution import NormalTanhDistribution
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
@@ -31,6 +32,7 @@ from track_mjx.agent.observation_utils import (
     convert_flat_to_dict_normalizer,
     init_dict_normalizer,
 )
+from track_mjx.agent.distribution import NormalSigmoidDistribution
 
 
 def load_config_from_checkpoint(
@@ -286,7 +288,15 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
                 - network_config.reference_obs_size,
             }
 
+        action_dist_key = cfg.network_config.get("action_distribution", "tanh")
+        if action_dist_key.lower() == "sigmoid":
+            print("Using sigmoid action distribution")
+            action_distribution = NormalSigmoidDistribution
+        else:
+            print("Using tanh action distribution")
+            action_distribution = NormalTanhDistribution
         return mlp_ppo_networks.make_intention_ppo_networks(
+            action_distribution=action_distribution,
             obs_sizes=obs_sizes,
             action_size=cfg.network_config.action_size,
             intention_latent_size=cfg.network_config.intention_size,

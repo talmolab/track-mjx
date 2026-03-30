@@ -107,6 +107,7 @@ network_config:
   # Code embedding (KPMS best_codes.npz has 50 unique codes: 0-49)
   num_codes: 50
   code_embed_dim: 16
+  code_stack_size: 5             # stack N consecutive codes [t, t+1, ..., t+N-1] (1 = current only)
 
   # Decoder MLP (same sizes as VQ-VAE decoder)
   decoder_layer_sizes: [512, 512, 256, 256]

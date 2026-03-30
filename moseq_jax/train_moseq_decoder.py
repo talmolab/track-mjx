@@ -461,12 +461,19 @@ def main(cfg: DictConfig) -> None:
         train_codes = rng.randint(0, num_codes, size=(n_train, n_frames))
         test_codes = rng.randint(0, num_codes, size=(n_test, n_frames))
 
+    # Code stack size: how many consecutive codes to give the decoder
+    code_stack_size = int(cfg.network_config.get("code_stack_size", 1))
+
     # Use MoSeqImitation (subclass of Imitation) which injects kpms_code
     # directly in _get_obs. This ensures the obs pytree structure is consistent
     # from the start — no wrapper needed, no pytree mismatches in jax.lax.scan.
-    env = MoSeqImitation(config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes)
+    env = MoSeqImitation(
+        config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes,
+        code_stack_size=code_stack_size,
+    )
     test_env = MoSeqImitation(
-        config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes
+        config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes,
+        code_stack_size=code_stack_size,
     )
 
     logging.info(f"Environment config: {cfg.env_config}")
@@ -626,6 +633,7 @@ def main(cfg: DictConfig) -> None:
             "arch": arch_name,
             "num_codes": num_codes,
             "code_embed_dim": int(cfg.network_config.code_embed_dim),
+            "code_stack_size": code_stack_size,
             "codes_path": str(codes_path) if codes_path else "random",
             "kpms_kappa": kpms_kappa,
             "kpms_num_states": kpms_num_states,
@@ -702,7 +710,8 @@ def main(cfg: DictConfig) -> None:
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
     rollout_env = MoSeqImitation(
-        config=rollout_cfg, clips=test_clips, kpms_codes=test_codes
+        config=rollout_cfg, clips=test_clips, kpms_codes=test_codes,
+        code_stack_size=code_stack_size,
     )
 
     jit_reset = jax.jit(rollout_env.reset)

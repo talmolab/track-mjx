@@ -82,10 +82,12 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
             When ``use_continuous_encoder=False``, ``mean`` and ``logvar``
             are ``None``.
         """
-        # Extract code index — passed as float, round to int for embedding
-        kpms_code = obs["kpms_code"]  # [..., 1]
-        code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)
-        code_emb = self.code_embedding(code_idx)  # [..., code_embed_dim]
+        # Extract code indices — may be stacked [code_t, ..., code_{t+N-1}]
+        kpms_code = obs["kpms_code"]  # [..., N] where N = code_stack_size
+        code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)  # current code for metrics
+        all_code_idx = jnp.round(kpms_code).astype(jnp.int32)
+        all_emb = self.code_embedding(all_code_idx)  # [..., N, code_embed_dim]
+        code_emb = all_emb.reshape(*all_emb.shape[:-2], -1)  # [..., N * code_embed_dim]
 
         # Proprioception (already normalized and flattened by the policy wrapper)
         proprio = obs["proprioception"]
@@ -230,8 +232,13 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None]:
         """Encode obs into (decoder_input, code_idx, mean, logvar)."""
         kpms_code = obs["kpms_code"]
+        # Current code index (first in stack, used for metrics/logging)
         code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)
-        code_emb = self.code_embedding(code_idx)
+        # Embed all codes in the stack and concatenate
+        all_code_idx = jnp.round(kpms_code).astype(jnp.int32)
+        all_emb = self.code_embedding(all_code_idx)  # [..., N, code_embed_dim]
+        # Flatten last two dims: [..., N * code_embed_dim]
+        code_emb = all_emb.reshape(*all_emb.shape[:-2], -1)
 
         proprio = obs["proprioception"]
 

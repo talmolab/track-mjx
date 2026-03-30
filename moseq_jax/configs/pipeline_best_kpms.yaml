@@ -1,0 +1,75 @@
+# =============================================================================
+# Best-KPMS Pipeline Configuration
+# =============================================================================
+# Stage 1: KPMS sweep (fix num_states=25, sweep kappa) → best by MSE
+# Stage 2: Generate ONE code database from best model
+# Stage 3: Decoder RL sweep (KL schedule, KL weight, dropout)
+#
+# Usage:
+#   cd moseq_jax
+#   bash run_pipeline_best_kpms.sh
+#   bash run_pipeline_best_kpms.sh --skip-kpms      # reuse existing codes
+#   bash run_pipeline_best_kpms.sh --dry-run
+# =============================================================================
+
+data:
+  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+  stac_xml_path: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
+
+# --- Stage 1: KPMS fitting (fix num_states, sweep kappa) ---
+kpms:
+  num_states: [25]
+  kappa: [1.0e+2, 3.0e+2, 1.0e+3, 3.0e+3, 1.0e+4, 3.0e+4, 1.0e+5]
+  latent_dim: [10]
+  model_type: ["arhmm"]
+  seeds_per_setting: 2
+  ar_iters: 50
+  full_iters: 300
+  selection: "mse"  # select best by lowest MSE
+
+# --- Stage 3: Decoder RL sweep ---
+decoder:
+  # KL weight: log scale from 0.01 to 0.5 (8 values)
+  kl_weights: [0.01, 0.018, 0.032, 0.056, 0.1, 0.178, 0.316, 0.5]
+
+  # KL schedule variants
+  kl_schedules: ["ramp", "cosine_anneal"]
+
+  # z_e dropout
+  z_e_dropout_rates: [0.0, 0.1]
+
+  # Code stacking (current + future codes given to decoder)
+  code_stack_size: 5
+
+  # Architecture (fixed for this sweep)
+  continuous_latent_dim: 4
+  use_rnn_decoder: true
+  rnn_hidden_sizes: [512, 512, 256, 256]
+  rnn_cell_type: gru
+  use_continuous_encoder: true
+
+  # Training budget per run
+  num_timesteps: 2_000_000_000
+  eval_every: 20_000_000
+
+# KL schedule configs (used when kl_schedule != "none")
+kl_schedule_configs:
+  ramp:
+    start_value: 0.01
+    end_value: null    # set to kl_weight per run
+    start_frac: 0.0
+    end_frac: 0.5
+  cosine_anneal:
+    start_value: 0.01
+    end_value: null    # set to kl_weight per run
+    start_frac: 0.1
+    num_cycles: 4
+
+output:
+  base_dir: outputs/pipeline_best_kpms
+
+wandb:
+  enabled: true
+  project: moseq_experiments
+  group: pipeline_best_kpms

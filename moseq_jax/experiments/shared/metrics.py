@@ -70,15 +70,15 @@ def plot_transition_matrix(
 def compute_pairwise_joint_divergence(
     trajectories_qpos: list[np.ndarray],
     root_dof: int = 7,
-) -> np.ndarray:
-    """Mean pairwise joint-L2 distance over time across K trajectories.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mean and std of pairwise joint-L2 distance over time across K trajectories.
 
     Args:
         trajectories_qpos: ``K`` arrays each ``[T_i, nq]``.
         root_dof: Number of root DOFs to skip (default 7 for free-body).
 
     Returns:
-        Array ``[min_T]`` of mean pairwise L2 distances.
+        ``(mean_curve, std_curve)`` each ``[min_T]``.
     """
     K = len(trajectories_qpos)
     min_T = min(len(q) for q in trajectories_qpos)
@@ -89,8 +89,8 @@ def compute_pairwise_joint_divergence(
             qj = trajectories_qpos[j][:min_T, root_dof:]
             pair_dists.append(np.linalg.norm(qi - qj, axis=1))
     if not pair_dists:
-        return np.zeros(min_T)
-    return np.mean(pair_dists, axis=0)
+        return np.zeros(min_T), np.zeros(min_T)
+    return np.mean(pair_dists, axis=0), np.std(pair_dists, axis=0)
 
 
 # ---------------------------------------------------------------------------

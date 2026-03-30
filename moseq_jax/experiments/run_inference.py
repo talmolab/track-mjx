@@ -67,35 +67,56 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+COMPONENT_MARKERS = {
+    "total": "-",       # solid
+    "coarse": "--",     # dashed
+    "fine": ":",        # dotted
+}
+
+COMPONENT_LABELS = {
+    "total": "Total",
+    "coarse": "Coarse (root)",
+    "fine": "Fine (joints+end-eff)",
+}
+
+
 def plot_reward_curves(
     results: dict[str, dict[str, np.ndarray]],
     max_steps: int,
 ) -> plt.Figure:
-    """Mean reward over time: coarse vs fine, full vs code_only."""
+    """Single plot: modes as colors, components as line styles, normalized Y."""
     set_nature_style()
-    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.5), sharey=False)
+    fig, ax = plt.subplots(figsize=(3.5, 2.5))
 
-    labels = {"total": "Total", "coarse": "Coarse (root)", "fine": "Fine (joints+end-eff)"}
-
-    for ax, component in zip(axes, ["total", "coarse", "fine"]):
-        for mode, color in MODE_COLORS.items():
-            key = mode
-            if key not in results:
-                continue
-            curve = results[key].get(component)
+    for mode, color in MODE_COLORS.items():
+        if mode not in results:
+            continue
+        mode_label = "Code+z_e" if mode == "full" else "Code only"
+        for comp, ls in COMPONENT_MARKERS.items():
+            curve = results[mode].get(comp)
             if curve is None:
                 continue
-            mean = curve.mean(axis=0) if curve.ndim > 1 else curve
-            if curve.ndim > 1:
-                std = curve.std(axis=0)
-                ax.fill_between(range(len(mean)), mean - std, mean + std, alpha=0.2, color=color)
-            label = "Code+z_e" if mode == "full" else "Code only"
-            ax.plot(mean, color=color, label=label)
-        ax.set_xlabel("Timestep")
-        ax.set_ylabel("Reward")
-        ax.set_title(labels[component])
-        ax.legend(frameon=False)
+            # Normalize: divide by max of total to get 0-1 range
+            total_max = results[mode].get("total")
+            if total_max is not None and total_max.ndim > 1:
+                norm_factor = total_max.mean(axis=0).max()
+            elif total_max is not None:
+                norm_factor = total_max.max()
+            else:
+                norm_factor = 1.0
+            norm_factor = max(norm_factor, 1e-8)
 
+            mean = curve.mean(axis=0) / norm_factor if curve.ndim > 1 else curve / norm_factor
+            label = f"{mode_label} — {COMPONENT_LABELS[comp]}"
+            ax.plot(mean, color=color, linestyle=ls, label=label, linewidth=1.2)
+            if curve.ndim > 1:
+                std = curve.std(axis=0) / norm_factor
+                ax.fill_between(range(len(mean)), mean - std, mean + std, alpha=0.15, color=color)
+
+    ax.set_xlabel("Timestep")
+    ax.set_ylabel("Normalized reward")
+    ax.set_title("Reward decomposition")
+    ax.legend(frameon=False, fontsize=5.5, ncol=2)
     plt.tight_layout()
     return fig
 
@@ -288,24 +309,24 @@ def main(cfg: DictConfig) -> None:
             window = int(cfg.analysis.transition_window)
             full_codes = per_mode_data["full"]["all_codes"]
             full_rewards = per_mode_data["full"]["all_rewards"]
-            # Aggregate all transitions across clips
-            all_tw_means = []
-            total_transitions = 0
+            # Aggregate all transition windows across clips
+            all_windows = []  # list of [2*window+1] arrays
             for ci in range(min(n_clips, len(full_codes))):
                 codes_i = full_codes[ci]
                 rewards_i = full_rewards[ci]
                 if len(codes_i) < 2 * window + 1:
                     continue
-                mean_c, std_c, n_t = compute_transition_window_rewards(
-                    codes_i, rewards_i, window=window,
-                )
-                if n_t > 0:
-                    all_tw_means.append(mean_c * n_t)
-                    total_transitions += n_t
+                # Get individual transition windows
+                transitions = np.where(codes_i[1:] != codes_i[:-1])[0] + 1
+                valid = transitions[(transitions >= window) & (transitions < len(codes_i) - window)]
+                for t in valid:
+                    all_windows.append(rewards_i[t - window : t + window + 1])
 
+            total_transitions = len(all_windows)
             if total_transitions > 0:
-                agg_mean = sum(all_tw_means) / total_transitions
-                agg_std = np.zeros_like(agg_mean)  # simplified
+                all_windows = np.array(all_windows)
+                agg_mean = all_windows.mean(axis=0)
+                agg_std = all_windows.std(axis=0)
                 fig_tw = plot_transition_window(agg_mean, agg_std, total_transitions, window)
                 if wandb_enabled:
                     wandb.log({f"inference/{split}/transition_window": fig_to_image(fig_tw)}, commit=False)

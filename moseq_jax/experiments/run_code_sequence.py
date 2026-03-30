@@ -71,24 +71,29 @@ CONDITION_STYLES = {
 
 
 def plot_divergence_curves(
-    curves: dict[str, dict[str, np.ndarray]],
+    curves: dict[str, dict[str, tuple[np.ndarray, np.ndarray]]],
     title: str = "Joint divergence over time",
 ) -> plt.Figure:
-    """Divergence curves: conditions × modes."""
+    """Divergence curves with std bands: conditions × modes."""
     set_nature_style()
     fig, ax = plt.subplots(figsize=(3.5, 2.5))
 
     for cond, mode_curves in curves.items():
         style = CONDITION_STYLES.get(cond, {"color": "#999999", "linestyle": "-"})
-        for mode, curve in mode_curves.items():
+        for mode, (mean_curve, std_curve) in mode_curves.items():
             ls = "-" if mode == "full" else "--"
             label = f"{cond} ({'code+z_e' if mode == 'full' else 'code only'})"
-            ax.plot(curve, color=style["color"], linestyle=ls, label=label, linewidth=1.2)
+            ax.plot(mean_curve, color=style["color"], linestyle=ls, label=label, linewidth=1.2)
+            ax.fill_between(
+                range(len(mean_curve)),
+                mean_curve - std_curve, mean_curve + std_curve,
+                alpha=0.15, color=style["color"],
+            )
 
     ax.set_xlabel("Timestep")
     ax.set_ylabel("Mean pairwise joint L2")
     ax.set_title(title)
-    ax.legend(frameon=False, fontsize=6, ncol=2)
+    ax.legend(frameon=False, fontsize=5.5, ncol=2)
     plt.tight_layout()
     return fig
 
@@ -97,23 +102,46 @@ def plot_root_displacement(
     panels: dict[str, list[np.ndarray]],
     title: str = "Root displacement",
 ) -> plt.Figure:
-    """Cumulative XY displacement per behaviour panel."""
+    """All behaviors on one plot. Colors=behavior, shapes=XY vs Z, mean+std."""
     set_nature_style()
-    n_panels = len(panels)
-    fig, axes = plt.subplots(1, n_panels, figsize=(2.4 * n_panels, 2.5), sharey=True)
-    if n_panels == 1:
-        axes = [axes]
+    fig, ax = plt.subplots(figsize=(3.5, 2.5))
 
-    for ax, (beh, trajs) in zip(axes, panels.items()):
+    for beh, trajs in panels.items():
         color = BEHAVIOR_COLORS.get(beh, "#999999")
-        for i, qpos in enumerate(trajs):
+
+        # Compute cumulative XY displacement per trajectory
+        xy_curves = []
+        z_curves = []
+        for qpos in trajs:
+            min_len = len(qpos)
             xy = qpos[:, :2]
-            disp = np.cumsum(np.linalg.norm(np.diff(xy, axis=0), axis=1))
-            disp = np.concatenate([[0], disp])
-            ax.plot(disp, color=color, alpha=0.5, linewidth=0.8)
-        ax.set_xlabel("Timestep")
-        ax.set_title(beh.capitalize())
-    axes[0].set_ylabel("Cumulative XY displacement")
+            xy_disp = np.cumsum(np.linalg.norm(np.diff(xy, axis=0), axis=1))
+            xy_disp = np.concatenate([[0], xy_disp])
+            xy_curves.append(xy_disp)
+
+            z_disp = np.cumsum(np.abs(np.diff(qpos[:, 2])))
+            z_disp = np.concatenate([[0], z_disp])
+            z_curves.append(z_disp)
+
+        # Pad to same length
+        max_len = max(len(c) for c in xy_curves)
+        xy_padded = np.array([np.pad(c, (0, max_len - len(c)), mode="edge") for c in xy_curves])
+        z_padded = np.array([np.pad(c, (0, max_len - len(c)), mode="edge") for c in z_curves])
+
+        # XY displacement: solid line
+        xy_mean, xy_std = xy_padded.mean(axis=0), xy_padded.std(axis=0)
+        ax.plot(xy_mean, color=color, linestyle="-", linewidth=1.2, label=f"{beh} XY")
+        ax.fill_between(range(max_len), xy_mean - xy_std, xy_mean + xy_std, alpha=0.15, color=color)
+
+        # Z displacement: dashed line
+        z_mean, z_std = z_padded.mean(axis=0), z_padded.std(axis=0)
+        ax.plot(z_mean, color=color, linestyle="--", linewidth=1.2, label=f"{beh} Z")
+        ax.fill_between(range(max_len), z_mean - z_std, z_mean + z_std, alpha=0.1, color=color)
+
+    ax.set_xlabel("Timestep")
+    ax.set_ylabel("Cumulative displacement")
+    ax.set_title(title)
+    ax.legend(frameon=False, fontsize=5.5, ncol=2)
     plt.tight_layout()
     return fig
 
@@ -182,9 +210,9 @@ def run_temporal_order(
                 trajectories_qpos.append(result["qpos"][:-1])
                 trajectories_codes.append(result["code_indices"])
 
-            # Compute divergence
-            div_curve = compute_pairwise_joint_divergence(trajectories_qpos)
-            divergence_curves[cond_name][mode] = div_curve
+            # Compute divergence (mean + std)
+            div_mean, div_std = compute_pairwise_joint_divergence(trajectories_qpos)
+            divergence_curves[cond_name][mode] = (div_mean, div_std)
 
             # Ghost video (3 conditions → 3 bodies per clip not applicable here,
             # instead K bodies per condition)
@@ -269,10 +297,12 @@ def run_killer_demo(
     high_z = float(np.percentile(all_max_z, 90))
     log.info(f"  Anchor heights: low={low_z:.4f}, high={high_z:.4f}")
 
+    # Collect trajectories: height → behavior → list of qpos
+    height_beh_trajs: dict[str, dict[str, list[np.ndarray]]] = {}
+
     for beh in cfg.killer_demo.behaviors:
         log.info(f"  Behavior: {beh}")
 
-        # Select K clips for this behavior
         selected = select_clips_by_behavior(splits, "test", k_per_behavior=K, seed=seed)
         beh_indices = selected.get(beh, [])[:K]
 
@@ -280,11 +310,12 @@ def run_killer_demo(
             log.warning(f"    Only {len(beh_indices)} clips for {beh}, skipping")
             continue
 
-        # Extract code sequences
         code_seqs = make_correct_sequences(codes, beh_indices, max_steps)
 
         for height in cfg.killer_demo.start_heights:
             log.info(f"    Height: {height}")
+            if height not in height_beh_trajs:
+                height_beh_trajs[height] = {}
 
             trajectories_qpos = []
             trajectories_codes = []
@@ -295,12 +326,13 @@ def run_killer_demo(
                     env, inf_fn, params, ppo_networks, use_rnn, key,
                     max_steps=max_steps,
                     code_override=code_seqs[ki],
-                    # initial_qpos override is TODO — for now use env reset
                 )
                 trajectories_qpos.append(result["qpos"][:-1])
                 trajectories_codes.append(result["code_indices"])
 
-            # Ghost video
+            height_beh_trajs[height][beh] = trajectories_qpos
+
+            # Ghost video per behavior+height
             if len(trajectories_qpos) >= 2:
                 try:
                     from experiments.shared.ghost_rendering import (
@@ -336,12 +368,14 @@ def run_killer_demo(
                 except Exception as e:
                     log.warning(f"    Ghost rendering failed: {e}")
 
-            # Root displacement plot
-            fig = plot_root_displacement({beh: trajectories_qpos})
-            if wandb_enabled:
-                wandb.log({f"killer_demo/{beh}/{height}/root_displacement": fig_to_image(fig)}, commit=False)
-            fig.savefig(output_dir / f"killer_{beh}_{height}_displacement.png", dpi=300)
-            plt.close(fig)
+    # Combined displacement plot per height (all behaviors, mean+std)
+    for height, beh_trajs in height_beh_trajs.items():
+        fig = plot_root_displacement(beh_trajs, title=f"Root displacement ({height} start)")
+        if wandb_enabled:
+            wandb.log({f"killer_demo/{height}/root_displacement": fig_to_image(fig)}, commit=False)
+        fig.savefig(output_dir / f"killer_{height}_displacement.png", dpi=300)
+        plt.close(fig)
+        log.info(f"  Displacement plot saved for {height}")
 
         # Control: original starting positions
         if cfg.killer_demo.get("include_control", True):

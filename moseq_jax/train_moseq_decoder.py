@@ -498,42 +498,56 @@ def main(cfg: DictConfig) -> None:
     rnn_hidden_sizes = tuple(cfg.network_config.get("rnn_hidden_sizes", [256]))
     rnn_cell_type = str(cfg.network_config.get("rnn_cell_type", "gru"))
 
-    # z_e annealing config
-    z_e_anneal = bool(cfg.network_config.get("z_e_anneal", False))
-    z_e_anneal_start_frac = float(cfg.network_config.get("z_e_anneal_start_frac", 0.3))
-    z_e_anneal_end_frac = float(cfg.network_config.get("z_e_anneal_end_frac", 0.7))
-    z_e_anneal_direction = str(cfg.network_config.get("z_e_anneal_direction", "down"))
+    # KL schedule config
+    kl_schedule = str(cfg.network_config.get("kl_schedule", "none"))
+    kl_sched_cfg = cfg.network_config.get("kl_schedule_config", {})
+    kl_sched_start = float(kl_sched_cfg.get("start_value", kl_weight))
+    kl_sched_end = float(kl_sched_cfg.get("end_value", 0.5))
+    kl_sched_start_frac = float(kl_sched_cfg.get("start_frac", 0.3))
+    kl_sched_end_frac = float(kl_sched_cfg.get("end_frac", 0.7))
+    kl_sched_num_cycles = int(kl_sched_cfg.get("num_cycles", 4))
 
     num_evals_total = int(
         cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
     )
 
-    z_e_scale_fn = None
-    if z_e_anneal and use_continuous_encoder:
-        _start = z_e_anneal_start_frac * num_evals_total
-        _end = z_e_anneal_end_frac * num_evals_total
-        _range = max(_end - _start, 1.0)
+    z_e_scale_fn = None  # No z_e_scale scheduling — use KL schedule instead
+    kl_weight_fn = None
 
-        if z_e_anneal_direction == "up":
-            # Reverse anneal: 0→1 (codes first, then add z_e refinement)
-            def z_e_scale_fn(step, _s=_start, _r=_range, _e=_end):
+    if kl_schedule != "none" and use_continuous_encoder:
+        _start = kl_sched_start_frac * num_evals_total
+        _end = kl_sched_end_frac * num_evals_total
+        _range = max(_end - _start, 1.0)
+        _sv = kl_sched_start
+        _ev = kl_sched_end
+
+        if kl_schedule == "ramp":
+            def kl_weight_fn(step, _s=_start, _r=_range, _e=_end, sv=_sv, ev=_ev):
                 frac = jnp.clip((step - _s) / _r, 0.0, 1.0)
-                return jnp.where(step < _s, 0.0, jnp.where(step > _e, 1.0, frac))
+                w = sv + (ev - sv) * frac
+                return jnp.where(step < _s, sv, jnp.where(step > _e, ev, w))
 
             logging.info(
-                f"z_e annealing UP (0→1): start_step={_start:.0f}, "
-                f"end_step={_end:.0f} (of {num_evals_total} evals)"
+                f"KL ramp: {_sv}→{_ev} over steps {_start:.0f}-{_end:.0f} "
+                f"(of {num_evals_total} evals)"
+            )
+
+        elif kl_schedule == "cosine_anneal":
+            _nc = kl_sched_num_cycles
+
+            def kl_weight_fn(step, _s=_start, _n=num_evals_total, sv=_sv, ev=_ev, nc=_nc):
+                progress = jnp.clip((step - _s) / max(_n - _s, 1.0), 0.0, 1.0)
+                cos_val = 0.5 * (1.0 + jnp.cos(2.0 * jnp.pi * nc * progress))
+                # cos_val=1 at trough (low KL), cos_val=0 at peak (high KL)
+                w = ev + (sv - ev) * cos_val
+                return jnp.where(step < _s, sv, w)
+
+            logging.info(
+                f"KL cosine anneal: {_sv}↔{_ev}, {_nc} cycles, "
+                f"starting at step {_start:.0f} (of {num_evals_total} evals)"
             )
         else:
-            # Original: 1→0 (gradually remove z_e)
-            def z_e_scale_fn(step, _s=_start, _r=_range, _e=_end):
-                frac = jnp.clip((step - _s) / _r, 0.0, 1.0)
-                return jnp.where(step < _s, 1.0, jnp.where(step > _e, 0.0, 1.0 - frac))
-
-            logging.info(
-                f"z_e annealing DOWN (1→0): start_step={_start:.0f}, "
-                f"end_step={_end:.0f} (of {num_evals_total} evals)"
-            )
+            logging.warning(f"Unknown kl_schedule '{kl_schedule}', using constant kl_weight")
 
     # Network factory
     if use_rnn_decoder:
@@ -655,6 +669,7 @@ def main(cfg: DictConfig) -> None:
         use_rnn_decoder=use_rnn_decoder,
         rnn_hidden_sizes=rnn_hidden_sizes,
         z_e_scale_fn=z_e_scale_fn,
+        kl_weight_fn=kl_weight_fn,
     )
 
     # Rollout env for logging

@@ -146,6 +146,7 @@ def train(
     use_rnn_decoder: bool = False,
     rnn_hidden_sizes: tuple[int, ...] = (256,),
     z_e_scale_fn: Callable[[int], float] | None = None,
+    kl_weight_fn: Callable[[int], float] | None = None,
 ):
     """Train a MoSeq decoder PPO agent.
 
@@ -155,7 +156,8 @@ def train(
     Args:
         use_rnn_decoder: Use RNN decoder with carry-aware training.
         rnn_hidden_sizes: GRU hidden sizes per layer.
-        z_e_scale_fn: Optional ``step -> z_e_scale`` function for annealing.
+        z_e_scale_fn: Optional ``step -> z_e_scale`` function for scaling.
+        kl_weight_fn: Optional ``step -> kl_weight`` function for KL scheduling.
 
     Returns:
         Tuple of ``(make_policy, params, metrics)``.
@@ -166,6 +168,7 @@ def train(
 
     _kl_weight = kl_weight
     _z_e_scale_fn = z_e_scale_fn
+    _kl_weight_fn = kl_weight_fn
 
     if use_rnn_decoder:
         # --- RNN mode: carry-aware loss + inference ---
@@ -193,6 +196,9 @@ def train(
             z_e_scale = 1.0
             if _z_e_scale_fn is not None:
                 z_e_scale = _z_e_scale_fn(step)
+            effective_kl = _kl_weight
+            if _kl_weight_fn is not None:
+                effective_kl = _kl_weight_fn(step)
             return compute_moseq_recurrent_ppo_loss(
                 params=params,
                 normalizer_params=normalizer_params,
@@ -207,7 +213,7 @@ def train(
                 clipping_epsilon=clipping_epsilon,
                 normalize_advantage=normalize_advantage,
                 vf_coefficient=vf_coefficient,
-                kl_weight=_kl_weight,
+                kl_weight=effective_kl,
                 z_e_scale=z_e_scale,
             )
 
@@ -219,6 +225,7 @@ def train(
 
         # Carry callbacks for ppo.train
         _generate_unroll_fn = generate_unroll_rnn_moseq
+
         _init_carry_state_fn = lambda n: [jnp.zeros((n, h)) for h in _rnn_hidden_sizes]
         _make_rollout_policy_fn = make_moseq_rnn_rollout_policy_fn
 

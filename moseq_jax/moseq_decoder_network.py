@@ -329,21 +329,13 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         jnp.ndarray | None,
         list[jnp.ndarray],
     ]:
-        """Single-timestep forward pass.
-
-        Args:
-            obs: Observation dict with ``kpms_code``, ``proprioception``,
-                and optionally ``imitation_target``.
-            hidden: List of GRU hidden states, one per layer.
-            key: PRNG key for reparameterization.
-            deterministic: If True, use mean instead of sampling.
-            z_e_scale: Multiplier on z_e (1.0 = full, 0.0 = decoder-only).
+        """Single-timestep forward pass (no per-code decay — used in rollout).
 
         Returns:
             ``(action_params, code_idx, mean, logvar, new_hidden)``.
         """
         decoder_input, code_idx, mean, logvar = self._encode(
-            obs, key, deterministic, z_e_scale
+            obs, key, deterministic, z_e_scale,
         )
         action_params, new_hidden = self._decode_rnn(decoder_input, hidden)
         return action_params, code_idx, mean, logvar, new_hidden
@@ -404,7 +396,6 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                 new_hidden = _reset_hidden(new_hidden, done_t)
                 return new_hidden, (action_params, mean, logvar)
 
-            # Pack obs dict values into a single dict for scan
             final_hidden, (logits, means, logvars) = jax.lax.scan(
                 step_stored,
                 initial_hidden,

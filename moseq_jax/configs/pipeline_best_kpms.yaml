@@ -37,7 +37,7 @@ decoder:
   kl_schedules: ["ramp", "cosine_anneal"]
 
   # z_e dropout
-  z_e_dropout_rates: [0.0, 0.1]
+  z_e_dropout_rates: [0.0]
 
   # Code stacking (current + future codes given to decoder)
   code_stack_size: 5

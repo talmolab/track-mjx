@@ -130,10 +130,10 @@ network_config:
   # "ramp": linear from start_value to end_value over [start_frac, end_frac] of training
   # "cosine_anneal": cosine annealing cycling between start_value and end_value
   # "none": kl_weight = constant (from kl_weight above)
-  kl_schedule: "none"
+  kl_schedule: "ramp"
   kl_schedule_config:
     start_value: 0.05            # KL weight at start of schedule (low = z_e informative)
-    end_value: 0.5               # KL weight at end of schedule (high = z_e crushed)
+    end_value: 0.8               # KL weight at end of schedule (high = z_e crushed)
     start_frac: 0.3              # fraction of training where schedule begins
     end_frac: 0.7                # fraction of training where schedule ends (ramp only)
     num_cycles: 4                # number of cosine cycles (cosine_anneal only)
@@ -168,7 +168,7 @@ train_setup:
     entropy_cost: 1e-2
     reward_scaling: 1
     normalize_observations: true
-    unroll_length: 60
+    unroll_length: 40
     seed: 0
     get_activation: false
     deterministic_eval: true

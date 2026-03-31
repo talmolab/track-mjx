@@ -26,6 +26,8 @@ class MoSeqImitation(Imitation):
 
     Attributes:
         _kpms_codes: Pre-computed code array ``[n_clips, n_frames]``.
+        _code_stack_size: Number of consecutive codes to stack (1 = current only,
+            5 = current + 4 future codes).
     """
 
     def __init__(
@@ -33,20 +35,32 @@ class MoSeqImitation(Imitation):
         config: Any,
         clips: ReferenceClips,
         kpms_codes: jnp.ndarray,
+        code_stack_size: int = 1,
     ):
         super().__init__(config=config, clips=clips)
         self._kpms_codes = jnp.asarray(kpms_codes, dtype=jnp.int32)
+        self._code_stack_size = code_stack_size
 
     # ------------------------------------------------------------------
-    # Override _get_obs to append kpms_code
+    # Override _get_obs to append kpms_code (optionally stacked)
     # ------------------------------------------------------------------
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         obs = super()._get_obs(data, info)
         frame = self._get_cur_frame(data, info)
-        frame = jnp.clip(frame, 0, self._kpms_codes.shape[1] - 1)
-        code = self._kpms_codes[info["reference_clip"], frame]
-        # Inject kpms_code into the "state" sub-dict (vnl-playground now nests
-        # obs under {"state": {"task_obs": ..., "proprioception": ...}})
-        obs["state"]["kpms_code"] = code[..., None].astype(jnp.float32)
+        n_frames = self._kpms_codes.shape[1]
+        clip_idx = info["reference_clip"]
+
+        if self._code_stack_size <= 1:
+            # Single code (original behavior)
+            frame = jnp.clip(frame, 0, n_frames - 1)
+            code = self._kpms_codes[clip_idx, frame]
+            obs["state"]["kpms_code"] = code[..., None].astype(jnp.float32)
+        else:
+            # Stack N consecutive codes: [code_t, code_{t+1}, ..., code_{t+N-1}]
+            # Pad with last code if near end of clip
+            offsets = jnp.arange(self._code_stack_size)
+            frames = jnp.clip(frame[..., None] + offsets, 0, n_frames - 1)
+            codes = self._kpms_codes[clip_idx[..., None], frames]
+            obs["state"]["kpms_code"] = codes.astype(jnp.float32)
         return obs

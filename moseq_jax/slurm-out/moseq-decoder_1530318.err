@@ -1,0 +1,9 @@
+wandb: Currently logged in as: charles-zhang216 to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: - Waiting for wandb.init()...wandb: \ Waiting for wandb.init()...wandb: Tracking run with wandb version 0.19.5
+wandb: Run data is saved locally in /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/wandb/run-20260325_091605-s20_k1e+02_arhmm_ld2_kl0.1_260325_091557_599988
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run s20_k1e+02_arhmm_ld2_kl0.1_260325_091557_599988
+wandb: ⭐️ View project at https://wandb.ai/charles-zhang216/moseq_experiments
+wandb: 🚀 View run at https://wandb.ai/charles-zhang216/moseq_experiments/runs/s20_k1e%2B02_arhmm_ld2_kl0.1_260325_091557_599988
+[2026-03-25T09:16:47.541] error: *** JOB 1530318 ON holygpu8a12402 CANCELLED AT 2026-03-25T09:16:47 DUE to SIGNAL Terminated ***

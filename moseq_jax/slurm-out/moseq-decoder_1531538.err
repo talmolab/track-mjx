@@ -1,0 +1,33 @@
+wandb: Currently logged in as: charles-zhang216 to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: - Waiting for wandb.init()...wandb: \ Waiting for wandb.init()...wandb: Tracking run with wandb version 0.19.5
+wandb: Run data is saved locally in /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/wandb/run-20260325_093312-s10_k5e+03_arhmm_ld2_kl0.01_260325_093303_855587
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run s10_k5e+03_arhmm_ld2_kl0.01_260325_093303_855587
+wandb: ⭐️ View project at https://wandb.ai/charles-zhang216/moseq_experiments
+wandb: 🚀 View run at https://wandb.ai/charles-zhang216/moseq_experiments/runs/s10_k5e%2B03_arhmm_ld2_kl0.01_260325_093303_855587
+Error executing job with overrides: ['kpms_config.codes_path=/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/outputs/pipeline_sweep/codes/s10_k5e+03_arhmm.npz', 'network_config.num_codes=10', 'network_config.continuous_latent_dim=2', 'network_config.kl_weight=0.01', 'network_config.use_continuous_encoder=true', 'network_config.use_rnn_decoder=true', 'network_config.rnn_hidden_sizes=[256]', 'network_config.rnn_cell_type=gru', 'network_config.z_e_anneal=false', 'network_config.z_e_anneal_start_frac=0.3', 'network_config.z_e_anneal_end_frac=0.7', 'train_setup.run_name=s10_k5e+03_arhmm_ld2_kl0.01', 'train_setup.train_config.num_timesteps=4000000000', 'train_setup.train_config.num_envs=4096', 'train_setup.eval_every=50000000', 'logging_config.group_name=pipeline_sweep', 'logging_config.exp_name=s10_k5e+03_arhmm_ld2_kl0.01']
+Traceback (most recent call last):
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/train_moseq_decoder.py", line 712, in main
+    make_inference_fn, params, _ = train_fn(
+                                   ^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/moseq_ppo.py", line 280, in train
+    result = ppo.train(
+             ^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/ff_ppo/ppo.py", line 718, in train
+    policy=ppo_network.policy_network.init(key_policy),
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/moseq_ppo_networks.py", line 421, in init
+    return module.init(key, dummy_obs, dummy_hidden, dummy_key)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/moseq_decoder_network.py", line 316, in __call__
+    decoder_input, code_idx, mean, logvar = self._encode(
+                                            ^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/moseq_decoder_network.py", line 225, in _encode
+    proprio = obs["proprioception"]
+              ~~~^^^^^^^^^^^^^^^^^^
+KeyError: 'proprioception'
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.

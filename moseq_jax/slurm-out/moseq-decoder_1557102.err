@@ -1,0 +1,90 @@
+wandb: Currently logged in as: charles-zhang216 to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: - Waiting for wandb.init()...wandb: \ Waiting for wandb.init()...wandb: Tracking run with wandb version 0.19.5
+wandb: Run data is saved locally in /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/wandb/run-20260325_120839-s10_k1e+02_arhmm_ld2_kl0.1_260325_120832_245269
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run s10_k1e+02_arhmm_ld2_kl0.1_260325_120832_245269
+wandb: ⭐️ View project at https://wandb.ai/charles-zhang216/moseq_experiments
+wandb: 🚀 View run at https://wandb.ai/charles-zhang216/moseq_experiments/runs/s10_k1e%2B02_arhmm_ld2_kl0.1_260325_120832_245269
+E0325 12:15:54.293131 1598366 xtile_compiler.cc:399] Fusion: gemm_fusion_dot_general.681 = f32[128,76]{1,0} fusion(add.53263, get-tuple-element.64897), kind=kCustom, calls=gemm_fusion_dot_general.681_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","256"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 12:15:54.293314 1598366 xtile_compiler.cc:401] Computation: gemm_fusion_dot_general.681_computation.clone {
+  parameter_0.16 = f32[128,256]{1,0} parameter(0)
+  parameter_1.16 = f32[256,76]{1,0} parameter(1)
+  ROOT dot_general.687 = f32[128,76]{1,0} dot(parameter_0.16, parameter_1.16), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 12:15:55.121401 1598366 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.683 = f32[128,73]{1,0} fusion(bitcast.133119, bitcast.136), kind=kCustom, calls=gemm_fusion_dot.683_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","256"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 12:15:55.121550 1598366 xtile_compiler.cc:401] Computation: gemm_fusion_dot.683_computation.clone {
+  parameter_0.4 = f32[38,128]{1,0} parameter(0)
+  parameter_1.4 = f32[38,73]{1,0} parameter(1)
+  ROOT dot.784 = f32[128,73]{1,0} dot(parameter_0.4, parameter_1.4), lhs_contracting_dims={0}, rhs_contracting_dims={0}, backend_config={"sizes":["32"]}
+}
+E0325 12:15:56.412707 1598365 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.712 = f32[128,54]{1,0} fusion(get-tuple-element.63967, concatenate.11774), kind=kCustom, calls=gemm_fusion_dot.712_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","256"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 12:15:56.412869 1598365 xtile_compiler.cc:401] Computation: gemm_fusion_dot.712_computation.clone {
+  parameter_0.2 = f32[128,73]{1,0} parameter(0)
+  parameter_1.2 = f32[54,73]{1,0} parameter(1)
+  ROOT dot.782 = f32[128,54]{1,0} dot(parameter_0.2, parameter_1.2), lhs_contracting_dims={1}, rhs_contracting_dims={1}, backend_config={"sizes":["32"]}
+}
+E0325 12:15:56.779882 1598365 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.712 = f32[128,54]{1,0} fusion(get-tuple-element.63967, concatenate.11774), kind=kCustom, calls=gemm_fusion_dot.712_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","256"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 12:15:56.780114 1598365 xtile_compiler.cc:401] Computation: gemm_fusion_dot.712_computation.clone {
+  parameter_0.2 = f32[128,73]{1,0} parameter(0)
+  parameter_1.2 = f32[54,73]{1,0} parameter(1)
+  ROOT dot.782 = f32[128,54]{1,0} dot(parameter_0.2, parameter_1.2), lhs_contracting_dims={1}, rhs_contracting_dims={1}, backend_config={"sizes":["64"]}
+}
+Error executing job with overrides: ['kpms_config.codes_path=/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/outputs/pipeline_sweep/codes/s10_k1e+02_arhmm.npz', 'network_config.num_codes=10', 'network_config.continuous_latent_dim=2', 'network_config.kl_weight=0.1', 'network_config.use_continuous_encoder=true', 'network_config.use_rnn_decoder=true', 'network_config.rnn_hidden_sizes=[256]', 'network_config.rnn_cell_type=gru', 'network_config.z_e_anneal=false', 'network_config.z_e_anneal_start_frac=0.3', 'network_config.z_e_anneal_end_frac=0.7', 'train_setup.run_name=s10_k1e+02_arhmm_ld2_kl0.1', 'train_setup.train_config.num_timesteps=4000000000', 'train_setup.train_config.num_envs=2048', 'train_setup.eval_every=50000000', 'logging_config.group_name=pipeline_sweep', 'logging_config.exp_name=s10_k1e+02_arhmm_ld2_kl0.1']
+Traceback (most recent call last):
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/train_moseq_decoder.py", line 712, in main
+    make_inference_fn, params, _ = train_fn(
+                                   ^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/moseq_ppo.py", line 280, in train
+    result = ppo.train(
+             ^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/ff_ppo/ppo.py", line 916, in train
+    (training_state, env_state, training_metrics) = training_epoch_with_timing(
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/ff_ppo/ppo.py", line 571, in training_epoch_with_timing
+    result = training_epoch(
+             ^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/jax/_src/pmap.py", line 98, in wrapped
+    out = jitted_f(*dyn_args_flat)
+          ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/ff_ppo/ppo.py", line 527, in training_epoch
+    (training_state, state, carry_state, _, _), loss_metrics = jax.lax.scan(
+                                                               ^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/ff_ppo/ppo.py", line 498, in training_step
+    (optimizer_state, params, _, _), metrics = jax.lax.scan(
+                                               ^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/ff_ppo/ppo.py", line 377, in sgd_step
+    (optimizer_state, params, _, _), metrics = jax.lax.scan(
+                                               ^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/ff_ppo/ppo.py", line 350, in minibatch_step
+    (_, metrics), params, optimizer_state = gradient_update_fn(
+                                            ^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/gradients.py", line 66, in f
+    value, grads = loss_and_pgrad_fn(*args)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/track_mjx/agent/gradients.py", line 32, in h
+    value, grad = g(*args, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/moseq_ppo.py", line 196, in moseq_rnn_loss_wrapper
+    return compute_moseq_recurrent_ppo_loss(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/moseq_losses.py", line 340, in compute_moseq_recurrent_ppo_loss
+    baseline = value_apply(normalizer_params, params.value, data.observation)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/moseq_ppo_networks.py", line 283, in apply
+    return base_value.apply((), base_params, augmented)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/brax/training/networks.py", line 446, in apply
+    return jnp.squeeze(value_module.apply(value_params, obs), axis=-1)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/brax/training/networks.py", line 151, in __call__
+    hidden = linen.Dense(
+             ^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/flax/linen/linear.py", line 263, in __call__
+    kernel = self.param(
+             ^^^^^^^^^^^
+flax.errors.ScopeParamShapeError: For parameter "kernel" in "/hidden_0", the given initializer is expected to generate shape (934, 512), but the existing parameter it received has shape (933, 512). (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.

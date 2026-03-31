@@ -1,0 +1,266 @@
+E0325 16:00:33.167253 2172162 numa_hwloc.cc:121] Call to hwloc_set_cpubind() failed: Invalid argument [22]
+E0325 16:00:33.167308 2172163 numa_hwloc.cc:121] Call to hwloc_set_cpubind() failed: Invalid argument [22]
+E0325 16:00:33.167346 2172164 numa_hwloc.cc:121] Call to hwloc_set_cpubind() failed: Invalid argument [22]
+wandb: Currently logged in as: charles-zhang216 to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: Tracking run with wandb version 0.19.5
+wandb: Run data is saved locally in /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/wandb/run-20260325_160042-s10_k5e+02_arhmm_ld4_kl0.01_260325_160034_383835
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run s10_k5e+02_arhmm_ld4_kl0.01_260325_160034_383835
+wandb: ⭐️ View project at https://wandb.ai/charles-zhang216/moseq_experiments
+wandb: 🚀 View run at https://wandb.ai/charles-zhang216/moseq_experiments/runs/s10_k5e%2B02_arhmm_ld4_kl0.01_260325_160034_383835
+E0325 16:11:15.796337 2172169 slow_operation_alarm.cc:73] 
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 16:11:16.332292 2172132 slow_operation_alarm.cc:140] The operation took 2m0.536065207s
+
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 16:16:25.698353 2172168 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.533 = f32[2,768,2048]{1,2,0} fusion(concatenate.7359, get-tuple-element.78372, get-tuple-element.78375, get-tuple-element.78369), kind=kCustom, calls=gemm_fusion_dot.533_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["1","128","128"]}],"num_ctas":1,"num_stages":3,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:25.698648 2172168 xtile_compiler.cc:401] Computation: gemm_fusion_dot.533_computation.clone {
+  parameter_1.48 = f32[297,256]{1,0} parameter(1)
+  parameter_2.8 = f32[297,256]{1,0} parameter(2)
+  parameter_3.4 = f32[297,256]{1,0} parameter(3)
+  concatenate.10902 = f32[297,768]{1,0} concatenate(parameter_1.48, parameter_2.8, parameter_3.4), dimensions={1}
+  constant = f32[] constant(0)
+  pad = f32[304,768]{1,0} pad(concatenate.10902, constant), padding=0_7x0_0
+  bitcast = f32[2,152,768]{2,1,0} bitcast(pad)
+  parameter_0.48 = f32[2048,297]{1,0} parameter(0)
+  constant_1 = f32[] constant(0)
+  pad.1 = f32[2048,304]{1,0} pad(parameter_0.48, constant_1), padding=0_0x0_7
+  bitcast.1 = f32[2048,2,152]{2,1,0} bitcast(pad.1)
+  ROOT dot = f32[2,768,2048]{1,2,0} dot(bitcast, bitcast.1), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={1}, rhs_contracting_dims={2}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:25.792945 2172165 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.533 = f32[768,2048]{0,1} fusion(concatenate.7359, get-tuple-element.78372, get-tuple-element.78375, get-tuple-element.78369), kind=kCustom, calls=gemm_fusion_dot.533_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["64","64"]}],"num_ctas":1,"num_stages":5,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:25.793205 2172165 xtile_compiler.cc:401] Computation: gemm_fusion_dot.533_computation.clone {
+  parameter_1.48 = f32[297,256]{1,0} parameter(1)
+  parameter_2.8 = f32[297,256]{1,0} parameter(2)
+  parameter_3.4 = f32[297,256]{1,0} parameter(3)
+  concatenate.10902 = f32[297,768]{1,0} concatenate(parameter_1.48, parameter_2.8, parameter_3.4), dimensions={1}
+  parameter_0.48 = f32[2048,297]{1,0} parameter(0)
+  ROOT dot.598 = f32[768,2048]{0,1} dot(concatenate.10902, parameter_0.48), lhs_contracting_dims={0}, rhs_contracting_dims={1}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:27.124778 2172168 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.392 = f32[10240,512]{1,0} fusion(select_n.16212, get-tuple-element.60407), kind=kCustom, calls=gemm_fusion_dot.392_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":true,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:27.124907 2172168 xtile_compiler.cc:401] Computation: gemm_fusion_dot.392_computation.clone {
+  parameter_0.29 = f32[10240,256]{1,0} parameter(0)
+  parameter_1.29 = f32[512,256]{1,0} parameter(1)
+  ROOT dot.576 = f32[10240,512]{1,0} dot(parameter_0.29, parameter_1.29), lhs_contracting_dims={1}, rhs_contracting_dims={1}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:29.324150 2172166 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.391 = f32[10240,256]{1,0} fusion(select_n.16211, get-tuple-element.60409), kind=kCustom, calls=gemm_fusion_dot.391_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":true,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:29.324292 2172166 xtile_compiler.cc:401] Computation: gemm_fusion_dot.391_computation.clone {
+  parameter_0.28 = f32[10240,256]{1,0} parameter(0)
+  parameter_1.28 = f32[256,256]{1,0} parameter(1)
+  ROOT dot.575 = f32[10240,256]{1,0} dot(parameter_0.28, parameter_1.28), lhs_contracting_dims={1}, rhs_contracting_dims={1}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:30.822032 2172167 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.503 = f32[10752,256]{1,0} fusion(max.1261, max.1273, get-tuple-element.60407), kind=kCustom, calls=gemm_fusion_dot.503_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["64","32"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:30.822201 2172167 xtile_compiler.cc:401] Computation: gemm_fusion_dot.503_computation.clone {
+  parameter_0.26 = f32[512,512]{1,0} parameter(0)
+  parameter_1.26 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10900 = f32[10752,512]{1,0} concatenate(parameter_0.26, parameter_1.26), dimensions={0}
+  parameter_2.6 = f32[512,256]{1,0} parameter(2)
+  ROOT dot.573 = f32[10752,256]{1,0} dot(concatenate.10900, parameter_2.6), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["128"]}
+}
+E0325 16:16:31.025036 2172166 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.503 = f32[10752,256]{1,0} fusion(max.1261, max.1273, get-tuple-element.60407), kind=kCustom, calls=gemm_fusion_dot.503_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["64","64"]}],"num_ctas":1,"num_stages":5,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:31.025192 2172166 xtile_compiler.cc:401] Computation: gemm_fusion_dot.503_computation.clone {
+  parameter_0.26 = f32[512,512]{1,0} parameter(0)
+  parameter_1.26 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10900 = f32[10752,512]{1,0} concatenate(parameter_0.26, parameter_1.26), dimensions={0}
+  parameter_2.6 = f32[512,256]{1,0} parameter(2)
+  ROOT dot.573 = f32[10752,256]{1,0} dot(concatenate.10900, parameter_2.6), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:31.661273 2172167 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.503 = f32[10752,256]{1,0} fusion(max.1261, max.1273, get-tuple-element.60407), kind=kCustom, calls=gemm_fusion_dot.503_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":true,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:31.661437 2172167 xtile_compiler.cc:401] Computation: gemm_fusion_dot.503_computation.clone {
+  parameter_0.26 = f32[512,512]{1,0} parameter(0)
+  parameter_1.26 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10900 = f32[10752,512]{1,0} concatenate(parameter_0.26, parameter_1.26), dimensions={0}
+  parameter_2.6 = f32[512,256]{1,0} parameter(2)
+  ROOT dot.573 = f32[10752,256]{1,0} dot(concatenate.10900, parameter_2.6), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:31.757334 2172167 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.503 = f32[10752,256]{1,0} fusion(max.1261, max.1273, get-tuple-element.60407), kind=kCustom, calls=gemm_fusion_dot.503_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":3,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:31.757482 2172167 xtile_compiler.cc:401] Computation: gemm_fusion_dot.503_computation.clone {
+  parameter_0.26 = f32[512,512]{1,0} parameter(0)
+  parameter_1.26 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10900 = f32[10752,512]{1,0} concatenate(parameter_0.26, parameter_1.26), dimensions={0}
+  parameter_2.6 = f32[512,256]{1,0} parameter(2)
+  ROOT dot.573 = f32[10752,256]{1,0} dot(concatenate.10900, parameter_2.6), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:33.405536 2172166 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.503 = f32[2,10752,256]{2,1,0} fusion(max.1261, max.1273, bitcast.2), kind=kCustom, calls=gemm_fusion_dot.503_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["1","128","256"]}],"num_ctas":1,"num_stages":5,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:33.405698 2172166 xtile_compiler.cc:401] Computation: gemm_fusion_dot.503_computation.clone {
+  parameter_0.26 = f32[512,512]{1,0} parameter(0)
+  parameter_1.26 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10900 = f32[10752,512]{1,0} concatenate(parameter_0.26, parameter_1.26), dimensions={0}
+  bitcast = f32[10752,2,256]{2,1,0} bitcast(concatenate.10900)
+  parameter_2.6 = f32[2,256,256]{2,1,0} parameter(2)
+  ROOT dot = f32[2,10752,256]{2,1,0} dot(bitcast, parameter_2.6), lhs_batch_dims={1}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, backend_config={"sizes":["32"]}
+}
+E0325 16:16:37.286476 2172166 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.502 = f32[10752,512]{1,0} fusion(max.1260, max.1272, get-tuple-element.60405), kind=kCustom, calls=gemm_fusion_dot.502_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["64","64"]}],"num_ctas":1,"num_stages":5,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:37.286636 2172166 xtile_compiler.cc:401] Computation: gemm_fusion_dot.502_computation.clone {
+  parameter_0.25 = f32[512,512]{1,0} parameter(0)
+  parameter_1.25 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10899 = f32[10752,512]{1,0} concatenate(parameter_0.25, parameter_1.25), dimensions={0}
+  parameter_2.5 = f32[512,512]{1,0} parameter(2)
+  ROOT dot.572 = f32[10752,512]{1,0} dot(concatenate.10899, parameter_2.5), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:37.734009 2172167 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.502 = f32[10752,512]{1,0} fusion(max.1260, max.1272, get-tuple-element.60405), kind=kCustom, calls=gemm_fusion_dot.502_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["64","32"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:37.734183 2172167 xtile_compiler.cc:401] Computation: gemm_fusion_dot.502_computation.clone {
+  parameter_0.25 = f32[512,512]{1,0} parameter(0)
+  parameter_1.25 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10899 = f32[10752,512]{1,0} concatenate(parameter_0.25, parameter_1.25), dimensions={0}
+  parameter_2.5 = f32[512,512]{1,0} parameter(2)
+  ROOT dot.572 = f32[10752,512]{1,0} dot(concatenate.10899, parameter_2.5), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["128"]}
+}
+E0325 16:16:38.600904 2172166 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.502 = f32[10752,512]{1,0} fusion(max.1260, max.1272, get-tuple-element.60405), kind=kCustom, calls=gemm_fusion_dot.502_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":3,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:38.601050 2172166 xtile_compiler.cc:401] Computation: gemm_fusion_dot.502_computation.clone {
+  parameter_0.25 = f32[512,512]{1,0} parameter(0)
+  parameter_1.25 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10899 = f32[10752,512]{1,0} concatenate(parameter_0.25, parameter_1.25), dimensions={0}
+  parameter_2.5 = f32[512,512]{1,0} parameter(2)
+  ROOT dot.572 = f32[10752,512]{1,0} dot(concatenate.10899, parameter_2.5), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:40.088927 2172168 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.502 = f32[10752,512]{1,0} fusion(max.1260, max.1272, get-tuple-element.60405), kind=kCustom, calls=gemm_fusion_dot.502_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","256"]}],"num_ctas":1,"num_stages":5,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:40.089124 2172168 xtile_compiler.cc:401] Computation: gemm_fusion_dot.502_computation.clone {
+  parameter_0.25 = f32[512,512]{1,0} parameter(0)
+  parameter_1.25 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10899 = f32[10752,512]{1,0} concatenate(parameter_0.25, parameter_1.25), dimensions={0}
+  parameter_2.5 = f32[512,512]{1,0} parameter(2)
+  ROOT dot.572 = f32[10752,512]{1,0} dot(concatenate.10899, parameter_2.5), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["32"]}
+}
+E0325 16:16:41.073850 2172165 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.502 = f32[10752,512]{1,0} fusion(max.1260, max.1272, get-tuple-element.60405), kind=kCustom, calls=gemm_fusion_dot.502_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":true,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:41.074032 2172165 xtile_compiler.cc:401] Computation: gemm_fusion_dot.502_computation.clone {
+  parameter_0.25 = f32[512,512]{1,0} parameter(0)
+  parameter_1.25 = f32[10240,512]{1,0} parameter(1)
+  concatenate.10899 = f32[10752,512]{1,0} concatenate(parameter_0.25, parameter_1.25), dimensions={0}
+  parameter_2.5 = f32[512,512]{1,0} parameter(2)
+  ROOT dot.572 = f32[10752,512]{1,0} dot(concatenate.10899, parameter_2.5), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:43.355289 2172167 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.501 = f32[10752,512]{1,0} fusion(concatenate.6092, bitcast.233, get-tuple-element.60403), kind=kCustom, calls=gemm_fusion_dot.501_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["64","32"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:43.355496 2172167 xtile_compiler.cc:401] Computation: gemm_fusion_dot.501_computation.clone {
+  parameter_0.24 = f32[512,933]{1,0} parameter(0)
+  parameter_1.24 = f32[10240,933]{1,0} parameter(1)
+  concatenate.10898 = f32[10752,933]{1,0} concatenate(parameter_0.24, parameter_1.24), dimensions={0}
+  parameter_2.4 = f32[933,512]{1,0} parameter(2)
+  ROOT dot.571 = f32[10752,512]{1,0} dot(concatenate.10898, parameter_2.4), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["128"]}
+}
+E0325 16:16:43.522972 2172167 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.501 = f32[10752,512]{1,0} fusion(concatenate.6092, bitcast.233, get-tuple-element.60403), kind=kCustom, calls=gemm_fusion_dot.501_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["64","64"]}],"num_ctas":1,"num_stages":5,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:43.523155 2172167 xtile_compiler.cc:401] Computation: gemm_fusion_dot.501_computation.clone {
+  parameter_0.24 = f32[512,933]{1,0} parameter(0)
+  parameter_1.24 = f32[10240,933]{1,0} parameter(1)
+  concatenate.10898 = f32[10752,933]{1,0} concatenate(parameter_0.24, parameter_1.24), dimensions={0}
+  parameter_2.4 = f32[933,512]{1,0} parameter(2)
+  ROOT dot.571 = f32[10752,512]{1,0} dot(concatenate.10898, parameter_2.4), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:45.214951 2172167 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.501 = f32[8,10752,512]{2,1,0} fusion(concatenate.6092, bitcast.233, get-tuple-element.60403), kind=kCustom, calls=gemm_fusion_dot.501_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"16","output_tiles":[{"sizes":["1","128","256"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:45.215130 2172167 xtile_compiler.cc:401] Computation: gemm_fusion_dot.501_computation.clone {
+  parameter_0.24 = f32[512,933]{1,0} parameter(0)
+  parameter_1.24 = f32[10240,933]{1,0} parameter(1)
+  concatenate.10898 = f32[10752,933]{1,0} concatenate(parameter_0.24, parameter_1.24), dimensions={0}
+  constant = f32[] constant(0)
+  pad = f32[10752,960]{1,0} pad(concatenate.10898, constant), padding=0_0x0_27
+  bitcast = f32[10752,8,120]{2,1,0} bitcast(pad)
+  parameter_2.4 = f32[933,512]{1,0} parameter(2)
+  constant_1 = f32[] constant(0)
+  pad.1 = f32[960,512]{1,0} pad(parameter_2.4, constant_1), padding=0_27x0_0
+  bitcast.1 = f32[8,120,512]{2,1,0} bitcast(pad.1)
+  ROOT dot = f32[8,10752,512]{2,1,0} dot(bitcast, bitcast.1), lhs_batch_dims={1}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, backend_config={"sizes":["32"]}
+}
+E0325 16:16:45.985413 2172168 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.501 = f32[10752,512]{1,0} fusion(concatenate.6092, bitcast.233, get-tuple-element.60403), kind=kCustom, calls=gemm_fusion_dot.501_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":true,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:45.985654 2172168 xtile_compiler.cc:401] Computation: gemm_fusion_dot.501_computation.clone {
+  parameter_0.24 = f32[512,933]{1,0} parameter(0)
+  parameter_1.24 = f32[10240,933]{1,0} parameter(1)
+  concatenate.10898 = f32[10752,933]{1,0} concatenate(parameter_0.24, parameter_1.24), dimensions={0}
+  parameter_2.4 = f32[933,512]{1,0} parameter(2)
+  ROOT dot.571 = f32[10752,512]{1,0} dot(concatenate.10898, parameter_2.4), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:46.000454 2172165 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.501 = f32[10752,512]{1,0} fusion(concatenate.6092, bitcast.233, get-tuple-element.60403), kind=kCustom, calls=gemm_fusion_dot.501_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":3,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:46.000623 2172165 xtile_compiler.cc:401] Computation: gemm_fusion_dot.501_computation.clone {
+  parameter_0.24 = f32[512,933]{1,0} parameter(0)
+  parameter_1.24 = f32[10240,933]{1,0} parameter(1)
+  concatenate.10898 = f32[10752,933]{1,0} concatenate(parameter_0.24, parameter_1.24), dimensions={0}
+  parameter_2.4 = f32[933,512]{1,0} parameter(2)
+  ROOT dot.571 = f32[10752,512]{1,0} dot(concatenate.10898, parameter_2.4), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:46.172925 2172168 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.501 = f32[10752,512]{1,0} fusion(concatenate.6092, bitcast.233, get-tuple-element.60403), kind=kCustom, calls=gemm_fusion_dot.501_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","256"]}],"num_ctas":1,"num_stages":5,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:46.173126 2172168 xtile_compiler.cc:401] Computation: gemm_fusion_dot.501_computation.clone {
+  parameter_0.24 = f32[512,933]{1,0} parameter(0)
+  parameter_1.24 = f32[10240,933]{1,0} parameter(1)
+  concatenate.10898 = f32[10752,933]{1,0} concatenate(parameter_0.24, parameter_1.24), dimensions={0}
+  parameter_2.4 = f32[933,512]{1,0} parameter(2)
+  ROOT dot.571 = f32[10752,512]{1,0} dot(concatenate.10898, parameter_2.4), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["32"]}
+}
+E0325 16:16:46.245455 2172165 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.501 = f32[2,10752,512]{2,1,0} fusion(concatenate.6092, bitcast.233, get-tuple-element.60403), kind=kCustom, calls=gemm_fusion_dot.501_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["1","128","64"]}],"num_ctas":1,"num_stages":5,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:46.245676 2172165 xtile_compiler.cc:401] Computation: gemm_fusion_dot.501_computation.clone {
+  parameter_0.24 = f32[512,933]{1,0} parameter(0)
+  parameter_1.24 = f32[10240,933]{1,0} parameter(1)
+  concatenate.10898 = f32[10752,933]{1,0} concatenate(parameter_0.24, parameter_1.24), dimensions={0}
+  constant = f32[] constant(0)
+  pad = f32[10752,936]{1,0} pad(concatenate.10898, constant), padding=0_0x0_3
+  bitcast = f32[10752,2,468]{2,1,0} bitcast(pad)
+  parameter_2.4 = f32[933,512]{1,0} parameter(2)
+  constant_1 = f32[] constant(0)
+  pad.1 = f32[936,512]{1,0} pad(parameter_2.4, constant_1), padding=0_3x0_0
+  bitcast.1 = f32[2,468,512]{2,1,0} bitcast(pad.1)
+  ROOT dot = f32[2,10752,512]{2,1,0} dot(bitcast, bitcast.1), lhs_batch_dims={1}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:49.519389 2172165 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.504 = f32[10752,256]{1,0} fusion(max.1262, max.1274, get-tuple-element.60409), kind=kCustom, calls=gemm_fusion_dot.504_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"8","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":3,"is_tma_allowed":false,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:49.519544 2172165 xtile_compiler.cc:401] Computation: gemm_fusion_dot.504_computation.clone {
+  parameter_0.27 = f32[512,256]{1,0} parameter(0)
+  parameter_1.27 = f32[10240,256]{1,0} parameter(1)
+  concatenate.10901 = f32[10752,256]{1,0} concatenate(parameter_0.27, parameter_1.27), dimensions={0}
+  parameter_2.7 = f32[256,256]{1,0} parameter(2)
+  ROOT dot.574 = f32[10752,256]{1,0} dot(concatenate.10901, parameter_2.7), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:51.073415 2172168 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.504 = f32[10752,256]{1,0} fusion(max.1262, max.1274, get-tuple-element.60409), kind=kCustom, calls=gemm_fusion_dot.504_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":true,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:51.073580 2172168 xtile_compiler.cc:401] Computation: gemm_fusion_dot.504_computation.clone {
+  parameter_0.27 = f32[512,256]{1,0} parameter(0)
+  parameter_1.27 = f32[10240,256]{1,0} parameter(1)
+  concatenate.10901 = f32[10752,256]{1,0} concatenate(parameter_0.27, parameter_1.27), dimensions={0}
+  parameter_2.7 = f32[256,256]{1,0} parameter(2)
+  ROOT dot.574 = f32[10752,256]{1,0} dot(concatenate.10901, parameter_2.7), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"sizes":["64"]}
+}
+E0325 16:16:56.403993 2172168 xtile_compiler.cc:399] Fusion: gemm_fusion_dot.393 = f32[10240,512]{1,0} fusion(select_n.16213, get-tuple-element.60405), kind=kCustom, calls=gemm_fusion_dot.393_computation.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion","block_level_fusion_config":{"num_warps":"4","output_tiles":[{"sizes":["128","128"]}],"num_ctas":1,"num_stages":4,"is_tma_allowed":true,"is_warp_specialization_allowed":false}},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
+E0325 16:16:56.404148 2172168 xtile_compiler.cc:401] Computation: gemm_fusion_dot.393_computation.clone {
+  parameter_0.30 = f32[10240,512]{1,0} parameter(0)
+  parameter_1.30 = f32[512,512]{1,0} parameter(1)
+  ROOT dot.577 = f32[10240,512]{1,0} dot(parameter_0.30, parameter_1.30), lhs_contracting_dims={1}, rhs_contracting_dims={1}, backend_config={"sizes":["64"]}
+}
+E0325 17:02:05.799878 2172169 slow_operation_alarm.cc:73] 
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 17:02:08.092940 2172132 slow_operation_alarm.cc:140] The operation took 2m2.29316056s
+
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 17:47:46.577919 2172169 slow_operation_alarm.cc:73] 
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 17:47:50.597757 2172132 slow_operation_alarm.cc:140] The operation took 2m4.019941318s
+
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 18:24:48.943503 2172169 slow_operation_alarm.cc:73] 
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 18:24:52.792144 2172132 slow_operation_alarm.cc:140] The operation took 2m3.848743982s
+
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 18:28:57.487161 2172169 slow_operation_alarm.cc:73] 
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0325 18:29:00.872280 2172132 slow_operation_alarm.cc:140] The operation took 2m3.385206589s
+
+********************************
+[Compiling module jit_generate_eval_unroll for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+/usr/lib64/python3.12/subprocess.py:1885: RuntimeWarning: os.fork() was called. os.fork() is incompatible with multithreaded code, and JAX is multithreaded, so this will likely lead to a deadlock.
+  self.pid = _fork_exec(
+[2026-03-26T16:00:27.049] error: *** JOB 1602716 ON holygpu8a12201 CANCELLED AT 2026-03-26T16:00:27 DUE TO TIME LIMIT ***

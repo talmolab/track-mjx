@@ -49,6 +49,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
     use_continuous_encoder: bool = False
     encoder_layer_sizes: Sequence[int] = (256, 128)
     continuous_latent_dim: int = 16
+    z_e_dropout_rate: float = 0.0
 
     def setup(self):
         self.code_embedding = nn.Embed(
@@ -81,10 +82,12 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
             When ``use_continuous_encoder=False``, ``mean`` and ``logvar``
             are ``None``.
         """
-        # Extract code index — passed as float, round to int for embedding
-        kpms_code = obs["kpms_code"]  # [..., 1]
-        code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)
-        code_emb = self.code_embedding(code_idx)  # [..., code_embed_dim]
+        # Extract code indices — may be stacked [code_t, ..., code_{t+N-1}]
+        kpms_code = obs["kpms_code"]  # [..., N] where N = code_stack_size
+        code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)  # current code for metrics
+        all_code_idx = jnp.round(kpms_code).astype(jnp.int32)
+        all_emb = self.code_embedding(all_code_idx)  # [..., N, code_embed_dim]
+        code_emb = all_emb.reshape(*all_emb.shape[:-2], -1)  # [..., N * code_embed_dim]
 
         # Proprioception (already normalized and flattened by the policy wrapper)
         proprio = obs["proprioception"]
@@ -122,6 +125,15 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
 
             # Decoder input: code_emb + z_e_scaled + proprio
             z_e_scaled = z_e * z_e_scale
+
+            # z_e dropout (training only)
+            if not deterministic and self.z_e_dropout_rate > 0 and key is not None:
+                _, _, dropout_key = jax.random.split(key, 3)
+                keep = jax.random.bernoulli(
+                    dropout_key, 1.0 - self.z_e_dropout_rate, shape=mean.shape[:1]
+                ).astype(z_e_scaled.dtype)
+                z_e_scaled = z_e_scaled * keep[..., None]
+
             x = jnp.concatenate([code_emb, z_e_scaled, proprio], axis=-1)
         else:
             mean = None
@@ -172,6 +184,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
     use_continuous_encoder: bool = False
     encoder_layer_sizes: Sequence[int] = (256, 128)
     continuous_latent_dim: int = 16
+    z_e_dropout_rate: float = 0.0
 
     def setup(self):
         self.code_embedding = nn.Embed(
@@ -219,8 +232,13 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None]:
         """Encode obs into (decoder_input, code_idx, mean, logvar)."""
         kpms_code = obs["kpms_code"]
+        # Current code index (first in stack, used for metrics/logging)
         code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)
-        code_emb = self.code_embedding(code_idx)
+        # Embed all codes in the stack and concatenate
+        all_code_idx = jnp.round(kpms_code).astype(jnp.int32)
+        all_emb = self.code_embedding(all_code_idx)  # [..., N, code_embed_dim]
+        # Flatten last two dims: [..., N * code_embed_dim]
+        code_emb = all_emb.reshape(*all_emb.shape[:-2], -1)
 
         proprio = obs["proprioception"]
 
@@ -263,6 +281,24 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     z_e = mean + jnp.exp(0.5 * logvar) * eps
 
             z_e_scaled = z_e * z_e_scale
+
+            # z_e dropout: zero out entire z_e with prob p per sample (training only)
+            if not deterministic and self.z_e_dropout_rate > 0 and key is not None:
+                if key.ndim > 1:
+                    # Per-sample keys [B, 2]: vmap bernoulli over batch
+                    dropout_keys = jax.vmap(lambda k: jax.random.split(k, 3)[2])(key)
+                    keep = jax.vmap(
+                        lambda k: jax.random.bernoulli(k, 1.0 - self.z_e_dropout_rate)
+                    )(dropout_keys).astype(z_e_scaled.dtype)
+                else:
+                    _, _, dropout_key = jax.random.split(key, 3)
+                    keep = jax.random.bernoulli(
+                        dropout_key,
+                        1.0 - self.z_e_dropout_rate,
+                        shape=mean.shape[:1],
+                    ).astype(z_e_scaled.dtype)
+                z_e_scaled = z_e_scaled * keep[..., None]
+
             decoder_input = jnp.concatenate([code_emb, z_e_scaled, proprio], axis=-1)
         else:
             mean = None
@@ -300,21 +336,13 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         jnp.ndarray | None,
         list[jnp.ndarray],
     ]:
-        """Single-timestep forward pass.
-
-        Args:
-            obs: Observation dict with ``kpms_code``, ``proprioception``,
-                and optionally ``imitation_target``.
-            hidden: List of GRU hidden states, one per layer.
-            key: PRNG key for reparameterization.
-            deterministic: If True, use mean instead of sampling.
-            z_e_scale: Multiplier on z_e (1.0 = full, 0.0 = decoder-only).
+        """Single-timestep forward pass (no per-code decay — used in rollout).
 
         Returns:
             ``(action_params, code_idx, mean, logvar, new_hidden)``.
         """
         decoder_input, code_idx, mean, logvar = self._encode(
-            obs, key, deterministic, z_e_scale
+            obs, key, deterministic, z_e_scale,
         )
         action_params, new_hidden = self._decode_rnn(decoder_input, hidden)
         return action_params, code_idx, mean, logvar, new_hidden
@@ -375,7 +403,6 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                 new_hidden = _reset_hidden(new_hidden, done_t)
                 return new_hidden, (action_params, mean, logvar)
 
-            # Pack obs dict values into a single dict for scan
             final_hidden, (logits, means, logvars) = jax.lax.scan(
                 step_stored,
                 initial_hidden,

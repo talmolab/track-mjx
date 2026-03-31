@@ -1,0 +1,13 @@
+/bin/bash: /n/sw/helmod-rocky8/apps/lmod/lmod/init/bash: Stale file handle
+/etc/profile.d/lmod.sh: line 96: /n/sw/helmod-rocky8/apps/lmod/lmod/init/sh: Stale file handle
+environment: line 17: /n/sw/helmod-rocky8/apps/lmod/lmod/libexec/lmod: Stale file handle
+environment: line 17: /n/sw/helmod-rocky8/apps/lmod/lmod/libexec/lmod: Stale file handle
+wandb: Currently logged in as: charles-zhang216 to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: - Waiting for wandb.init()...wandb: \ Waiting for wandb.init()...wandb: Tracking run with wandb version 0.19.5
+wandb: Run data is saved locally in /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/wandb/run-20260325_091559-s20_k1e+02_arhmm_ld2_kl0.01_260325_091552_557535
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run s20_k1e+02_arhmm_ld2_kl0.01_260325_091552_557535
+wandb: ⭐️ View project at https://wandb.ai/charles-zhang216/moseq_experiments
+wandb: 🚀 View run at https://wandb.ai/charles-zhang216/moseq_experiments/runs/s20_k1e%2B02_arhmm_ld2_kl0.01_260325_091552_557535
+[2026-03-25T09:16:47.595] error: *** JOB 1530316 ON holygpu8a19303 CANCELLED AT 2026-03-25T09:16:47 DUE to SIGNAL Terminated ***

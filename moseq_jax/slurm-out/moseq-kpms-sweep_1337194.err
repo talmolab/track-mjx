@@ -1,0 +1,85 @@
+INFO: Loaded qpos: (210500, 74)
+INFO: Set up model with 23 keypoint sites
+INFO: Running forward kinematics...
+INFO:2026-03-24 17:36:38,962:jax._src.xla_bridge:834: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+INFO: Using JAX default device: cuda:0.
+INFO: Using JAX default device: cuda:0.
+INFO: FK output: (210500, 23, 3)
+INFO: Using 484 balanced clips (train+test)
+INFO: Loaded keypoints: (484, 250, 23, 3), 23 keypoints
+wandb: Currently logged in as: charles-zhang216 to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: Tracking run with wandb version 0.19.5
+wandb: Run data is saved locally in /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/wandb/run-20260324_173806-iiyg84v5
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run kpms_sweep_260324_173805
+wandb: ⭐️ View project at https://wandb.ai/charles-zhang216/moseq_experiments
+wandb: 🚀 View run at https://wandb.ai/charles-zhang216/moseq_experiments/runs/iiyg84v5
+INFO: Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+INFO: MovieWriter._run: running command: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 -f rawvideo -vcodec rawvideo -s 800x800 -pix_fmt rgba -framerate 30 -loglevel error -i pipe: -vcodec h264 -pix_fmt yuv420p -b 2400k -y outputs/pipeline_sweep/kpms/input_keypoint_clip0.mp4
+INFO: Saved 3D keypoint video: outputs/pipeline_sweep/kpms/input_keypoint_clip0.mp4
+wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+INFO: Grid: 15 settings × 2 seeds = 30 fits
+INFO: [1/15] s10_k1e+02_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [1/15] s10_k1e+02_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [2/15] s10_k5e+02_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [2/15] s10_k5e+02_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [3/15] s10_k1e+03_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [3/15] s10_k1e+03_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [4/15] s10_k5e+03_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [4/15] s10_k5e+03_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [5/15] s10_k1e+04_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [5/15] s10_k1e+04_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [6/15] s20_k1e+02_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [6/15] s20_k1e+02_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [7/15] s20_k5e+02_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [7/15] s20_k5e+02_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [8/15] s20_k1e+03_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [8/15] s20_k1e+03_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [9/15] s20_k5e+03_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [9/15] s20_k5e+03_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [10/15] s20_k1e+04_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [10/15] s20_k1e+04_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [11/15] s30_k1e+02_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [11/15] s30_k1e+02_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [12/15] s30_k5e+02_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [12/15] s30_k5e+02_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [13/15] s30_k1e+03_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [13/15] s30_k1e+03_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [14/15] s30_k5e+03_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [14/15] s30_k5e+03_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [15/15] s30_k1e+04_l10_arhmm seed=0
+WARNING:   FAILED: keypoint_moseq not installed
+INFO: [15/15] s30_k1e+04_l10_arhmm seed=1
+WARNING:   FAILED: keypoint_moseq not installed
+WARNING: No successful fits!
+INFO: Saved results to outputs/pipeline_sweep/kpms/sweep_results.json

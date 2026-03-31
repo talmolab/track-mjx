@@ -1,0 +1,22 @@
+Error executing job with overrides: ['kpms_config.codes_path=/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/outputs/pipeline_sweep/codes/s10_k5e+02_arhmm.npz', 'network_config.num_codes=10', 'network_config.continuous_latent_dim=4', 'network_config.kl_weight=0.01', 'network_config.use_continuous_encoder=true', 'network_config.use_rnn_decoder=true', 'network_config.rnn_hidden_sizes=[[256]]', 'network_config.rnn_cell_type=gru', 'network_config.z_e_anneal=false', 'network_config.z_e_anneal_start_frac=0.3', 'network_config.z_e_anneal_end_frac=0.7', 'train_setup.run_name=s10_k5e+02_arhmm_ld4_kl0.01', 'train_setup.train_config.num_timesteps=4000000000', 'train_setup.train_config.num_envs=4096', 'train_setup.eval_every=50000000', 'logging_config.group_name=pipeline_sweep', 'logging_config.exp_name=s10_k5e+02_arhmm_ld4_kl0.01']
+Traceback (most recent call last):
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/train_moseq_decoder.py", line 402, in main
+    train_clips = ReferenceClips(
+                  ^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/vnl-playground/vnl_playground/tasks/reference_clips.py", line 166, in __init__
+    self._load_from_disk(
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/vnl-playground/vnl_playground/tasks/reference_clips.py", line 179, in _load_from_disk
+    with h5py.File(data_path, "r") as fid:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/h5py/_hl/files.py", line 561, in __init__
+    fid = make_fid(name, mode, userblock_size, fapl, fcpl, swmr=swmr)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/h5py/_hl/files.py", line 235, in make_fid
+    fid = h5f.open(name, flags, fapl=fapl)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "h5py/_objects.pyx", line 54, in h5py._objects.with_phil.wrapper
+  File "h5py/_objects.pyx", line 55, in h5py._objects.with_phil.wrapper
+  File "h5py/h5f.pyx", line 102, in h5py.h5f.open
+FileNotFoundError: [Errno 2] Unable to synchronously open file (unable to open file: name = '/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/data/rodent/rodent_reference_clips.h5', errno = 2, error message = 'No such file or directory', flags = 0, o_flags = 0)
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.

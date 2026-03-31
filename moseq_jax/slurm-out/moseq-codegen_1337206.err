@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/codegen/generate_all_codes.py", line 215, in <module>
+    main()
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/codegen/generate_all_codes.py", line 207, in main
+    generate_all_codes(
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/codegen/generate_all_codes.py", line 70, in generate_all_codes
+    raise ValueError("No successful fits in sweep results")
+ValueError: No successful fits in sweep results
+Traceback (most recent call last):
+  File "<string>", line 7, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: 'outputs/pipeline_sweep/codes/manifest.json'

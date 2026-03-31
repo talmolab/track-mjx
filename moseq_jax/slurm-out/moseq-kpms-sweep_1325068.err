@@ -1,0 +1,48 @@
+INFO: Loaded qpos: (210500, 74)
+INFO: Set up model with 23 keypoint sites
+INFO: Running forward kinematics...
+INFO:2026-03-24 17:05:55,708:jax._src.xla_bridge:834: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+INFO: Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+INFO: Using JAX default device: cuda:0.
+INFO: Using JAX default device: cuda:0.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/sweep/run_sweep.py", line 963, in <module>
+    main()
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/sweep/run_sweep.py", line 959, in main
+    run_sweep(cfg)
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/sweep/run_sweep.py", line 663, in run_sweep
+    keypoints, kp_names = _load_keypoints(
+                          ^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/sweep/run_sweep.py", line 202, in _load_keypoints
+    kp_3d = _qpos_to_keypoints_fk(qpos, mj_model, mj_data, site_ids)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/sweep/run_sweep.py", line 163, in _qpos_to_keypoints_fk
+    batch_kps = batch_fk(batch_qpos)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/sweep/run_sweep.py", line 151, in forward_kinematics
+    data = mjx.forward(mjx_model, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/mujoco/mjx/_src/forward.py", line 63, in wrapper
+    res = fn(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/mujoco/mjx/_src/forward.py", line 440, in forward
+    d = fwd_position(m, d)
+        ^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/mujoco/mjx/_src/forward.py", line 63, in wrapper
+    res = fn(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/mujoco/mjx/_src/forward.py", line 73, in fwd_position
+    d = smooth.kinematics(m, d)
+        ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/mujoco/mjx/_src/smooth.py", line 96, in kinematics
+    qpos, xanchor, xaxis, xpos, xquat, xmat = scan.body_tree(
+                                              ^^^^^^^^^^^^^^^
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/mujoco/mjx/_src/scan.py", line 373, in body_tree
+    _check_input(m, args, in_types)
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.venv/lib64/python3.12/site-packages/mujoco/mjx/_src/scan.py", line 149, in _check_input
+    raise IndexError((
+IndexError: f argument "3" with type "q" has length "74" which does not match the in_types[3] expected length of "67".
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.

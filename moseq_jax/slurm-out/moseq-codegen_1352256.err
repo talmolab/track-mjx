@@ -1,0 +1,32 @@
+INFO: Found 15 unique (num_states, kappa) settings
+INFO:   s10_k1e+02_arhmm: seed=1, MSE=0.002721, EML=-1350004.8514103056, dur=8.1
+INFO:     -> s10_k1e+02_arhmm.npz: shape=(484, 250), num_codes=10
+INFO:   s10_k5e+02_arhmm: seed=1, MSE=0.002721, EML=-1340180.5490770014, dur=62.5
+INFO:     -> s10_k5e+02_arhmm.npz: shape=(484, 250), num_codes=10
+INFO:   s10_k1e+03_arhmm: seed=0, MSE=0.002721, EML=-1338752.5286430314, dur=45.5
+INFO:     -> s10_k1e+03_arhmm.npz: shape=(484, 250), num_codes=10
+INFO:   s10_k5e+03_arhmm: seed=1, MSE=0.002721, EML=-1337931.4423980538, dur=78.5
+INFO:     -> s10_k5e+03_arhmm.npz: shape=(484, 250), num_codes=10
+INFO:   s10_k1e+04_arhmm: seed=0, MSE=0.002721, EML=-1338313.3224205403, dur=87.6
+INFO:     -> s10_k1e+04_arhmm.npz: shape=(484, 250), num_codes=10
+INFO:   s20_k1e+02_arhmm: seed=1, MSE=0.002721, EML=-1346613.1358871805, dur=6.3
+INFO:     -> s20_k1e+02_arhmm.npz: shape=(484, 250), num_codes=20
+INFO:   s20_k5e+02_arhmm: seed=0, MSE=0.002721, EML=-1336731.5087965785, dur=45.0
+INFO:     -> s20_k5e+02_arhmm.npz: shape=(484, 250), num_codes=20
+INFO:   s20_k1e+03_arhmm: seed=1, MSE=0.002721, EML=-1334794.5596604939, dur=53.6
+INFO:     -> s20_k1e+03_arhmm.npz: shape=(484, 250), num_codes=20
+INFO:   s20_k5e+03_arhmm: seed=1, MSE=0.002721, EML=-1336655.2864079627, dur=74.6
+INFO:     -> s20_k5e+03_arhmm.npz: shape=(484, 250), num_codes=20
+INFO:   s20_k1e+04_arhmm: seed=1, MSE=0.002721, EML=-1337164.5818784765, dur=75.6
+INFO:     -> s20_k1e+04_arhmm.npz: shape=(484, 250), num_codes=20
+INFO:   s30_k1e+02_arhmm: seed=1, MSE=0.002721, EML=-1343237.0840437687, dur=9.0
+INFO:     -> s30_k1e+02_arhmm.npz: shape=(484, 250), num_codes=30
+INFO:   s30_k5e+02_arhmm: seed=0, MSE=0.002721, EML=-1332426.0091644796, dur=57.0
+INFO:     -> s30_k5e+02_arhmm.npz: shape=(484, 250), num_codes=30
+INFO:   s30_k1e+03_arhmm: seed=0, MSE=0.002721, EML=-1331950.7405355654, dur=58.7
+INFO:     -> s30_k1e+03_arhmm.npz: shape=(484, 250), num_codes=30
+INFO:   s30_k5e+03_arhmm: seed=0, MSE=0.002721, EML=-1331027.959191646, dur=70.4
+INFO:     -> s30_k5e+03_arhmm.npz: shape=(484, 250), num_codes=30
+INFO:   s30_k1e+04_arhmm: seed=1, MSE=0.002721, EML=-1331757.09154051, dur=71.4
+INFO:     -> s30_k1e+04_arhmm.npz: shape=(484, 250), num_codes=30
+INFO: Wrote manifest (15 settings) to outputs/pipeline_sweep/codes/manifest.json

@@ -1,0 +1,7 @@
+E0324 21:20:37.146212  819791 numa_hwloc.cc:121] Call to hwloc_set_cpubind() failed: Invalid argument [22]
+E0324 21:20:37.146173  819790 numa_hwloc.cc:121] Call to hwloc_set_cpubind() failed: Invalid argument [22]
+E0324 21:20:37.146252  819792 numa_hwloc.cc:121] Call to hwloc_set_cpubind() failed: Invalid argument [22]
+Traceback (most recent call last):
+  File "/n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/.claude/worktrees/kevin-kpms-decoder/moseq_jax/train_moseq_decoder.py", line 38, in <module>
+    from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+ModuleNotFoundError: No module named 'vnl_playground.tasks.rodent.reference_clips'

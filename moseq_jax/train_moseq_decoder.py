@@ -462,6 +462,9 @@ def main(cfg: DictConfig) -> None:
         train_codes = rng.randint(0, num_codes, size=(n_train, n_frames))
         test_codes = rng.randint(0, num_codes, size=(n_test, n_frames))
 
+    # Code stack size: how many consecutive codes to give the decoder
+    code_stack_size = int(cfg.network_config.get("code_stack_size", 1))
+
     # Use MoSeqImitation (subclass of Imitation) which injects kpms_code
     # directly in _get_obs. This ensures the obs pytree structure is consistent
     # from the start — no wrapper needed, no pytree mismatches in jax.lax.scan.
@@ -471,12 +474,18 @@ def main(cfg: DictConfig) -> None:
     # flat {"task_obs": ..., "proprioception": ..., "kpms_code": ...}.
     env = rodent_wrappers.LegacyObsWrapper(
         rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes)
+            MoSeqImitation(
+                config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes,
+                code_stack_size=code_stack_size,
+            )
         )
     )
     test_env = rodent_wrappers.LegacyObsWrapper(
         rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes)
+            MoSeqImitation(
+                config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes,
+                code_stack_size=code_stack_size,
+            )
         )
     )
 
@@ -502,35 +511,63 @@ def main(cfg: DictConfig) -> None:
     )
     continuous_latent_dim = int(cfg.network_config.get("continuous_latent_dim", 16))
     kl_weight = float(cfg.network_config.get("kl_weight", 0.0))
+    z_e_dropout_rate = float(cfg.network_config.get("z_e_dropout_rate", 0.0))
 
     # RNN decoder config
     use_rnn_decoder = bool(cfg.network_config.get("use_rnn_decoder", False))
     rnn_hidden_sizes = tuple(cfg.network_config.get("rnn_hidden_sizes", [256]))
     rnn_cell_type = str(cfg.network_config.get("rnn_cell_type", "gru"))
 
-    # z_e annealing config
-    z_e_anneal = bool(cfg.network_config.get("z_e_anneal", False))
-    z_e_anneal_start_frac = float(cfg.network_config.get("z_e_anneal_start_frac", 0.3))
-    z_e_anneal_end_frac = float(cfg.network_config.get("z_e_anneal_end_frac", 0.7))
+    # KL schedule config
+    kl_schedule = str(cfg.network_config.get("kl_schedule", "none"))
+    kl_sched_cfg = cfg.network_config.get("kl_schedule_config", {})
+    kl_sched_start = float(kl_sched_cfg.get("start_value", kl_weight))
+    kl_sched_end = float(kl_sched_cfg.get("end_value", 0.5))
+    kl_sched_start_frac = float(kl_sched_cfg.get("start_frac", 0.3))
+    kl_sched_end_frac = float(kl_sched_cfg.get("end_frac", 0.7))
+    kl_sched_num_cycles = int(kl_sched_cfg.get("num_cycles", 4))
 
     num_evals_total = int(
         cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
     )
 
-    z_e_scale_fn = None
-    if z_e_anneal and use_continuous_encoder:
-        _start = z_e_anneal_start_frac * num_evals_total
-        _end = z_e_anneal_end_frac * num_evals_total
+    z_e_scale_fn = None  # No z_e_scale scheduling — use KL schedule instead
+    kl_weight_fn = None
+
+    if kl_schedule != "none" and use_continuous_encoder:
+        _start = kl_sched_start_frac * num_evals_total
+        _end = kl_sched_end_frac * num_evals_total
         _range = max(_end - _start, 1.0)
+        _sv = kl_sched_start
+        _ev = kl_sched_end
 
-        def z_e_scale_fn(step, _s=_start, _r=_range, _e=_end):
-            frac = jnp.clip((step - _s) / _r, 0.0, 1.0)
-            return jnp.where(step < _s, 1.0, jnp.where(step > _e, 0.0, 1.0 - frac))
+        if kl_schedule == "ramp":
+            def kl_weight_fn(step, _s=_start, _r=_range, _e=_end, sv=_sv, ev=_ev):
+                frac = jnp.clip((step - _s) / _r, 0.0, 1.0)
+                w = sv + (ev - sv) * frac
+                return jnp.where(step < _s, sv, jnp.where(step > _e, ev, w))
 
-        logging.info(
-            f"z_e annealing: start_step={_start:.0f}, end_step={_end:.0f} "
-            f"(of {num_evals_total} evals)"
-        )
+            logging.info(
+                f"KL ramp: {_sv}→{_ev} over steps {_start:.0f}-{_end:.0f} "
+                f"(of {num_evals_total} evals)"
+            )
+
+        elif kl_schedule == "cosine_anneal":
+            _nc = kl_sched_num_cycles
+
+            def kl_weight_fn(step, _s=_start, _n=num_evals_total, sv=_sv, ev=_ev, nc=_nc):
+                progress = jnp.clip((step - _s) / max(_n - _s, 1.0), 0.0, 1.0)
+                cos_val = 0.5 * (1.0 + jnp.cos(2.0 * jnp.pi * nc * progress))
+                # cos_val=1 at trough (low KL), cos_val=0 at peak (high KL)
+                w = ev + (sv - ev) * cos_val
+                return jnp.where(step < _s, sv, w)
+
+            logging.info(
+                f"KL cosine anneal: {_sv}↔{_ev}, {_nc} cycles, "
+                f"starting at step {_start:.0f} (of {num_evals_total} evals)"
+            )
+        else:
+            logging.warning(f"Unknown kl_schedule '{kl_schedule}', using constant kl_weight")
 
     # Network factory
     if use_rnn_decoder:
@@ -542,6 +579,7 @@ def main(cfg: DictConfig) -> None:
             use_continuous_encoder=use_continuous_encoder,
             encoder_layer_sizes=encoder_layer_sizes,
             continuous_latent_dim=continuous_latent_dim,
+            z_e_dropout_rate=z_e_dropout_rate,
             rnn_hidden_sizes=rnn_hidden_sizes,
             rnn_cell_type=rnn_cell_type,
         )
@@ -558,6 +596,7 @@ def main(cfg: DictConfig) -> None:
             use_continuous_encoder=use_continuous_encoder,
             encoder_layer_sizes=encoder_layer_sizes,
             continuous_latent_dim=continuous_latent_dim,
+            z_e_dropout_rate=z_e_dropout_rate,
         )
 
     # WandB
@@ -579,21 +618,48 @@ def main(cfg: DictConfig) -> None:
             "moseq_encoder_decoder" if use_continuous_encoder else "moseq_decoder"
         )
 
+    # Read KPMS model provenance (kappa, num_states) from sweep results
+    kpms_kappa = None
+    kpms_num_states = None
+    kpms_model_type = None
+    kpms_mean_duration = None
+    if codes_path:
+        sweep_results_path = Path(codes_path).parent / "sweep_results.json"
+        if sweep_results_path.exists():
+            try:
+                with open(sweep_results_path) as f:
+                    sweep_results = json.load(f)
+                best = sweep_results.get("best_model", {})
+                kpms_kappa = best.get("kappa")
+                kpms_num_states = best.get("n_states")
+                kpms_model_type = best.get("model_type")
+                kpms_mean_duration = best.get("mean_duration")
+                logging.info(
+                    f"KPMS provenance: kappa={kpms_kappa}, n_states={kpms_num_states}, "
+                    f"model={kpms_model_type}, mean_duration={kpms_mean_duration:.1f}"
+                )
+            except Exception as e:
+                logging.warning(f"Could not read KPMS sweep results: {e}")
+
     wandb.config.update(
         {
             "arch": arch_name,
             "num_codes": num_codes,
             "code_embed_dim": int(cfg.network_config.code_embed_dim),
+            "code_stack_size": code_stack_size,
             "codes_path": str(codes_path) if codes_path else "random",
+            "kpms_kappa": kpms_kappa,
+            "kpms_num_states": kpms_num_states,
+            "kpms_model_type": kpms_model_type,
+            "kpms_mean_duration": kpms_mean_duration,
             "use_continuous_encoder": use_continuous_encoder,
             "continuous_latent_dim": continuous_latent_dim,
             "kl_weight": kl_weight,
+            "kl_schedule": kl_schedule,
             "use_rnn_decoder": use_rnn_decoder,
             "rnn_hidden_sizes": list(rnn_hidden_sizes) if use_rnn_decoder else None,
             "rnn_cell_type": rnn_cell_type if use_rnn_decoder else None,
-            "z_e_anneal": z_e_anneal,
-            "z_e_anneal_start_frac": z_e_anneal_start_frac if z_e_anneal else None,
-            "z_e_anneal_end_frac": z_e_anneal_end_frac if z_e_anneal else None,
+            "z_e_dropout_rate": z_e_dropout_rate,
         }
     )
 
@@ -650,6 +716,7 @@ def main(cfg: DictConfig) -> None:
         use_rnn_decoder=use_rnn_decoder,
         rnn_hidden_sizes=rnn_hidden_sizes,
         z_e_scale_fn=z_e_scale_fn,
+        kl_weight_fn=kl_weight_fn,
     )
 
     # Rollout env for logging
@@ -657,7 +724,10 @@ def main(cfg: DictConfig) -> None:
     rollout_cfg.start_frame_range = [0, 0]
     rollout_env = rodent_wrappers.LegacyObsWrapper(
         rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(config=rollout_cfg, clips=test_clips, kpms_codes=test_codes)
+            MoSeqImitation(
+                config=rollout_cfg, clips=test_clips, kpms_codes=test_codes,
+                code_stack_size=code_stack_size,
+            )
         )
     )
 
@@ -711,11 +781,37 @@ def main(cfg: DictConfig) -> None:
             jit_decoder_only_inference_fn=jit_decoder_only_fn,
         )
 
+    # Wrap wandb_progress to add `/`-prefixed metric groups for WandB panels
+    def _grouped_wandb_progress(num_steps: int, metrics: dict) -> None:
+        grouped = {}
+        for k, v in metrics.items():
+            if k in ("total_loss", "policy_loss", "v_loss", "entropy_loss"):
+                grouped[f"losses/{k}"] = v
+            elif k in ("kl_loss", "scaled_kl_loss", "z_e_norm", "z_e_std", "z_e_scale"):
+                grouped[f"z_e/{k}"] = v
+            elif k in ("transition_rate", "perplexity", "codebook_utilization", "codes_used"):
+                grouped[f"codes/{k}"] = v
+            elif k in ("hidden_state_norm",):
+                grouped[f"rnn/{k}"] = v
+            # Keep originals for backward compat with shared code
+            grouped[k] = v
+        wandb_logging.wandb_progress(num_steps, grouped)
+
     make_inference_fn, params, _ = train_fn(
         environment=env,
-        progress_fn=wandb_logging.wandb_progress,
+        progress_fn=_grouped_wandb_progress,
         policy_params_fn=_policy_params_fn_wrapper,
     )
+
+    # Log final summary for sweep filtering
+    try:
+        wandb.run.summary.update({
+            "training_completed": True,
+            "kpms_kappa": kpms_kappa,
+            "kpms_num_states": kpms_num_states,
+        })
+    except Exception:
+        pass
 
     try:
         checkpointing.cleanup_run_state(cfg)

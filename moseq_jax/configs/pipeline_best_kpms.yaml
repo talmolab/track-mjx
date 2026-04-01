@@ -13,12 +13,12 @@
 # =============================================================================
 
 data:
-  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
-  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
-  stac_xml_path: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
+  reference_data_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_reference_clips.h5
+  balanced_split_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_balanced_splits.json
+  stac_xml_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/stac-mjx/models/rodent.xml
 
 # --- Stage 1: KPMS fitting (fix num_states, sweep kappa) ---
-kpms:
+sweep:
   num_states: [25]
   kappa: [1.0e+2, 3.0e+2, 1.0e+3, 3.0e+3, 1.0e+4, 3.0e+4, 1.0e+5]
   latent_dim: [10]
@@ -34,10 +34,10 @@ decoder:
   kl_weights: [0.01, 0.018, 0.032, 0.056, 0.1, 0.178, 0.316, 0.5]
 
   # KL schedule variants
-  kl_schedules: ["ramp", "cosine_anneal"]
+  kl_schedules: ["ramp"]
 
   # z_e dropout
-  z_e_dropout_rates: [0.0]
+  z_e_dropout_rates: [0.0, 0.1]
 
   # Code stacking (current + future codes given to decoder)
   code_stack_size: 5
@@ -45,7 +45,8 @@ decoder:
   # Architecture (fixed for this sweep)
   continuous_latent_dim: 4
   use_rnn_decoder: true
-  rnn_hidden_sizes: [512, 512, 256, 256]
+  rnn_hidden_sizes: [1024, 1024]
+  unroll_length: 128
   rnn_cell_type: gru
   use_continuous_encoder: true
 
@@ -72,4 +73,4 @@ output:
 wandb:
   enabled: true
   project: moseq_experiments
-  group: pipeline_best_kpms
+  group: sweep_04_01

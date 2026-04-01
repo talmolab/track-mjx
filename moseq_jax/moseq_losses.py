@@ -179,7 +179,7 @@ def compute_moseq_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL loss for continuous encoder
-    if cont_mean is not None and kl_weight > 0:
+    if cont_mean is not None:
         kl_loss = 0.5 * jnp.mean(
             jnp.exp(cont_logvar) + cont_mean**2 - 1.0 - cont_logvar
         )
@@ -377,7 +377,7 @@ def compute_moseq_recurrent_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL loss for continuous encoder
-    if cont_mean is not None and kl_weight > 0:
+    if cont_mean is not None:
         kl_loss = 0.5 * jnp.mean(
             jnp.exp(cont_logvar) + cont_mean**2 - 1.0 - cont_logvar
         )

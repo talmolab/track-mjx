@@ -132,10 +132,10 @@ network_config:
   # "none": kl_weight = constant (from kl_weight above)
   kl_schedule: "cosine_anneal"
   kl_schedule_config:
-    start_value: 0.05            # KL weight at start of schedule (low = z_e informative)
-    end_value: 0.8               # KL weight at end of schedule (high = z_e crushed)
-    start_frac: 0.3              # fraction of training where schedule begins
-    end_frac: 0.7                # fraction of training where schedule ends (ramp only)
+    start_value: 0.01            # KL weight at start of schedule (low = z_e informative)
+    end_value: 0.05               # KL weight at end of schedule (high = z_e crushed)
+    start_frac: 0.1              # fraction of training where schedule begins
+    end_frac: 0.9                # fraction of training where schedule ends (ramp only)
     num_cycles: 4                # number of cosine cycles (cosine_anneal only)
 
 # =============================================================================
@@ -156,7 +156,7 @@ train_setup:
   reset_every: 20_000_000
 
   train_config:
-    num_envs: 2048
+    num_envs: 1024
     num_timesteps: 5_000_000_000
     batch_size: 512
     num_minibatches: 16
@@ -168,7 +168,7 @@ train_setup:
     entropy_cost: 1e-2
     reward_scaling: 1
     normalize_observations: true
-    unroll_length: 40
+    unroll_length: 128
     seed: 0
     get_activation: false
     deterministic_eval: true

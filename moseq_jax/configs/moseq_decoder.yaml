@@ -134,8 +134,8 @@ network_config:
   kl_schedule_config:
     start_value: 0.01            # KL weight at start of schedule (low = z_e informative)
     end_value: 0.05               # KL weight at end of schedule (high = z_e crushed)
-    start_frac: 0.1              # fraction of training where schedule begins
-    end_frac: 0.9                # fraction of training where schedule ends (ramp only)
+    start_frac: 0.0              # fraction of training where schedule begins
+    end_frac: 0.5                # fraction of training where schedule ends (ramp only)
     num_cycles: 4                # number of cosine cycles (cosine_anneal only)
 
 # =============================================================================

@@ -130,7 +130,7 @@ network_config:
   # "ramp": linear from start_value to end_value over [start_frac, end_frac] of training
   # "cosine_anneal": cosine annealing cycling between start_value and end_value
   # "none": kl_weight = constant (from kl_weight above)
-  kl_schedule: "ramp"
+  kl_schedule: "cosine_anneal"
   kl_schedule_config:
     start_value: 0.05            # KL weight at start of schedule (low = z_e informative)
     end_value: 0.8               # KL weight at end of schedule (high = z_e crushed)

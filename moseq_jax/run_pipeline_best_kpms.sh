@@ -227,6 +227,9 @@ for kl_w in $KL_WEIGHTS; do
                 network_config.use_rnn_decoder="$USE_RNN" \
                 "network_config.rnn_hidden_sizes=[$RNN_HIDDEN]" \
                 network_config.rnn_cell_type="$RNN_CELL" \
+                network_config.z_e_at_action_head=true \
+                network_config.reinit_hidden_on_code=true \
+                network_config.learned_hidden_init=true \
                 train_setup.run_name="$RUN_NAME" \
                 train_setup.train_config.num_timesteps="$NUM_TIMESTEPS" \
                 train_setup.eval_every="$EVAL_EVERY" \

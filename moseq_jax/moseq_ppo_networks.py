@@ -692,6 +692,9 @@ def make_moseq_recurrent_decoder_ppo_networks(
     rnn_hidden_sizes: tuple[int, ...] = (256,),
     rnn_cell_type: str = "gru",
     z_e_dropout_rate: float = 0.0,
+    z_e_at_action_head: bool = False,
+    reinit_hidden_on_code: bool = False,
+    learned_hidden_init: bool = False,
 ) -> MoSeqRecurrentPPONetworks:
     """Create recurrent MoSeq decoder PPO networks.
 
@@ -726,6 +729,9 @@ def make_moseq_recurrent_decoder_ppo_networks(
         encoder_layer_sizes=encoder_layer_sizes,
         continuous_latent_dim=continuous_latent_dim,
         z_e_dropout_rate=z_e_dropout_rate,
+        z_e_at_action_head=z_e_at_action_head,
+        reinit_hidden_on_code=reinit_hidden_on_code,
+        learned_hidden_init=learned_hidden_init,
     )
 
     init_obs_sizes = {**obs_sizes}

@@ -2,7 +2,7 @@
 
 The network receives a pre-computed syllable code (integer, passed as float in
 ``obs["kpms_code"]``), the agent's proprioception, and optionally the reference
-trajectory (``obs["imitation_target"]``). It embeds the code via a learned
+trajectory (``obs["task_obs"]``). It embeds the code via a learned
 embedding table, optionally encodes the reference trajectory into a continuous
 latent, and feeds the concatenation through a decoder to produce action
 parameters.
@@ -94,7 +94,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
 
         # Continuous encoder (optional)
         if self.use_continuous_encoder:
-            imitation_target = obs["imitation_target"]
+            imitation_target = obs["task_obs"]
 
             # Encoder MLP
             h = imitation_target
@@ -156,12 +156,19 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
 
 
 class MoSeqRecurrentDecoderNetwork(nn.Module):
-    """RNN decoder policy: code embedding + z_e + proprio -> GRU -> action.
+    """RNN decoder policy: code embedding + proprio -> GRU -> action (+z_e).
 
     The decoder maintains hidden state across timesteps so it can produce
     temporally coherent control autonomously given a syllable code. The
-    optional continuous encoder (z_e) acts as a training scaffold that can
-    be annealed to zero via ``z_e_scale``.
+    optional continuous encoder (z_e) acts as a training scaffold.
+
+    When ``z_e_at_action_head=True``, z_e does NOT enter the GRU recurrence.
+    Instead it is concatenated with the GRU output at the action head. This
+    forces the GRU to learn dynamics from code+proprio alone.
+
+    When ``reinit_hidden_on_code=True``, the GRU hidden state is reinitialized
+    at code transitions. If ``learned_hidden_init=True``, each code has a
+    learned initial hidden state; otherwise hidden resets to zeros.
 
     Attributes:
         num_codes: Number of syllable codes (embedding table rows).
@@ -173,6 +180,10 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         use_continuous_encoder: Whether to encode imitation_target into z_e.
         encoder_layer_sizes: Hidden layer sizes for the encoder MLP.
         continuous_latent_dim: Dimensionality of the continuous latent.
+        z_e_dropout_rate: Probability of zeroing z_e per sample.
+        z_e_at_action_head: If True, z_e enters at action head only (not GRU).
+        reinit_hidden_on_code: If True, reinitialize hidden at code transitions.
+        learned_hidden_init: If True, use learned per-code initial hidden states.
     """
 
     num_codes: int = 32
@@ -185,6 +196,9 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
     encoder_layer_sizes: Sequence[int] = (256, 128)
     continuous_latent_dim: int = 16
     z_e_dropout_rate: float = 0.0
+    z_e_at_action_head: bool = False
+    reinit_hidden_on_code: bool = False
+    learned_hidden_init: bool = False
 
     def setup(self):
         self.code_embedding = nn.Embed(
@@ -223,14 +237,25 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             name="action_head",
         )
 
+        # Learned per-code initial hidden states
+        if self.learned_hidden_init:
+            self.hidden_init_params = [
+                self.param(
+                    f"hidden_init_{i}",
+                    nn.initializers.zeros_init(),
+                    (self.num_codes, h),
+                )
+                for i, h in enumerate(self.rnn_hidden_sizes)
+            ]
+
     def _encode(
         self,
         obs: dict[str, jnp.ndarray],
         key=None,
         deterministic: bool = False,
         z_e_scale: float = 1.0,
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None]:
-        """Encode obs into (decoder_input, code_idx, mean, logvar)."""
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None, jnp.ndarray | None]:
+        """Encode obs into (decoder_input, code_idx, mean, logvar, z_e_scaled)."""
         kpms_code = obs["kpms_code"]
         # Current code index (first in stack, used for metrics/logging)
         code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)
@@ -243,7 +268,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         proprio = obs["proprioception"]
 
         if self.use_continuous_encoder:
-            imitation_target = obs["imitation_target"]
+            imitation_target = obs["task_obs"]
 
             h = imitation_target
             for dense, ln in zip(self.enc_layers, self.enc_lns):
@@ -299,27 +324,45 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     ).astype(z_e_scaled.dtype)
                 z_e_scaled = z_e_scaled * keep[..., None]
 
-            decoder_input = jnp.concatenate([code_emb, z_e_scaled, proprio], axis=-1)
+            if self.z_e_at_action_head:
+                # z_e goes to action head, NOT into GRU input
+                decoder_input = jnp.concatenate([code_emb, proprio], axis=-1)
+            else:
+                # z_e goes into GRU input (legacy behavior)
+                decoder_input = jnp.concatenate([code_emb, z_e_scaled, proprio], axis=-1)
         else:
             mean = None
             logvar = None
+            z_e_scaled = None
             decoder_input = jnp.concatenate([code_emb, proprio], axis=-1)
 
-        return decoder_input, code_idx, mean, logvar
+        return decoder_input, code_idx, mean, logvar, z_e_scaled
 
     def _decode_rnn(
         self,
         x: jnp.ndarray,
         hidden: list[jnp.ndarray],
+        z_e_for_action: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, list[jnp.ndarray]]:
-        """Run one timestep through the stacked GRU and action head."""
+        """Run one timestep through the stacked GRU and action head.
+
+        Args:
+            x: GRU input (code_emb + proprio, or code_emb + z_e + proprio).
+            hidden: List of GRU hidden states per layer.
+            z_e_for_action: If provided, concatenated with GRU output before
+                the action head (z_e at action head architecture).
+        """
         new_hidden = []
         rnn_input = x
         for cell, h in zip(self.rnn_cells, hidden):
             new_h, _ = cell(h, rnn_input)
             new_hidden.append(new_h)
             rnn_input = new_h
-        action_params = self.action_head(rnn_input)
+        # Optionally concat z_e at action head
+        action_input = rnn_input
+        if z_e_for_action is not None:
+            action_input = jnp.concatenate([rnn_input, z_e_for_action], axis=-1)
+        action_params = self.action_head(action_input)
         return action_params, new_hidden
 
     def __call__(
@@ -341,10 +384,13 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         Returns:
             ``(action_params, code_idx, mean, logvar, new_hidden)``.
         """
-        decoder_input, code_idx, mean, logvar = self._encode(
+        decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
             obs, key, deterministic, z_e_scale,
         )
-        action_params, new_hidden = self._decode_rnn(decoder_input, hidden)
+        z_e_arg = z_e_scaled if self.z_e_at_action_head else None
+        action_params, new_hidden = self._decode_rnn(
+            decoder_input, hidden, z_e_for_action=z_e_arg,
+        )
         return action_params, code_idx, mean, logvar, new_hidden
 
     def apply_sequence(
@@ -374,9 +420,23 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             ``(logits, means, logvars, final_hidden)`` each ``[T, B, ...]``.
         """
 
-        def _reset_hidden(hidden_list, done_t):
+        def _reset_hidden_on_done(hidden_list, done_t):
+            """Reset hidden to zeros on episode done."""
             done_expanded = done_t[..., None]
             return [jnp.where(done_expanded, 0.0, h) for h in hidden_list]
+
+        def _reinit_hidden_on_code(hidden_list, code_t, code_changed):
+            """Reinitialize hidden at code transitions."""
+            if not self.reinit_hidden_on_code:
+                return hidden_list
+            changed = code_changed[..., None]
+            if self.learned_hidden_init:
+                return [
+                    jnp.where(changed, self.hidden_init_params[i][code_t], h)
+                    for i, h in enumerate(hidden_list)
+                ]
+            else:
+                return [jnp.where(changed, 0.0, h) for h in hidden_list]
 
         # Validate stored_keys shape if provided
         if stored_keys is not None:
@@ -388,44 +448,68 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     f"{expected_shape}. stored_keys must have shape [T, B, 2]."
                 )
 
+        # Initial prev_code for code-transition tracking (internal to scan)
+        B = jax.tree_util.tree_leaves(obs_seq)[0].shape[1]
+        init_prev_code = jnp.full((B,), -1, dtype=jnp.int32)
+
         if stored_keys is not None:
 
             def step_stored(carry, inputs):
-                hidden_list = carry
+                hidden_list, prev_code = carry
                 obs_t = {k: inputs[0][k] for k in inputs[0]}
                 done_t = inputs[1]
                 keys_t = inputs[2]
 
-                decoder_input, code_idx, mean, logvar = self._encode(
+                # Detect code transition
+                code_t = jnp.round(obs_t["kpms_code"][..., 0]).astype(jnp.int32)
+                code_changed = (code_t != prev_code) | (prev_code == -1)
+
+                # Reinit hidden on code change (before encode/decode)
+                hidden_list = _reinit_hidden_on_code(hidden_list, code_t, code_changed)
+
+                decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
                     obs_t, keys_t, deterministic, z_e_scale
                 )
-                action_params, new_hidden = self._decode_rnn(decoder_input, hidden_list)
-                new_hidden = _reset_hidden(new_hidden, done_t)
-                return new_hidden, (action_params, mean, logvar)
+                z_e_arg = z_e_scaled if self.z_e_at_action_head else None
+                action_params, new_hidden = self._decode_rnn(
+                    decoder_input, hidden_list, z_e_for_action=z_e_arg,
+                )
+                new_hidden = _reset_hidden_on_done(new_hidden, done_t)
+                return (new_hidden, code_t), (action_params, mean, logvar)
 
-            final_hidden, (logits, means, logvars) = jax.lax.scan(
+            (final_hidden, _), (logits, means, logvars) = jax.lax.scan(
                 step_stored,
-                initial_hidden,
+                (initial_hidden, init_prev_code),
                 (obs_seq, done_seq, stored_keys),
             )
         else:
 
             def step_fresh(carry, inputs):
-                hidden_list, step_key = carry
+                hidden_list, prev_code, step_key = carry
                 obs_t = {k: inputs[0][k] for k in inputs[0]}
                 done_t = inputs[1]
                 step_key, next_key = jax.random.split(step_key)
 
-                decoder_input, code_idx, mean, logvar = self._encode(
+                # Detect code transition
+                code_t = jnp.round(obs_t["kpms_code"][..., 0]).astype(jnp.int32)
+                code_changed = (code_t != prev_code) | (prev_code == -1)
+
+                # Reinit hidden on code change
+                hidden_list = _reinit_hidden_on_code(hidden_list, code_t, code_changed)
+
+                decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
                     obs_t, step_key, deterministic, z_e_scale
                 )
-                action_params, new_hidden = self._decode_rnn(decoder_input, hidden_list)
-                new_hidden = _reset_hidden(new_hidden, done_t)
-                return (new_hidden, next_key), (action_params, mean, logvar)
+                z_e_arg = z_e_scaled if self.z_e_at_action_head else None
+                action_params, new_hidden = self._decode_rnn(
+                    decoder_input, hidden_list, z_e_for_action=z_e_arg,
+                )
+                new_hidden = _reset_hidden_on_done(new_hidden, done_t)
+                return (new_hidden, code_t, next_key), (action_params, mean, logvar)
 
-            (final_hidden, _), (logits, means, logvars) = jax.lax.scan(
+            (final_hidden, _, _), (logits, means, logvars) = jax.lax.scan(
                 step_fresh,
-                (initial_hidden, key),
+                (initial_hidden, init_prev_code, key),
                 (obs_seq, done_seq),
             )
 

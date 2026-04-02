@@ -15,9 +15,9 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.imitation import ReferenceClips
-from vnl_playground.tasks import wrappers as rodent_wrappers
+
+from track_mjx.agent.flat_imitation import FlatImitation
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
@@ -90,17 +90,10 @@ def main(cfg: DictConfig) -> None:
     if hasattr(env_cfg_ml, "nconmax"):
         env_cfg_ml.naconmax = env_cfg_ml.nconmax * cfg.train_setup.train_config.num_envs
 
-    # Create environments (dict observations, no flattening)
-    env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-        )
-    )
-    test_env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            imitation.Imitation(config=env_cfg_ml, clips=test_clips)
-        )
-    )
+    # Create environments (flat dict observations via FlatImitation subclass,
+    # not wrapper chain — DR vmap bypasses wrappers via env.unwrapped)
+    env = FlatImitation(config=env_cfg_ml, clips=train_clips)
+    test_env = FlatImitation(config=env_cfg_ml, clips=test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -230,11 +223,7 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            imitation.Imitation(config=rollout_cfg)
-        )
-    )
+    rollout_env = FlatImitation(config=rollout_cfg)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

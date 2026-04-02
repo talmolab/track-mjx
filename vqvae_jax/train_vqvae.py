@@ -34,11 +34,10 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.imitation import ReferenceClips
-from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from ref_joints_imitation import RefJointsImitation
+from track_mjx.agent.flat_imitation import FlatImitation
 
 # Import from main codebase
 from track_mjx.config import utils
@@ -513,19 +512,12 @@ def main(cfg: DictConfig) -> None:
     use_ref_joints_encoder = bool(
         cfg.network_config.get("use_ref_joints_encoder", False)
     )
-    EnvClass = RefJointsImitation if use_ref_joints_encoder else imitation.Imitation
+    # Use FlatImitation subclass (not wrapper chain — DR vmap bypasses wrappers)
+    EnvClass = RefJointsImitation if use_ref_joints_encoder else FlatImitation
     if use_ref_joints_encoder:
         logging.info("Using RefJointsImitation (raw ref_joints encoder input)")
-    env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            EnvClass(config=env_cfg_ml, clips=train_clips)
-        )
-    )
-    test_env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            EnvClass(config=env_cfg_ml, clips=test_clips)
-        )
-    )
+    env = EnvClass(config=env_cfg_ml, clips=train_clips)
+    test_env = EnvClass(config=env_cfg_ml, clips=test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -738,11 +730,7 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            EnvClass(config=rollout_cfg, clips=test_clips)
-        )
-    )
+    rollout_env = EnvClass(config=rollout_cfg, clips=test_clips)
 
     # Define jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

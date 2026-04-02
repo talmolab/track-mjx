@@ -36,7 +36,6 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground.tasks.rodent.imitation import ReferenceClips
-from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging

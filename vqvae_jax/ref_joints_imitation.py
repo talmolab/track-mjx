@@ -14,13 +14,16 @@ from typing import Any, Mapping
 
 import jax.numpy as jp
 from mujoco import mjx
-from vnl_playground.tasks.rodent import imitation
+from track_mjx.agent.flat_imitation import FlatImitation
 
 
-class RefJointsImitation(imitation.Imitation):
+class RefJointsImitation(FlatImitation):
     """Imitation env whose obs dict includes raw reference joint angles.
 
-    Adds ``ref_joints`` (shape ``[T*n_joints]``) to the observation dict.
+    Subclasses ``FlatImitation`` to inherit inline obs flattening (no wrapper
+    chain needed — safe with DR vmap). Adds ``ref_joints`` key to the flat
+    obs dict.
+
     ``task_obs`` remains the standard error-based signal from the
     parent class.
     """
@@ -28,5 +31,5 @@ class RefJointsImitation(imitation.Imitation):
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         obs = super()._get_obs(data, info)
         reference = self._get_imitation_reference(data, info)
-        obs["state"]["ref_joints"] = reference.joints.reshape(-1)
+        obs["ref_joints"] = reference.joints.reshape(-1)
         return obs

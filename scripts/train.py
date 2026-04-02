@@ -161,8 +161,14 @@ def main(cfg: DictConfig) -> None:
             intention_latent_size=cfg.network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            encoder_noise_std=cfg.network_config.get(
+                "encoder_noise_std", 0.0
+            ),
             proprioception_noise_std=cfg.network_config.get(
                 "proprioception_noise_std", 0.0
+            ),
+            proprioception_noise_mode=cfg.network_config.get(
+                "proprioception_noise_mode", "multiplicative"
             ),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )

@@ -98,7 +98,7 @@ def load_prior_checkpoint(
 
         # Add obs_sizes to config for downstream use
         cfg.network_config.obs_sizes = {
-            "imitation_target": reference_obs_size,
+            "task_obs": reference_obs_size,
             "proprioception": observation_size - reference_obs_size,
         }
 
@@ -127,7 +127,7 @@ def _create_abstract_prior_policy_dict(cfg: OmegaConf) -> Tuple[Any, Any]:
     action_size = cfg.network_config.action_size
     obs_sizes = dict(cfg.network_config.obs_sizes)
 
-    reference_obs_size = obs_sizes["imitation_target"]
+    reference_obs_size = obs_sizes["task_obs"]
     proprioceptive_obs_size = obs_sizes["proprioception"]
 
     encoder_hidden_layer_sizes = tuple(cfg.network_config.encoder_layer_sizes)
@@ -149,7 +149,7 @@ def _create_abstract_prior_policy_dict(cfg: OmegaConf) -> Tuple[Any, Any]:
 
     # Create dict normalizer state
     normalizer_state = DictRunningStatisticsState(
-        imitation_target=running_statistics.init_state(
+        task_obs=running_statistics.init_state(
             specs.Array(reference_obs_size, jnp.dtype("float32"))
         ),
         proprioception=running_statistics.init_state(

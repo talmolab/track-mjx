@@ -7,7 +7,7 @@ This module provides:
 - Combining networks for checkpointing in distill-compatible format
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -171,8 +171,8 @@ def load_frozen_encoder_decoder(
 
         # Create abstract dict normalizer
         normalizer_state = DictRunningStatisticsState(
-            imitation_target=running_statistics.init_state(
-                specs.Array(obs_sizes["imitation_target"], jnp.dtype("float32"))
+            task_obs=running_statistics.init_state(
+                specs.Array(obs_sizes["task_obs"], jnp.dtype("float32"))
             ),
             proprioception=running_statistics.init_state(
                 specs.Array(obs_sizes["proprioception"], jnp.dtype("float32"))
@@ -207,7 +207,7 @@ def load_frozen_encoder_decoder(
         # Note: This uses an older signature that we need for legacy checkpoints
         ppo_network = ff_ppo_networks.make_intention_ppo_networks(
             obs_sizes={
-                "imitation_target": reference_obs_size,
+                "task_obs": reference_obs_size,
                 "proprioception": observation_size - reference_obs_size,
             },
             action_size=cfg.network_config.action_size,
@@ -243,7 +243,7 @@ def load_frozen_encoder_decoder(
 
         # Add obs_sizes to config for downstream use
         cfg.network_config.obs_sizes = {
-            "imitation_target": reference_obs_size,
+            "task_obs": reference_obs_size,
             "proprioception": observation_size - reference_obs_size,
         }
 
@@ -351,7 +351,7 @@ def make_encoder_decoder_inference_fn(
 
     Returns:
         Policy function (obs, key) -> (action, extras)
-        obs can be either a dict {"imitation_target": ..., "proprioception": ...}
+        obs can be either a dict {"task_obs": ..., "proprioception": ...}
         or will be accessed via the flattening utilities if needed.
     """
     parametric_action_distribution = distribution.NormalTanhDistribution(
@@ -375,7 +375,7 @@ def make_encoder_decoder_inference_fn(
         """Generate actions using frozen encoder+decoder.
 
         Args:
-            obs: Dict observations with "imitation_target" and "proprioception" keys.
+            obs: Dict observations with "task_obs" and "proprioception" keys.
             key: Random key for sampling.
 
         Returns:
@@ -388,7 +388,7 @@ def make_encoder_decoder_inference_fn(
         normalized_obs = normalize_dict_obs(flat_obs, normalizer_params)
 
         # Access observations by key
-        traj_obs = normalized_obs["imitation_target"]
+        traj_obs = normalized_obs["task_obs"]
         proprio_obs = normalized_obs["proprioception"]
 
         # Encode trajectory -> latent distribution
@@ -487,7 +487,7 @@ def create_abstract_prior_policy(
     # Check if using dict observations (new format) or flat (legacy)
     obs_sizes = cfg["network_config"].get("obs_sizes", None)
     if obs_sizes is not None:
-        reference_obs_size = obs_sizes["imitation_target"]
+        reference_obs_size = obs_sizes["task_obs"]
         proprioceptive_obs_size = obs_sizes["proprioception"]
     else:
         reference_obs_size = cfg["network_config"]["reference_obs_size"]
@@ -538,7 +538,7 @@ def create_abstract_prior_policy(
 
     # Create dict normalizer state
     normalizer_state = DictRunningStatisticsState(
-        imitation_target=running_statistics.init_state(
+        task_obs=running_statistics.init_state(
             specs.Array(reference_obs_size, jnp.dtype("float32"))
         ),
         proprioception=running_statistics.init_state(

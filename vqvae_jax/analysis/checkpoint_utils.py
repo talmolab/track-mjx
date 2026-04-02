@@ -81,7 +81,7 @@ def _get_obs_sizes_from_cfg(cfg: DictConfig) -> dict[str, int]:
     if hasattr(net_cfg, "observation_size") and hasattr(net_cfg, "reference_obs_size"):
         proprio_size = net_cfg.observation_size - net_cfg.reference_obs_size
         obs_sizes = {
-            "imitation_target": net_cfg.reference_obs_size,
+            "task_obs": net_cfg.reference_obs_size,
             "proprioception": proprio_size,
         }
         # Add ref_joints size if encoder uses it
@@ -178,8 +178,8 @@ def make_abstract_vq_policy(
 
     obs_sizes = _get_obs_sizes_from_cfg(cfg)
     normalizer_state = DictRunningStatisticsState(
-        imitation_target=running_statistics.init_state(
-            specs.Array(obs_sizes["imitation_target"], jnp.dtype("float32"))
+        task_obs=running_statistics.init_state(
+            specs.Array(obs_sizes["task_obs"], jnp.dtype("float32"))
         ),
         proprioception=running_statistics.init_state(
             specs.Array(obs_sizes["proprioception"], jnp.dtype("float32"))
@@ -248,14 +248,17 @@ def load_vq_policy(
         normalizer_dict, policy_params = policy
 
         # Check if it's a dict normalizer or flat normalizer
-        if (
-            "imitation_target" in normalizer_dict
-            and "proprioception" in normalizer_dict
-        ):
-            # Already dict normalizer structure
+        # Handle both new ("task_obs") and legacy ("imitation_target") key names
+        task_obs_key = (
+            "task_obs" if "task_obs" in normalizer_dict
+            else "imitation_target" if "imitation_target" in normalizer_dict
+            else None
+        )
+        if task_obs_key and "proprioception" in normalizer_dict:
+            # Dict normalizer structure
             normalizer_state = DictRunningStatisticsState(
-                imitation_target=_dict_to_running_statistics_state(
-                    normalizer_dict["imitation_target"]
+                task_obs=_dict_to_running_statistics_state(
+                    normalizer_dict[task_obs_key]
                 ),
                 proprioception=_dict_to_running_statistics_state(
                     normalizer_dict["proprioception"]
@@ -274,7 +277,7 @@ def load_vq_policy(
             # Try to get obs_sizes first (newer format), fallback to reference_obs_size
             net_cfg = cfg.network_config
             if hasattr(net_cfg, "obs_sizes") and net_cfg.obs_sizes is not None:
-                reference_obs_size = net_cfg.obs_sizes.get("imitation_target")
+                reference_obs_size = net_cfg.obs_sizes.get("task_obs")
             elif hasattr(net_cfg, "reference_obs_size"):
                 reference_obs_size = net_cfg.reference_obs_size
             else:
@@ -287,7 +290,7 @@ def load_vq_policy(
 
             logging.info(
                 f"Converting flat normalizer to dict normalizer: "
-                f"total={total_obs_size}, imitation_target={reference_obs_size}, "
+                f"total={total_obs_size}, task_obs={reference_obs_size}, "
                 f"proprioception={proprio_size}"
             )
 

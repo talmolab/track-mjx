@@ -97,7 +97,7 @@ render_config:
 # =============================================================================
 kpms_config:
   # Path to pre-computed KPMS codes (.npz file from generate_codes.py)
-  codes_path: null  # overridden per-run by pipeline scripts
+  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
 
 # =============================================================================
 # Network Architecture - MoSeq Decoder-Only
@@ -130,8 +130,8 @@ network_config:
   z_e_at_action_head: true
 
   # Per-code hidden state reinitialization at code transitions
-  reinit_hidden_on_code: true
-  learned_hidden_init: true          # learned per-code init (vs zeros)
+  reinit_hidden_on_code: false
+  learned_hidden_init: false          # learned per-code init (vs zeros)
 
   # KL schedule: controls kl_weight over training steps
   # Higher KL = z_e pushed toward unit Gaussian = less informative = GRU must use codes

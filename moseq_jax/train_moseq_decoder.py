@@ -465,25 +465,17 @@ def main(cfg: DictConfig) -> None:
     # Code stack size: how many consecutive codes to give the decoder
     code_stack_size = int(cfg.network_config.get("code_stack_size", 1))
 
-    # MoSeqImitation injects kpms_code into obs["state"], then
-    # TrackMjxObsWrapper flattens nested obs values into 1D arrays, and
-    # LegacyObsWrapper strips the "state" hierarchy so the network receives
-    # flat {"task_obs": ..., "proprioception": ..., "kpms_code": ...}.
-    env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(
-                config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes,
-                code_stack_size=code_stack_size,
-            )
-        )
+    # MoSeqImitation overrides _get_obs to inject kpms_code, flatten nested
+    # obs, and strip the "state" hierarchy — all inline. No wrapper chain
+    # needed, since BraxDomainRandomizationVmapWrapper bypasses wrappers
+    # via env.unwrapped.
+    env = MoSeqImitation(
+        config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes,
+        code_stack_size=code_stack_size,
     )
-    test_env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(
-                config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes,
-                code_stack_size=code_stack_size,
-            )
-        )
+    test_env = MoSeqImitation(
+        config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes,
+        code_stack_size=code_stack_size,
     )
 
     logging.info(f"Environment config: {cfg.env_config}")
@@ -749,13 +741,9 @@ def main(cfg: DictConfig) -> None:
     # Rollout env for logging
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(
-                config=rollout_cfg, clips=test_clips, kpms_codes=test_codes,
-                code_stack_size=code_stack_size,
-            )
-        )
+    rollout_env = MoSeqImitation(
+        config=rollout_cfg, clips=test_clips, kpms_codes=test_codes,
+        code_stack_size=code_stack_size,
     )
 
     jit_reset = jax.jit(rollout_env.reset)

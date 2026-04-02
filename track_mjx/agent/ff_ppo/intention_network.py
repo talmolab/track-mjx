@@ -188,14 +188,23 @@ class IntentionNetwork(nn.Module):
         encoder_layers: Hidden layer sizes for the encoder MLP.
         decoder_layers: Layer sizes for decoder (excluding action output).
         latents: Dimension of the latent intention space.
-        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
-            decoder proprioception input during stochastic training passes.
+        encoder_noise_std: Stddev for additive Gaussian noise on the encoder's
+            imitation_target input during stochastic training passes. Forces
+            the encoder to be more robust, producing a more expressive latent
+            space. Defaults to 0.0 (no noise).
+        proprioception_noise_std: Stddev for Gaussian noise on decoder
+            proprioception input during stochastic training passes.
+        proprioception_noise_mode: How noise is applied. "multiplicative" scales
+            each dimension by (1 + std * N(0,1)); "additive" adds std * N(0,1)
+            uniformly in normalized space.
     """
 
     encoder_layers: Sequence[int]
     decoder_layers: Sequence[int]
     latents: int = 60
+    encoder_noise_std: float = 0.0
     proprioception_noise_std: float = 0.0
+    proprioception_noise_mode: str = "multiplicative"
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
@@ -218,16 +227,30 @@ class IntentionNetwork(nn.Module):
 
         # Handle key splitting based on both key shape AND observation shape
         if key.ndim == 1:
-            # Single key - split for encoder
-            encoder_rng, noise_rng = jax.random.split(key)
+            # Single key - split for encoder, encoder noise, and proprio noise
+            encoder_rng, enc_noise_rng, noise_rng = jax.random.split(key, 3)
         elif not obs_is_batched:
             # Per-sample keys but unbatched observation - use first key
             # This can happen when key batching was determined from nested obs structure
             # before normalization flattened it to unbatched
-            encoder_rng, noise_rng = jax.random.split(key[0])
+            encoder_rng, enc_noise_rng, noise_rng = jax.random.split(key[0], 3)
         else:
             # Per-sample keys [batch_size, 2] - vmap split over batch
-            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            split_keys = jax.vmap(lambda k: jax.random.split(k, 3))(key)
+            encoder_rng = split_keys[:, 0]
+            enc_noise_rng = split_keys[:, 1]
+            noise_rng = split_keys[:, 2]
+
+        if not deterministic and self.encoder_noise_std > 0.0:
+            if enc_noise_rng.ndim == 1:
+                enc_noise = jax.random.normal(enc_noise_rng, traj.shape)
+            elif not obs_is_batched:
+                enc_noise = jax.random.normal(enc_noise_rng[0], traj.shape)
+            else:
+                enc_noise = jax.vmap(
+                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
+                )(enc_noise_rng, traj)
+            traj = traj + self.encoder_noise_std * enc_noise
 
         if not deterministic and self.proprioception_noise_std > 0.0:
             if noise_rng.ndim == 1:
@@ -238,9 +261,12 @@ class IntentionNetwork(nn.Module):
                 noise = jax.vmap(
                     lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
                 )(noise_rng, egocentric_obs)
-            egocentric_obs = egocentric_obs * (
-                1.0 + self.proprioception_noise_std * noise
-            )
+            if self.proprioception_noise_mode == "additive":
+                egocentric_obs = egocentric_obs + self.proprioception_noise_std * noise
+            else:
+                egocentric_obs = egocentric_obs * (
+                    1.0 + self.proprioception_noise_std * noise
+                )
 
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
@@ -285,6 +311,7 @@ def make_intention_policy(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     proprioception_noise_std: float = 0.0,
+    proprioception_noise_mode: str = "multiplicative",
 ) -> networks.FeedForwardNetwork:
     """Create an intention-based policy network.
 
@@ -300,8 +327,9 @@ def make_intention_policy(
             {"imitation_target": 3716, "proprioception": 226}.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
-        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
-            decoder proprioception input during stochastic training passes.
+        proprioception_noise_std: Stddev for Gaussian noise on decoder
+            proprioception input during stochastic training passes.
+        proprioception_noise_mode: "multiplicative" or "additive".
 
     Returns:
         FeedForwardNetwork with init and apply methods. The apply function
@@ -314,6 +342,7 @@ def make_intention_policy(
         + [action_param_size],  # add action size to the last layer
         latents=latent_size,
         proprioception_noise_std=proprioception_noise_std,
+        proprioception_noise_mode=proprioception_noise_mode,
     )
 
     def apply(
@@ -412,8 +441,11 @@ class VisionIntentionNetwork(nn.Module):
         latents: Dimension of the latent intention space.
         vision_feature_size: Output dimension of the vision encoder CNN.
         vision_channels: Channel sizes for each conv layer in the vision encoder.
-        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
-            decoder proprioception input during stochastic training passes.
+        proprioception_noise_std: Stddev for Gaussian noise on decoder
+            proprioception input during stochastic training passes.
+        proprioception_noise_mode: How noise is applied. "multiplicative" scales
+            each dimension by (1 + std * N(0,1)); "additive" adds std * N(0,1)
+            uniformly in normalized space.
     """
 
     encoder_layers: Sequence[int]
@@ -422,6 +454,7 @@ class VisionIntentionNetwork(nn.Module):
     vision_feature_size: int = 8
     vision_channels: Sequence[int] = (2, 4, 8, 16)
     proprioception_noise_std: float = 0.0
+    proprioception_noise_mode: str = "multiplicative"
 
     def setup(self):
         """Initialize vision encoder, encoder, and decoder submodules."""
@@ -469,9 +502,12 @@ class VisionIntentionNetwork(nn.Module):
                 noise = jax.vmap(
                     lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
                 )(noise_rng, egocentric_obs)
-            egocentric_obs = egocentric_obs * (
-                1.0 + self.proprioception_noise_std * noise
-            )
+            if self.proprioception_noise_mode == "additive":
+                egocentric_obs = egocentric_obs + self.proprioception_noise_std * noise
+            else:
+                egocentric_obs = egocentric_obs * (
+                    1.0 + self.proprioception_noise_std * noise
+                )
 
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
@@ -651,6 +687,7 @@ def make_vision_intention_policy(
     vision_feature_size: int = 8,
     vision_channels: Sequence[int] = (2, 4, 8, 16),
     proprioception_noise_std: float = 0.0,
+    proprioception_noise_mode: str = "multiplicative",
 ) -> networks.FeedForwardNetwork:
     """Create a vision-enabled intention-based policy network.
 
@@ -670,8 +707,9 @@ def make_vision_intention_policy(
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
         vision_feature_size: Output dimension of the vision encoder CNN.
         vision_channels: Channel sizes for each conv layer in the vision encoder.
-        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
-            decoder proprioception input during stochastic training passes.
+        proprioception_noise_std: Stddev for Gaussian noise on decoder
+            proprioception input during stochastic training passes.
+        proprioception_noise_mode: "multiplicative" or "additive".
 
     Returns:
         FeedForwardNetwork with init and apply methods. The apply function
@@ -685,6 +723,7 @@ def make_vision_intention_policy(
         vision_feature_size=vision_feature_size,
         vision_channels=vision_channels,
         proprioception_noise_std=proprioception_noise_std,
+        proprioception_noise_mode=proprioception_noise_mode,
     )
 
     def apply(

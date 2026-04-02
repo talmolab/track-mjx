@@ -160,7 +160,7 @@ def run_single_rollout(
         # Store observation (flatten nested dict obs to single array)
         flat_obs = flatten_obs_dict(state.obs)
         obs_flat = np.concatenate([
-            np.array(flat_obs["imitation_target"]),
+            np.array(flat_obs["task_obs"]),
             np.array(flat_obs["proprioception"]),
         ])
         obs_list.append(obs_flat)

@@ -21,7 +21,7 @@ Trains a student network to mimic a pretrained teacher network using:
 3. KL divergence loss between encoder and prior distributions
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 

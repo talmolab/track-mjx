@@ -140,6 +140,10 @@ def generate_codes(
         test_codes=test_codes,
         train_indices=np.array(train_indices),
         test_indices=np.array(test_indices),
+        kappa=np.float64(best.get("kappa", 0.0)),
+        num_states=np.int32(best.get("n_states", int(np.max(all_codes)) + 1)),
+        model_type=np.array(str(best.get("model_type", "unknown"))),
+        mean_duration=np.float64(best.get("mean_duration", 0.0)),
     )
     log.info(f"Saved codes to {output_path}")
 

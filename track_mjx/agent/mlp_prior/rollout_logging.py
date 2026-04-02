@@ -7,7 +7,7 @@ This module provides logging functionality for prior training, including:
 - Video rendering (optional, since encoder+decoder is pretrained)
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -78,7 +78,7 @@ def prior_training_rollout_logging_fn(
     # Get observation sizes from config (support both new dict format and legacy)
     obs_sizes = cfg.network_config.get("obs_sizes", None)
     if obs_sizes is not None:
-        reference_obs_size = obs_sizes["imitation_target"]
+        reference_obs_size = obs_sizes["task_obs"]
     else:
         reference_obs_size = cfg.network_config.reference_obs_size
 

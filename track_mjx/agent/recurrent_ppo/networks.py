@@ -254,7 +254,7 @@ class RecurrentIntentionNetwork(nn.Module):
             Tuple of (action_params, latent_mean, latent_logvar, new_hidden).
         """
         # Encode trajectory observations to latent distribution
-        traj = obs["imitation_target"]
+        traj = obs["task_obs"]
         egocentric_obs = obs["proprioception"]
 
         # Check if observations are actually batched (based on obs shape)
@@ -535,7 +535,7 @@ def make_recurrent_intention_ppo_networks(
 
     Args:
         obs_sizes: Dict mapping observation keys to sizes, e.g.
-            {"imitation_target": 3716, "proprioception": 226}.
+            {"task_obs": 3716, "proprioception": 226}.
         action_size: Action dimension.
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
@@ -611,7 +611,7 @@ def make_recurrent_intention_ppo_networks(
         # Validate stored_keys shape if provided
         if stored_keys is not None:
             # Get expected shape from observations [T, B, ...]
-            ref_obs = obs_seq["imitation_target"]
+            ref_obs = obs_seq["task_obs"]
             expected_shape = (ref_obs.shape[0], ref_obs.shape[1], 2)
             if stored_keys.shape != expected_shape:
                 raise ValueError(
@@ -669,7 +669,7 @@ def make_recurrent_intention_ppo_networks(
 
     # Create dummy observations for initialization
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     dummy_key = jax.random.PRNGKey(0)

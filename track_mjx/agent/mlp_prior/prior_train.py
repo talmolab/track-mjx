@@ -6,7 +6,7 @@ ff_ppo checkpoint. The encoder and decoder remain frozen; only the prior
 is trained using KL divergence loss.
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -223,7 +223,7 @@ def train(
     # Get observation sizes - support both new dict format and legacy flat format
     teacher_obs_sizes = teacher_cfg["network_config"].get("obs_sizes", None)
     if teacher_obs_sizes is not None:
-        reference_obs_size = teacher_obs_sizes["imitation_target"]
+        reference_obs_size = teacher_obs_sizes["task_obs"]
         teacher_proprioceptive_obs_size = teacher_obs_sizes["proprioception"]
     else:
         reference_obs_size = teacher_cfg["network_config"]["reference_obs_size"]

@@ -35,7 +35,8 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.imitation import ReferenceClips
+from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
@@ -464,16 +465,25 @@ def main(cfg: DictConfig) -> None:
     # Code stack size: how many consecutive codes to give the decoder
     code_stack_size = int(cfg.network_config.get("code_stack_size", 1))
 
-    # Use MoSeqImitation (subclass of Imitation) which injects kpms_code
-    # directly in _get_obs. This ensures the obs pytree structure is consistent
-    # from the start — no wrapper needed, no pytree mismatches in jax.lax.scan.
-    env = MoSeqImitation(
-        config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes,
-        code_stack_size=code_stack_size,
+    # MoSeqImitation injects kpms_code into obs["state"], then
+    # TrackMjxObsWrapper flattens nested obs values into 1D arrays, and
+    # LegacyObsWrapper strips the "state" hierarchy so the network receives
+    # flat {"task_obs": ..., "proprioception": ..., "kpms_code": ...}.
+    env = rodent_wrappers.LegacyObsWrapper(
+        rodent_wrappers.TrackMjxObsWrapper(
+            MoSeqImitation(
+                config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes,
+                code_stack_size=code_stack_size,
+            )
+        )
     )
-    test_env = MoSeqImitation(
-        config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes,
-        code_stack_size=code_stack_size,
+    test_env = rodent_wrappers.LegacyObsWrapper(
+        rodent_wrappers.TrackMjxObsWrapper(
+            MoSeqImitation(
+                config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes,
+                code_stack_size=code_stack_size,
+            )
+        )
     )
 
     logging.info(f"Environment config: {cfg.env_config}")
@@ -499,6 +509,9 @@ def main(cfg: DictConfig) -> None:
     continuous_latent_dim = int(cfg.network_config.get("continuous_latent_dim", 16))
     kl_weight = float(cfg.network_config.get("kl_weight", 0.0))
     z_e_dropout_rate = float(cfg.network_config.get("z_e_dropout_rate", 0.0))
+    z_e_at_action_head = bool(cfg.network_config.get("z_e_at_action_head", False))
+    reinit_hidden_on_code = bool(cfg.network_config.get("reinit_hidden_on_code", False))
+    learned_hidden_init = bool(cfg.network_config.get("learned_hidden_init", False))
 
     # RNN decoder config
     use_rnn_decoder = bool(cfg.network_config.get("use_rnn_decoder", False))
@@ -569,9 +582,14 @@ def main(cfg: DictConfig) -> None:
             z_e_dropout_rate=z_e_dropout_rate,
             rnn_hidden_sizes=rnn_hidden_sizes,
             rnn_cell_type=rnn_cell_type,
+            z_e_at_action_head=z_e_at_action_head,
+            reinit_hidden_on_code=reinit_hidden_on_code,
+            learned_hidden_init=learned_hidden_init,
         )
         logging.info(
-            f"Using RNN decoder: cell={rnn_cell_type}, hidden={rnn_hidden_sizes}"
+            f"Using RNN decoder: cell={rnn_cell_type}, hidden={rnn_hidden_sizes}, "
+            f"z_e_at_action_head={z_e_at_action_head}, reinit_hidden={reinit_hidden_on_code}, "
+            f"learned_init={learned_hidden_init}"
         )
     else:
         network_factory = functools.partial(
@@ -605,28 +623,47 @@ def main(cfg: DictConfig) -> None:
             "moseq_encoder_decoder" if use_continuous_encoder else "moseq_decoder"
         )
 
-    # Read KPMS model provenance (kappa, num_states) from sweep results
+    # Read KPMS model provenance (kappa, num_states).
+    # Try .npz metadata first (self-contained), then fall back to sweep_results.json.
     kpms_kappa = None
     kpms_num_states = None
     kpms_model_type = None
     kpms_mean_duration = None
-    if codes_path:
-        sweep_results_path = Path(codes_path).parent / "sweep_results.json"
-        if sweep_results_path.exists():
-            try:
-                with open(sweep_results_path) as f:
-                    sweep_results = json.load(f)
-                best = sweep_results.get("best_model", {})
-                kpms_kappa = best.get("kappa")
-                kpms_num_states = best.get("n_states")
-                kpms_model_type = best.get("model_type")
-                kpms_mean_duration = best.get("mean_duration")
+    if codes_path and Path(codes_path).exists():
+        try:
+            codes_meta = np.load(codes_path, allow_pickle=False)
+            if "kappa" in codes_meta:
+                kpms_kappa = float(codes_meta["kappa"])
+                kpms_num_states = int(codes_meta["num_states"])
+                kpms_model_type = str(codes_meta.get("model_type", "unknown"))
+                kpms_mean_duration = float(codes_meta.get("mean_duration", 0.0))
                 logging.info(
-                    f"KPMS provenance: kappa={kpms_kappa}, n_states={kpms_num_states}, "
-                    f"model={kpms_model_type}, mean_duration={kpms_mean_duration:.1f}"
+                    f"KPMS provenance (from .npz): kappa={kpms_kappa}, "
+                    f"n_states={kpms_num_states}, model={kpms_model_type}, "
+                    f"mean_duration={kpms_mean_duration:.1f}"
                 )
-            except Exception as e:
-                logging.warning(f"Could not read KPMS sweep results: {e}")
+        except Exception as e:
+            logging.warning(f"Could not read .npz metadata: {e}")
+
+        # Fallback: sweep_results.json alongside the codes file
+        if kpms_kappa is None:
+            sweep_results_path = Path(codes_path).parent / "sweep_results.json"
+            if sweep_results_path.exists():
+                try:
+                    with open(sweep_results_path) as f:
+                        sweep_results = json.load(f)
+                    best = sweep_results.get("best_model", {})
+                    kpms_kappa = best.get("kappa")
+                    kpms_num_states = best.get("n_states")
+                    kpms_model_type = best.get("model_type")
+                    kpms_mean_duration = best.get("mean_duration")
+                    logging.info(
+                        f"KPMS provenance (from sweep_results.json): "
+                        f"kappa={kpms_kappa}, n_states={kpms_num_states}, "
+                        f"model={kpms_model_type}, mean_duration={kpms_mean_duration}"
+                    )
+                except Exception as e:
+                    logging.warning(f"Could not read KPMS sweep results: {e}")
 
     wandb.config.update(
         {
@@ -647,6 +684,9 @@ def main(cfg: DictConfig) -> None:
             "rnn_hidden_sizes": list(rnn_hidden_sizes) if use_rnn_decoder else None,
             "rnn_cell_type": rnn_cell_type if use_rnn_decoder else None,
             "z_e_dropout_rate": z_e_dropout_rate,
+            "z_e_at_action_head": z_e_at_action_head,
+            "reinit_hidden_on_code": reinit_hidden_on_code,
+            "learned_hidden_init": learned_hidden_init,
         }
     )
 
@@ -709,9 +749,13 @@ def main(cfg: DictConfig) -> None:
     # Rollout env for logging
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = MoSeqImitation(
-        config=rollout_cfg, clips=test_clips, kpms_codes=test_codes,
-        code_stack_size=code_stack_size,
+    rollout_env = rodent_wrappers.LegacyObsWrapper(
+        rodent_wrappers.TrackMjxObsWrapper(
+            MoSeqImitation(
+                config=rollout_cfg, clips=test_clips, kpms_codes=test_codes,
+                code_stack_size=code_stack_size,
+            )
+        )
     )
 
     jit_reset = jax.jit(rollout_env.reset)

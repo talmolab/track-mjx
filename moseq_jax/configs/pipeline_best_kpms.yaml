@@ -18,7 +18,7 @@ data:
   stac_xml_path: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
 
 # --- Stage 1: KPMS fitting (fix num_states, sweep kappa) ---
-kpms:
+sweep:
   num_states: [25]
   kappa: [1.0e+2, 3.0e+2, 1.0e+3, 3.0e+3, 1.0e+4, 3.0e+4, 1.0e+5]
   latent_dim: [10]
@@ -48,6 +48,9 @@ decoder:
   rnn_hidden_sizes: [512, 512, 256, 256]
   rnn_cell_type: gru
   use_continuous_encoder: true
+  z_e_at_action_head: true
+  reinit_hidden_on_code: true
+  learned_hidden_init: true
 
   # Training budget per run
   num_timesteps: 2_000_000_000

@@ -220,7 +220,7 @@ def make_abstract_policy(
         # New dict-based format
         obs_sizes = network_config["obs_sizes"]
         dummy_obs = {
-            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+            "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
             "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
         }
         normalizer_state = init_dict_normalizer(dummy_obs)
@@ -319,7 +319,7 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
     else:
         # Legacy flat format - convert to obs_sizes dict
         obs_sizes = {
-            "imitation_target": network_config.reference_obs_size,
+            "task_obs": network_config.reference_obs_size,
             "proprioception": network_config.observation_size
             - network_config.reference_obs_size,
         }

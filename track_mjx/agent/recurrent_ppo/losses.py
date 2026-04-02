@@ -165,7 +165,7 @@ def compute_recurrent_ppo_loss(
         normalizer_params,
         params.policy,
         {
-            "imitation_target": data.observation["imitation_target"],
+            "task_obs": data.observation["task_obs"],
             "proprioception": data.observation["proprioception"],
         },
         initial_hidden,

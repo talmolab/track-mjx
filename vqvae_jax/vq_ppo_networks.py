@@ -9,7 +9,7 @@ The key components are:
 - Factory functions for creating VQ-VAE intention-based PPO networks
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 

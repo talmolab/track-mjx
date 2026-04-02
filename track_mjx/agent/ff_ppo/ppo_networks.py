@@ -9,7 +9,7 @@ The key components are:
 - Factory functions for creating intention-based PPO networks
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -279,7 +279,7 @@ def make_intention_ppo_networks(
 
     Args:
         obs_sizes: Dict mapping observation keys to their sizes, e.g.
-            {"imitation_target": 3716, "proprioception": 226}.
+            {"task_obs": 3716, "proprioception": 226}.
         action_size: Action dimension.
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
@@ -353,8 +353,8 @@ def make_decoder_policy_fn(
     if "obs_sizes" in network_config:
         # New dict-based format
         obs_sizes = network_config["obs_sizes"]
-        reference_obs_size = obs_sizes["imitation_target"]
-        observation_size = obs_sizes["imitation_target"] + obs_sizes["proprioception"]
+        reference_obs_size = obs_sizes["task_obs"]
+        observation_size = obs_sizes["task_obs"] + obs_sizes["proprioception"]
     else:
         # Legacy flat format
         observation_size = network_config["observation_size"]

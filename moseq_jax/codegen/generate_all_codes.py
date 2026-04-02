@@ -153,6 +153,10 @@ def generate_all_codes(
             test_codes=test_codes,
             train_indices=np.array(train_indices),
             test_indices=np.array(test_indices),
+            kappa=np.float64(kappa),
+            num_states=np.int32(n_states),
+            mean_duration=np.float64(best["mean_duration"]),
+            seed=np.int32(best["seed"]),
         )
 
         manifest[setting_name] = {

@@ -519,7 +519,7 @@ class VQIntentionNetwork(nn.Module):
 
         Args:
             obs: Dictionary observation with keys:
-                - "imitation_target": Reference trajectory observations.
+                - "task_obs": Reference trajectory observations.
                 - "proprioception": Proprioceptive state observations.
             key: JAX random key.
             deterministic: If True, skip noise and use mean for continuous latent.
@@ -540,7 +540,7 @@ class VQIntentionNetwork(nn.Module):
         traj = (
             obs["ref_joints"]
             if self.use_ref_joints_encoder
-            else obs["imitation_target"]
+            else obs["task_obs"]
         )
         egocentric_obs = obs["proprioception"]
 
@@ -684,7 +684,7 @@ class VQIntentionNetwork(nn.Module):
         traj = (
             obs["ref_joints"]
             if self.use_ref_joints_encoder
-            else obs["imitation_target"]
+            else obs["task_obs"]
         )
         egocentric_obs = obs["proprioception"]
         H = commitment_horizon
@@ -808,7 +808,7 @@ class VQIntentionNetwork(nn.Module):
 
         Args:
             obs: Dictionary observation with keys:
-                - "imitation_target": Shape [T, B, traj_dim].
+                - "task_obs": Shape [T, B, traj_dim].
                 - "proprioception": Shape [T, B, proprio_dim].
             commitment_horizon: H, number of steps to hold D0 code.
             episode_mask: Optional mask indicating episode boundaries.
@@ -829,7 +829,7 @@ class VQIntentionNetwork(nn.Module):
         traj = (
             obs["ref_joints"]
             if self.use_ref_joints_encoder
-            else obs["imitation_target"]
+            else obs["task_obs"]
         )  # [T, B, traj_dim]
         egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
         T, B = traj.shape[0], traj.shape[1]
@@ -1004,7 +1004,7 @@ class VQIntentionNetwork(nn.Module):
 
         Args:
             obs: Dictionary observation with keys:
-                - "imitation_target": Shape [T, B, traj_dim].
+                - "task_obs": Shape [T, B, traj_dim].
                 - "proprioception": Shape [T, B, proprio_dim].
             episode_mask: Optional mask indicating episode boundaries.
                 Shape [T, B]. Value of 0 indicates episode start.
@@ -1020,7 +1020,7 @@ class VQIntentionNetwork(nn.Module):
         traj = (
             obs["ref_joints"]
             if self.use_ref_joints_encoder
-            else obs["imitation_target"]
+            else obs["task_obs"]
         )  # [T, B, traj_dim]
         egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
 
@@ -1268,7 +1268,7 @@ def make_vq_intention_policy(
         coupled_residual_grad: If True and use_rotation, couple depth
             gradients through the rotation transform (STAR-style).
         use_ref_joints_encoder: If True, encoder reads obs["ref_joints"]
-            instead of obs["imitation_target"].
+            instead of obs["task_obs"].
 
     Returns:
         VQPolicyNetwork with init, apply, and apply_temporal methods.
@@ -1420,7 +1420,7 @@ def make_vq_intention_policy(
 
     # Create dummy dict observation for initialization
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     if use_ref_joints_encoder and "ref_joints" in obs_sizes:

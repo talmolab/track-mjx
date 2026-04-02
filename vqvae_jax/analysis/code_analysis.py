@@ -49,7 +49,7 @@ import hydra
 from absl import logging
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.imitation import ReferenceClips
 
 from track_mjx.config import utils as config_utils
 

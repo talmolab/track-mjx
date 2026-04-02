@@ -11,7 +11,7 @@ actions, checking for terminations based on simple criteria (NaN detection,
 torso height range).
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 

@@ -173,7 +173,7 @@ class TestVQIntentionNetwork:
         )
         key = jax.random.PRNGKey(0)
         obs = {
-            "imitation_target": jnp.ones((4, 50)),
+            "task_obs": jnp.ones((4, 50)),
             "proprioception": jnp.ones((4, 50)),
         }
 
@@ -195,7 +195,7 @@ class TestVQIntentionNetwork:
         )
         key = jax.random.PRNGKey(0)
         obs = {
-            "imitation_target": jnp.ones((10, 4, 50)),
+            "task_obs": jnp.ones((10, 4, 50)),
             "proprioception": jnp.ones((10, 4, 50)),
         }
 
@@ -216,7 +216,7 @@ class TestVQIntentionNetwork:
         )
         key = jax.random.PRNGKey(0)
         obs = {
-            "imitation_target": jnp.ones((4, 50)),
+            "task_obs": jnp.ones((4, 50)),
             "proprioception": jnp.ones((4, 50)),
         }
 
@@ -526,7 +526,7 @@ class TestMakeVQIntentionPolicy:
         """Verify factory creates working network."""
         from track_mjx.agent.observation_utils import init_dict_normalizer
 
-        obs_sizes = {"imitation_target": 50, "proprioception": 50}
+        obs_sizes = {"task_obs": 50, "proprioception": 50}
         policy = make_vq_intention_policy(
             action_param_size=32,
             latent_dim=64,
@@ -544,7 +544,7 @@ class TestMakeVQIntentionPolicy:
 
         # Create normalizer for dict obs
         dummy_obs = {
-            "imitation_target": jnp.ones((4, 50)),
+            "task_obs": jnp.ones((4, 50)),
             "proprioception": jnp.ones((4, 50)),
         }
         normalizer = init_dict_normalizer(dummy_obs)
@@ -563,7 +563,7 @@ class TestMakeVQIntentionPPONetworks:
 
     def test_factory_creates_all_components(self):
         """Verify factory creates policy, value, and distribution."""
-        obs_sizes = {"imitation_target": 50, "proprioception": 50}
+        obs_sizes = {"task_obs": 50, "proprioception": 50}
         networks = make_vq_intention_ppo_networks(
             obs_sizes=obs_sizes,
             action_size=8,
@@ -584,7 +584,7 @@ class TestMakeVQIntentionPPONetworks:
         """Verify inference function produces valid outputs."""
         from track_mjx.agent.observation_utils import init_dict_normalizer
 
-        obs_sizes = {"imitation_target": 50, "proprioception": 50}
+        obs_sizes = {"task_obs": 50, "proprioception": 50}
         networks = make_vq_intention_ppo_networks(
             obs_sizes=obs_sizes,
             action_size=8,
@@ -600,7 +600,7 @@ class TestMakeVQIntentionPPONetworks:
 
         # Create normalizer for dict obs
         dummy_obs = {
-            "imitation_target": jnp.ones((4, 50)),
+            "task_obs": jnp.ones((4, 50)),
             "proprioception": jnp.ones((4, 50)),
         }
         normalizer = init_dict_normalizer(dummy_obs)

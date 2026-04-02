@@ -5,7 +5,7 @@ The prior training loss consists of KL divergence between the encoder
 (frozen, from pretrained ff_ppo) and the prior (trainable) distributions.
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -162,7 +162,7 @@ def compute_prior_training_loss(
     normalized_obs = normalize_dict_obs(data.observation, normalizer_params)
 
     # Access observations by key
-    traj_obs = normalized_obs["imitation_target"]
+    traj_obs = normalized_obs["task_obs"]
     proprio_obs = normalized_obs["proprioception"]
 
     # Get encoder outputs (frozen - apply stop_gradient)

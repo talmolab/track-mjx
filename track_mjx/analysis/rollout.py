@@ -21,7 +21,7 @@ def create_environment(cfg_dict: dict[str, Any] | DictConfig) -> Env:
     """Create a VNL imitation learning environment from a configuration.
 
     Creates the VNL Imitation environment directly, returning dictionary
-    observations with keys "imitation_target" and "proprioception".
+    observations with keys "task_obs" and "proprioception".
 
     Args:
         cfg_dict: Configuration dictionary. Can be either:

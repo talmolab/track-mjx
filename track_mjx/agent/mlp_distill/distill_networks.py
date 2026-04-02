@@ -3,7 +3,7 @@ Network definitions for distillation training.
 Reuses the IntentionNetwork architecture from ff_ppo but with distillation-specific utilities.
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -104,7 +104,7 @@ def make_student_networks(
     Uses the same architecture as PPO intention networks.
 
     Args:
-        obs_sizes: Dict with "imitation_target" and "proprioception" sizes.
+        obs_sizes: Dict with "task_obs" and "proprioception" sizes.
         action_size: Size of the action space.
         preprocess_observations_fn: Function to preprocess dict observations.
         intention_latent_size: Size of the latent space.

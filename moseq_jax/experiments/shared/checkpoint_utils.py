@@ -99,7 +99,7 @@ def _make_moseq_abstract_policy(
 
     # Initialise normalizer (dict-based)
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     normalizer_state = init_dict_normalizer(dummy_obs)

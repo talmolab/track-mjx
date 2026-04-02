@@ -2,7 +2,7 @@
 Rollout logging for distillation training.
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -44,7 +44,7 @@ def distill_rollout_logging_fn(
     if obs_sizes is None:
         # Legacy format - construct from env
         obs_sizes = {
-            "imitation_target": int(env.non_proprioceptive_obs_size),
+            "task_obs": int(env.non_proprioceptive_obs_size),
             "proprioception": int(env.proprioceptive_obs_size),
         }
 

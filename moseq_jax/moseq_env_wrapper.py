@@ -18,7 +18,7 @@ from typing import Any, Mapping
 import jax.numpy as jnp
 from mujoco import mjx
 from vnl_playground.tasks.rodent.imitation import Imitation
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.imitation import ReferenceClips
 
 
 class MoSeqImitation(Imitation):
@@ -55,13 +55,13 @@ class MoSeqImitation(Imitation):
             # Single code (original behavior)
             frame = jnp.clip(frame, 0, n_frames - 1)
             code = self._kpms_codes[clip_idx, frame]
-            obs["kpms_code"] = code[..., None].astype(jnp.float32)
+            obs["state"]["kpms_code"] = code[..., None].astype(jnp.float32)
         else:
             # Stack N consecutive codes: [code_t, code_{t+1}, ..., code_{t+N-1}]
             # Pad with last code if near end of clip
             offsets = jnp.arange(self._code_stack_size)
             frames = jnp.clip(frame[..., None] + offsets, 0, n_frames - 1)
             codes = self._kpms_codes[clip_idx[..., None], frames]
-            obs["kpms_code"] = codes.astype(jnp.float32)
+            obs["state"]["kpms_code"] = codes.astype(jnp.float32)
 
         return obs

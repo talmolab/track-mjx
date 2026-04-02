@@ -2,7 +2,7 @@
 Student network module for distillation training.
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -159,7 +159,7 @@ class Prior(nn.Module):
 class StudentNetwork(nn.Module):
     """Full VAE model with prior, encoder, and decoder.
 
-    Now accepts dict observations with "imitation_target" and "proprioception" keys.
+    Now accepts dict observations with "task_obs" and "proprioception" keys.
     """
 
     encoder_layers: Sequence[int]
@@ -209,7 +209,7 @@ class StudentNetwork(nn.Module):
         """Apply student network.
 
         Args:
-            obs: Dict with "imitation_target" and "proprioception" keys.
+            obs: Dict with "task_obs" and "proprioception" keys.
             key: Random key for sampling.
             deterministic: If True, use mean of latent distribution.
             get_activation: If True, return activations.
@@ -220,7 +220,7 @@ class StudentNetwork(nn.Module):
         """
         _, encoder_rng = jax.random.split(key)
         # Access observations by key
-        traj = obs["imitation_target"]
+        traj = obs["task_obs"]
         egocentric_obs = obs["proprioception"]
 
         if get_activation:
@@ -312,7 +312,7 @@ def make_student_policy(
             usually double of the action size to model both the mean and
             variance of the action distribution
         latent_size (int): the size of the latent space
-        obs_sizes (Mapping[str, int]): dict with "imitation_target" and
+        obs_sizes (Mapping[str, int]): dict with "task_obs" and
             "proprioception" sizes
         preprocess_observations_fn: function to preprocess dict observations.
             Should accept (obs_dict, normalizer_params) and return normalized obs_dict.
@@ -379,7 +379,7 @@ def make_student_policy(
 
     # Create dummy dict observations for initialization
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     dummy_key = jax.random.PRNGKey(0)

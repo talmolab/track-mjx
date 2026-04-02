@@ -179,8 +179,6 @@ def compute_moseq_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL loss for continuous encoder
-    # Note: kl_weight may be a traced JAX value (from kl_weight_fn schedule),
-    # so avoid Python `if kl_weight > 0`. Always compute when encoder is active.
     if cont_mean is not None:
         kl_loss = 0.5 * jnp.mean(
             jnp.exp(cont_logvar) + cont_mean**2 - 1.0 - cont_logvar
@@ -379,8 +377,6 @@ def compute_moseq_recurrent_ppo_loss(
     entropy_loss = entropy_cost * -entropy
 
     # KL loss for continuous encoder
-    # Note: kl_weight may be a traced JAX value (from kl_weight_fn schedule),
-    # so avoid Python `if kl_weight > 0`. Always compute when encoder is active.
     if cont_mean is not None:
         kl_loss = 0.5 * jnp.mean(
             jnp.exp(cont_logvar) + cont_mean**2 - 1.0 - cont_logvar

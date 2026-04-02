@@ -11,7 +11,7 @@ The architecture enables learning from motion capture data by encoding trajector
 information into a compact latent space that conditions the policy.
 
 Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
+- "task_obs": Reference trajectory observations (flat array)
 - "proprioception": Proprioceptive state observations (flat array)
 """
 
@@ -177,7 +177,7 @@ class IntentionNetwork(nn.Module):
     """Full VAE model combining encoder and decoder for intention-based policy.
 
     The network receives observations as a dictionary with keys:
-    - "imitation_target": Reference trajectory observations (encoder input)
+    - "task_obs": Reference trajectory observations (encoder input)
     - "proprioception": Proprioceptive state observations (decoder input with latent)
 
     The encoder processes trajectory observations to produce latent intentions,
@@ -207,7 +207,7 @@ class IntentionNetwork(nn.Module):
         get_activation: bool = False,
     ):
         # Access observations by name
-        traj = obs["imitation_target"]
+        traj = obs["task_obs"]
         egocentric_obs = obs["proprioception"]
 
         # Check if observations are actually batched (based on normalized obs shape)
@@ -280,7 +280,7 @@ def make_intention_policy(
             Gaussian mean and variance).
         latent_size: Dimension of the latent intention space.
         obs_sizes: Dict mapping observation keys to their sizes, e.g.
-            {"imitation_target": 3716, "proprioception": 226}.
+            {"task_obs": 3716, "proprioception": 226}.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
 
@@ -316,7 +316,7 @@ def make_intention_policy(
 
     # Create dummy dict observation for initialization
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     dummy_key = jax.random.PRNGKey(0)

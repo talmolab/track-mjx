@@ -19,7 +19,7 @@ import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.imitation import ReferenceClips
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
@@ -239,7 +239,7 @@ def main(cfg: DictConfig):
     # Handle both new (dict-based) and legacy (flat) config formats
     if "obs_sizes" in teacher_net_cfg:
         # New dict-based format
-        reference_obs_size = teacher_net_cfg["obs_sizes"]["imitation_target"]
+        reference_obs_size = teacher_net_cfg["obs_sizes"]["task_obs"]
         proprioceptive_obs_size = teacher_net_cfg["obs_sizes"]["proprioception"]
     else:
         # Legacy flat format

@@ -31,7 +31,7 @@ for _p in (str(MOSEQ_DIR), str(REPO_ROOT)):
         sys.path.insert(0, _p)
 
 from track_mjx.config import utils
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.imitation import ReferenceClips
 from moseq_env_wrapper import MoSeqImitation
 
 from experiments.shared.checkpoint_utils import (

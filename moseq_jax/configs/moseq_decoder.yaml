@@ -15,7 +15,7 @@ env_config:
   solver: "newton"
   iterations: 5
   ls_iterations: 5
-  nconmax: 256
+  naconmax: 131072
   njmax: 128
   noslip_iterations: 0
 
@@ -26,6 +26,7 @@ env_config:
   clip_length: 250
   clip_set: "all"
   reference_length: 5
+  reference_stride: 1
   start_frame_range: [0, 20]
   qvel_init: "zeros"
   keep_clips_idx: null
@@ -96,7 +97,7 @@ render_config:
 # =============================================================================
 kpms_config:
   # Path to pre-computed KPMS codes (.npz file from generate_codes.py)
-  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
+  codes_path: null  # overridden per-run by pipeline scripts
 
 # =============================================================================
 # Network Architecture - MoSeq Decoder-Only
@@ -124,6 +125,13 @@ network_config:
   use_rnn_decoder: true
   rnn_cell_type: gru
   rnn_hidden_sizes: [512, 512, 256, 256]
+
+  # z_e placement: action head only (GRU sees code+proprio only)
+  z_e_at_action_head: true
+
+  # Per-code hidden state reinitialization at code transitions
+  reinit_hidden_on_code: true
+  learned_hidden_init: true          # learned per-code init (vs zeros)
 
   # KL schedule: controls kl_weight over training steps
   # Higher KL = z_e pushed toward unit Gaussian = less informative = GRU must use codes

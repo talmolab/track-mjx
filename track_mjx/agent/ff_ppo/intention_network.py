@@ -310,6 +310,7 @@ def make_intention_policy(
     obs_sizes: Mapping[str, int],
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    encoder_noise_std: float = 0.0,
     proprioception_noise_std: float = 0.0,
     proprioception_noise_mode: str = "multiplicative",
 ) -> networks.FeedForwardNetwork:
@@ -327,6 +328,8 @@ def make_intention_policy(
             {"imitation_target": 3716, "proprioception": 226}.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
+        encoder_noise_std: Stddev for additive Gaussian noise on the
+            encoder's imitation_target input during stochastic passes.
         proprioception_noise_std: Stddev for Gaussian noise on decoder
             proprioception input during stochastic training passes.
         proprioception_noise_mode: "multiplicative" or "additive".
@@ -341,6 +344,7 @@ def make_intention_policy(
         decoder_layers=list(decoder_hidden_layer_sizes)
         + [action_param_size],  # add action size to the last layer
         latents=latent_size,
+        encoder_noise_std=encoder_noise_std,
         proprioception_noise_std=proprioception_noise_std,
         proprioception_noise_mode=proprioception_noise_mode,
     )
@@ -441,6 +445,9 @@ class VisionIntentionNetwork(nn.Module):
         latents: Dimension of the latent intention space.
         vision_feature_size: Output dimension of the vision encoder CNN.
         vision_channels: Channel sizes for each conv layer in the vision encoder.
+        encoder_noise_std: Stddev for additive Gaussian noise on the encoder's
+            imitation_target input (before vision concatenation) during
+            stochastic training passes. Defaults to 0.0 (no noise).
         proprioception_noise_std: Stddev for Gaussian noise on decoder
             proprioception input during stochastic training passes.
         proprioception_noise_mode: How noise is applied. "multiplicative" scales
@@ -453,6 +460,7 @@ class VisionIntentionNetwork(nn.Module):
     latents: int = 60
     vision_feature_size: int = 8
     vision_channels: Sequence[int] = (2, 4, 8, 16)
+    encoder_noise_std: float = 0.0
     proprioception_noise_std: float = 0.0
     proprioception_noise_mode: str = "multiplicative"
 
@@ -481,17 +489,32 @@ class VisionIntentionNetwork(nn.Module):
         # Encode vision to feature vector
         vision_features = self.vision_encoder(vision)
 
-        # Concat trajectory + vision features for encoder
-        encoder_input = jnp.concatenate([traj, vision_features], axis=-1)
-
-        # Key handling (same as IntentionNetwork)
+        # Key handling (same as IntentionNetwork, 3-way split)
         obs_is_batched = traj.ndim >= 2
         if key.ndim == 1:
-            encoder_rng, noise_rng = jax.random.split(key)
+            encoder_rng, enc_noise_rng, noise_rng = jax.random.split(key, 3)
         elif not obs_is_batched:
-            encoder_rng, noise_rng = jax.random.split(key[0])
+            encoder_rng, enc_noise_rng, noise_rng = jax.random.split(key[0], 3)
         else:
-            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            split_keys = jax.vmap(lambda k: jax.random.split(k, 3))(key)
+            encoder_rng = split_keys[:, 0]
+            enc_noise_rng = split_keys[:, 1]
+            noise_rng = split_keys[:, 2]
+
+        # Apply encoder noise to traj BEFORE vision concatenation
+        if not deterministic and self.encoder_noise_std > 0.0:
+            if enc_noise_rng.ndim == 1:
+                enc_noise = jax.random.normal(enc_noise_rng, traj.shape)
+            elif not obs_is_batched:
+                enc_noise = jax.random.normal(enc_noise_rng[0], traj.shape)
+            else:
+                enc_noise = jax.vmap(
+                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
+                )(enc_noise_rng, traj)
+            traj = traj + self.encoder_noise_std * enc_noise
+
+        # Concat trajectory + vision features for encoder
+        encoder_input = jnp.concatenate([traj, vision_features], axis=-1)
 
         if not deterministic and self.proprioception_noise_std > 0.0:
             if noise_rng.ndim == 1:
@@ -686,6 +709,7 @@ def make_vision_intention_policy(
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     vision_feature_size: int = 8,
     vision_channels: Sequence[int] = (2, 4, 8, 16),
+    encoder_noise_std: float = 0.0,
     proprioception_noise_std: float = 0.0,
     proprioception_noise_mode: str = "multiplicative",
 ) -> networks.FeedForwardNetwork:
@@ -707,6 +731,9 @@ def make_vision_intention_policy(
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
         vision_feature_size: Output dimension of the vision encoder CNN.
         vision_channels: Channel sizes for each conv layer in the vision encoder.
+        encoder_noise_std: Stddev for additive Gaussian noise on the
+            encoder's imitation_target input (before vision concatenation)
+            during stochastic passes.
         proprioception_noise_std: Stddev for Gaussian noise on decoder
             proprioception input during stochastic training passes.
         proprioception_noise_mode: "multiplicative" or "additive".
@@ -722,6 +749,7 @@ def make_vision_intention_policy(
         latents=latent_size,
         vision_feature_size=vision_feature_size,
         vision_channels=vision_channels,
+        encoder_noise_std=encoder_noise_std,
         proprioception_noise_std=proprioception_noise_std,
         proprioception_noise_mode=proprioception_noise_mode,
     )

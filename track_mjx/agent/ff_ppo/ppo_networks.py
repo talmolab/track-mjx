@@ -276,7 +276,9 @@ def make_intention_ppo_networks(
     intention_latent_size: int = 60,
     encoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     decoder_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    encoder_noise_std: float = 0.0,
     proprioception_noise_std: float = 0.0,
+    proprioception_noise_mode: str = "multiplicative",
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
 ) -> PPOImitationNetworks:
     """Create intention-based PPO networks for imitation learning.
@@ -292,8 +294,11 @@ def make_intention_ppo_networks(
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         decoder_hidden_layer_sizes: MLP layer sizes for decoder.
-        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
-            decoder proprioception input during stochastic training passes.
+        encoder_noise_std: Stddev for additive Gaussian noise on the
+            encoder's imitation_target input during stochastic passes.
+        proprioception_noise_std: Stddev for Gaussian noise on decoder
+            proprioception input during stochastic training passes.
+        proprioception_noise_mode: "multiplicative" or "additive".
         value_hidden_layer_sizes: MLP layer sizes for value network.
 
     Returns:
@@ -309,7 +314,9 @@ def make_intention_ppo_networks(
         obs_sizes=obs_sizes,
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
+        encoder_noise_std=encoder_noise_std,
         proprioception_noise_std=proprioception_noise_std,
+        proprioception_noise_mode=proprioception_noise_mode,
     )
 
     value_network = make_dict_value_network(

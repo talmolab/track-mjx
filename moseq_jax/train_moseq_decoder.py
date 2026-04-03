@@ -73,11 +73,14 @@ def _run_eval_rollouts(
     """Run eval rollouts and return raw data (no logging).
 
     Returns:
-        ``(all_indices, all_states, all_rewards, final_key)``
+        ``(all_indices, all_states, all_rewards, all_latents, final_key)``
+        where ``all_latents`` is a list of arrays ``[T, latent_dim]`` per
+        rollout (empty list if no continuous encoder).
     """
     all_rollout_indices: list[np.ndarray] = []
     all_rollout_states: list[list] = []
     all_rollout_rewards: list[list] = []
+    all_rollout_latents: list[np.ndarray] = []
 
     for rollout_i in range(n_rollouts):
         key, subkey = jax.random.split(key)
@@ -86,6 +89,7 @@ def _run_eval_rollouts(
         rollout_states = [state]
         rollout_indices = []
         rollout_rewards = []
+        rollout_latents = []
 
         if use_rnn and ppo_network is not None:
             hidden = ppo_network.policy_network.init_hidden(1)
@@ -114,6 +118,9 @@ def _run_eval_rollouts(
             elif "indices" in extras:
                 rollout_indices.append(int(extras["indices"]))
 
+            if "cont_mean" in extras and extras["cont_mean"] is not None:
+                rollout_latents.append(np.array(extras["cont_mean"]))
+
             state = jit_step(state, action)
             rollout_states.append(state)
             rollout_rewards.append(float(state.reward))
@@ -126,8 +133,10 @@ def _run_eval_rollouts(
         all_rollout_indices.append(np.array(rollout_indices))
         all_rollout_states.append(rollout_states)
         all_rollout_rewards.append(rollout_rewards)
+        if rollout_latents:
+            all_rollout_latents.append(np.stack(rollout_latents))
 
-    return all_rollout_indices, all_rollout_states, all_rollout_rewards, key
+    return all_rollout_indices, all_rollout_states, all_rollout_rewards, all_rollout_latents, key
 
 
 def _log_eval_metrics(
@@ -142,6 +151,7 @@ def _log_eval_metrics(
     render_video,
     metric_prefix="moseq",
     video_prefix="videos",
+    all_rollout_latents=None,
 ):
     """Log metrics, code plots, and videos from eval rollouts.
 
@@ -223,6 +233,30 @@ def _log_eval_metrics(
         wandb.log({f"{metric_prefix}/code_sequence": wandb.Image(fig)}, commit=False)
         plt.close(fig)
 
+    # Continuous latent statistics (z_e)
+    if all_rollout_latents:
+        # Stack all rollouts: [total_steps, latent_dim]
+        all_latents = np.concatenate(all_rollout_latents, axis=0)
+        latent_dim = all_latents.shape[-1]
+
+        # Per-dimension stats across timesteps
+        latent_metrics = {}
+        for i in range(latent_dim):
+            dim_vals = all_latents[:, i]
+            latent_metrics[f"{metric_prefix}/z_e_mean_dim{i}"] = float(np.mean(dim_vals))
+            latent_metrics[f"{metric_prefix}/z_e_std_dim{i}"] = float(np.std(dim_vals))
+
+        # Aggregate stats
+        latent_metrics[f"{metric_prefix}/z_e_mean_norm"] = float(
+            np.mean(np.linalg.norm(all_latents, axis=-1))
+        )
+        latent_metrics[f"{metric_prefix}/z_e_std_norm"] = float(
+            np.std(np.linalg.norm(all_latents, axis=-1))
+        )
+        latent_metrics[f"{metric_prefix}/z_e_mean_abs"] = float(np.mean(np.abs(all_latents)))
+
+        wandb.log(latent_metrics, commit=False)
+
     # Render video
     if render_video and all_rollout_states:
         try:
@@ -287,6 +321,7 @@ def moseq_rollout_logging_fn(
     render_video=True,
     ppo_network=None,
     jit_decoder_only_inference_fn=None,
+    jit_random_ze_inference_fn=None,
 ):
     """Rollout logging with MoSeq code metrics and video rendering.
 
@@ -305,7 +340,7 @@ def moseq_rollout_logging_fn(
     key = policy_params_fn_key
 
     # --- Full eval (z_e=1.0) ---
-    all_indices, all_states, all_rewards, key = _run_eval_rollouts(
+    all_indices, all_states, all_rewards, all_latents, key = _run_eval_rollouts(
         env,
         jit_reset,
         jit_step,
@@ -329,11 +364,12 @@ def moseq_rollout_logging_fn(
         render_video,
         metric_prefix="moseq",
         video_prefix="videos",
+        all_rollout_latents=all_latents,
     )
 
     # --- Decoder-only eval (z_e=0.0) ---
     if jit_decoder_only_inference_fn is not None:
-        do_indices, do_states, do_rewards, key = _run_eval_rollouts(
+        do_indices, do_states, do_rewards, do_latents, key = _run_eval_rollouts(
             env,
             jit_reset,
             jit_step,
@@ -357,11 +393,46 @@ def moseq_rollout_logging_fn(
             render_video,
             metric_prefix="decoder_only",
             video_prefix="videos",
+            all_rollout_latents=do_latents,
         )
 
         # Reward gap: how much performance is lost without z_e
         wandb.log(
             {"decoder_only/reward_gap": full_reward - decoder_only_reward},
+            commit=False,
+        )
+
+    # --- Random z_e eval (z_e ~ N(0,I)) ---
+    if jit_random_ze_inference_fn is not None:
+        rz_indices, rz_states, rz_rewards, rz_latents, key = _run_eval_rollouts(
+            env,
+            jit_reset,
+            jit_step,
+            jit_random_ze_inference_fn,
+            params,
+            key,
+            episode_length,
+            n_rollouts,
+            use_rnn,
+            ppo_network,
+        )
+        random_ze_reward = _log_eval_metrics(
+            rz_indices,
+            rz_states,
+            rz_rewards,
+            env,
+            cfg,
+            model_path,
+            current_step,
+            num_codes,
+            render_video,
+            metric_prefix="random_ze",
+            video_prefix="videos",
+            all_rollout_latents=rz_latents,
+        )
+
+        wandb.log(
+            {"random_ze/reward_gap": full_reward - random_ze_reward},
             commit=False,
         )
 
@@ -734,8 +805,8 @@ def main(cfg: DictConfig) -> None:
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
 
-    # Cache for decoder-only inference fn (created lazily once ppo_network available)
-    _decoder_only_fn_cache = {}
+    # Caches for ablation inference fns (created lazily once ppo_network available)
+    _inference_fn_cache = {}
 
     def _policy_params_fn_wrapper(
         current_step,
@@ -745,10 +816,10 @@ def main(cfg: DictConfig) -> None:
         render_video=True,
         ppo_network=None,
     ):
-        # Create decoder-only inference fn (z_e=0) from ppo_network
         jit_decoder_only_fn = None
+        jit_random_ze_fn = None
         if use_continuous_encoder and ppo_network is not None:
-            if "fn" not in _decoder_only_fn_cache:
+            if "decoder_only" not in _inference_fn_cache:
                 from moseq_ppo_networks import (
                     make_moseq_recurrent_logging_inference_fn,
                     make_moseq_logging_inference_fn,
@@ -761,10 +832,14 @@ def main(cfg: DictConfig) -> None:
                 else:
                     make_logging = make_moseq_logging_inference_fn(ppo_network)
 
-                _decoder_only_fn_cache["fn"] = jax.jit(
+                _inference_fn_cache["decoder_only"] = jax.jit(
                     make_logging(deterministic=True, z_e_scale=0.0)
                 )
-            jit_decoder_only_fn = _decoder_only_fn_cache["fn"]
+                _inference_fn_cache["random_ze"] = jax.jit(
+                    make_logging(deterministic=False, z_e_scale=1.0, z_e_random=True)
+                )
+            jit_decoder_only_fn = _inference_fn_cache["decoder_only"]
+            jit_random_ze_fn = _inference_fn_cache["random_ze"]
 
         return moseq_rollout_logging_fn(
             rollout_env,
@@ -779,6 +854,7 @@ def main(cfg: DictConfig) -> None:
             render_video=render_video,
             ppo_network=ppo_network,
             jit_decoder_only_inference_fn=jit_decoder_only_fn,
+            jit_random_ze_inference_fn=jit_random_ze_fn,
         )
 
     # Wrap wandb_progress to add `/`-prefixed metric groups for WandB panels

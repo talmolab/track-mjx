@@ -64,6 +64,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
         key=None,
         deterministic: bool = False,
         z_e_scale: float = 1.0,
+        z_e_random: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None]:
         """Forward pass.
 
@@ -76,6 +77,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
                 ``use_continuous_encoder=True`` and ``deterministic=False``).
             deterministic: If True, use mean (no sampling) for continuous latent.
             z_e_scale: Multiplier on z_e (1.0 = full, 0.0 = decoder-only).
+            z_e_random: If True, bypass encoder and use z_e ~ N(0, I).
 
         Returns:
             Tuple of ``(action_params, code_idx, mean, logvar)``.
@@ -122,6 +124,14 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
                     key = self.make_rng("params")
                 eps = jax.random.normal(key, mean.shape)
                 z_e = mean + jnp.exp(0.5 * logvar) * eps
+
+            # Replace z_e with N(0,I) noise if z_e_random mode
+            if z_e_random:
+                if key is not None:
+                    _, rand_key = jax.random.split(key)
+                    z_e = jax.random.normal(rand_key, mean.shape)
+                else:
+                    z_e = jnp.zeros_like(mean)
 
             # Decoder input: code_emb + z_e_scaled + proprio
             z_e_scaled = z_e * z_e_scale
@@ -229,8 +239,14 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         key=None,
         deterministic: bool = False,
         z_e_scale: float = 1.0,
+        z_e_random: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None]:
-        """Encode obs into (decoder_input, code_idx, mean, logvar)."""
+        """Encode obs into (decoder_input, code_idx, mean, logvar).
+
+        Args:
+            z_e_random: If True, bypass the encoder and use z_e ~ N(0, I).
+                Tests decoder reliance on structured continuous latent.
+        """
         kpms_code = obs["kpms_code"]
         # Current code index (first in stack, used for metrics/logging)
         code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)
@@ -279,6 +295,18 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     _, encoder_rng = jax.random.split(key)
                     eps = jax.random.normal(encoder_rng, mean.shape)
                     z_e = mean + jnp.exp(0.5 * logvar) * eps
+
+            # Replace z_e with N(0,I) noise if z_e_random mode
+            if z_e_random:
+                if key is not None:
+                    if key.ndim > 1:
+                        rand_keys = jax.vmap(lambda k: jax.random.split(k, 4)[3])(key)
+                        z_e = jax.vmap(lambda k: jax.random.normal(k, mean.shape[-1:]))(rand_keys)
+                    else:
+                        _, rand_key = jax.random.split(key)
+                        z_e = jax.random.normal(rand_key, mean.shape)
+                else:
+                    z_e = jnp.zeros_like(mean)
 
             z_e_scaled = z_e * z_e_scale
 
@@ -329,6 +357,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         key=None,
         deterministic: bool = False,
         z_e_scale: float = 1.0,
+        z_e_random: bool = False,
     ) -> tuple[
         jnp.ndarray,
         jnp.ndarray,
@@ -342,7 +371,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             ``(action_params, code_idx, mean, logvar, new_hidden)``.
         """
         decoder_input, code_idx, mean, logvar = self._encode(
-            obs, key, deterministic, z_e_scale,
+            obs, key, deterministic, z_e_scale, z_e_random=z_e_random,
         )
         action_params, new_hidden = self._decode_rnn(decoder_input, hidden)
         return action_params, code_idx, mean, logvar, new_hidden

@@ -122,7 +122,7 @@ def make_moseq_logging_inference_fn(
     """
 
     def make_logging_policy(
-        deterministic: bool = False, z_e_scale: float = 1.0
+        deterministic: bool = False, z_e_scale: float = 1.0, z_e_random: bool = False,
     ) -> Callable:
         policy_network = ppo_networks.policy_network
         action_dist = ppo_networks.parametric_action_distribution
@@ -141,6 +141,7 @@ def make_moseq_logging_inference_fn(
                 key_net,
                 deterministic=deterministic,
                 z_e_scale=z_e_scale,
+                z_e_random=z_e_random,
             )
 
             extras = {"code_idx": code_idx, "indices": code_idx}
@@ -208,12 +209,14 @@ def _make_moseq_policy_network(
             normalized["kpms_code"] = raw_code
 
         z_e_scale = kwargs.get("z_e_scale", 1.0)
+        z_e_random = kwargs.get("z_e_random", False)
         return module.apply(
             policy_params,
             normalized,
             key=key,
             deterministic=deterministic,
             z_e_scale=z_e_scale,
+            z_e_random=z_e_random,
         )
 
     return networks.FeedForwardNetwork(init=init, apply=apply)
@@ -431,6 +434,7 @@ def _make_moseq_recurrent_policy_network(
         key=None,
         deterministic: bool = False,
         z_e_scale: float = 1.0,
+        z_e_random: bool = False,
     ):
         normalized = _normalize_and_reattach_code(obs, processor_params)
         return module.apply(
@@ -440,6 +444,7 @@ def _make_moseq_recurrent_policy_network(
             key=key,
             deterministic=deterministic,
             z_e_scale=z_e_scale,
+            z_e_random=z_e_random,
         )
 
     def apply_sequence(
@@ -557,7 +562,7 @@ def make_moseq_recurrent_logging_inference_fn(
     """
 
     def make_logging_policy(
-        deterministic: bool = False, z_e_scale: float = 1.0
+        deterministic: bool = False, z_e_scale: float = 1.0, z_e_random: bool = False,
     ) -> Callable:
         policy_network = ppo_networks.policy_network
         action_dist = ppo_networks.parametric_action_distribution
@@ -583,6 +588,7 @@ def make_moseq_recurrent_logging_inference_fn(
                 key_net,
                 deterministic=deterministic,
                 z_e_scale=z_e_scale,
+                z_e_random=z_e_random,
             )
 
             extras = {"code_idx": code_idx, "indices": code_idx}

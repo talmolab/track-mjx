@@ -36,6 +36,7 @@ from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from ref_joints_imitation import RefJointsImitation
 
@@ -515,8 +516,12 @@ def main(cfg: DictConfig) -> None:
     EnvClass = RefJointsImitation if use_ref_joints_encoder else imitation.Imitation
     if use_ref_joints_encoder:
         logging.info("Using RefJointsImitation (raw ref_joints encoder input)")
-    env = EnvClass(config=env_cfg_ml, clips=train_clips)
-    test_env = EnvClass(config=env_cfg_ml, clips=test_clips)
+    env = rodent_wrappers.TrackMjxObsWrapper(
+        EnvClass(config=env_cfg_ml, clips=train_clips)
+    )
+    test_env = rodent_wrappers.TrackMjxObsWrapper(
+        EnvClass(config=env_cfg_ml, clips=test_clips)
+    )
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -693,7 +698,6 @@ def main(cfg: DictConfig) -> None:
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
         eval_env_test_set=test_env,
-        freeze_decoder=cfg.train_setup.get("freeze_decoder", False),
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
@@ -729,7 +733,9 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = EnvClass(config=rollout_cfg, clips=test_clips)
+    rollout_env = rodent_wrappers.TrackMjxObsWrapper(
+        EnvClass(config=rollout_cfg, clips=test_clips)
+    )
 
     # Define jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

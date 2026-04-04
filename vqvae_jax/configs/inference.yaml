@@ -32,6 +32,7 @@ output:
 # Environment Configuration (inherited from training config)
 # =============================================================================
 env_config:
+  env_name: "RodentImitation"
   mujoco_impl: "jax"
 
   # Physics Solver Settings

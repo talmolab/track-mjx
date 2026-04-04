@@ -401,7 +401,7 @@ def compute_moseq_recurrent_ppo_loss(
     hidden_state_norm = jnp.mean(jnp.stack(hidden_norms))
 
     # Code metrics (from observation, not from scan — codes don't change)
-    kpms_code = data.observation.get("kpms_code")
+    kpms_code = data.observation["state"].get("kpms_code")
     if kpms_code is not None:
         code_idx = jnp.round(kpms_code[..., 0]).astype(jnp.int32)
         num_codes = ppo_network.num_codes

@@ -24,8 +24,8 @@ for _p in (str(_MOSEQ_DIR), str(_REPO_ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from brax.training.acme import running_statistics, specs
 from track_mjx.agent import checkpointing
-from track_mjx.agent.observation_utils import init_dict_normalizer
 from moseq_ppo_networks import (
     make_moseq_decoder_ppo_networks,
     make_moseq_recurrent_decoder_ppo_networks,
@@ -97,12 +97,13 @@ def _make_moseq_abstract_policy(
 
     key_policy, key_value = jax.random.split(jax.random.key(1))
 
-    # Initialise normalizer (dict-based)
-    dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
-        "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+    # Initialise normalizer (pytree-based, matching ppo.train structure)
+    inner_specs = {
+        k: specs.Array((v,), jnp.dtype("float32"))
+        for k, v in obs_sizes.items()
     }
-    normalizer_state = init_dict_normalizer(dummy_obs)
+    obs_shape = {"state": inner_specs}
+    normalizer_state = running_statistics.init_state(obs_shape)
 
     # Initialise policy and value params
     init_policy = ppo_networks.policy_network.init(key_policy)
@@ -286,11 +287,11 @@ def run_rollout(
         # Override code if requested
         if code_override is not None:
             desired_code = int(code_override[min(t, len(code_override) - 1)])
-            # CRITICAL: preserve OrderedDict type to avoid JAX recompilation
-            # on every step (OrderedDict vs dict are different pytree types)
-            from collections import OrderedDict
-            new_obs = OrderedDict((k, v) for k, v in state.obs.items())
-            new_obs["kpms_code"] = jnp.array([desired_code], dtype=jnp.float32)
+            # Override kpms_code inside the nested state obs dict
+            new_state_obs = dict(state.obs["state"])
+            new_state_obs["kpms_code"] = jnp.array([desired_code], dtype=jnp.float32)
+            new_obs = dict(state.obs)
+            new_obs["state"] = new_state_obs
             state = state.replace(obs=new_obs)
 
         key, subkey = jax.random.split(key)

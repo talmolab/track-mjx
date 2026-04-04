@@ -75,6 +75,7 @@ output:
 # Environment Configuration
 # =============================================================================
 env_config:
+  env_name: "RodentImitation"
   mujoco_impl: "jax"
 
   solver: "newton"

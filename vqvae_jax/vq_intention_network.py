@@ -27,10 +27,8 @@ import jax.numpy as jnp
 from brax.training import networks, types
 from flax import linen as nn
 
-from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
-    normalize_dict_obs,
-)
+from brax.training.acme import running_statistics
+from track_mjx.agent.observation_utils import normalizer_select
 
 
 class VQEncoder(nn.Module):
@@ -540,7 +538,7 @@ class VQIntentionNetwork(nn.Module):
         traj = (
             obs["ref_joints"]
             if self.use_ref_joints_encoder
-            else obs["imitation_target"]
+            else obs["task_obs"]
         )
         egocentric_obs = obs["proprioception"]
 
@@ -684,7 +682,7 @@ class VQIntentionNetwork(nn.Module):
         traj = (
             obs["ref_joints"]
             if self.use_ref_joints_encoder
-            else obs["imitation_target"]
+            else obs["task_obs"]
         )
         egocentric_obs = obs["proprioception"]
         H = commitment_horizon
@@ -829,7 +827,7 @@ class VQIntentionNetwork(nn.Module):
         traj = (
             obs["ref_joints"]
             if self.use_ref_joints_encoder
-            else obs["imitation_target"]
+            else obs["task_obs"]
         )  # [T, B, traj_dim]
         egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
         T, B = traj.shape[0], traj.shape[1]
@@ -1020,7 +1018,7 @@ class VQIntentionNetwork(nn.Module):
         traj = (
             obs["ref_joints"]
             if self.use_ref_joints_encoder
-            else obs["imitation_target"]
+            else obs["task_obs"]
         )  # [T, B, traj_dim]
         egocentric_obs = obs["proprioception"]  # [T, B, proprio_dim]
 
@@ -1268,7 +1266,7 @@ def make_vq_intention_policy(
         coupled_residual_grad: If True and use_rotation, couple depth
             gradients through the rotation transform (STAR-style).
         use_ref_joints_encoder: If True, encoder reads obs["ref_joints"]
-            instead of obs["imitation_target"].
+            instead of obs["task_obs"].
 
     Returns:
         VQPolicyNetwork with init, apply, and apply_temporal methods.
@@ -1293,7 +1291,7 @@ def make_vq_intention_policy(
     )
 
     def apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs: Mapping[str, jnp.ndarray],
         key,
@@ -1310,8 +1308,10 @@ def make_vq_intention_policy(
             logvar: logvar when use_continuous_latent=True, else None.
             (optional) extras: Dict of activations if get_activation=True.
         """
-        ref_joints = obs.get("ref_joints")
-        obs = normalize_dict_obs(obs, processor_params)
+        state_obs = obs["state"]
+        ref_joints = state_obs.get("ref_joints")
+        state_normalizer = normalizer_select(processor_params, "state")
+        obs = dict(running_statistics.normalize(state_obs, state_normalizer))
         if ref_joints is not None:
             obs["ref_joints"] = ref_joints
         return policy_module.apply(
@@ -1324,7 +1324,7 @@ def make_vq_intention_policy(
         )
 
     def apply_temporal(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs: Mapping[str, jnp.ndarray],
         episode_mask: jnp.ndarray | None = None,
@@ -1338,8 +1338,10 @@ def make_vq_intention_policy(
             all_indices: Tuple of D arrays, each shape [T, B].
             logvar: Shape [T, B, latent_dim] or None.
         """
-        ref_joints = obs.get("ref_joints")
-        obs = normalize_dict_obs(obs, processor_params)
+        state_obs = obs["state"]
+        ref_joints = state_obs.get("ref_joints")
+        state_normalizer = normalizer_select(processor_params, "state")
+        obs = dict(running_statistics.normalize(state_obs, state_normalizer))
         if ref_joints is not None:
             obs["ref_joints"] = ref_joints
         return policy_module.apply(
@@ -1351,7 +1353,7 @@ def make_vq_intention_policy(
         )
 
     def apply_temporal_chunked(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs: Mapping[str, jnp.ndarray],
         commitment_horizon: int,
@@ -1369,8 +1371,10 @@ def make_vq_intention_policy(
             logvar: Shape [T, B, latent_dim] or None.
             tau: Timer values, shape [T, B].
         """
-        ref_joints = obs.get("ref_joints")
-        obs = normalize_dict_obs(obs, processor_params)
+        state_obs = obs["state"]
+        ref_joints = state_obs.get("ref_joints")
+        state_normalizer = normalizer_select(processor_params, "state")
+        obs = dict(running_statistics.normalize(state_obs, state_normalizer))
         if ref_joints is not None:
             obs["ref_joints"] = ref_joints
         return policy_module.apply(
@@ -1385,7 +1389,7 @@ def make_vq_intention_policy(
         )
 
     def apply_step_chunked(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs: Mapping[str, jnp.ndarray],
         held_d0_idx: jnp.ndarray,
@@ -1403,8 +1407,10 @@ def make_vq_intention_policy(
             logvar: Shape [B, latent_dim] or None.
             new_chunk_state: Tuple of (new_held_d0, new_tau), each [B].
         """
-        ref_joints = obs.get("ref_joints")
-        obs = normalize_dict_obs(obs, processor_params)
+        state_obs = obs["state"]
+        ref_joints = state_obs.get("ref_joints")
+        state_normalizer = normalizer_select(processor_params, "state")
+        obs = dict(running_statistics.normalize(state_obs, state_normalizer))
         if ref_joints is not None:
             obs["ref_joints"] = ref_joints
         return policy_module.apply(
@@ -1420,7 +1426,7 @@ def make_vq_intention_policy(
 
     # Create dummy dict observation for initialization
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     if use_ref_joints_encoder and "ref_joints" in obs_sizes:

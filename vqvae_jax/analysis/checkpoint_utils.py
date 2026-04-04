@@ -27,10 +27,7 @@ from vq_ppo_networks import (
     make_vq_chunked_ppo_networks,
 )
 
-from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
-    convert_flat_to_dict_normalizer,
-)
+from brax.training.acme import specs
 
 
 def load_config_from_checkpoint(
@@ -177,14 +174,15 @@ def make_abstract_vq_policy(
     init_policy_params = ppo_network.policy_network.init(key_policy)
 
     obs_sizes = _get_obs_sizes_from_cfg(cfg)
-    normalizer_state = DictRunningStatisticsState(
-        imitation_target=running_statistics.init_state(
-            specs.Array(obs_sizes["imitation_target"], jnp.dtype("float32"))
-        ),
-        proprioception=running_statistics.init_state(
-            specs.Array(obs_sizes["proprioception"], jnp.dtype("float32"))
-        ),
-    )
+    # Remap old key names to new names
+    key_map = {"imitation_target": "task_obs"}
+    mapped = {key_map.get(k, k): v for k, v in obs_sizes.items()}
+    inner_specs = {
+        k: specs.Array((v,), jnp.dtype("float32"))
+        for k, v in mapped.items()
+    }
+    obs_shape = {"state": inner_specs}
+    normalizer_state = running_statistics.init_state(obs_shape)
 
     return (normalizer_state, init_policy_params)
 
@@ -247,31 +245,61 @@ def load_vq_policy(
         # Convert orbax-restored dicts back to proper dataclass types
         normalizer_dict, policy_params = policy
 
-        # Check if it's a dict normalizer or flat normalizer
-        if (
+        # Convert legacy normalizer formats to pytree normalizer.
+        # Old checkpoints stored either:
+        #   a) DictRunningStatisticsState with imitation_target/proprioception keys
+        #   b) flat RunningStatisticsState covering all obs
+        # New checkpoints store a pytree RunningStatisticsState with
+        #   state -> {task_obs, proprioception} structure.
+
+        def _build_pytree_normalizer(task_obs_state, proprio_state):
+            """Combine per-key stats into a pytree RunningStatisticsState."""
+            return running_statistics.RunningStatisticsState(
+                count=task_obs_state.count,
+                mean={"state": {"task_obs": task_obs_state.mean, "proprioception": proprio_state.mean}},
+                summed_variance={"state": {"task_obs": task_obs_state.summed_variance, "proprioception": proprio_state.summed_variance}},
+                std={"state": {"task_obs": task_obs_state.std, "proprioception": proprio_state.std}},
+                std_eps=task_obs_state.std_eps,
+                mode=task_obs_state.mode,
+            )
+
+        if "state" in normalizer_dict:
+            # New pytree format — reconstruct directly
+            state_dict = normalizer_dict["state"]
+            inner = {}
+            for k, v in state_dict.items():
+                inner[k] = _dict_to_running_statistics_state(v)
+            # Rebuild full pytree normalizer
+            first = next(iter(inner.values()))
+            normalizer_state = running_statistics.RunningStatisticsState(
+                count=first.count,
+                mean={"state": {k: v.mean for k, v in inner.items()}},
+                summed_variance={"state": {k: v.summed_variance for k, v in inner.items()}},
+                std={"state": {k: v.std for k, v in inner.items()}},
+                std_eps=first.std_eps,
+                mode=first.mode,
+            )
+        elif (
             "imitation_target" in normalizer_dict
             and "proprioception" in normalizer_dict
         ):
-            # Already dict normalizer structure
-            normalizer_state = DictRunningStatisticsState(
-                imitation_target=_dict_to_running_statistics_state(
-                    normalizer_dict["imitation_target"]
-                ),
-                proprioception=_dict_to_running_statistics_state(
-                    normalizer_dict["proprioception"]
-                ),
+            # Old DictRunningStatisticsState — convert key names
+            imit_state = _dict_to_running_statistics_state(
+                normalizer_dict["imitation_target"]
             )
+            proprio_state = _dict_to_running_statistics_state(
+                normalizer_dict["proprioception"]
+            )
+            normalizer_state = _build_pytree_normalizer(imit_state, proprio_state)
         else:
-            # Flat normalizer - need to convert
+            # Flat normalizer — split by reference_obs_size
             flat_state = _dict_to_running_statistics_state(normalizer_dict)
 
-            # Get reference_obs_size from config (in network_config, not env_config)
             if cfg is None:
                 cfg = OmegaConf.create(
                     load_config_from_checkpoint(checkpoint_path, step_prefix, step)
                 )
 
-            # Try to get obs_sizes first (newer format), fallback to reference_obs_size
             net_cfg = cfg.network_config
             if hasattr(net_cfg, "obs_sizes") and net_cfg.obs_sizes is not None:
                 reference_obs_size = net_cfg.obs_sizes.get("imitation_target")
@@ -282,18 +310,28 @@ def load_vq_policy(
                     "Checkpoint config missing both 'obs_sizes' and 'reference_obs_size'"
                 )
 
-            total_obs_size = flat_state.mean.shape[0]
-            proprio_size = total_obs_size - reference_obs_size
-
             logging.info(
-                f"Converting flat normalizer to dict normalizer: "
-                f"total={total_obs_size}, imitation_target={reference_obs_size}, "
-                f"proprioception={proprio_size}"
+                f"Converting flat normalizer to pytree normalizer: "
+                f"total={flat_state.mean.shape[0]}, task_obs={reference_obs_size}"
             )
 
-            normalizer_state = convert_flat_to_dict_normalizer(
-                flat_state, reference_obs_size
+            imit_state = running_statistics.RunningStatisticsState(
+                count=flat_state.count,
+                mean=flat_state.mean[:reference_obs_size],
+                summed_variance=flat_state.summed_variance[:reference_obs_size],
+                std=flat_state.std[:reference_obs_size],
+                std_eps=flat_state.std_eps,
+                mode=flat_state.mode,
             )
+            proprio_state = running_statistics.RunningStatisticsState(
+                count=flat_state.count,
+                mean=flat_state.mean[reference_obs_size:],
+                summed_variance=flat_state.summed_variance[reference_obs_size:],
+                std=flat_state.std[reference_obs_size:],
+                std_eps=flat_state.std_eps,
+                mode=flat_state.mode,
+            )
+            normalizer_state = _build_pytree_normalizer(imit_state, proprio_state)
 
         return (normalizer_state, policy_params)
 

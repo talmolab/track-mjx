@@ -173,7 +173,7 @@ class TestVQIntentionNetwork:
         )
         key = jax.random.PRNGKey(0)
         obs = {
-            "imitation_target": jnp.ones((4, 50)),
+            "task_obs": jnp.ones((4, 50)),
             "proprioception": jnp.ones((4, 50)),
         }
 
@@ -195,7 +195,7 @@ class TestVQIntentionNetwork:
         )
         key = jax.random.PRNGKey(0)
         obs = {
-            "imitation_target": jnp.ones((10, 4, 50)),
+            "task_obs": jnp.ones((10, 4, 50)),
             "proprioception": jnp.ones((10, 4, 50)),
         }
 
@@ -216,7 +216,7 @@ class TestVQIntentionNetwork:
         )
         key = jax.random.PRNGKey(0)
         obs = {
-            "imitation_target": jnp.ones((4, 50)),
+            "task_obs": jnp.ones((4, 50)),
             "proprioception": jnp.ones((4, 50)),
         }
 
@@ -524,9 +524,9 @@ class TestMakeVQIntentionPolicy:
 
     def test_factory_creates_valid_network(self):
         """Verify factory creates working network."""
-        from track_mjx.agent.observation_utils import init_dict_normalizer
+        from brax.training.acme import running_statistics, specs
 
-        obs_sizes = {"imitation_target": 50, "proprioception": 50}
+        obs_sizes = {"task_obs": 50, "proprioception": 50}
         policy = make_vq_intention_policy(
             action_param_size=32,
             latent_dim=64,
@@ -544,10 +544,11 @@ class TestMakeVQIntentionPolicy:
 
         # Create normalizer for dict obs
         dummy_obs = {
-            "imitation_target": jnp.ones((4, 50)),
+            "task_obs": jnp.ones((4, 50)),
             "proprioception": jnp.ones((4, 50)),
         }
-        normalizer = init_dict_normalizer(dummy_obs)
+        obs_shape = {"state": {k: specs.Array(v.shape[-1:], jnp.dtype("float32")) for k, v in dummy_obs.items()}}
+        normalizer = running_statistics.init_state(obs_shape)
 
         # Verify apply works with dict obs
         action, z_e, all_indices = policy.apply(normalizer, params, dummy_obs, key)
@@ -563,7 +564,7 @@ class TestMakeVQIntentionPPONetworks:
 
     def test_factory_creates_all_components(self):
         """Verify factory creates policy, value, and distribution."""
-        obs_sizes = {"imitation_target": 50, "proprioception": 50}
+        obs_sizes = {"task_obs": 50, "proprioception": 50}
         networks = make_vq_intention_ppo_networks(
             obs_sizes=obs_sizes,
             action_size=8,
@@ -582,9 +583,9 @@ class TestMakeVQIntentionPPONetworks:
 
     def test_inference_fn_works(self):
         """Verify inference function produces valid outputs."""
-        from track_mjx.agent.observation_utils import init_dict_normalizer
+        from brax.training.acme import running_statistics, specs
 
-        obs_sizes = {"imitation_target": 50, "proprioception": 50}
+        obs_sizes = {"task_obs": 50, "proprioception": 50}
         networks = make_vq_intention_ppo_networks(
             obs_sizes=obs_sizes,
             action_size=8,
@@ -600,10 +601,11 @@ class TestMakeVQIntentionPPONetworks:
 
         # Create normalizer for dict obs
         dummy_obs = {
-            "imitation_target": jnp.ones((4, 50)),
+            "task_obs": jnp.ones((4, 50)),
             "proprioception": jnp.ones((4, 50)),
         }
-        normalizer = init_dict_normalizer(dummy_obs)
+        obs_shape = {"state": {k: specs.Array(v.shape[-1:], jnp.dtype("float32")) for k, v in dummy_obs.items()}}
+        normalizer = running_statistics.init_state(obs_shape)
 
         make_policy = make_vq_inference_fn(networks)
         policy_fn = make_policy((normalizer, policy_params), deterministic=False)

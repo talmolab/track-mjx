@@ -20,11 +20,8 @@ import jax.numpy as jnp
 from brax.training import distribution, networks, types
 from brax.training.types import PRNGKey
 
-from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
-    concat_flat_dict_obs,
-    normalize_dict_obs,
-)
+from brax.training.acme import running_statistics
+from track_mjx.agent.observation_utils import normalizer_select
 
 from moseq_decoder_network import (
     MoSeqEncoderDecoderNetwork,
@@ -179,11 +176,10 @@ def _make_moseq_policy_network(
     """Build a FeedForwardNetwork that normalizes obs and forwards to *module*.
 
     The wrapper:
-    1. Saves the raw ``kpms_code`` from obs.
-    2. Normalizes ``imitation_target`` and ``proprioception`` via
-       ``normalize_dict_obs`` (which ignores unknown keys).
-    3. Re-attaches the raw ``kpms_code`` to the normalized dict.
-    4. Passes the combined dict to the Flax module.
+    1. Extracts ``obs["state"]`` and saves the raw ``kpms_code``.
+    2. Normalizes all keys via pytree normalizer.
+    3. Re-attaches the raw ``kpms_code`` (overriding the normalized version).
+    4. Passes the flat inner dict to the Flax module.
     """
     dummy_obs = {k: jnp.zeros(v) for k, v in obs_sizes.items()}
 
@@ -191,20 +187,20 @@ def _make_moseq_policy_network(
         return module.init(key, dummy_obs)
 
     def apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
-        obs: Mapping[str, jnp.ndarray],
+        obs: Mapping[str, Any],
         key=None,
         deterministic: bool = False,
         **kwargs,
     ):
-        # Save raw code before normalization
-        raw_code = obs.get("kpms_code")
+        state_obs = obs["state"]
+        raw_code = state_obs.get("kpms_code")
 
-        # Normalize imitation_target + proprioception (ignores kpms_code)
-        normalized = normalize_dict_obs(obs, processor_params)
+        # Normalize all obs keys via pytree normalizer, then override kpms_code
+        state_normalizer = normalizer_select(processor_params, "state")
+        normalized = dict(running_statistics.normalize(state_obs, state_normalizer))
 
-        # Re-attach raw code
         if raw_code is not None:
             normalized["kpms_code"] = raw_code
 
@@ -260,17 +256,21 @@ def make_moseq_value_network(
         return {**base_params, "value_embed": embed_params}
 
     def apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         value_params,
-        obs: Mapping[str, jnp.ndarray],
+        obs: Mapping[str, Any],
         **kwargs,
     ):
-        # Save raw code
-        raw_code = obs.get("kpms_code")
+        state_obs = obs["state"]
+        raw_code = state_obs.get("kpms_code")
 
-        # Normalize and flatten (ignores kpms_code)
-        normalized = normalize_dict_obs(obs, processor_params)
-        flat_obs = concat_flat_dict_obs(normalized)
+        # Normalize via pytree normalizer, then flatten (excluding kpms_code)
+        state_normalizer = normalizer_select(processor_params, "state")
+        normalized = dict(running_statistics.normalize(state_obs, state_normalizer))
+        flat_obs = jnp.concatenate(
+            [normalized[k] for k in sorted(normalized) if k != "kpms_code"],
+            axis=-1,
+        )
 
         # Embed code
         if raw_code is not None:
@@ -402,12 +402,14 @@ class MoSeqRecurrentPPONetworks:
 
 
 def _normalize_and_reattach_code(
-    obs: Mapping[str, jnp.ndarray],
-    processor_params: DictRunningStatisticsState,
+    obs: Mapping[str, Any],
+    processor_params: running_statistics.RunningStatisticsState,
 ) -> dict[str, jnp.ndarray]:
-    """Normalize obs, preserve raw kpms_code."""
-    raw_code = obs.get("kpms_code")
-    normalized = normalize_dict_obs(obs, processor_params)
+    """Normalize obs["state"], preserve raw kpms_code."""
+    state_obs = obs["state"]
+    raw_code = state_obs.get("kpms_code")
+    state_normalizer = normalizer_select(processor_params, "state")
+    normalized = dict(running_statistics.normalize(state_obs, state_normalizer))
     if raw_code is not None:
         normalized["kpms_code"] = raw_code
     return normalized
@@ -427,7 +429,7 @@ def _make_moseq_recurrent_policy_network(
         return module.init(key, dummy_obs, dummy_hidden, dummy_key)
 
     def apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs: Mapping[str, jnp.ndarray],
         hidden: list[jnp.ndarray],
@@ -448,7 +450,7 @@ def _make_moseq_recurrent_policy_network(
         )
 
     def apply_sequence(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
         obs_seq: Mapping[str, jnp.ndarray],
         initial_hidden: list[jnp.ndarray],

@@ -133,7 +133,6 @@ def train(
     policy_params_fn: Callable[..., None] = lambda *args: None,
     randomization_fn: Callable | None = None,
     get_activation: bool = False,
-    freeze_decoder: bool = False,
     checkpoint_callback: Callable[[int], None] | None = None,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
@@ -322,7 +321,6 @@ def train(
             randomization_fn=randomization_fn,
             get_activation=get_activation,
             use_kl_schedule=False,
-            freeze_decoder=freeze_decoder,
             checkpoint_callback=checkpoint_callback,
             wrap_for_training=wrap_for_training,
             generate_unroll_fn=_generate_unroll_fn,

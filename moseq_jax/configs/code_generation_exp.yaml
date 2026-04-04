@@ -61,6 +61,7 @@ output:
   base_dir: ./outputs/moseq_code_generation
 
 env_config:
+  env_name: "RodentImitation"
   mujoco_impl: "jax"
   solver: "newton"
   iterations: 5

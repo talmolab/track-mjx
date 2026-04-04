@@ -46,7 +46,6 @@ from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
-from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.config import utils as config_utils
 
 from brax.training import distribution
@@ -168,7 +167,7 @@ def make_decoder_only_step_fn(
         """Decode a single D0 code to an action."""
         z_q = codebook_0[d0_code_index]
 
-        flat_obs = flatten_obs_dict(obs)
+        flat_obs = obs["state"]
         proprio_norm = running_statistics.normalize(
             flat_obs["proprioception"],
             normalizer_state.proprioception,
@@ -225,7 +224,7 @@ def make_decoder_d0d1_step_fn(
         """Decode D0+D1 codes to an action (residual sum)."""
         z_q = codebook_0[d0_code_index] + codebook_1[d1_code_index]
 
-        flat_obs = flatten_obs_dict(obs)
+        flat_obs = obs["state"]
         proprio_norm = running_statistics.normalize(
             flat_obs["proprioception"],
             normalizer_state.proprioception,
@@ -646,7 +645,7 @@ def run_ablation_rollout(
         prev_indices = None
 
         for step in range(max_steps):
-            obs = flatten_obs_dict(state.obs)
+            obs = state.obs["state"]
             rng, action_rng = jax.random.split(rng)
             action, extras = inference_fn(obs, action_rng, prev_indices)
 
@@ -772,7 +771,7 @@ def run_ablation_rollout_chunked(
         chunk_state = initial_chunk_state_fn()
 
         for step in range(max_steps):
-            obs = flatten_obs_dict(state.obs)
+            obs = state.obs["state"]
             rng, action_rng = jax.random.split(rng)
             action, extras, chunk_state = inference_fn(obs, chunk_state, action_rng)
 

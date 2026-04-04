@@ -21,11 +21,8 @@ from brax.training import distribution, networks, types
 from brax.training.types import PRNGKey
 from jax import numpy as jnp
 
-from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
-    concat_flat_dict_obs,
-    normalize_dict_obs,
-)
+from brax.training.acme import running_statistics
+from track_mjx.agent.observation_utils import normalizer_select
 
 # Import from local scratch directory
 from vq_intention_network import make_vq_intention_policy
@@ -251,14 +248,17 @@ def make_vq_dict_value_network(
     )
 
     def apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         value_params,
         obs: Mapping[str, jnp.ndarray],
     ):
         """Apply value network with dict observation normalization."""
-        # Normalize each component and flatten
-        normalized_obs = normalize_dict_obs(obs, processor_params)
-        flat_obs = concat_flat_dict_obs(normalized_obs)
+        state_obs = obs["state"]
+        state_normalizer = normalizer_select(processor_params, "state")
+        normalized = running_statistics.normalize(state_obs, state_normalizer)
+        flat_obs = jnp.concatenate(
+            [normalized["task_obs"], normalized["proprioception"]], axis=-1,
+        )
         return base_value_network.apply((), value_params, flat_obs)
 
     return networks.FeedForwardNetwork(
@@ -299,7 +299,7 @@ def make_vq_augmented_value_network(
     )
 
     def apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         value_params,
         obs: Mapping[str, jnp.ndarray],
         d0_code_idx: jnp.ndarray | None = None,
@@ -314,9 +314,12 @@ def make_vq_augmented_value_network(
             d0_code_idx: D0 code indices, shape [...]. None pads with zeros.
             tau: Timer values, shape [...]. None pads with zeros.
         """
-        # Normalize obs first, then append code info (NOT normalized)
-        normalized_obs = normalize_dict_obs(obs, processor_params)
-        flat_obs = concat_flat_dict_obs(normalized_obs)
+        state_obs = obs["state"]
+        state_normalizer = normalizer_select(processor_params, "state")
+        normalized = running_statistics.normalize(state_obs, state_normalizer)
+        flat_obs = jnp.concatenate(
+            [normalized["task_obs"], normalized["proprioception"]], axis=-1,
+        )
 
         if d0_code_idx is not None:
             code_one_hot = jax.nn.one_hot(d0_code_idx, num_codes)

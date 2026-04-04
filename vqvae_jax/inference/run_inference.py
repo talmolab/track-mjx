@@ -43,7 +43,6 @@ from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
-from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.config import utils as config_utils
 
 sys.path.insert(0, str(VQVAE_DIR))
@@ -112,9 +111,9 @@ def run_inference(
         prev_indices = None  # Track previous code for stickiness
 
         for step in range(max_steps):
-            # Get observation and flatten to dict format expected by policy
+            # Get observation and extract state dict expected by policy
             obs = state.obs
-            flat_obs = flatten_obs_dict(obs)
+            flat_obs = obs["state"]
 
             # Run inference (with or without stickiness)
             rng, action_rng = jax.random.split(rng)
@@ -237,7 +236,7 @@ def run_inference_chunked(
         chunk_state = initial_chunk_state_fn()
 
         for step in range(max_steps):
-            obs = flatten_obs_dict(state.obs)
+            obs = state.obs["state"]
 
             rng, action_rng = jax.random.split(rng)
             action, extras, chunk_state = inference_fn(obs, chunk_state, action_rng)

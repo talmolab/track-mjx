@@ -154,7 +154,7 @@ class TestVQIntentionNetworkTemporal:
     def test_forward_temporal_no_bias_parallel_equivalent(self):
         """With bias=0, forward_temporal should match standard forward."""
         key = jax.random.PRNGKey(0)
-        obs_sizes = {"imitation_target": 16, "proprioception": 8}
+        obs_sizes = {"task_obs": 16, "proprioception": 8}
         action_param_size = 10
         T, B = 5, 3  # Time steps and batch size
 
@@ -169,7 +169,7 @@ class TestVQIntentionNetworkTemporal:
 
         # Initialize
         dummy_obs = {
-            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+            "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
             "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
         }
         variables = network.init(key, dummy_obs, key)
@@ -177,8 +177,8 @@ class TestVQIntentionNetworkTemporal:
         # Create test observations [T, B, D]
         key, subkey = jax.random.split(key)
         obs = {
-            "imitation_target": jax.random.normal(
-                subkey, (T, B, obs_sizes["imitation_target"])
+            "task_obs": jax.random.normal(
+                subkey, (T, B, obs_sizes["task_obs"])
             ),
             "proprioception": jax.random.normal(
                 subkey, (T, B, obs_sizes["proprioception"])
@@ -202,7 +202,7 @@ class TestVQIntentionNetworkTemporal:
     def test_forward_temporal_with_bias_different(self):
         """With bias>0, forward_temporal should produce different (stickier) codes."""
         key = jax.random.PRNGKey(42)
-        obs_sizes = {"imitation_target": 16, "proprioception": 8}
+        obs_sizes = {"task_obs": 16, "proprioception": 8}
         action_param_size = 10
         T, B = 20, 2  # More timesteps to see transition differences
 
@@ -217,7 +217,7 @@ class TestVQIntentionNetworkTemporal:
 
         # Initialize
         dummy_obs = {
-            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+            "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
             "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
         }
         variables = network.init(key, dummy_obs, key)
@@ -225,8 +225,8 @@ class TestVQIntentionNetworkTemporal:
         # Create test observations with small variations
         key, subkey = jax.random.split(key)
         obs = {
-            "imitation_target": jax.random.normal(
-                subkey, (T, B, obs_sizes["imitation_target"])
+            "task_obs": jax.random.normal(
+                subkey, (T, B, obs_sizes["task_obs"])
             ),
             "proprioception": jax.random.normal(
                 subkey, (T, B, obs_sizes["proprioception"])
@@ -247,7 +247,7 @@ class TestVQIntentionNetworkTemporal:
     def test_episode_mask_resets_bias(self):
         """Episode mask should reset the bias at episode boundaries."""
         key = jax.random.PRNGKey(0)
-        obs_sizes = {"imitation_target": 16, "proprioception": 8}
+        obs_sizes = {"task_obs": 16, "proprioception": 8}
         action_param_size = 10
         T, B = 10, 1
 
@@ -262,7 +262,7 @@ class TestVQIntentionNetworkTemporal:
 
         # Initialize
         dummy_obs = {
-            "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+            "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
             "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
         }
         variables = network.init(key, dummy_obs, key)
@@ -270,8 +270,8 @@ class TestVQIntentionNetworkTemporal:
         # Create test observations
         key, subkey = jax.random.split(key)
         obs = {
-            "imitation_target": jax.random.normal(
-                subkey, (T, B, obs_sizes["imitation_target"])
+            "task_obs": jax.random.normal(
+                subkey, (T, B, obs_sizes["task_obs"])
             ),
             "proprioception": jax.random.normal(
                 subkey, (T, B, obs_sizes["proprioception"])
@@ -299,7 +299,7 @@ class TestMakeVQIntentionPolicy:
 
     def test_creates_policy_with_temporal_method(self):
         """Factory should create policy with apply_temporal method."""
-        obs_sizes = {"imitation_target": 16, "proprioception": 8}
+        obs_sizes = {"task_obs": 16, "proprioception": 8}
 
         policy = make_vq_intention_policy(
             action_param_size=10,
@@ -319,7 +319,7 @@ class TestMakeVQIntentionPolicy:
     def test_stickiness_bias_zero_no_temporal(self):
         """With bias=0, apply should work without temporal processing."""
         key = jax.random.PRNGKey(0)
-        obs_sizes = {"imitation_target": 16, "proprioception": 8}
+        obs_sizes = {"task_obs": 16, "proprioception": 8}
 
         policy = make_vq_intention_policy(
             action_param_size=10,
@@ -335,13 +335,14 @@ class TestMakeVQIntentionPolicy:
         params = policy.init(key)
 
         # Create normalizer for dict obs
-        from track_mjx.agent.observation_utils import init_dict_normalizer
+        from brax.training.acme import running_statistics, specs
 
         obs = {
-            "imitation_target": jax.random.normal(key, (1, 16)),
+            "task_obs": jax.random.normal(key, (1, 16)),
             "proprioception": jax.random.normal(key, (1, 8)),
         }
-        normalizer = init_dict_normalizer(obs)
+        obs_shape = {"state": {k: specs.Array(v.shape[-1:], jnp.dtype("float32")) for k, v in obs.items()}}
+        normalizer = running_statistics.init_state(obs_shape)
 
         # Standard apply should work — returns (action, z_e, all_indices_tuple)
         action, z_e, all_indices = policy.apply(normalizer, params, obs, key)

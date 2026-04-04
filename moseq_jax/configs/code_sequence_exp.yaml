@@ -51,6 +51,7 @@ output:
 
 # Environment (same as inference, DR off)
 env_config:
+  env_name: "RodentImitation"
   mujoco_impl: "jax"
   solver: "newton"
   iterations: 5

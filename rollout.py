@@ -32,7 +32,6 @@ import numpy as np
 from tqdm import tqdm
 
 from track_mjx.agent.checkpointing import load_checkpoint_for_eval, load_inference_fn
-from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.analysis.rollout import create_environment
 
 logging.basicConfig(level=logging.INFO)
@@ -157,11 +156,11 @@ def run_single_rollout(
     for step in range(num_steps):
         _, act_rng = jax.random.split(act_rng)
 
-        # Store observation (flatten nested dict obs to single array)
-        flat_obs = flatten_obs_dict(state.obs)
+        # Store observation (extract flat arrays from nested state dict)
+        state_obs = state.obs["state"]
         obs_flat = np.concatenate([
-            np.array(flat_obs["imitation_target"]),
-            np.array(flat_obs["proprioception"]),
+            np.array(state_obs["task_obs"]),
+            np.array(state_obs["proprioception"]),
         ])
         obs_list.append(obs_flat)
 

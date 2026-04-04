@@ -52,7 +52,6 @@ from omegaconf import DictConfig
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
-from track_mjx.agent.observation_utils import flatten_obs_dict
 from track_mjx.config import utils as config_utils
 
 from analysis.checkpoint_utils import (
@@ -659,7 +658,7 @@ def make_decoder_only_step_fn(
         """
         z_q = codebook_0[d0_code_index]
 
-        flat_obs = flatten_obs_dict(obs)
+        flat_obs = obs["state"]
         proprio_norm = running_statistics.normalize(
             flat_obs["proprioception"], normalizer_state.proprioception
         )

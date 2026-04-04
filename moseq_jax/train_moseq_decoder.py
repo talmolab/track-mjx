@@ -539,24 +539,17 @@ def main(cfg: DictConfig) -> None:
     # Use MoSeqImitation (subclass of Imitation) which injects kpms_code
     # directly in _get_obs. This ensures the obs pytree structure is consistent
     # from the start — no wrapper needed, no pytree mismatches in jax.lax.scan.
-    # MoSeqImitation injects kpms_code into obs["state"], then
-    # TrackMjxObsWrapper flattens nested obs values into 1D arrays, and
-    # LegacyObsWrapper strips the "state" hierarchy so the network receives
-    # flat {"task_obs": ..., "proprioception": ..., "kpms_code": ...}.
-    env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(
-                config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes,
-                code_stack_size=code_stack_size,
-            )
+    # Obs structure: {'state': {'task_obs': ..., 'proprioception': ..., 'kpms_code': ...}}
+    env = rodent_wrappers.TrackMjxObsWrapper(
+        MoSeqImitation(
+            config=env_cfg_ml, clips=train_clips, kpms_codes=train_codes,
+            code_stack_size=code_stack_size,
         )
     )
-    test_env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(
-                config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes,
-                code_stack_size=code_stack_size,
-            )
+    test_env = rodent_wrappers.TrackMjxObsWrapper(
+        MoSeqImitation(
+            config=env_cfg_ml, clips=test_clips, kpms_codes=test_codes,
+            code_stack_size=code_stack_size,
         )
     )
 
@@ -763,7 +756,6 @@ def main(cfg: DictConfig) -> None:
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         config_dict=cfg_dict,
         eval_env_test_set=test_env,
-        freeze_decoder=cfg.train_setup.get("freeze_decoder", False),
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
@@ -793,12 +785,10 @@ def main(cfg: DictConfig) -> None:
     # Rollout env for logging
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = rodent_wrappers.LegacyObsWrapper(
-        rodent_wrappers.TrackMjxObsWrapper(
-            MoSeqImitation(
-                config=rollout_cfg, clips=test_clips, kpms_codes=test_codes,
-                code_stack_size=code_stack_size,
-            )
+    rollout_env = rodent_wrappers.TrackMjxObsWrapper(
+        MoSeqImitation(
+            config=rollout_cfg, clips=test_clips, kpms_codes=test_codes,
+            code_stack_size=code_stack_size,
         )
     )
 

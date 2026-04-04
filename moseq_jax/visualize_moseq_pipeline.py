@@ -232,6 +232,21 @@ def _squiggly_arrow(ax, x1, y, x2):
             fontsize=10, color=C_TEXT, zorder=5)
 
 
+def _bracket_labeled(ax, cx, cy, top_text, bot_text, w=0.40, h=0.38):
+    """Draw a bracket pair with custom top/bottom labels."""
+    left, right = cx - w / 2, cx + w / 2
+    top, bot = cy + h / 2, cy - h / 2
+    hook = 0.04
+    ax.plot([left + hook, left, left, left + hook], [top, top, bot, bot],
+            color=C_TEXT, lw=1.6, zorder=4, solid_capstyle="round")
+    ax.plot([right - hook, right, right, right - hook], [top, top, bot, bot],
+            color=C_TEXT, lw=1.6, zorder=4, solid_capstyle="round")
+    ax.text(cx, cy + h * 0.25, top_text, ha="center", va="center",
+            fontsize=10, color=C_TEXT, zorder=5)
+    ax.text(cx, cy - h * 0.25, bot_text, ha="center", va="center",
+            fontsize=10, color=C_TEXT, zorder=5)
+
+
 # =============================================================================
 # Main pipeline drawing
 # =============================================================================
@@ -485,13 +500,303 @@ def make_figure(output_path: str = "outputs/moseq_pipeline"):
     plt.close(fig)
 
 
+# =============================================================================
+# Prior distillation variant
+# =============================================================================
+
+# Warm orange for the distillation prior head
+C_DISTILL = "#E89850"
+C_DISTILL_DARK = "#C07030"
+
+
+def draw_moseq_prior_distill_pipeline(ax):
+    """Draw pipeline with distillation head replacing direct z concat.
+
+    Compared with ``draw_moseq_pipeline``:
+
+    * A **Distill Head** (short-side-up trapezoid) reads h_t from the
+      RNN and outputs its own (μ^d, σ^d).
+    * The encoder (train-only) outputs (μ^e, σ^e).
+    * A KL node sits between the two distributions — encoder feeds from
+      the left, distill head feeds from below.
+    * The Readout receives only h_t (no z concatenation).
+    """
+
+    # =====================================================================
+    # MAIN ROW
+    # =====================================================================
+    main_cy = 1.20
+
+    xg_x = 0.40
+    ax.text(xg_x, main_cy, r"$x_t^g$", ha="center", va="center",
+            fontsize=13, color=C_TEXT)
+
+    _arrow(ax, xg_x + 0.18, main_cy, xg_x + 0.48, main_cy)
+    kpms_x = xg_x + 0.53
+    kpms_w = 0.95
+    kpms_h = 0.50
+    kpms_by = main_cy - kpms_h / 2
+    _block(ax, kpms_x, kpms_by, kpms_w, kpms_h, C_BLUE, "Keypoint-\nMoSeq",
+           fontsize=9, border_color=C_BLUE_DARK,
+           sublabel=r"$c_t = \mathrm{MoSeq}(x_t^g)$", sublabel_size=6.5)
+
+    ct_x = kpms_x + kpms_w + 0.30
+    _arrow(ax, kpms_x + kpms_w + 0.05, main_cy, ct_x - 0.12, main_cy)
+    ax.text(ct_x, main_cy, r"$c_t$", ha="center", va="center",
+            fontsize=14, color=C_CODE_DARK, fontweight="bold")
+
+    rnn_cx = ct_x + 0.95
+    rnn_cy = main_cy
+    rnn_r = 0.48
+    _arrow(ax, ct_x + 0.14, main_cy, rnn_cx - rnn_r - 0.06, main_cy)
+    _rnn_diagram(ax, rnn_cx, rnn_cy, rnn_r)
+    # Label moved LEFT so RNN top is clear for the h_t upward arrow
+    ax.text(rnn_cx - rnn_r - 0.12, rnn_cy + 0.15, "RNN /\nSSM",
+            ha="right", va="center", fontsize=9, fontweight="bold",
+            color=C_DECODER_DARK, zorder=6)
+
+    rnn_right = rnn_cx + rnn_r + 0.06
+    ah_x = rnn_right + 0.48
+    _arrow(ax, rnn_right, main_cy + 0.03, ah_x - 0.05, main_cy + 0.03)
+    ax.text(rnn_right + 0.20, main_cy + 0.18, r"$h_t$", ha="center",
+            va="bottom", fontsize=9.5, color=C_DECODER_DARK,
+            fontstyle="italic")
+
+    ah_w = 0.62
+    ah_h = 0.42
+    ah_by = main_cy + 0.03 - ah_h / 2
+    ah_cx = ah_x + ah_w / 2
+    # Readout only receives h_t — no z concatenation
+    _block(ax, ah_x, ah_by, ah_w, ah_h, C_DECODER, "Readout",
+           fontsize=9, fontweight="bold", border_color=C_DECODER_DARK,
+           sublabel=r"$h_t \to a_t$", sublabel_size=6,
+           text_color="white")
+
+    at_x = ah_x + ah_w + 0.35
+    _arrow(ax, ah_x + ah_w + 0.05, main_cy + 0.03, at_x - 0.12,
+           main_cy + 0.03)
+    ax.text(at_x, main_cy + 0.03, r"$a_t$", ha="center", va="center",
+            fontsize=13, color=C_TEXT)
+
+    phys_x = at_x + 0.32
+    phys_w = 0.58
+    phys_h = 0.46
+    phys_by = main_cy + 0.03 - phys_h / 2
+    _arrow(ax, at_x + 0.13, main_cy + 0.03, phys_x - 0.05, main_cy + 0.03)
+    _block(ax, phys_x, phys_by, phys_w, phys_h, C_PHYSICS,
+           "Physics\nSim", fontsize=8.5, border_color="#666666",
+           text_color="white", sublabel=r"$s_{t+1}^p$", sublabel_size=7)
+    phys_cx = phys_x + phys_w / 2
+
+    # =====================================================================
+    # s^p_t + feedback
+    # =====================================================================
+    sp_x = rnn_cx
+    sp_y = main_cy - rnn_r - 0.55
+    ax.text(sp_x, sp_y, r"$s_t^p$", ha="center", va="center",
+            fontsize=12, color=C_TEXT, fontweight="bold")
+    _arrow(ax, sp_x, sp_y + 0.15, sp_x, rnn_cy - rnn_r - 0.06,
+           color=C_FEEDBACK, lw=1.2)
+    fb_y = sp_y - 0.35
+    ax.plot([phys_cx, phys_cx, sp_x, sp_x],
+            [phys_by, fb_y, fb_y, sp_y - 0.18],
+            color=C_FEEDBACK, lw=1.0, ls="--", zorder=1)
+    ax.annotate("", xy=(sp_x, sp_y - 0.15), xytext=(sp_x, sp_y - 0.18),
+                arrowprops=dict(arrowstyle="-|>", color=C_FEEDBACK, lw=1.0),
+                zorder=2)
+
+    # =====================================================================
+    # DISTILL HEAD — short-side-up trapezoid above RNN
+    # =====================================================================
+    dh_cx = rnn_cx            # centered above RNN
+    dh_w = 0.55               # top (short) width
+    dh_h = 0.40               # height
+    dh_by = 1.88              # bottom y
+    dh_ty = dh_by + dh_h      # top y
+    taper = dh_w * 0.22
+
+    # Wide at bottom, narrow at top
+    dh_verts = [
+        (dh_cx - dh_w / 2 - taper, dh_by),   # bottom-left (wide)
+        (dh_cx + dh_w / 2 + taper, dh_by),   # bottom-right (wide)
+        (dh_cx + dh_w / 2, dh_ty),            # top-right (narrow)
+        (dh_cx - dh_w / 2, dh_ty),            # top-left (narrow)
+    ]
+    ax.add_patch(Polygon(dh_verts, closed=True, facecolor=C_DISTILL,
+                         edgecolor=C_DISTILL_DARK, linewidth=1.5, zorder=3))
+    ax.text(dh_cx, dh_by + dh_h * 0.58, "Distill\nHead",
+            ha="center", va="center", fontsize=9, fontweight="bold",
+            color="white", zorder=4)
+    ax.text(dh_cx, dh_by + dh_h * 0.20,
+            r"$p_\psi(z \mid h_t)$", ha="center", va="center",
+            fontsize=6.5, fontstyle="italic", color="white",
+            alpha=0.85, zorder=4)
+
+    # h_t upward from RNN top to Distill Head bottom
+    _arrow(ax, rnn_cx, rnn_cy + rnn_r + 0.05,
+           dh_cx, dh_by - 0.06,
+           color=C_DISTILL_DARK, lw=1.5)
+    ax.text(rnn_cx + 0.15,
+            (rnn_cy + rnn_r + 0.05 + dh_by - 0.06) / 2,
+            r"$h_t$", ha="left", va="center", fontsize=8.5,
+            color=C_DISTILL_DARK, fontstyle="italic", zorder=5)
+
+    # Distill bracket [μ^d, σ^d] above Distill Head
+    dist_bkt_cx = dh_cx
+    dist_bkt_cy = dh_ty + 0.23
+    _bracket_labeled(ax, dist_bkt_cx, dist_bkt_cy,
+                     r"$\mu_t^d$", r"$\sigma_t^d$", w=0.35, h=0.30)
+
+    # =====================================================================
+    # ENCODER ROW — pushed higher, no sampling / z_e
+    # =====================================================================
+    enc_cy = 3.30
+
+    sg_x = xg_x
+    ax.text(sg_x, enc_cy, r"$s_{t:T}^g$", ha="center", va="center",
+            fontsize=12, color=C_TEXT)
+
+    _arrow(ax, sg_x + 0.22, enc_cy, sg_x + 0.50, enc_cy)
+    enc_x = sg_x + 0.55
+    enc_w = 0.70
+    enc_h = 0.50
+    enc_by = enc_cy - enc_h / 2
+    _trapezoid(ax, enc_x, enc_by, enc_w, enc_h, C_BLUE, "Encoder",
+               direction="right", fontsize=9.5, border_color=C_BLUE_DARK,
+               sublabel=r"$q_\phi(z \mid s_{t:T}^g)$", sublabel_size=6.5)
+
+    # Encoder -> bracket [μ^e, σ^e]  (no squiggly / z_e)
+    _arrow(ax, enc_x + enc_w + 0.06, enc_cy, enc_x + enc_w + 0.30, enc_cy)
+    enc_bkt_cx = enc_x + enc_w + 0.52
+    _bracket_labeled(ax, enc_bkt_cx, enc_cy,
+                     r"$\mu_t^e$", r"$\sigma_t^e$")
+
+    # "train only" annotation
+    ax.text(enc_x + enc_w / 2, enc_by - 0.15, "(train only)",
+            ha="center", va="top", fontsize=7.5, color=C_BLUE_DARK,
+            fontstyle="italic", alpha=0.7)
+
+    # IK arrow
+    _arrow(ax, xg_x, main_cy + 0.20, xg_x, enc_cy - 0.20,
+           color=C_STAC, lw=1.5)
+    ax.text(xg_x + 0.15, (main_cy + enc_cy) / 2, "IK over\nT frames",
+            ha="left", va="center", fontsize=8.5, color=C_STAC,
+            fontstyle="italic")
+
+    # =====================================================================
+    # KL NODE — junction of encoder (from left) and distill (from below)
+    # =====================================================================
+    kl_cx = dh_cx             # same x as distill head
+    kl_cy = enc_cy            # same y as encoder
+
+    # Dashed line: encoder bracket → KL (rightward)
+    ax.plot([enc_bkt_cx + 0.22, kl_cx - 0.35], [kl_cy, kl_cy],
+            color=C_KL, lw=1.5, ls="--", zorder=2)
+
+    # Dashed line: distill bracket → KL (upward)
+    dist_bkt_top = dist_bkt_cy + 0.15 + 0.05
+    ax.plot([kl_cx, kl_cx], [dist_bkt_top, kl_cy - 0.15],
+            color=C_KL, lw=1.5, ls="--", zorder=2)
+
+    # KL text (plain, no box)
+    ax.text(kl_cx, kl_cy, r"$\mathrm{KL}(p_\psi \| q_\phi)$",
+            ha="center", va="center", fontsize=9, fontweight="bold",
+            color=C_KL, zorder=5)
+
+    # =====================================================================
+    # CODE STRIP
+    # =====================================================================
+    strip_y = -0.55
+    strip_h = 0.12
+
+    _arrow(ax, ct_x, main_cy - 0.22, ct_x, strip_y + strip_h + 0.22,
+           color=C_CODE_DARK, lw=1.3)
+    ax.text(ct_x, strip_y + strip_h + 0.12,
+            r"$[c_1, c_2, \ldots, c_T]$",
+            ha="center", va="bottom", fontsize=8.5, color=C_TEXT)
+
+    strip_w = 0.95
+    _code_strip(ax, ct_x - strip_w / 2, strip_y, strip_w, strip_h, n=10)
+
+    # =====================================================================
+    # GENERATIVE PRIOR
+    # =====================================================================
+    gen_prior_w = 1.20
+    gen_prior_h = 0.35
+    gen_prior_y = -1.22
+    gen_prior_cx = ct_x
+
+    _block(ax, gen_prior_cx - gen_prior_w / 2, gen_prior_y,
+           gen_prior_w, gen_prior_h, C_PRIOR, "Generative Prior",
+           fontsize=9.5, border_color=C_PRIOR_DARK,
+           sublabel="HMM / Transformer / ...", sublabel_size=7,
+           text_color="white")
+
+    tx = gen_prior_cx + 0.18
+    _arrow(ax, tx, strip_y - 0.06, tx, gen_prior_y + gen_prior_h + 0.06,
+           color=C_PRIOR_DARK, lw=2.0, zorder=5)
+    ax.text(tx + 0.12, (strip_y + gen_prior_y + gen_prior_h) / 2,
+            "train", ha="left", va="center", fontsize=8,
+            color=C_PRIOR_DARK, fontstyle="italic", zorder=6)
+
+    gx = gen_prior_cx - 0.18
+    ax.annotate(
+        "", xy=(gx, strip_y - 0.06),
+        xytext=(gx, gen_prior_y + gen_prior_h + 0.06),
+        arrowprops=dict(arrowstyle="-|>", color=C_PRIOR_DARK, lw=1.8,
+                        ls="--"),
+        zorder=5,
+    )
+    ax.text(gx - 0.12, (strip_y + gen_prior_y + gen_prior_h) / 2,
+            "generate", ha="right", va="center", fontsize=8,
+            color=C_PRIOR_DARK, fontstyle="italic", zorder=6)
+
+
+def make_prior_distill_figure(
+    output_path: str = "outputs/moseq_prior_distill_pipeline",
+):
+    """Generate the prior-distillation variant of the pipeline figure."""
+    fig, ax = plt.subplots(1, 1, figsize=(14, 10))
+
+    ax.set_xlim(-0.30, 6.50)
+    ax.set_ylim(-1.55, 4.20)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    ax.add_patch(FancyBboxPatch(
+        (-0.15, -1.40), 6.50, 5.40,
+        boxstyle="round,pad=0.05", facecolor=C_PANEL_BG,
+        edgecolor="#CCCCCC", linewidth=1.0, zorder=0,
+    ))
+
+    ax.text(0.05, 3.85, "KPMS Decoder Pipeline (Prior Distillation)",
+            fontsize=13, fontweight="bold", color=C_TEXT, zorder=5)
+
+    draw_moseq_prior_distill_pipeline(ax)
+
+    base = str(output_path).replace(".pdf", "").replace(".png", "")
+    Path(base).parent.mkdir(parents=True, exist_ok=True)
+    for ext in [".pdf", ".png"]:
+        p = base + ext
+        fig.savefig(p, dpi=400, bbox_inches="tight",
+                    facecolor="white", edgecolor="none")
+        print(f"Saved: {p}")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Visualize the KPMS decoder pipeline",
     )
     parser.add_argument(
         "--output", default="outputs/moseq_pipeline",
-        help="Output path (saves .pdf and .png)",
+        help="Output path for the base pipeline (saves .pdf and .png)",
+    )
+    parser.add_argument(
+        "--distill-output",
+        default="outputs/moseq_prior_distill_pipeline",
+        help="Output path for the prior distillation variant",
     )
     args = parser.parse_args()
     make_figure(args.output)
+    make_prior_distill_figure(args.distill_output)

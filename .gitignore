@@ -9,6 +9,8 @@ patch.ipynb
 jax_cache/
 results/
 tmp/
+SCAMPER/
+trained_mimic_ckpts/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

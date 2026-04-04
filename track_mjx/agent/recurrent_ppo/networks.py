@@ -11,6 +11,15 @@ Key components:
 - Factory functions for creating recurrent intention PPO networks
 
 Supported RNN cell types: SimpleCell, GRU, LSTM
+
+Observations are expected as nested dictionaries:
+    {
+        'state': {'task_obs': ..., 'proprioception': ...},
+        'privileged_state': {'task_obs': ..., 'proprioception': ...}
+    }
+
+The policy uses 'state' for both encoder and decoder.
+The value network uses 'state' by default (configurable via value_obs_key).
 """
 
 import dataclasses
@@ -24,13 +33,11 @@ from brax.training import distribution, networks, types
 from brax.training.types import PRNGKey
 from flax import linen as nn
 
-from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
-from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
-    concat_flat_dict_obs,
-    normalize_dict_obs,
-)
+from brax.training.acme import running_statistics
 
+from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
+from track_mjx.agent.networks import make_dict_value_network
+from track_mjx.agent.observation_utils import normalizer_select
 
 # Type aliases
 RNNCellType = Literal["simple", "gru", "lstm"]
@@ -168,6 +175,7 @@ class RecurrentDecoder(nn.Module):
         self,
         x: jnp.ndarray,
         hidden: HiddenState | list[HiddenState],
+        get_activation: bool = False,
     ) -> tuple[jnp.ndarray, list[HiddenState]]:
         """Forward pass for single timestep.
 
@@ -175,15 +183,20 @@ class RecurrentDecoder(nn.Module):
             x: Input tensor [batch, input_dim] (concatenated [z, proprioception]).
             hidden: Hidden state(s) from previous timestep. For single layer,
                 can be a single HiddenState. For multiple layers, list of states.
+            get_activation: If True, return layer activations in a dict.
 
         Returns:
             Tuple of (output [batch, output_size], new_hidden_states).
+            If get_activation, returns (output, new_hidden_states, activations).
         """
         # Handle single vs multiple layer hidden states
         if self.num_rnn_layers == 1 and not isinstance(hidden, list):
             hidden_list = [hidden]
         else:
             hidden_list = hidden
+
+        if get_activation:
+            activations = {}
 
         new_hidden_list = []
         rnn_input = x
@@ -196,19 +209,24 @@ class RecurrentDecoder(nn.Module):
                 rnn_input = new_h[1]  # h from (c, h) carry tuple
             else:
                 rnn_input = new_h
+            if get_activation:
+                activations[f"rnn_layer_{i}"] = rnn_input
 
         # Final output layer (no activation)
         output = self.final_layer(rnn_input)
 
+        if get_activation:
+            return output, new_hidden_list, activations
         return output, new_hidden_list
 
 
 class RecurrentIntentionNetwork(nn.Module):
     """VAE-style policy with MLP encoder and RNN decoder.
 
-    The encoder processes trajectory observations to produce latent intention
-    distribution parameters (mean, logvar). The decoder uses an RNN to process
-    the sampled latent along with proprioceptive observations.
+    The network receives inner observation dicts (already selected and normalized
+    by the outer apply function). The encoder processes obs['task_obs'] to produce
+    latent intention distribution parameters (mean, logvar). The decoder uses an
+    RNN to process the sampled latent along with obs['proprioception'].
 
     Attributes:
         output_size: Output dimension (action distribution param size).
@@ -223,6 +241,7 @@ class RecurrentIntentionNetwork(nn.Module):
     latents: int = 60
     rnn_hidden_sizes: Sequence[int] = (256,)
     cell_type: RNNCellType = "gru"
+    proprioception_noise_std: float = 0.0
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
@@ -239,22 +258,27 @@ class RecurrentIntentionNetwork(nn.Module):
         hidden: HiddenState | list[HiddenState],
         key: jax.Array,
         deterministic: bool = False,
+        get_activation: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, list[HiddenState]]:
         """Forward pass for single timestep.
 
         Args:
-            obs: Dict with 'imitation_target' and 'proprioception' keys.
+            obs: Inner observation dict (already selected and normalized):
+                {'task_obs': ..., 'proprioception': ...}
             hidden: RNN hidden state(s) from previous timestep.
             key: JAX random key for sampling. Either shape [2] (single key
                 for all samples) or [batch_size, 2] (per-sample keys for
                 deterministic replay).
             deterministic: If True, use latent mean instead of sampling.
+            get_activation: If True, return activations dict as 5th element.
 
         Returns:
             Tuple of (action_params, latent_mean, latent_logvar, new_hidden).
+            If get_activation, returns
+            (action_params, latent_mean, latent_logvar, new_hidden, activations).
         """
         # Encode trajectory observations to latent distribution
-        traj = obs["imitation_target"]
+        traj = obs["task_obs"]
         egocentric_obs = obs["proprioception"]
 
         # Check if observations are actually batched (based on obs shape)
@@ -263,15 +287,33 @@ class RecurrentIntentionNetwork(nn.Module):
         # Handle key splitting based on both key shape AND observation shape
         if key.ndim == 1:
             # Single key - split for encoder
-            _, encoder_rng = jax.random.split(key)
+            encoder_rng, noise_rng = jax.random.split(key)
         elif not obs_is_batched:
             # Per-sample keys but unbatched observation - use first key
-            _, encoder_rng = jax.random.split(key[0])
+            encoder_rng, noise_rng = jax.random.split(key[0])
         else:
             # Per-sample keys [batch_size, 2] - vmap split over batch
-            _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
 
-        latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
+        if not deterministic and self.proprioception_noise_std > 0.0:
+            if noise_rng.ndim == 1:
+                noise = jax.random.normal(noise_rng, egocentric_obs.shape)
+            elif not obs_is_batched:
+                noise = jax.random.normal(noise_rng[0], egocentric_obs.shape)
+            else:
+                noise = jax.vmap(
+                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
+                )(noise_rng, egocentric_obs)
+            egocentric_obs = egocentric_obs * (
+                1.0 + self.proprioception_noise_std * noise
+            )
+
+        if get_activation:
+            (latent_mean, latent_logvar), encoder_activations = self.encoder(
+                traj, get_activation=True
+            )
+        else:
+            latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
 
         # Sample or use mean
         if deterministic:
@@ -281,9 +323,21 @@ class RecurrentIntentionNetwork(nn.Module):
 
         # Decode with RNN
         decoder_input = jnp.concatenate([z, egocentric_obs], axis=-1)
-        action_params, new_hidden = self.decoder(decoder_input, hidden)
-
-        return action_params, latent_mean, latent_logvar, new_hidden
+        if get_activation:
+            action_params, new_hidden, decoder_activations = self.decoder(
+                decoder_input, hidden, get_activation=True
+            )
+            activations = {
+                "encoder": encoder_activations,
+                "decoder": decoder_activations,
+                "egocentric_obs": egocentric_obs,
+                "traj_obs": traj,
+                "intention": z,
+            }
+            return action_params, latent_mean, latent_logvar, new_hidden, activations
+        else:
+            action_params, new_hidden = self.decoder(decoder_input, hidden)
+            return action_params, latent_mean, latent_logvar, new_hidden
 
 
 @dataclasses.dataclass
@@ -341,12 +395,14 @@ def make_inference_fn(
     def make_policy(
         params: types.PolicyParams,
         deterministic: bool = False,
+        get_activation: bool = False,
     ) -> Callable:
         """Create a recurrent policy function with fixed parameters.
 
         Args:
             params: Tuple of (normalizer_params, policy_params).
             deterministic: If True, return mode of action distribution.
+            get_activation: If True, include network activations in extras.
 
         Returns:
             Policy function: (obs, hidden, key) -> (action, extras, new_hidden).
@@ -364,7 +420,9 @@ def make_inference_fn(
             key_sample, key_network = jax.random.split(key_sample)
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
-            obs_leaf = jax.tree_util.tree_leaves(observations)[0]
+            # Get first leaf array from nested observation structure
+            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys for deterministic replay
                 batch_size = obs_leaf.shape[0]
@@ -373,13 +431,26 @@ def make_inference_fn(
                 # Unbatched observation - use single key
                 per_sample_keys = key_network
 
-            logits, latent_mean, latent_logvar, new_hidden = policy_network.apply(
-                *params,
-                observations,
-                hidden,
-                per_sample_keys,
-                deterministic=deterministic,
-            )
+            if get_activation:
+                logits, latent_mean, latent_logvar, new_hidden, activations = (
+                    policy_network.apply(
+                        *params,
+                        observations,
+                        hidden,
+                        per_sample_keys,
+                        deterministic=deterministic,
+                        get_activation=True,
+                    )
+                )
+            else:
+                logits, latent_mean, latent_logvar, new_hidden = policy_network.apply(
+                    *params,
+                    observations,
+                    hidden,
+                    per_sample_keys,
+                    deterministic=deterministic,
+                )
+                activations = None
 
             if deterministic:
                 action = jnp.array(parametric_action_distribution.mode(logits))
@@ -387,6 +458,8 @@ def make_inference_fn(
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
+                if get_activation:
+                    extras["activations"] = activations
                 return action, extras, new_hidden
 
             # Sample action from distribution
@@ -398,16 +471,20 @@ def make_inference_fn(
                 raw_actions
             )
 
+            extras = {
+                "latent_mean": latent_mean,
+                "latent_logvar": latent_logvar,
+                "log_prob": log_prob,
+                "raw_action": raw_actions,
+                "logits": logits,
+                "policy_rng": per_sample_keys,
+            }
+            if get_activation:
+                extras["activations"] = activations
+
             return (
                 jnp.array(postprocessed_actions),
-                {
-                    "latent_mean": latent_mean,
-                    "latent_logvar": latent_logvar,
-                    "log_prob": log_prob,
-                    "raw_action": raw_actions,
-                    "logits": logits,
-                    "policy_rng": per_sample_keys,
-                },
+                extras,
                 new_hidden,
             )
 
@@ -478,46 +555,6 @@ def make_logging_inference_fn(
     return make_logging_policy
 
 
-def make_dict_value_network(
-    obs_sizes: Mapping[str, int],
-    hidden_layer_sizes: Sequence[int] = (1024,) * 2,
-) -> networks.FeedForwardNetwork:
-    """Create a value network that accepts dictionary observations.
-
-    The value network flattens the dict observation and normalizes each
-    component before concatenating.
-
-    Args:
-        obs_sizes: Dict mapping observation keys to their sizes.
-        hidden_layer_sizes: MLP layer sizes for value network.
-
-    Returns:
-        FeedForwardNetwork that accepts dict observations.
-    """
-    total_obs_size = sum(obs_sizes.values())
-
-    base_value_network = networks.make_value_network(
-        total_obs_size,
-        preprocess_observations_fn=types.identity_observation_preprocessor,
-        hidden_layer_sizes=hidden_layer_sizes,
-    )
-
-    def apply(
-        processor_params: DictRunningStatisticsState,
-        value_params,
-        obs: Mapping[str, jnp.ndarray],
-    ):
-        """Apply value network with dict observation normalization."""
-        normalized_obs = normalize_dict_obs(obs, processor_params)
-        flat_obs = concat_flat_dict_obs(normalized_obs)
-        return base_value_network.apply((), value_params, flat_obs)
-
-    return networks.FeedForwardNetwork(
-        init=lambda key: base_value_network.init(key),
-        apply=apply,
-    )
-
-
 def make_recurrent_intention_ppo_networks(
     obs_sizes: Mapping[str, int],
     action_size: int,
@@ -525,23 +562,31 @@ def make_recurrent_intention_ppo_networks(
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     rnn_type: RNNCellType = "gru",
     rnn_hidden_sizes: Sequence[int] = (256,),
+    proprioception_noise_std: float = 0.0,
     value_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    policy_obs_key: str = "state",
+    value_obs_key: str = "state",
 ) -> RecurrentPPONetworks:
     """Create recurrent intention-based PPO networks.
 
     Creates an encoder-decoder policy network where the encoder is an MLP
-    that processes trajectory observations, and the decoder is an RNN that
-    processes the latent intention along with proprioceptive observations.
+    that processes obs[policy_obs_key]['task_obs'], and the decoder is an
+    RNN that processes the latent intention along with obs[policy_obs_key]['proprioception'].
+
+    The value network uses obs[value_obs_key].
 
     Args:
-        obs_sizes: Dict mapping observation keys to sizes, e.g.
-            {"imitation_target": 3716, "proprioception": 226}.
+        obs_sizes: Dict with 'task_obs' and 'proprioception' sizes.
         action_size: Action dimension.
         intention_latent_size: Dimension of VAE latent space.
         encoder_hidden_layer_sizes: MLP layer sizes for encoder.
         rnn_type: Type of RNN cell ('simple', 'gru', 'lstm').
         rnn_hidden_sizes: Hidden sizes for each RNN layer, e.g. (512, 256).
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            decoder proprioception input during stochastic training passes.
         value_hidden_layer_sizes: MLP layer sizes for value network.
+        policy_obs_key: Top-level observation key for policy (default: 'state').
+        value_obs_key: Top-level observation key for value network (default: 'state').
 
     Returns:
         RecurrentPPONetworks containing policy, value, and action distribution.
@@ -558,30 +603,36 @@ def make_recurrent_intention_ppo_networks(
         latents=intention_latent_size,
         rnn_hidden_sizes=rnn_hidden_sizes,
         cell_type=rnn_type,
+        proprioception_noise_std=proprioception_noise_std,
     )
 
     def policy_apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
-        obs: Mapping[str, jnp.ndarray],
+        obs: Mapping[str, Mapping[str, jnp.ndarray]],
         hidden: HiddenState | list[HiddenState],
         key: jax.Array,
         deterministic: bool = False,
+        get_activation: bool = False,
     ):
         """Apply policy with observation normalization."""
-        obs = normalize_dict_obs(obs, processor_params)
+        policy_normalizer = normalizer_select(processor_params, policy_obs_key)
+        normalized_obs = running_statistics.normalize(
+            obs[policy_obs_key], policy_normalizer
+        )
         return policy_module.apply(
             policy_params,
-            obs=obs,
+            obs=normalized_obs,
             hidden=hidden,
             key=key,
             deterministic=deterministic,
+            get_activation=get_activation,
         )
 
     def policy_apply_sequence(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
-        obs_seq: Mapping[str, jnp.ndarray],
+        obs_seq: Mapping[str, Mapping[str, jnp.ndarray]],
         initial_hidden: HiddenState | list[HiddenState],
         done_seq: jnp.ndarray,
         key: jax.Array,
@@ -591,9 +642,9 @@ def make_recurrent_intention_ppo_networks(
         """Apply policy over sequence with hidden state reset on done.
 
         Args:
-            processor_params: Normalizer parameters.
+            processor_params: Normalizer parameters (pytree structure).
             policy_params: Policy network parameters.
-            obs_seq: Observations with shape [T, B, ...] for each key.
+            obs_seq: Nested observations with shape [T, B, ...] for inner arrays.
             initial_hidden: Initial hidden state(s).
             done_seq: Done flags with shape [T, B].
             key: Random key (used only if stored_keys is None).
@@ -606,12 +657,15 @@ def make_recurrent_intention_ppo_networks(
             Tuple of (logits, latent_mean, latent_logvar, final_hidden).
             Each output has shape [T, B, ...].
         """
-        obs_seq = normalize_dict_obs(obs_seq, processor_params)
+        policy_normalizer = normalizer_select(processor_params, policy_obs_key)
+        obs_seq_normalized = running_statistics.normalize(
+            obs_seq[policy_obs_key], policy_normalizer
+        )
 
         # Validate stored_keys shape if provided
         if stored_keys is not None:
             # Get expected shape from observations [T, B, ...]
-            ref_obs = obs_seq["imitation_target"]
+            ref_obs = obs_seq_normalized["task_obs"]
             expected_shape = (ref_obs.shape[0], ref_obs.shape[1], 2)
             if stored_keys.shape != expected_shape:
                 raise ValueError(
@@ -621,7 +675,8 @@ def make_recurrent_intention_ppo_networks(
 
         if stored_keys is not None:
             # Deterministic replay: use stored per-timestep, per-sample keys
-            def step_with_stored_keys(carry, inputs):
+            # Pass observations directly to scan (not via closure) for memory efficiency
+            def scan_step_stored(carry, inputs):
                 hidden = carry
                 obs_t, done_t, keys_t = inputs
 
@@ -629,24 +684,24 @@ def make_recurrent_intention_ppo_networks(
                     policy_params,
                     obs=obs_t,
                     hidden=hidden,
-                    key=keys_t,  # Per-sample keys [B, 2]
+                    key=keys_t,
                     deterministic=deterministic,
                 )
-
-                # Reset hidden state where episodes ended
                 new_hidden = reset_hidden_on_done(new_hidden, done_t, rnn_type)
-
                 return new_hidden, (logits, mean, logvar)
 
             final_hidden, (logits, means, logvars) = jax.lax.scan(
-                step_with_stored_keys, initial_hidden, (obs_seq, done_seq, stored_keys)
+                scan_step_stored,
+                initial_hidden,
+                (obs_seq_normalized, done_seq, stored_keys),
             )
         else:
             # Standard path: generate fresh keys at each timestep
-            def step(carry, inputs):
+            # Pass observations directly to scan (not via closure) for memory efficiency
+            def scan_step_fresh(carry, inputs):
                 hidden, step_key = carry
-                obs_t, done_t = inputs
                 step_key, next_key = jax.random.split(step_key)
+                obs_t, done_t = inputs
 
                 logits, mean, logvar, new_hidden = policy_module.apply(
                     policy_params,
@@ -655,21 +710,18 @@ def make_recurrent_intention_ppo_networks(
                     key=step_key,
                     deterministic=deterministic,
                 )
-
-                # Reset hidden state where episodes ended
                 new_hidden = reset_hidden_on_done(new_hidden, done_t, rnn_type)
-
                 return (new_hidden, next_key), (logits, mean, logvar)
 
             (final_hidden, _), (logits, means, logvars) = jax.lax.scan(
-                step, (initial_hidden, key), (obs_seq, done_seq)
+                scan_step_fresh, (initial_hidden, key), (obs_seq_normalized, done_seq)
             )
 
         return logits, means, logvars, final_hidden
 
-    # Create dummy observations for initialization
+    # Create dummy inner observations for initialization (already selected/normalized)
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     dummy_key = jax.random.PRNGKey(0)
@@ -697,6 +749,7 @@ def make_recurrent_intention_ppo_networks(
     value_network = make_dict_value_network(
         obs_sizes=obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
+        value_obs_key=value_obs_key,
     )
 
     return RecurrentPPONetworks(

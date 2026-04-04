@@ -10,6 +10,12 @@
 # =============================================================================
 # Settings for the MuJoCo simulation environment and imitation learning task.
 env_config:
+  # Environment name for registry lookup
+  env_name: "RodentImitation"
+  walker_name: "rodent"
+  torque_actuators: true              # Use torque (vs position) control
+  rescale_factor: 0.9                 # Model scale factor
+
   # MuJoCo backend: "jax" for GPU-accelerated simulation via MJX
   mujoco_impl: "jax"
 
@@ -20,7 +26,8 @@ env_config:
   solver: "newton"
   iterations: 5           # Max solver iterations per step
   ls_iterations: 5        # Line search iterations for Newton solver
-  nconmax: 256            # Max contacts (increase if contact clipping occurs)
+  nconmax: 32             # Max contacts (increase if contact clipping occurs)
+  naconmax: 131072        # Max arena contacts
   njmax: 128              # Max constraint rows
   noslip_iterations: 0    # No-slip solver iterations (0 = disabled)
 
@@ -58,8 +65,8 @@ env_config:
   # -----------------------------------------------------------------------------
   # Reward Terms
   # -----------------------------------------------------------------------------
-  # Imitation rewards computed as: weight * exp(-exp_scale * error)
-  # Higher exp_scale = sharper penalty for deviations
+  # Imitation rewards computed as: weight * exp(-((error / exp_scale)^2) / 2)
+  # Higher exp_scale = more lenient penalty for deviations
   reward_terms:
     # Root (pelvis) position tracking
     root_pos:
@@ -151,6 +158,7 @@ network_config:
   decoder_layer_sizes: [1024,1024,512]  # Policy decoder
   critic_layer_sizes: [2048,1024,1024,1024,1024,512]   # Value function
   intention_size: 16                   # Latent intention vector dimension
+  proprioception_noise_std: 0.1        # Multiplicative decoder state noise std
   kl_schedule: true                    # Anneal KL divergence weight over training
   latent_kl_weight: 1e-1               # Weight for KL divergence to standard Gaussian prior
   latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss
@@ -204,16 +212,7 @@ train_setup:
 # Weights & Biases logging settings
 logging_config:
   project_name: mimic-mjx
-  group_name: v1
-  exp_name: latent-reg
+  group_name: 
+  exp_name: baseline
   clip_id: -1                         # Clip ID for single-clip runs (-1 = all)
   model_path: model_checkpoints/
-
-# =============================================================================
-# Walker Configuration
-# =============================================================================
-# Rodent morphology and actuator settings
-walker_config:
-  walker_name: "rodent"
-  torque_actuators: true              # Use torque (vs position) control
-  rescale_factor: 0.9                 # Model scale factor

@@ -5,6 +5,7 @@ import os
 # Must set rendering backend before importing MuJoCo
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import functools
 import logging
@@ -15,8 +16,8 @@ import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
-from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground import registry
+from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
@@ -36,7 +37,11 @@ def _setup_environment() -> None:
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
-@hydra.main(version_base=None, config_path="config", config_name="rodent-full-clips")
+@hydra.main(
+    version_base=None,
+    config_path="../track_mjx/config",
+    config_name="rodent-full-clips",
+)
 def main(cfg: DictConfig) -> None:
     """Main training entry point using Hydra configs.
 
@@ -58,7 +63,7 @@ def main(cfg: DictConfig) -> None:
 
     # Prepare config BEFORE load_from_run_state so the config hash is consistent
     # between discovery and saving (prepare_config modifies cfg by adding paths)
-    (cfg, cfg_dict, env_cfg_ml) = utils.prepare_config(cfg)
+    cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
 
     # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
@@ -70,9 +75,11 @@ def main(cfg: DictConfig) -> None:
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
-    # Create the reference clips
+    # Create the reference clips using registry, get environment name from config
     logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
-    reference_clips = ReferenceClips(
+    env_name = cfg.env_config.env_name
+    reference_clips = registry.load_reference_clips(
+        env_name,
         data_path=cfg.env_config.reference_data_path,
         n_frames_per_clip=cfg.env_config.clip_length,
         keep_clips_idx=cfg.env_config.keep_clips_idx,
@@ -85,13 +92,13 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
-    # Compute naconmax for warp backend (naconmax = nconmax * num_envs)
-    if hasattr(env_cfg_ml, "nconmax"):
-        env_cfg_ml.naconmax = env_cfg_ml.nconmax * cfg.train_setup.train_config.num_envs
-
-    # Create environments (dict observations, no flattening)
-    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
+    # Create environments using registry
+    env = rodent_wrappers.TrackMjxObsWrapper(
+        registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
+    )
+    test_env = rodent_wrappers.TrackMjxObsWrapper(
+        registry.load(env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False)
+    )
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -135,6 +142,9 @@ def main(cfg: DictConfig) -> None:
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             rnn_type=cfg.network_config.rnn_type,
             rnn_hidden_sizes=tuple(cfg.network_config.rnn_hidden_sizes),
+            proprioception_noise_std=cfg.network_config.get(
+                "proprioception_noise_std", 0.0
+            ),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
         ppo_module = recurrent_ppo
@@ -145,6 +155,9 @@ def main(cfg: DictConfig) -> None:
             intention_latent_size=cfg.network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            proprioception_noise_std=cfg.network_config.get(
+                "proprioception_noise_std", 0.0
+            ),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
         ppo_module = ff_ppo
@@ -209,9 +222,8 @@ def main(cfg: DictConfig) -> None:
         ),
     )
 
-    # Add freeze_decoder only for feedforward PPO (not supported for recurrent)
+    # Add get_activation only for feedforward PPO (not supported for recurrent)
     if arch_name != "recurrent_intention":
-        train_kwargs["freeze_decoder"] = cfg.train_setup.get("freeze_decoder", False)
         train_kwargs["get_activation"] = cfg.train_setup.train_config.get(
             "get_activation", False
         )
@@ -221,7 +233,9 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = imitation.Imitation(config=rollout_cfg)
+    rollout_env = rodent_wrappers.TrackMjxObsWrapper(
+        registry.load(env_name, config=rollout_cfg, clips=None, flatten_obs=False)
+    )
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

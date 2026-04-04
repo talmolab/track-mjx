@@ -30,18 +30,17 @@ from brax.training import pmap, types
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
 
+from brax.training.acme import running_statistics
+
 from track_mjx.agent import checkpointing, gradients
 from track_mjx.agent.recurrent_ppo import losses, networks
 from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
     get_obs_sizes,
-    init_dict_normalizer,
-    update_dict_normalizer,
+    get_obs_shape,
 )
 
-
 # Type aliases
-InferenceParams = tuple[DictRunningStatisticsState, Params]
+InferenceParams = tuple[running_statistics.RunningStatisticsState, Params]
 Metrics = types.Metrics
 HiddenState = networks.HiddenState
 
@@ -57,14 +56,14 @@ class TrainingState:
     Attributes:
         optimizer_state: Optax optimizer state.
         params: PPO network parameters (policy and value).
-        normalizer_params: Running statistics for observation normalization
-            (per observation key).
+        normalizer_params: Running statistics for observation normalization.
+            Has pytree structure matching observation dict.
         env_steps: Total environment steps taken (in thousands).
     """
 
     optimizer_state: optax.OptState
     params: losses.RecurrentPPONetworkParams
-    normalizer_params: DictRunningStatisticsState
+    normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
 
 
@@ -535,7 +534,7 @@ def train(
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=init_dict_normalizer(env_state.obs),
+        normalizer_params=running_statistics.init_state(get_obs_shape(env_state.obs)),
         env_steps=0,
     )
 
@@ -557,7 +556,7 @@ def train(
     def minibatch_step(
         carry,
         data: types.Transition,
-        normalizer_params: DictRunningStatisticsState,
+        normalizer_params: running_statistics.RunningStatisticsState,
     ):
         optimizer_state, params, key, it = carry
         key, key_loss = jax.random.split(key)
@@ -576,7 +575,7 @@ def train(
         carry,
         unused_t,
         data: types.Transition,
-        normalizer_params: DictRunningStatisticsState,
+        normalizer_params: running_statistics.RunningStatisticsState,
     ):
         optimizer_state, params, key, it = carry
         key, key_perm, key_grad = jax.random.split(key, 3)
@@ -660,7 +659,7 @@ def train(
 
         # Update normalization params
         if normalize_observations:
-            normalizer_params = update_dict_normalizer(
+            normalizer_params = running_statistics.update(
                 training_state.normalizer_params,
                 data.observation,
                 pmap_axis_name=_PMAP_AXIS_NAME,

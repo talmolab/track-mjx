@@ -10,9 +10,10 @@ The key components are:
 The architecture enables learning from motion capture data by encoding trajectory
 information into a compact latent space that conditions the policy.
 
-Observations are expected as dictionaries with keys:
-- "imitation_target": Reference trajectory observations (flat array)
-- "proprioception": Proprioceptive state observations (flat array)
+The outer policy API (make_intention_policy) accepts nested observations
+{'state': {...}, 'privileged_state': {...}} and handles key selection and
+normalization. The IntentionNetwork module itself receives the already-selected
+inner dict {'task_obs': ..., 'proprioception': ...}.
 """
 
 from collections.abc import Mapping, Sequence
@@ -21,11 +22,11 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from brax.training import networks, types
+from brax.training.acme import running_statistics
 from flax import linen as nn
 
 from track_mjx.agent.observation_utils import (
-    DictRunningStatisticsState,
-    normalize_dict_obs,
+    normalizer_select,
 )
 
 
@@ -176,13 +177,10 @@ def reparameterize(
 class IntentionNetwork(nn.Module):
     """Full VAE model combining encoder and decoder for intention-based policy.
 
-    The network receives observations as a dictionary with keys:
-    - "imitation_target": Reference trajectory observations (encoder input)
-    - "proprioception": Proprioceptive state observations (decoder input with latent)
-
-    The encoder processes trajectory observations to produce latent intentions,
-    which are then concatenated with proprioceptive state and decoded into
-    action distribution parameters.
+    The network receives inner observation dicts (already selected and normalized
+    by the outer apply function). The encoder processes obs['task_obs'] to produce
+    latent intentions, which are then concatenated with obs['proprioception'] and
+    decoded into action distribution parameters.
 
     Attributes:
         encoder_layers: Hidden layer sizes for the encoder MLP.
@@ -193,6 +191,7 @@ class IntentionNetwork(nn.Module):
     encoder_layers: Sequence[int]
     decoder_layers: Sequence[int]
     latents: int = 60
+    proprioception_noise_std: float = 0.0
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
@@ -206,8 +205,9 @@ class IntentionNetwork(nn.Module):
         deterministic: bool = False,
         get_activation: bool = False,
     ):
-        # Access observations by name
-        traj = obs["imitation_target"]
+        # Access inner observations: already normalized and selected for 'state'
+        # obs is the inner dict: {'task_obs': ..., 'proprioception': ...}
+        traj = obs["task_obs"]
         egocentric_obs = obs["proprioception"]
 
         # Check if observations are actually batched (based on normalized obs shape)
@@ -216,15 +216,28 @@ class IntentionNetwork(nn.Module):
         # Handle key splitting based on both key shape AND observation shape
         if key.ndim == 1:
             # Single key - split for encoder
-            _, encoder_rng = jax.random.split(key)
+            encoder_rng, noise_rng = jax.random.split(key)
         elif not obs_is_batched:
             # Per-sample keys but unbatched observation - use first key
             # This can happen when key batching was determined from nested obs structure
             # before normalization flattened it to unbatched
-            _, encoder_rng = jax.random.split(key[0])
+            encoder_rng, noise_rng = jax.random.split(key[0])
         else:
             # Per-sample keys [batch_size, 2] - vmap split over batch
-            _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+
+        if not deterministic and self.proprioception_noise_std > 0.0:
+            if noise_rng.ndim == 1:
+                noise = jax.random.normal(noise_rng, egocentric_obs.shape)
+            elif not obs_is_batched:
+                noise = jax.random.normal(noise_rng[0], egocentric_obs.shape)
+            else:
+                noise = jax.vmap(
+                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
+                )(noise_rng, egocentric_obs)
+            egocentric_obs = egocentric_obs * (
+                1.0 + self.proprioception_noise_std * noise
+            )
 
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
@@ -268,21 +281,25 @@ def make_intention_policy(
     obs_sizes: Mapping[str, int],
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    proprioception_noise_std: float = 0.0,
+    policy_obs_key: str = "state",
 ) -> networks.FeedForwardNetwork:
     """Create an intention-based policy network.
 
     Constructs an encoder-decoder VAE policy where the encoder processes
-    reference trajectory observations and the decoder generates action
-    parameters conditioned on latent intentions and proprioceptive state.
+    obs[policy_obs_key]['task_obs'] and the decoder generates action
+    parameters conditioned on latent intentions and obs[policy_obs_key]['proprioception'].
 
     Args:
         action_param_size: Output dimension (typically 2x action_size for
             Gaussian mean and variance).
         latent_size: Dimension of the latent intention space.
-        obs_sizes: Dict mapping observation keys to their sizes, e.g.
-            {"imitation_target": 3716, "proprioception": 226}.
+        obs_sizes: Dict with 'task_obs' and 'proprioception' sizes.
         encoder_hidden_layer_sizes: Hidden layer sizes for encoder MLP.
         decoder_hidden_layer_sizes: Hidden layer sizes for decoder MLP.
+        proprioception_noise_std: Stddev for multiplicative Gaussian noise on
+            proprioception during stochastic training passes.
+        policy_obs_key: Top-level observation key for policy (default: 'state').
 
     Returns:
         FeedForwardNetwork with init and apply methods. The apply function
@@ -294,29 +311,42 @@ def make_intention_policy(
         decoder_layers=list(decoder_hidden_layer_sizes)
         + [action_param_size],  # add action size to the last layer
         latents=latent_size,
+        proprioception_noise_std=proprioception_noise_std,
     )
 
     def apply(
-        processor_params: DictRunningStatisticsState,
+        processor_params: running_statistics.RunningStatisticsState,
         policy_params,
-        obs: Mapping[str, jnp.ndarray],
+        obs: Mapping[str, Mapping[str, jnp.ndarray]],
         key,
         deterministic: bool = False,
         get_activation: bool = False,
     ):
-        """Apply policy with observation normalization."""
-        obs = normalize_dict_obs(obs, processor_params)
+        """Apply policy with observation normalization.
+
+        Args:
+            processor_params: RunningStatisticsState with pytree structure matching obs.
+            policy_params: Policy network parameters.
+            obs: Nested observation dict.
+            key: Random key for sampling.
+            deterministic: If True, use mean instead of sampling.
+            get_activation: If True, return activations.
+        """
+        policy_normalizer = normalizer_select(processor_params, policy_obs_key)
+        normalized_obs = running_statistics.normalize(
+            obs[policy_obs_key], policy_normalizer
+        )
         return policy_module.apply(
             policy_params,
-            obs=obs,
+            obs=normalized_obs,
             key=key,
             deterministic=deterministic,
             get_activation=get_activation,
         )
 
-    # Create dummy dict observation for initialization
+    # Create dummy inner observation for initialization (already selected/normalized)
     dummy_obs = {
-        "imitation_target": jnp.zeros((1, obs_sizes["imitation_target"])),
+        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
     dummy_key = jax.random.PRNGKey(0)

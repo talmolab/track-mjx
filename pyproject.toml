@@ -10,11 +10,10 @@ authors = [
     {name = "Aidan Sirbu", email = "aidan.sirbu@mail.mcgill.ca"},
     {name = "Talmo Pereira", email = "talmo@salk.edu"}]
 description=  "Track-MJX: A Python package for fast reinforcement learning-based imitation learning tracking for agents"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.12,<3.13"
 keywords = ["tracking", "imitation learning", "deep learning"]
 license = {text = "BSD-3-Clause"}
 classifiers = [
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12"]
 dependencies = [
     # JAX core (both platforms)
@@ -29,7 +28,7 @@ dependencies = [
     # Rendering (EGL/osmesa support)
     "PyOpenGL==3.1.9",
     # Data & ML utilities
-    "numpy==2.0.0",
+    "numpy>=2.0.0",
     "h5py==3.12.1",
     "numba==0.61.0",
     "scikit-learn==1.7.2",
@@ -63,7 +62,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "pytest-watch",
-    "black[jupyter]",
+    "black[jupyter]>=26.1.0",
     "pydocstyle",
     "toml",
     "twine",
@@ -87,7 +86,7 @@ exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 line-length = 88
 
 [tool.uv.sources]
-vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.9" }
+vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.13" }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
 
 [pydocstyle]

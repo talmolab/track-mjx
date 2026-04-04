@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install linting tools
         run: |
@@ -26,4 +26,4 @@ jobs:
 
       - name: Run Black
         run: |
-          black --check track_mjx/ notebooks/
+          black --check track_mjx/ notebooks/ scripts/

@@ -116,8 +116,8 @@ network_config:
 
   # Continuous encoder (reference trajectory -> continuous latent)
   use_continuous_encoder: true
-  encoder_layer_sizes: [512, 256, 256]
-  continuous_latent_dim: 4       # compact continuous latent
+  encoder_layer_sizes: [512, 512, 256]
+  continuous_latent_dim: 16
   kl_weight: 0.05               # base KL weight (used if kl_schedule is "none")
   z_e_dropout_rate: 0.01         # prob of zeroing z_e per timestep (0 = off)
 

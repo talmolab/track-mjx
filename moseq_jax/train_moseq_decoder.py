@@ -647,24 +647,21 @@ def main(cfg: DictConfig) -> None:
             z_e_dropout_rate=z_e_dropout_rate,
         )
 
-    # Encoder loading: inject pre-trained encoder params from a same-pipeline
-    # MoSeq checkpoint.  Uses the freeze_decoder pattern (ppo.py:744-745):
-    # direct dict key assignment from a compatible checkpoint.
+    # Encoder loading: inject pre-trained encoder params from a VAE
+    # checkpoint trained with train_mimic_encoder.py.  Both the VAE and
+    # the distillation model use IntentionEncoder, so the encoder subtree
+    # at params["encoder_module"] has identical structure — one-line drop-in.
     _post_init_params_fn = None
     if use_distillation_head and distillation_encoder_checkpoint is not None:
         _encoder_ckpt_path = str(Path(distillation_encoder_checkpoint))
-
-        # Encoder param keys to copy from the loaded checkpoint
-        _ENCODER_KEYS = [
-            "enc_0", "enc_1", "enc_2",
-            "enc_ln_0", "enc_ln_1", "enc_ln_2",
-            "continuous_mean", "continuous_logvar",
-        ]
+        _encoder_step_prefix = str(
+            cfg.network_config.get("distillation_encoder_step_prefix", "MimicEncoder")
+        )
 
         def _post_init_params_fn(training_state):
-            """Inject encoder params from a same-pipeline MoSeq checkpoint."""
+            """Load encoder from VAE checkpoint (direct subtree assignment)."""
             mgr_options = ocp.CheckpointManagerOptions(
-                create=False, step_prefix="MoSeqPPONetwork"
+                create=False, step_prefix=_encoder_step_prefix,
             )
             with ocp.CheckpointManager(_encoder_ckpt_path, options=mgr_options) as mgr:
                 restored = mgr.restore(
@@ -673,17 +670,14 @@ def main(cfg: DictConfig) -> None:
                 )
             _, loaded_policy_params = restored["policy"]
 
-            # Direct dict assignment — same pattern as freeze_decoder
-            params_dict = training_state.params.policy["params"]
-            loaded_dict = loaded_policy_params["params"]
-            replaced_count = 0
-            for key in _ENCODER_KEYS:
-                if key in loaded_dict and key in params_dict:
-                    params_dict[key] = loaded_dict[key]
-                    replaced_count += 1
+            # The VAE checkpoint stores encoder under params["encoder"].
+            # Our model stores it under params["encoder_module"].
+            # Both are the same IntentionEncoder Flax module.
+            loaded_encoder = loaded_policy_params["params"]["encoder"]
+            training_state.params.policy["params"]["encoder_module"] = loaded_encoder
             logging.info(
-                f"Injected {replaced_count} encoder param groups from "
-                f"{distillation_encoder_checkpoint}"
+                f"Loaded encoder from {distillation_encoder_checkpoint} "
+                f"(step_prefix={_encoder_step_prefix})"
             )
             return training_state
 

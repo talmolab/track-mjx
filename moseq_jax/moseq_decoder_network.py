@@ -30,6 +30,11 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from track_mjx.agent.ff_ppo.intention_network import (
+    Encoder as IntentionEncoder,
+    reparameterize,
+)
+
 
 class MoSeqEncoderDecoderNetwork(nn.Module):
     """Encoder-decoder policy: code embedding + continuous latent + proprio -> action.
@@ -98,27 +103,16 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
         # Proprioception (already normalized and flattened by the policy wrapper)
         proprio = obs["proprioception"]
 
-        # Continuous encoder (optional)
+        # Continuous encoder (optional) — uses IntentionEncoder for
+        # checkpoint-compatible param names
         if self.use_continuous_encoder:
             imitation_target = obs["task_obs"]
 
-            # Encoder MLP
-            h = imitation_target
-            for i, size in enumerate(self.encoder_layer_sizes):
-                h = nn.Dense(size, kernel_init=self.kernel_init, name=f"enc_{i}")(h)
-                h = self.activation(h)
-                h = nn.LayerNorm(name=f"enc_ln_{i}")(h)
-
-            mean = nn.Dense(
-                self.continuous_latent_dim,
-                kernel_init=self.kernel_init,
-                name="continuous_mean",
-            )(h)
-            logvar = nn.Dense(
-                self.continuous_latent_dim,
-                kernel_init=self.kernel_init,
-                name="continuous_logvar",
-            )(h)
+            encoder = IntentionEncoder(
+                layer_sizes=self.encoder_layer_sizes,
+                latents=self.continuous_latent_dim,
+            )
+            mean, logvar = encoder(imitation_target)
 
             # Reparameterization
             if deterministic:
@@ -126,8 +120,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
             else:
                 if key is None:
                     key = self.make_rng("params")
-                eps = jax.random.normal(key, mean.shape)
-                z_e = mean + jnp.exp(0.5 * logvar) * eps
+                z_e = reparameterize(key, mean, logvar)
 
             # Decoder input: code_emb + z_e_scaled + proprio
             z_e_scaled = z_e * z_e_scale
@@ -222,25 +215,14 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             features=self.code_embed_dim,
         )
 
-        # Pre-create encoder layers (must be in setup for apply_sequence/scan)
+        # Encoder: reuse IntentionEncoder from the main branch so that
+        # param names (encoder/hidden_0, encoder/fc2_mean, etc.) are
+        # identical to the VAE training checkpoint — enabling direct
+        # subtree loading with no name mapping.
         if self.use_continuous_encoder:
-            self.enc_layers = [
-                nn.Dense(size, kernel_init=self.kernel_init, name=f"enc_{i}")
-                for i, size in enumerate(self.encoder_layer_sizes)
-            ]
-            self.enc_lns = [
-                nn.LayerNorm(name=f"enc_ln_{i}")
-                for i in range(len(self.encoder_layer_sizes))
-            ]
-            self.mean_layer = nn.Dense(
-                self.continuous_latent_dim,
-                kernel_init=self.kernel_init,
-                name="continuous_mean",
-            )
-            self.logvar_layer = nn.Dense(
-                self.continuous_latent_dim,
-                kernel_init=self.kernel_init,
-                name="continuous_logvar",
+            self.encoder_module = IntentionEncoder(
+                layer_sizes=self.encoder_layer_sizes,
+                latents=self.continuous_latent_dim,
             )
 
         self.rnn_cells = [
@@ -333,16 +315,11 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         if self.use_continuous_encoder:
             imitation_target = obs["task_obs"]
 
-            h = imitation_target
-            for dense, ln in zip(self.enc_layers, self.enc_lns):
-                h = dense(h)
-                h = self.activation(h)
-                h = ln(h)
+            # Encoder forward pass (uses IntentionEncoder — same param names
+            # as the main branch VAE checkpoint)
+            mean, logvar = self.encoder_module(imitation_target)
 
-            mean = self.mean_layer(h)
-            logvar = self.logvar_layer(h)
-
-            # Freeze encoder when used as a distillation target (pre-trained weights)
+            # Freeze encoder when used as a distillation target
             if self.use_distillation_head:
                 mean = jax.lax.stop_gradient(mean)
                 logvar = jax.lax.stop_gradient(logvar)
@@ -352,26 +329,14 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             else:
                 if key is None:
                     key = self.make_rng("params")
-                # Split key before reparameterization (matches reference
-                # RecurrentIntentionNetwork pattern for PRNG hygiene)
+                # Split key for reparameterization
                 if key.ndim > 1:
-                    # Per-sample keys [B, 2]: vmap split, use second half
                     _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
-
-                    def _reparam(k, m, lv):
-                        return m + jnp.exp(0.5 * lv) * jax.random.normal(k, m.shape)
-
-                    z_e = jax.vmap(_reparam)(encoder_rng, mean, logvar)
                 elif mean.ndim == 1:
-                    # Per-sample key but unbatched obs: use first key
                     _, encoder_rng = jax.random.split(key[0])
-                    eps = jax.random.normal(encoder_rng, mean.shape)
-                    z_e = mean + jnp.exp(0.5 * logvar) * eps
                 else:
-                    # Single key [2]: split for encoder
                     _, encoder_rng = jax.random.split(key)
-                    eps = jax.random.normal(encoder_rng, mean.shape)
-                    z_e = mean + jnp.exp(0.5 * logvar) * eps
+                z_e = reparameterize(encoder_rng, mean, logvar)
 
             z_e_scaled = z_e * z_e_scale
 

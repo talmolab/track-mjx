@@ -113,7 +113,7 @@ def test_no_reinit_hidden_propagates():
     key = jax.random.PRNGKey(42)
 
     # Run apply_sequence
-    logits_seq, _, _, final_hidden = module.apply(
+    logits_seq, _, _, _, _, final_hidden = module.apply(
         params, obs_seq, init_hidden, done_seq, key,
         deterministic=True, z_e_scale=1.0,
         method=module.apply_sequence,
@@ -124,7 +124,7 @@ def test_no_reinit_hidden_propagates():
     manual_logits = []
     for t in range(T):
         obs_t = {k: v[t] for k, v in obs_seq.items()}
-        action_params, code_idx, mean, logvar, new_hidden = module.apply(
+        action_params, code_idx, mean, logvar, new_hidden, _, _ = module.apply(
             params, obs_t, hidden, key, deterministic=True, z_e_scale=1.0,
         )
         manual_logits.append(action_params)
@@ -158,7 +158,7 @@ def test_zero_reinit_on_code_transition():
     done_seq = jnp.zeros((T, BATCH_SIZE))
     key = jax.random.PRNGKey(42)
 
-    logits_seq, _, _, _ = module.apply(
+    logits_seq, _, _, _, _, _ = module.apply(
         params, obs_seq, init_hidden, done_seq, key,
         deterministic=True, z_e_scale=1.0,
         method=module.apply_sequence,
@@ -180,7 +180,7 @@ def test_zero_reinit_on_code_transition():
     hidden = [jnp.zeros((BATCH_SIZE, h)) for h in RNN_HIDDEN]
     for t in range(3, T):
         obs_t = {k: v[t] for k, v in obs_seq.items()}
-        action_params, _, _, _, new_hidden = module.apply(
+        action_params, _, _, _, new_hidden, _, _ = module.apply(
             params, obs_t, hidden, key, deterministic=True,
         )
         if t == 3:
@@ -237,7 +237,7 @@ def test_learned_reinit_on_code_transition():
     done_seq = jnp.zeros((T, BATCH_SIZE))
     key = jax.random.PRNGKey(42)
 
-    logits_seq, _, _, _ = module.apply(
+    logits_seq, _, _, _, _, _ = module.apply(
         params, obs_seq, init_hidden, done_seq, key,
         deterministic=True, z_e_scale=1.0,
         method=module.apply_sequence,
@@ -257,7 +257,7 @@ def test_learned_reinit_on_code_transition():
     hidden_for_code3 = [code3_init[None, :].repeat(BATCH_SIZE, axis=0)]  # [B, H]
 
     obs_step2 = {k: v[2] for k, v in obs_seq.items()}
-    action_step2, _, _, _, _ = module.apply(
+    action_step2, _, _, _, _, _, _ = module.apply(
         params, obs_step2, hidden_for_code3, key, deterministic=True,
     )
     np.testing.assert_allclose(action_step2, logits_seq[2], atol=1e-3,
@@ -282,7 +282,7 @@ def test_done_resets_to_zeros_not_learned():
     done_seq = jnp.array([[0, 0], [1, 1], [0, 0], [0, 0]], dtype=jnp.float32)
     key = jax.random.PRNGKey(42)
 
-    logits_seq, _, _, _ = module.apply(
+    logits_seq, _, _, _, _, _ = module.apply(
         params, obs_seq, init_hidden, done_seq, key,
         deterministic=True, z_e_scale=1.0,
         method=module.apply_sequence,
@@ -300,7 +300,7 @@ def test_done_resets_to_zeros_not_learned():
     # Verify: step 2 output should match running with zero hidden + code=2
     zero_hidden = [jnp.zeros((BATCH_SIZE, h)) for h in RNN_HIDDEN]
     obs_step2 = {k: v[2] for k, v in obs_seq.items()}
-    action_step2, _, _, _, _ = module.apply(
+    action_step2, _, _, _, _, _, _ = module.apply(
         params, obs_step2, zero_hidden, key, deterministic=True,
     )
     np.testing.assert_allclose(action_step2, logits_seq[2], atol=1e-5,
@@ -327,14 +327,14 @@ def test_z_e_at_action_head():
     key = jax.random.PRNGKey(42)
 
     # Run with z_e_scale=1.0 (full z_e at action head)
-    logits_full, _, _, hidden_full = module_with_ze.apply(
+    logits_full, _, _, _, _, hidden_full = module_with_ze.apply(
         params_with_ze, obs_seq, init_hidden, done_seq, key,
         deterministic=True, z_e_scale=1.0,
         method=module_with_ze.apply_sequence,
     )
 
     # Run with z_e_scale=0.0 (no z_e at action head)
-    logits_zero, _, _, hidden_zero = module_with_ze.apply(
+    logits_zero, _, _, _, _, hidden_zero = module_with_ze.apply(
         params_with_ze, obs_seq, init_hidden, done_seq, key,
         deterministic=True, z_e_scale=0.0,
         method=module_with_ze.apply_sequence,
@@ -370,7 +370,7 @@ def test_first_step_always_reinits():
     # Pass non-zero initial hidden
     nonzero_hidden = [jnp.ones((BATCH_SIZE, h)) * 5.0 for h in RNN_HIDDEN]
 
-    logits_seq, _, _, _ = module.apply(
+    logits_seq, _, _, _, _, _ = module.apply(
         params, obs_seq, nonzero_hidden, done_seq, key,
         deterministic=True, z_e_scale=1.0,
         method=module.apply_sequence,
@@ -380,7 +380,7 @@ def test_first_step_always_reinits():
     # NOT the nonzero_hidden we passed in
     zero_hidden = [jnp.zeros((BATCH_SIZE, h)) for h in RNN_HIDDEN]
     obs_step0 = {k: v[0] for k, v in obs_seq.items()}
-    action_from_zero, _, _, _, _ = module.apply(
+    action_from_zero, _, _, _, _, _, _ = module.apply(
         params, obs_step0, zero_hidden, key, deterministic=True,
     )
     np.testing.assert_allclose(action_from_zero, logits_seq[0], atol=1e-5,
@@ -405,7 +405,7 @@ def test_code_transition_and_done_same_step():
     done_seq = jnp.array([[0, 0], [0, 0], [1, 1], [0, 0]], dtype=jnp.float32)
     key = jax.random.PRNGKey(42)
 
-    logits_seq, _, _, _ = module.apply(
+    logits_seq, _, _, _, _, _ = module.apply(
         params, obs_seq, init_hidden, done_seq, key,
         deterministic=True, z_e_scale=1.0,
         method=module.apply_sequence,
@@ -419,7 +419,7 @@ def test_code_transition_and_done_same_step():
 
     zero_hidden = [jnp.zeros((BATCH_SIZE, h)) for h in RNN_HIDDEN]
     obs_step3 = {k: v[3] for k, v in obs_seq.items()}
-    action_step3, _, _, _, _ = module.apply(
+    action_step3, _, _, _, _, _, _ = module.apply(
         params, obs_step3, zero_hidden, key, deterministic=True,
     )
     np.testing.assert_allclose(action_step3, logits_seq[3], atol=1e-5,
@@ -464,7 +464,7 @@ def test_different_codes_different_inits():
     obs_seq = _make_obs_seq(code_seq, T, BATCH_SIZE)
     done_seq = jnp.zeros((T, BATCH_SIZE))
 
-    logits_seq, _, _, _ = module.apply(
+    logits_seq, _, _, _, _, _ = module.apply(
         params, obs_seq, init_hidden, done_seq, key,
         deterministic=True, z_e_scale=1.0,
         method=module.apply_sequence,

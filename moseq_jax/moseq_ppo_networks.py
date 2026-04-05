@@ -366,8 +366,8 @@ class MoSeqRecurrentNetwork:
 
     Attributes:
         init: ``(key) -> params``.
-        apply: Single-step forward: ``(proc, pol, obs, hidden, key, det, z_e_scale) -> 5-tuple``.
-        apply_sequence: Scan forward: ``(proc, pol, obs_seq, init_h, done, key, det, stored_keys, z_e_scale) -> 4-tuple``.
+        apply: Single-step forward: ``(proc, pol, obs, hidden, key, det, z_e_scale) -> 7-tuple``.
+        apply_sequence: Scan forward: ``(proc, pol, obs_seq, init_h, done, key, det, stored_keys, z_e_scale) -> 6-tuple``.
         init_hidden: ``(batch_size) -> list[jnp.zeros]``.
     """
 
@@ -388,6 +388,7 @@ class MoSeqRecurrentPPONetworks:
         num_codes: Number of KPMS syllable codes.
         code_embed_dim: Code embedding dimension.
         rnn_hidden_sizes: GRU hidden sizes per layer.
+        use_distillation_head: Whether distillation head is active.
     """
 
     policy_network: MoSeqRecurrentNetwork
@@ -396,6 +397,7 @@ class MoSeqRecurrentPPONetworks:
     num_codes: int = 32
     code_embed_dim: int = 16
     rnn_hidden_sizes: tuple[int, ...] = (256,)
+    use_distillation_head: bool = False
 
 
 def _normalize_and_reattach_code(
@@ -518,6 +520,8 @@ def make_moseq_recurrent_inference_fn(
                 cont_mean,
                 cont_logvar,
                 _new_hidden,
+                _distill_mean,
+                _distill_logvar,
             ) = policy_network.apply(
                 *params, observations, hidden, key_net, deterministic=deterministic
             )
@@ -576,6 +580,8 @@ def make_moseq_recurrent_logging_inference_fn(
                 cont_mean,
                 cont_logvar,
                 new_hidden,
+                _distill_mean,
+                _distill_logvar,
             ) = policy_network.apply(
                 *params,
                 observations,
@@ -648,6 +654,8 @@ def make_moseq_rnn_rollout_policy_fn(
                 cont_mean,
                 cont_logvar,
                 new_hidden,
+                _distill_mean,
+                _distill_logvar,
             ) = policy_network.apply(
                 *params,
                 observations,
@@ -695,6 +703,10 @@ def make_moseq_recurrent_decoder_ppo_networks(
     z_e_at_action_head: bool = False,
     reinit_hidden_on_code: bool = False,
     learned_hidden_init: bool = False,
+    use_distillation_head: bool = False,
+    distill_head_layer_sizes: tuple[int, ...] = (256, 128),
+    distill_logvar_min: float | None = None,
+    distill_logvar_max: float | None = None,
 ) -> MoSeqRecurrentPPONetworks:
     """Create recurrent MoSeq decoder PPO networks.
 
@@ -710,6 +722,10 @@ def make_moseq_recurrent_decoder_ppo_networks(
         rnn_hidden_sizes: GRU hidden sizes per layer.
         rnn_cell_type: Only ``"gru"`` is supported.
         z_e_dropout_rate: Probability of zeroing z_e per timestep during training.
+        use_distillation_head: Whether to add a distillation head.
+        distill_head_layer_sizes: Distill head MLP hidden layer sizes.
+        distill_logvar_min: Optional min clamp for distill head log-variance.
+        distill_logvar_max: Optional max clamp for distill head log-variance.
 
     Returns:
         MoSeqRecurrentPPONetworks with recurrent policy + FF value network.
@@ -732,6 +748,10 @@ def make_moseq_recurrent_decoder_ppo_networks(
         z_e_at_action_head=z_e_at_action_head,
         reinit_hidden_on_code=reinit_hidden_on_code,
         learned_hidden_init=learned_hidden_init,
+        use_distillation_head=use_distillation_head,
+        distill_head_layer_sizes=distill_head_layer_sizes,
+        distill_logvar_min=distill_logvar_min,
+        distill_logvar_max=distill_logvar_max,
     )
 
     init_obs_sizes = {**obs_sizes}
@@ -756,4 +776,5 @@ def make_moseq_recurrent_decoder_ppo_networks(
         num_codes=num_codes,
         code_embed_dim=code_embed_dim,
         rnn_hidden_sizes=rnn_hidden_sizes,
+        use_distillation_head=use_distillation_head,
     )

@@ -147,6 +147,7 @@ def train(
     rnn_hidden_sizes: tuple[int, ...] = (256,),
     z_e_scale_fn: Callable[[int], float] | None = None,
     kl_weight_fn: Callable[[int], float] | None = None,
+    distill_kl_weight: float = 0.0,
 ):
     """Train a MoSeq decoder PPO agent.
 
@@ -158,6 +159,7 @@ def train(
         rnn_hidden_sizes: GRU hidden sizes per layer.
         z_e_scale_fn: Optional ``step -> z_e_scale`` function for scaling.
         kl_weight_fn: Optional ``step -> kl_weight`` function for KL scheduling.
+        distill_kl_weight: Weight for distillation KL loss (0.0 = disabled).
 
     Returns:
         Tuple of ``(make_policy, params, metrics)``.
@@ -169,6 +171,7 @@ def train(
     _kl_weight = kl_weight
     _z_e_scale_fn = z_e_scale_fn
     _kl_weight_fn = kl_weight_fn
+    _distill_kl_weight = distill_kl_weight
 
     if use_rnn_decoder:
         # --- RNN mode: carry-aware loss + inference ---
@@ -215,6 +218,7 @@ def train(
                 vf_coefficient=vf_coefficient,
                 kl_weight=effective_kl,
                 z_e_scale=z_e_scale,
+                distill_kl_weight=_distill_kl_weight,
             )
 
         original_losses.compute_ppo_loss = moseq_rnn_loss_wrapper

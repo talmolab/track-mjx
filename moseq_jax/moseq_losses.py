@@ -244,6 +244,43 @@ def compute_moseq_ppo_loss(
     return total_loss, metrics
 
 
+def compute_distill_kl_loss(
+    encoder_mean: jnp.ndarray,
+    encoder_logvar: jnp.ndarray,
+    distill_mean: jnp.ndarray,
+    distill_logvar: jnp.ndarray,
+) -> jnp.ndarray:
+    """KL divergence between frozen encoder and distill head distributions.
+
+    Computes ``KL(q_encoder_sg || p_distill)`` with stop-gradient on the
+    encoder outputs so that this loss only trains the distill head (and
+    the RNN via h_t backprop), not the encoder.
+
+    Args:
+        encoder_mean: Encoder mean ``[T, B, D]``.
+        encoder_logvar: Encoder log-variance ``[T, B, D]``.
+        distill_mean: Distill head mean ``[T, B, D]``.
+        distill_logvar: Distill head log-variance ``[T, B, D]``.
+
+    Returns:
+        Scalar KL loss (sum over latent dims, mean over samples).
+    """
+    enc_mean_sg = jax.lax.stop_gradient(encoder_mean)
+    enc_logvar_sg = jax.lax.stop_gradient(encoder_logvar)
+
+    # KL(N(mu_e, sigma_e^2) || N(mu_d, sigma_d^2)) per latent dim:
+    # = 0.5 * [ log(sigma_d^2 / sigma_e^2) + sigma_e^2 / sigma_d^2
+    #           + (mu_e - mu_d)^2 / sigma_d^2 - 1 ]
+    log_var_diff = distill_logvar - enc_logvar_sg
+    var_ratio = jnp.exp(enc_logvar_sg - distill_logvar)
+    mean_diff_sq = jnp.square(enc_mean_sg - distill_mean) / jnp.exp(distill_logvar)
+    element_kl = 0.5 * (log_var_diff + var_ratio + mean_diff_sq - 1)
+
+    # Sum over latent dims, mean over (T, B)
+    kl_per_sample = jnp.sum(element_kl, axis=-1)
+    return jnp.mean(kl_per_sample)
+
+
 def compute_moseq_recurrent_ppo_loss(
     params: PPONetworkParams,
     normalizer_params: Any,
@@ -260,6 +297,7 @@ def compute_moseq_recurrent_ppo_loss(
     vf_coefficient: float = 0.5,
     kl_weight: float = 0.0,
     z_e_scale: float = 1.0,
+    distill_kl_weight: float = 0.0,
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss for the recurrent MoSeq decoder.
 
@@ -287,6 +325,8 @@ def compute_moseq_recurrent_ppo_loss(
         vf_coefficient: Value loss coefficient.
         kl_weight: KL regularization weight for continuous encoder.
         z_e_scale: Multiplier on z_e (1.0 = full, 0.0 = decoder-only).
+        distill_kl_weight: Weight for distillation KL loss
+            ``KL(encoder_sg || distill_head)``.
 
     Returns:
         ``(total_loss, metrics_dict)``.
@@ -324,7 +364,10 @@ def compute_moseq_recurrent_ppo_loss(
     done = data.discount < 0.5
 
     # Forward pass via scan over time
-    policy_logits, cont_mean, cont_logvar, final_hidden = policy_network.apply_sequence(
+    (
+        policy_logits, cont_mean, cont_logvar,
+        distill_means, distill_logvars, final_hidden,
+    ) = policy_network.apply_sequence(
         normalizer_params,
         params.policy,
         data.observation,
@@ -386,7 +429,17 @@ def compute_moseq_recurrent_ppo_loss(
         kl_loss = jnp.array(0.0)
         scaled_kl_loss = jnp.array(0.0)
 
-    total_loss = policy_loss + v_loss + entropy_loss + scaled_kl_loss
+    # Distillation KL loss (distill head predicts frozen encoder distribution)
+    if distill_means is not None and distill_kl_weight > 0:
+        distill_kl_loss = compute_distill_kl_loss(
+            cont_mean, cont_logvar, distill_means, distill_logvars,
+        )
+        scaled_distill_kl_loss = distill_kl_weight * distill_kl_loss
+    else:
+        distill_kl_loss = jnp.array(0.0)
+        scaled_distill_kl_loss = jnp.array(0.0)
+
+    total_loss = policy_loss + v_loss + entropy_loss + scaled_kl_loss + scaled_distill_kl_loss
 
     # --- z_e and hidden state diagnostics ---
     if cont_mean is not None:
@@ -426,6 +479,14 @@ def compute_moseq_recurrent_ppo_loss(
         transition_rate = jnp.array(0.0)
         num_codes = ppo_network.num_codes
 
+    # Distill head diagnostics
+    if distill_means is not None:
+        distill_mean_norm = jnp.mean(jnp.sqrt(jnp.sum(distill_means**2, axis=-1)))
+        distill_logvar_mean = jnp.mean(distill_logvars)
+    else:
+        distill_mean_norm = jnp.array(0.0)
+        distill_logvar_mean = jnp.array(0.0)
+
     metrics = {
         "total_loss": total_loss,
         "policy_loss": policy_loss,
@@ -441,6 +502,10 @@ def compute_moseq_recurrent_ppo_loss(
         "z_e_std": z_e_std,
         "z_e_scale": jnp.array(z_e_scale),
         "hidden_state_norm": hidden_state_norm,
+        "distill_kl_loss": distill_kl_loss,
+        "scaled_distill_kl_loss": scaled_distill_kl_loss,
+        "distill_mean_norm": distill_mean_norm,
+        "distill_logvar_mean": distill_logvar_mean,
         # Placeholders for VQ metrics (shared logging code)
         "vq_loss": jnp.array(0.0),
         "commitment_loss": jnp.array(0.0),

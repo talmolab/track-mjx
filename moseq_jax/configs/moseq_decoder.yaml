@@ -127,11 +127,26 @@ network_config:
   rnn_hidden_sizes: [512, 512, 256, 256]
 
   # z_e placement: action head only (GRU sees code+proprio only)
-  z_e_at_action_head: true
+  # NOTE: auto-overridden to false when use_distillation_head=true
+  z_e_at_action_head: false
 
   # Per-code hidden state reinitialization at code transitions
   reinit_hidden_on_code: false
   learned_hidden_init: false          # learned per-code init (vs zeros)
+
+  # --- Distillation Head (Prior Distillation Pipeline) ---
+  # When enabled, a distill head MLP reads h_t and predicts the frozen
+  # pre-trained encoder's latent distribution via KL loss.  z_e is
+  # automatically excluded from the action path.
+  use_distillation_head: true
+  distillation_head_layer_sizes: [512, 512, 256, 256]
+  distill_kl_weight: 1.0                    # weight for KL(encoder_sg || distill_head)
+  # Pre-trained encoder checkpoint — REQUIRED when use_distillation_head=true.
+  # Charles's trained intention network:
+  #   arch=intention, encoder_layers=[2048,1024,1024], intention_size=16
+  distillation_encoder_checkpoint: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260216_184057_890471/
+  distill_logvar_min: null
+  distill_logvar_max: null
 
   # KL schedule: controls kl_weight over training steps
   # Higher KL = z_e pushed toward unit Gaussian = less informative = GRU must use codes

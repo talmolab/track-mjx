@@ -16,6 +16,7 @@ import os
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
+import dataclasses
 import sys
 import functools
 import json
@@ -509,8 +510,80 @@ def main(cfg: DictConfig) -> None:
     rnn_hidden_sizes = tuple(cfg.network_config.get("rnn_hidden_sizes", [256]))
     rnn_cell_type = str(cfg.network_config.get("rnn_cell_type", "gru"))
 
+    # Distillation head config
+    use_distillation_head = bool(
+        cfg.network_config.get("use_distillation_head", False)
+    )
+    distill_head_layer_sizes = tuple(
+        cfg.network_config.get("distillation_head_layer_sizes", [256, 128])
+    )
+    distill_kl_weight = float(cfg.network_config.get("distill_kl_weight", 1.0))
+    distillation_encoder_checkpoint = cfg.network_config.get(
+        "distillation_encoder_checkpoint", None
+    )
+    distill_logvar_min = cfg.network_config.get("distill_logvar_min", None)
+    distill_logvar_max = cfg.network_config.get("distill_logvar_max", None)
+    if distill_logvar_min is not None:
+        distill_logvar_min = float(distill_logvar_min)
+    if distill_logvar_max is not None:
+        distill_logvar_max = float(distill_logvar_max)
+
+    # Auto-disable / auto-override when distillation head is enabled
+    if use_distillation_head:
+        if not use_rnn_decoder:
+            raise ValueError(
+                "use_distillation_head=True requires use_rnn_decoder=True "
+                "(distill head reads from RNN hidden state)"
+            )
+        if distillation_encoder_checkpoint is None:
+            raise ValueError(
+                "use_distillation_head=True requires distillation_encoder_checkpoint "
+                "to be set (pre-trained encoder checkpoint path)"
+            )
+        # Force continuous encoder ON (needed to produce distillation targets)
+        use_continuous_encoder = True
+        # z_e must NOT enter the action path
+        z_e_at_action_head = False
+        z_e_dropout_rate = 0.0
+        # Disable z_e action-path KL schedule (z_e is detached from actions)
+        kl_weight = 0.0
+
+        # Read encoder architecture from checkpoint metadata
+        ckpt_base = Path(distillation_encoder_checkpoint)
+        ckpt_config_path = None
+        # Find the config metadata file in the checkpoint
+        for p in sorted(ckpt_base.rglob("config/metadata")):
+            ckpt_config_path = p
+            break
+        if ckpt_config_path is not None:
+            ckpt_cfg = json.loads(ckpt_config_path.read_text())
+            ckpt_net = ckpt_cfg.get("network_config", {})
+            enc_layers_from_ckpt = ckpt_net.get("encoder_layer_sizes")
+            latent_dim_from_ckpt = ckpt_net.get("intention_size")
+            if enc_layers_from_ckpt is not None:
+                encoder_layer_sizes = tuple(enc_layers_from_ckpt)
+            if latent_dim_from_ckpt is not None:
+                continuous_latent_dim = int(latent_dim_from_ckpt)
+            logging.info(
+                f"Distillation mode: overriding encoder arch from checkpoint — "
+                f"encoder_layers={encoder_layer_sizes}, latent_dim={continuous_latent_dim}"
+            )
+        else:
+            logging.warning(
+                "Could not read checkpoint config metadata — using config-specified "
+                "encoder architecture. Ensure it matches the checkpoint."
+            )
+
+        logging.info(
+            f"Distillation mode enabled: z_e detached from action path, "
+            f"KL schedule disabled, distill_kl_weight={distill_kl_weight}, "
+            f"encoder_checkpoint={distillation_encoder_checkpoint}"
+        )
+
     # KL schedule config
     kl_schedule = str(cfg.network_config.get("kl_schedule", "none"))
+    if use_distillation_head:
+        kl_schedule = "none"  # Force disable when distilling
     kl_sched_cfg = cfg.network_config.get("kl_schedule_config", {})
     kl_sched_start = float(kl_sched_cfg.get("start_value", kl_weight))
     kl_sched_end = float(kl_sched_cfg.get("end_value", 0.5))
@@ -576,11 +649,16 @@ def main(cfg: DictConfig) -> None:
             z_e_at_action_head=z_e_at_action_head,
             reinit_hidden_on_code=reinit_hidden_on_code,
             learned_hidden_init=learned_hidden_init,
+            use_distillation_head=use_distillation_head,
+            distill_head_layer_sizes=distill_head_layer_sizes,
+            distill_logvar_min=distill_logvar_min,
+            distill_logvar_max=distill_logvar_max,
         )
         logging.info(
             f"Using RNN decoder: cell={rnn_cell_type}, hidden={rnn_hidden_sizes}, "
             f"z_e_at_action_head={z_e_at_action_head}, reinit_hidden={reinit_hidden_on_code}, "
-            f"learned_init={learned_hidden_init}"
+            f"learned_init={learned_hidden_init}, "
+            f"distillation_head={use_distillation_head}"
         )
     else:
         network_factory = functools.partial(
@@ -595,6 +673,131 @@ def main(cfg: DictConfig) -> None:
             z_e_dropout_rate=z_e_dropout_rate,
         )
 
+    # Encoder loading: patch the network factory's init to inject pre-trained
+    # encoder weights from Charles's checkpoint.  The encoder params are
+    # identified by name prefix ("enc_", "continuous_mean", "continuous_logvar").
+    if use_distillation_head and distillation_encoder_checkpoint is not None:
+        _encoder_ckpt_path = Path(distillation_encoder_checkpoint)
+
+        def _load_and_inject_encoder(original_init):
+            """Wrap the policy network init to inject pre-trained encoder params."""
+
+            def patched_init(key):
+                params = original_init(key)
+
+                # Load checkpoint policy params via raw Orbax restore
+                # (avoids normalizer tree mismatch with load_policy)
+                ckpt_dir = str(_encoder_ckpt_path)
+                mgr_options = ocp.CheckpointManagerOptions(
+                    create=False, step_prefix="PPONetwork"
+                )
+                with ocp.CheckpointManager(ckpt_dir, options=mgr_options) as ckpt_mgr_enc:
+                    step = ckpt_mgr_enc.latest_step()
+                    restored = ckpt_mgr_enc.restore(
+                        step,
+                        args=ocp.args.Composite(
+                            policy=ocp.args.StandardRestore(),
+                        ),
+                    )
+                loaded_policy = restored["policy"]
+                # loaded_policy = (normalizer_params, policy_params)
+                _, loaded_policy_params = loaded_policy
+
+                # Build name-based mapping from checkpoint encoder params
+                # to our model's encoder params.
+                # Checkpoint: encoder/hidden_N, encoder/LayerNorm_N,
+                #             encoder/fc2_mean, encoder/fc2_logvar
+                # Our model:  enc_N, enc_ln_N, continuous_mean, continuous_logvar
+                loaded_flat = jax.tree_util.tree_leaves_with_path(loaded_policy_params)
+                loaded_by_path = {}
+                for path, leaf in loaded_flat:
+                    path_str = "/".join(str(p) for p in path)
+                    loaded_by_path[path_str] = leaf
+
+                # Build lookup from checkpoint encoder params by suffix
+                # (e.g. "encoder/hidden_0/kernel" -> leaf)
+                def _clean_path(path_keys):
+                    """Convert JAX path keys to clean '/'-separated string."""
+                    parts = []
+                    for p in path_keys:
+                        s = str(p)
+                        # Strip brackets/quotes: "['params']" -> "params"
+                        s = s.strip("[]'\"")
+                        parts.append(s)
+                    return "/".join(parts)
+
+                ckpt_encoder = {}
+                for full_path, leaf in loaded_flat:
+                    path_str = _clean_path(full_path)
+                    if "encoder/" in path_str:
+                        suffix = path_str[path_str.index("encoder/"):]
+                        ckpt_encoder[suffix] = leaf
+
+                # Name mapping: our model -> checkpoint
+                _NAME_MAP = {
+                    **{f"enc_{i}": f"encoder/hidden_{i}" for i in range(10)},
+                    **{f"enc_ln_{i}": f"encoder/LayerNorm_{i}" for i in range(10)},
+                    "continuous_mean": "encoder/fc2_mean",
+                    "continuous_logvar": "encoder/fc2_logvar",
+                }
+
+                our_flat = jax.tree_util.tree_leaves_with_path(params)
+                new_leaves = []
+                replaced_count = 0
+                for path, leaf in our_flat:
+                    clean_parts = [s.strip("[]'\"") for s in (str(p) for p in path)]
+                    # Check if any part matches our encoder param names
+                    matched = False
+                    for our_name, ckpt_prefix in _NAME_MAP.items():
+                        if our_name in clean_parts:
+                            # Build ckpt key: ckpt_prefix + leaf type (kernel/bias/scale)
+                            leaf_type = clean_parts[-1]  # "kernel", "bias", or "scale"
+                            ckpt_key = f"{ckpt_prefix}/{leaf_type}"
+                            if ckpt_key in ckpt_encoder:
+                                loaded_leaf = ckpt_encoder[ckpt_key]
+                                if loaded_leaf.shape == leaf.shape:
+                                    new_leaves.append(loaded_leaf)
+                                    replaced_count += 1
+                                    matched = True
+                                else:
+                                    logging.warning(
+                                        f"Shape mismatch for {'/'.join(clean_parts)}: "
+                                        f"ours={leaf.shape}, ckpt={loaded_leaf.shape}"
+                                    )
+                            else:
+                                logging.warning(
+                                    f"Checkpoint key {ckpt_key} not found "
+                                    f"for {'/'.join(parts)}"
+                                )
+                            break
+                    if not matched:
+                        new_leaves.append(leaf)
+
+                params = jax.tree_util.tree_unflatten(
+                    jax.tree_util.tree_structure(params), new_leaves
+                )
+                logging.info(
+                    f"Injected {replaced_count} encoder params from "
+                    f"{distillation_encoder_checkpoint}"
+                )
+                return params
+
+            return patched_init
+
+        # Patch the network factory to wrap init
+        _original_factory = network_factory
+
+        def _patched_factory(*args, **kwargs):
+            networks = _original_factory(*args, **kwargs)
+            original_init = networks.policy_network.init
+            networks.policy_network = dataclasses.replace(
+                networks.policy_network,
+                init=_load_and_inject_encoder(original_init),
+            )
+            return networks
+
+        network_factory = _patched_factory
+
     # WandB
     wandb_logging.initialize_wandb_logging(
         logging_cfg=cfg.logging_config,
@@ -603,7 +806,9 @@ def main(cfg: DictConfig) -> None:
         existing_run_state=existing_run_state,
     )
 
-    if use_rnn_decoder:
+    if use_distillation_head:
+        arch_name = "moseq_rnn_distill"
+    elif use_rnn_decoder:
         arch_name = (
             "moseq_rnn_encoder_decoder"
             if use_continuous_encoder
@@ -678,6 +883,11 @@ def main(cfg: DictConfig) -> None:
             "z_e_at_action_head": z_e_at_action_head,
             "reinit_hidden_on_code": reinit_hidden_on_code,
             "learned_hidden_init": learned_hidden_init,
+            "use_distillation_head": use_distillation_head,
+            "distill_kl_weight": distill_kl_weight if use_distillation_head else None,
+            "distillation_encoder_checkpoint": (
+                str(distillation_encoder_checkpoint) if distillation_encoder_checkpoint else None
+            ),
         }
     )
 
@@ -735,6 +945,7 @@ def main(cfg: DictConfig) -> None:
         rnn_hidden_sizes=rnn_hidden_sizes,
         z_e_scale_fn=z_e_scale_fn,
         kl_weight_fn=kl_weight_fn,
+        distill_kl_weight=distill_kl_weight if use_distillation_head else 0.0,
     )
 
     # Rollout env for logging
@@ -760,8 +971,10 @@ def main(cfg: DictConfig) -> None:
         ppo_network=None,
     ):
         # Create decoder-only inference fn (z_e=0) from ppo_network
+        # Skip in distillation mode (z_e never enters action path, so z_e=0 is
+        # identical to z_e=1)
         jit_decoder_only_fn = None
-        if use_continuous_encoder and ppo_network is not None:
+        if use_continuous_encoder and not use_distillation_head and ppo_network is not None:
             if "fn" not in _decoder_only_fn_cache:
                 from moseq_ppo_networks import (
                     make_moseq_recurrent_logging_inference_fn,
@@ -807,6 +1020,11 @@ def main(cfg: DictConfig) -> None:
                 grouped[f"codes/{k}"] = v
             elif k in ("hidden_state_norm",):
                 grouped[f"rnn/{k}"] = v
+            elif k in (
+                "distill_kl_loss", "scaled_distill_kl_loss",
+                "distill_mean_norm", "distill_logvar_mean",
+            ):
+                grouped[f"distillation/{k}"] = v
             # Keep originals for backward compat with shared code
             grouped[k] = v
         wandb_logging.wandb_progress(num_steps, grouped)

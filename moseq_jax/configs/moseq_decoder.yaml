@@ -141,10 +141,9 @@ network_config:
   use_distillation_head: true
   distillation_head_layer_sizes: [512, 512, 256, 256]
   distill_kl_weight: 1.0                    # weight for KL(encoder_sg || distill_head)
-  # Pre-trained encoder checkpoint — REQUIRED when use_distillation_head=true.
-  # Charles's trained intention network:
-  #   arch=intention, encoder_layers=[2048,1024,1024], intention_size=16
-  distillation_encoder_checkpoint: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260216_184057_890471/
+  # Pre-trained encoder checkpoint — same-pipeline MoSeq checkpoint with
+  # trained continuous encoder [512, 256, 256], latent_dim=4.
+  distillation_encoder_checkpoint: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260326_014031_608396_moseq_encoder/
   distill_logvar_min: null
   distill_logvar_max: null
 
@@ -179,7 +178,7 @@ train_setup:
   reset_every: 20_000_000
 
   train_config:
-    num_envs: 1024
+    num_envs: 2048
     num_timesteps: 5_000_000_000
     batch_size: 512
     num_minibatches: 16

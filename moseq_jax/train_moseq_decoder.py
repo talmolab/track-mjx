@@ -536,9 +536,9 @@ def main(cfg: DictConfig) -> None:
                 "(distill head reads from RNN hidden state)"
             )
         if distillation_encoder_checkpoint is None:
-            raise ValueError(
-                "use_distillation_head=True requires distillation_encoder_checkpoint "
-                "to be set (pre-trained encoder checkpoint path)"
+            logging.warning(
+                "use_distillation_head=True without encoder checkpoint — "
+                "using randomly initialized encoder (for testing only)"
             )
         # Force continuous encoder ON (needed to produce distillation targets)
         use_continuous_encoder = True
@@ -547,32 +547,6 @@ def main(cfg: DictConfig) -> None:
         z_e_dropout_rate = 0.0
         # Disable z_e action-path KL schedule (z_e is detached from actions)
         kl_weight = 0.0
-
-        # Read encoder architecture from checkpoint metadata
-        ckpt_base = Path(distillation_encoder_checkpoint)
-        ckpt_config_path = None
-        # Find the config metadata file in the checkpoint
-        for p in sorted(ckpt_base.rglob("config/metadata")):
-            ckpt_config_path = p
-            break
-        if ckpt_config_path is not None:
-            ckpt_cfg = json.loads(ckpt_config_path.read_text())
-            ckpt_net = ckpt_cfg.get("network_config", {})
-            enc_layers_from_ckpt = ckpt_net.get("encoder_layer_sizes")
-            latent_dim_from_ckpt = ckpt_net.get("intention_size")
-            if enc_layers_from_ckpt is not None:
-                encoder_layer_sizes = tuple(enc_layers_from_ckpt)
-            if latent_dim_from_ckpt is not None:
-                continuous_latent_dim = int(latent_dim_from_ckpt)
-            logging.info(
-                f"Distillation mode: overriding encoder arch from checkpoint — "
-                f"encoder_layers={encoder_layer_sizes}, latent_dim={continuous_latent_dim}"
-            )
-        else:
-            logging.warning(
-                "Could not read checkpoint config metadata — using config-specified "
-                "encoder architecture. Ensure it matches the checkpoint."
-            )
 
         logging.info(
             f"Distillation mode enabled: z_e detached from action path, "
@@ -673,130 +647,45 @@ def main(cfg: DictConfig) -> None:
             z_e_dropout_rate=z_e_dropout_rate,
         )
 
-    # Encoder loading: patch the network factory's init to inject pre-trained
-    # encoder weights from Charles's checkpoint.  The encoder params are
-    # identified by name prefix ("enc_", "continuous_mean", "continuous_logvar").
+    # Encoder loading: inject pre-trained encoder params from a same-pipeline
+    # MoSeq checkpoint.  Uses the freeze_decoder pattern (ppo.py:744-745):
+    # direct dict key assignment from a compatible checkpoint.
+    _post_init_params_fn = None
     if use_distillation_head and distillation_encoder_checkpoint is not None:
-        _encoder_ckpt_path = Path(distillation_encoder_checkpoint)
+        _encoder_ckpt_path = str(Path(distillation_encoder_checkpoint))
 
-        def _load_and_inject_encoder(original_init):
-            """Wrap the policy network init to inject pre-trained encoder params."""
+        # Encoder param keys to copy from the loaded checkpoint
+        _ENCODER_KEYS = [
+            "enc_0", "enc_1", "enc_2",
+            "enc_ln_0", "enc_ln_1", "enc_ln_2",
+            "continuous_mean", "continuous_logvar",
+        ]
 
-            def patched_init(key):
-                params = original_init(key)
-
-                # Load checkpoint policy params via raw Orbax restore
-                # (avoids normalizer tree mismatch with load_policy)
-                ckpt_dir = str(_encoder_ckpt_path)
-                mgr_options = ocp.CheckpointManagerOptions(
-                    create=False, step_prefix="PPONetwork"
-                )
-                with ocp.CheckpointManager(ckpt_dir, options=mgr_options) as ckpt_mgr_enc:
-                    step = ckpt_mgr_enc.latest_step()
-                    restored = ckpt_mgr_enc.restore(
-                        step,
-                        args=ocp.args.Composite(
-                            policy=ocp.args.StandardRestore(),
-                        ),
-                    )
-                loaded_policy = restored["policy"]
-                # loaded_policy = (normalizer_params, policy_params)
-                _, loaded_policy_params = loaded_policy
-
-                # Build name-based mapping from checkpoint encoder params
-                # to our model's encoder params.
-                # Checkpoint: encoder/hidden_N, encoder/LayerNorm_N,
-                #             encoder/fc2_mean, encoder/fc2_logvar
-                # Our model:  enc_N, enc_ln_N, continuous_mean, continuous_logvar
-                loaded_flat = jax.tree_util.tree_leaves_with_path(loaded_policy_params)
-                loaded_by_path = {}
-                for path, leaf in loaded_flat:
-                    path_str = "/".join(str(p) for p in path)
-                    loaded_by_path[path_str] = leaf
-
-                # Build lookup from checkpoint encoder params by suffix
-                # (e.g. "encoder/hidden_0/kernel" -> leaf)
-                def _clean_path(path_keys):
-                    """Convert JAX path keys to clean '/'-separated string."""
-                    parts = []
-                    for p in path_keys:
-                        s = str(p)
-                        # Strip brackets/quotes: "['params']" -> "params"
-                        s = s.strip("[]'\"")
-                        parts.append(s)
-                    return "/".join(parts)
-
-                ckpt_encoder = {}
-                for full_path, leaf in loaded_flat:
-                    path_str = _clean_path(full_path)
-                    if "encoder/" in path_str:
-                        suffix = path_str[path_str.index("encoder/"):]
-                        ckpt_encoder[suffix] = leaf
-
-                # Name mapping: our model -> checkpoint
-                _NAME_MAP = {
-                    **{f"enc_{i}": f"encoder/hidden_{i}" for i in range(10)},
-                    **{f"enc_ln_{i}": f"encoder/LayerNorm_{i}" for i in range(10)},
-                    "continuous_mean": "encoder/fc2_mean",
-                    "continuous_logvar": "encoder/fc2_logvar",
-                }
-
-                our_flat = jax.tree_util.tree_leaves_with_path(params)
-                new_leaves = []
-                replaced_count = 0
-                for path, leaf in our_flat:
-                    clean_parts = [s.strip("[]'\"") for s in (str(p) for p in path)]
-                    # Check if any part matches our encoder param names
-                    matched = False
-                    for our_name, ckpt_prefix in _NAME_MAP.items():
-                        if our_name in clean_parts:
-                            # Build ckpt key: ckpt_prefix + leaf type (kernel/bias/scale)
-                            leaf_type = clean_parts[-1]  # "kernel", "bias", or "scale"
-                            ckpt_key = f"{ckpt_prefix}/{leaf_type}"
-                            if ckpt_key in ckpt_encoder:
-                                loaded_leaf = ckpt_encoder[ckpt_key]
-                                if loaded_leaf.shape == leaf.shape:
-                                    new_leaves.append(loaded_leaf)
-                                    replaced_count += 1
-                                    matched = True
-                                else:
-                                    logging.warning(
-                                        f"Shape mismatch for {'/'.join(clean_parts)}: "
-                                        f"ours={leaf.shape}, ckpt={loaded_leaf.shape}"
-                                    )
-                            else:
-                                logging.warning(
-                                    f"Checkpoint key {ckpt_key} not found "
-                                    f"for {'/'.join(parts)}"
-                                )
-                            break
-                    if not matched:
-                        new_leaves.append(leaf)
-
-                params = jax.tree_util.tree_unflatten(
-                    jax.tree_util.tree_structure(params), new_leaves
-                )
-                logging.info(
-                    f"Injected {replaced_count} encoder params from "
-                    f"{distillation_encoder_checkpoint}"
-                )
-                return params
-
-            return patched_init
-
-        # Patch the network factory to wrap init
-        _original_factory = network_factory
-
-        def _patched_factory(*args, **kwargs):
-            networks = _original_factory(*args, **kwargs)
-            original_init = networks.policy_network.init
-            networks.policy_network = dataclasses.replace(
-                networks.policy_network,
-                init=_load_and_inject_encoder(original_init),
+        def _post_init_params_fn(training_state):
+            """Inject encoder params from a same-pipeline MoSeq checkpoint."""
+            mgr_options = ocp.CheckpointManagerOptions(
+                create=False, step_prefix="MoSeqPPONetwork"
             )
-            return networks
+            with ocp.CheckpointManager(_encoder_ckpt_path, options=mgr_options) as mgr:
+                restored = mgr.restore(
+                    mgr.latest_step(),
+                    args=ocp.args.Composite(policy=ocp.args.StandardRestore()),
+                )
+            _, loaded_policy_params = restored["policy"]
 
-        network_factory = _patched_factory
+            # Direct dict assignment — same pattern as freeze_decoder
+            params_dict = training_state.params.policy["params"]
+            loaded_dict = loaded_policy_params["params"]
+            replaced_count = 0
+            for key in _ENCODER_KEYS:
+                if key in loaded_dict and key in params_dict:
+                    params_dict[key] = loaded_dict[key]
+                    replaced_count += 1
+            logging.info(
+                f"Injected {replaced_count} encoder param groups from "
+                f"{distillation_encoder_checkpoint}"
+            )
+            return training_state
 
     # WandB
     wandb_logging.initialize_wandb_logging(
@@ -946,6 +835,7 @@ def main(cfg: DictConfig) -> None:
         z_e_scale_fn=z_e_scale_fn,
         kl_weight_fn=kl_weight_fn,
         distill_kl_weight=distill_kl_weight if use_distillation_head else 0.0,
+        post_init_params_fn=_post_init_params_fn,
     )
 
     # Rollout env for logging

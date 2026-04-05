@@ -229,6 +229,7 @@ def train(
     generate_unroll_fn: Callable | None = None,
     init_carry_state_fn: Callable[[int], Any] | None = None,
     make_rollout_policy_fn: Callable | None = None,
+    post_init_params_fn: Callable | None = None,
 ) -> tuple[Callable, InferenceParams, Metrics]:
     """Train a PPO agent on the given environment.
 
@@ -787,6 +788,14 @@ def train(
                     proprioception=frozen_proprioceptive_normalizer_params
                 )
             )
+
+    # Post-init hook (e.g., inject pre-trained encoder params for distillation)
+    if post_init_params_fn is not None:
+        training_state = post_init_params_fn(training_state)
+        # Reinitialize optimizer state to match potentially modified params
+        training_state = training_state.replace(
+            optimizer_state=optimizer.init(training_state.params)
+        )
 
     # gradient update function with the new optimizer and loss function
     gradient_update_fn = gradients.gradient_update_fn(

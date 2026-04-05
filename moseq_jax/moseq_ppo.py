@@ -148,6 +148,7 @@ def train(
     z_e_scale_fn: Callable[[int], float] | None = None,
     kl_weight_fn: Callable[[int], float] | None = None,
     distill_kl_weight: float = 0.0,
+    post_init_params_fn: Callable | None = None,
 ):
     """Train a MoSeq decoder PPO agent.
 
@@ -332,6 +333,7 @@ def train(
             generate_unroll_fn=_generate_unroll_fn,
             init_carry_state_fn=_init_carry_state_fn,
             make_rollout_policy_fn=_make_rollout_policy_fn,
+            post_init_params_fn=post_init_params_fn,
         )
     finally:
         original_losses.compute_ppo_loss = original_compute_ppo_loss

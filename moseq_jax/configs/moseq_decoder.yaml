@@ -191,7 +191,7 @@ train_setup:
     entropy_cost: 1e-2
     reward_scaling: 1
     normalize_observations: true
-    unroll_length: 128
+    unroll_length: 40
     seed: 0
     get_activation: false
     deterministic_eval: true

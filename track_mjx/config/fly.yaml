@@ -185,6 +185,9 @@ train_setup:
     num_minibatches: 16
     num_updates_per_batch: 4
     learning_rate: 1e-4
+    lr_schedule: constant             # "constant", "linear", or "cosine"
+    lr_end_value: 0.0                 # final LR (only used when lr_schedule != constant)
+    lr_warmup_frac: 0.0               # fraction of total optimizer steps for warmup
     grad_clip_threshold: 20.0
     clipping_epsilon: 0.2
     discounting: 0.95

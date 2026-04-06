@@ -186,6 +186,9 @@ train_setup:
     num_minibatches: 16               # Minibatches per epoch
     num_updates_per_batch: 4          # Epochs per PPO update
     learning_rate: 1e-4               # Adam learning rate
+    lr_schedule: constant             # "constant", "linear", or "cosine"
+    lr_end_value: 0.0                 # final LR (only used when lr_schedule != constant)
+    lr_warmup_frac: 0.0               # fraction of total optimizer steps for warmup
     clipping_epsilon: 0.2             # PPO clip range
     discounting: 0.95                 # Discount factor (gamma)
     action_repeat: 1                  # Actions repeated per step

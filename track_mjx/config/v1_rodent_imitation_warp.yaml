@@ -151,6 +151,7 @@ network_config:
   decoder_layer_sizes: [1024,1024,512]  # Policy decoder
   critic_layer_sizes: [1024,1024,1024,512]   # Value function
   intention_size: 16                   # Latent intention vector dimension
+  activation: silu                     # MLP activation: silu, relu, tanh, gelu, elu
   kl_schedule: true                    # Anneal KL divergence weight over training
   latent_kl_weight: 1e-1               # Weight for KL divergence to standard Gaussian prior
   latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss

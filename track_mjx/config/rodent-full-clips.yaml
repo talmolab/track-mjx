@@ -158,6 +158,7 @@ network_config:
   encoder_noise_std: 0.0                # Encoder input noise std (additive, 0.0 = disabled)
   proprioception_noise_std: 0.0       # Decoder state noise std
   proprioception_noise_mode: additive  # "additive" (uniform) or "multiplicative"
+  activation: silu                     # MLP activation: silu, relu, tanh, gelu, elu
   kl_schedule: true                    # Anneal KL divergence weight over training
   latent_kl_weight: 1e-1               # Weight for KL divergence to standard Gaussian prior
   latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss

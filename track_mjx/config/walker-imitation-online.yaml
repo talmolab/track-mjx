@@ -39,6 +39,7 @@ network_config:
   critic_layer_sizes: [512, 256, 256]
   latent_kl_weight: 0.1
   latent_ar1_weight: 0.0
+  activation: silu                     # MLP activation: silu, relu, tanh, gelu, elu
   kl_schedule: true
 
 train_setup:

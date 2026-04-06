@@ -104,6 +104,7 @@ network_config:
   intention_size: 16
   proprioception_noise_std: 0.3
   proprioception_noise_mode: additive
+  activation: silu                     # MLP activation: silu, relu, tanh, gelu, elu
   kl_schedule: true
   latent_kl_weight: 1e-1
   latent_ar1_weight: 0.0

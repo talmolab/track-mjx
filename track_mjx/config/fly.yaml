@@ -151,6 +151,7 @@ network_config:
   decoder_layer_sizes: [512, 512, 512, 256]
   critic_layer_sizes: [512,512,512,512]
   intention_size: 60
+  activation: silu                     # MLP activation: silu, relu, tanh, gelu, elu
   kl_schedule: true
   latent_kl_weight: 3e-2
   latent_ar1_weight: 0

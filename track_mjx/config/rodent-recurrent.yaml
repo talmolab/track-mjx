@@ -111,6 +111,8 @@ network_config:
   # Value network (MLP)
   critic_layer_sizes: [2048, 1024, 1024, 1024, 1024, 512]
 
+  activation: silu                        # MLP activation: silu, relu, tanh, gelu, elu
+
   # Variational layer regularization losses
   kl_schedule: true
   latent_kl_weight: 1e-1

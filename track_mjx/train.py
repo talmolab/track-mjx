@@ -21,6 +21,7 @@ from vnl_playground import registry
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.ff_ppo import ppo as ff_ppo, ppo_networks as ff_networks
+from track_mjx.agent.ff_ppo.intention_network import get_activation_fn
 from track_mjx.agent.recurrent_ppo import (
     ppo as recurrent_ppo,
     networks as recurrent_networks,
@@ -128,6 +129,12 @@ def main(cfg: DictConfig) -> None:
             f"Valid options are: {sorted(valid_arch_names)}"
         )
 
+    # Resolve activation function (defaults to silu for backward compatibility)
+    activation_fn = get_activation_fn(
+        cfg.network_config.get("activation", "silu")
+    )
+    logging.info(f"Using activation function: {activation_fn.__name__}")
+
     if arch_name == "recurrent_intention":
         # Validate required config keys for recurrent architecture
         required_keys = ["rnn_type", "rnn_hidden_sizes"]
@@ -146,6 +153,7 @@ def main(cfg: DictConfig) -> None:
             rnn_type=cfg.network_config.rnn_type,
             rnn_hidden_sizes=tuple(cfg.network_config.rnn_hidden_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            activation=activation_fn,
         )
         ppo_module = recurrent_ppo
     else:
@@ -165,6 +173,7 @@ def main(cfg: DictConfig) -> None:
                 "proprioception_noise_mode", "multiplicative"
             ),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            activation=activation_fn,
         )
         ppo_module = ff_ppo
 

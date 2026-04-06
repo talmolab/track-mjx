@@ -175,6 +175,9 @@ def train(
     max_devices_per_host: int | None = None,
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
+    lr_schedule: str = "constant",
+    lr_end_value: float = 0.0,
+    lr_warmup_frac: float = 0.0,
     entropy_cost: float = 1e-4,
     latent_kl_weight: float = 1e-3,
     latent_ar1_weight: float = 1e-3,
@@ -586,9 +589,33 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
+    # LR schedule: compute total optimizer steps and create schedule
+    if lr_schedule != "constant":
+        total_optimizer_steps = int(
+            num_evals_after_init
+            * num_training_steps_per_epoch
+            * num_updates_per_batch
+            * num_minibatches
+        )
+        warmup_steps = int(total_optimizer_steps * lr_warmup_frac)
+        lr_schedule_fn = losses.create_lr_schedule(
+            init_value=learning_rate,
+            end_value=lr_end_value,
+            total_steps=total_optimizer_steps,
+            warmup_steps=warmup_steps,
+            schedule=lr_schedule,
+        )
+        logging.info(
+            f"Using LR schedule: {lr_schedule}, init={learning_rate:.1e}, "
+            f"end={lr_end_value:.1e}, total_steps={total_optimizer_steps}, "
+            f"warmup_steps={warmup_steps}"
+        )
+    else:
+        lr_schedule_fn = learning_rate  # static float
+
     base_optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
-        optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
+        optax.adamw(learning_rate=lr_schedule_fn, weight_decay=0.0, eps=1e-5),
     )
     optimizer = base_optimizer
 
@@ -632,10 +659,21 @@ def train(
 
     # Apply multi-rate optimizer for vision CNN if requested
     if vision_lr_multiplier != 1.0:
+        if lr_schedule != "constant":
+            vision_lr_schedule_fn = losses.create_lr_schedule(
+                init_value=learning_rate * vision_lr_multiplier,
+                end_value=lr_end_value * vision_lr_multiplier,
+                total_steps=total_optimizer_steps,
+                warmup_steps=warmup_steps,
+                schedule=lr_schedule,
+            )
+        else:
+            vision_lr_schedule_fn = learning_rate * vision_lr_multiplier
+
         vision_optimizer = optax.chain(
             optax.clip_by_global_norm(grad_clip_threshold),
             optax.adamw(
-                learning_rate=learning_rate * vision_lr_multiplier,
+                learning_rate=vision_lr_schedule_fn,
                 weight_decay=0.0,
                 eps=1e-5,
             ),

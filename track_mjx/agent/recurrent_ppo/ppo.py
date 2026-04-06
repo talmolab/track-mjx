@@ -503,33 +503,28 @@ def train(
     # Number of environments per device
     envs_per_device = num_envs // device_count
 
-    # LR schedule: compute total optimizer steps and create schedule
+    # Eval-iteration-based LR schedule (same pattern as KL weight annealing).
+    # Applied as a scaling factor on parameter updates, so the optimizer state
+    # structure stays constant — safe for checkpoint resume.
+    lr_schedule_fn = None
     if lr_schedule != "constant":
-        total_optimizer_steps = int(
-            num_evals_after_init
-            * num_training_steps_per_epoch
-            * num_updates_per_batch
-            * num_minibatches
-        )
-        warmup_steps = int(total_optimizer_steps * lr_warmup_frac)
+        lr_warmup_evals = int(num_evals_after_init * lr_warmup_frac)
         lr_schedule_fn = create_lr_schedule(
             init_value=learning_rate,
             end_value=lr_end_value,
-            total_steps=total_optimizer_steps,
-            warmup_steps=warmup_steps,
+            total_steps=num_evals_after_init,
+            warmup_steps=lr_warmup_evals,
             schedule=lr_schedule,
         )
         logging.info(
             f"Using LR schedule: {lr_schedule}, init={learning_rate:.1e}, "
-            f"end={lr_end_value:.1e}, total_steps={total_optimizer_steps}, "
-            f"warmup_steps={warmup_steps}"
+            f"end={lr_end_value:.1e}, over {num_evals_after_init} eval iters, "
+            f"warmup_evals={lr_warmup_evals}"
         )
-    else:
-        lr_schedule_fn = learning_rate
 
     base_optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
-        optax.adamw(learning_rate=lr_schedule_fn, weight_decay=0.0, eps=1e-5),
+        optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
     optimizer = base_optimizer
 
@@ -571,21 +566,10 @@ def train(
         value=recurrent_ppo_network.value_network.init(key_value),
     )
     if vision_lr_multiplier != 1.0:
-        if lr_schedule != "constant":
-            vision_lr_schedule_fn = create_lr_schedule(
-                init_value=learning_rate * vision_lr_multiplier,
-                end_value=lr_end_value * vision_lr_multiplier,
-                total_steps=total_optimizer_steps,
-                warmup_steps=warmup_steps,
-                schedule=lr_schedule,
-            )
-        else:
-            vision_lr_schedule_fn = learning_rate * vision_lr_multiplier
-
         vision_optimizer = optax.chain(
             optax.clip_by_global_norm(grad_clip_threshold),
             optax.adamw(
-                learning_rate=vision_lr_schedule_fn,
+                learning_rate=learning_rate * vision_lr_multiplier,
                 weight_decay=0.0, eps=1e-5,
             ),
         )
@@ -632,7 +616,7 @@ def train(
     ):
         optimizer_state, params, key, it = carry
         key, key_loss = jax.random.split(key)
-        (_, metrics), params, optimizer_state = gradient_update_fn(
+        (_, metrics), new_params, optimizer_state = gradient_update_fn(
             params,
             normalizer_params,
             data,
@@ -641,7 +625,18 @@ def train(
             optimizer_state=optimizer_state,
             params=params,
         )
-        return (optimizer_state, params, key, it), metrics
+
+        # Eval-iteration LR schedule: rescale the parameter update.
+        # gradient_update_fn already applied updates at base_lr; adjust to
+        # the scheduled LR by rescaling the delta.
+        if lr_schedule_fn is not None:
+            lr_scale = lr_schedule_fn(it) / learning_rate
+            new_params = jax.tree_util.tree_map(
+                lambda old, new: old + (new - old) * lr_scale,
+                params, new_params,
+            )
+
+        return (optimizer_state, new_params, key, it), metrics
 
     def sgd_step(
         carry,

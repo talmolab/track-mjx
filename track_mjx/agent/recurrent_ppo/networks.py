@@ -235,10 +235,11 @@ class RecurrentIntentionNetwork(nn.Module):
     rnn_hidden_sizes: Sequence[int] = (256,)
     cell_type: RNNCellType = "gru"
     proprioception_noise_std: float = 0.0
+    activation: ActivationFn = nn.silu
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
-        self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
+        self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents, activation=self.activation)
         self.decoder = RecurrentDecoder(
             output_size=self.output_size,
             rnn_hidden_sizes=self.rnn_hidden_sizes,

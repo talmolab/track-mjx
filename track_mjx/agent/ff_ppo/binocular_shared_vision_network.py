@@ -75,6 +75,7 @@ class BinocularSharedVisionPolicyValueModule(nn.Module):
     value_layers: Sequence[int] = (512, 512)
     shared_weights: bool = True
     mono_channels: int = 1
+    activation: networks.ActivationFn = nn.silu
 
     def setup(self):
         # ── Shared Binocular CNN ─────────────────────────────────────
@@ -94,11 +95,12 @@ class BinocularSharedVisionPolicyValueModule(nn.Module):
         self.fusion_dense = fusion_dense
         self.fusion_norms = fusion_norms
         self.fusion_out = nn.Dense(self.latent_size)
-        self.decoder = Decoder(layer_sizes=self.decoder_layers)
+        self.decoder = Decoder(layer_sizes=self.decoder_layers, activation=self.activation)
 
         # ── Value head: MLP ─────────────────────────────────────────
         self.value_head = Decoder(
             layer_sizes=list(self.value_layers) + [1],
+            activation=self.activation,
         )
 
     # ------------------------------------------------------------------ #
@@ -127,7 +129,7 @@ class BinocularSharedVisionPolicyValueModule(nn.Module):
         combined = jnp.concatenate([vision_features, task_obs], axis=-1)
         z = combined
         for dense, norm in zip(self.fusion_dense, self.fusion_norms):
-            z = nn.silu(dense(z))
+            z = self.activation(dense(z))
             z = norm(z)
         z = self.fusion_out(z)
 
@@ -165,7 +167,7 @@ class BinocularSharedVisionPolicyValueModule(nn.Module):
         combined = jnp.concatenate([vision_features, task_obs], axis=-1)
         z = combined
         for dense, norm in zip(self.fusion_dense, self.fusion_norms):
-            z = nn.silu(dense(z))
+            z = self.activation(dense(z))
             z = norm(z)
         z = self.fusion_out(z)
 

@@ -235,11 +235,12 @@ class IntentionNetwork(nn.Module):
     encoder_noise_std: float = 0.0
     proprioception_noise_std: float = 0.0
     proprioception_noise_mode: str = "multiplicative"
+    activation: networks.ActivationFn = nn.silu
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
-        self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
-        self.decoder = Decoder(layer_sizes=self.decoder_layers)
+        self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents, activation=self.activation)
+        self.decoder = Decoder(layer_sizes=self.decoder_layers, activation=self.activation)
 
     def __call__(
         self,
@@ -493,6 +494,7 @@ class VisionIntentionNetwork(nn.Module):
     encoder_noise_std: float = 0.0
     proprioception_noise_std: float = 0.0
     proprioception_noise_mode: str = "multiplicative"
+    activation: networks.ActivationFn = nn.silu
 
     def setup(self):
         """Initialize vision encoder, encoder, and decoder submodules."""
@@ -502,8 +504,8 @@ class VisionIntentionNetwork(nn.Module):
             feature_size=self.vision_feature_size,
             channels=self.vision_channels,
         )
-        self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents)
-        self.decoder = Decoder(layer_sizes=self.decoder_layers)
+        self.encoder = Encoder(layer_sizes=self.encoder_layers, latents=self.latents, activation=self.activation)
+        self.decoder = Decoder(layer_sizes=self.decoder_layers, activation=self.activation)
 
     def __call__(
         self,
@@ -619,6 +621,7 @@ class VisionOnlyNetwork(nn.Module):
     decoder_layers: Sequence[int]
     latent_size: int = 8
     vision_channels: Sequence[int] = (2, 4, 8, 16)
+    activation: networks.ActivationFn = nn.silu
 
     def setup(self):
         """Initialize vision encoder and decoder submodules."""
@@ -628,7 +631,7 @@ class VisionOnlyNetwork(nn.Module):
             feature_size=self.latent_size,
             channels=self.vision_channels,
         )
-        self.decoder = Decoder(layer_sizes=self.decoder_layers)
+        self.decoder = Decoder(layer_sizes=self.decoder_layers, activation=self.activation)
 
     def __call__(
         self,
@@ -842,6 +845,7 @@ class VisionTaskObsNetwork(nn.Module):
     vision_feature_size: int = 8
     vision_channels: Sequence[int] = (2, 4, 8, 16)
     fusion_layers: Sequence[int] = (256,)
+    activation: networks.ActivationFn = nn.silu
 
     def setup(self):
         """Initialize vision encoder, fusion MLP, and decoder submodules."""
@@ -860,7 +864,7 @@ class VisionTaskObsNetwork(nn.Module):
         self.fusion_dense = fusion_dense
         self.fusion_norms = fusion_norms
         self.fusion_out = nn.Dense(self.latent_size)
-        self.decoder = Decoder(layer_sizes=self.decoder_layers)
+        self.decoder = Decoder(layer_sizes=self.decoder_layers, activation=self.activation)
 
     def __call__(
         self,
@@ -880,7 +884,7 @@ class VisionTaskObsNetwork(nn.Module):
         combined = jnp.concatenate([vision_features, task_obs], axis=-1)
         z = combined
         for dense, norm in zip(self.fusion_dense, self.fusion_norms):
-            z = nn.silu(dense(z))
+            z = self.activation(dense(z))
             z = norm(z)
         z = self.fusion_out(z)
 

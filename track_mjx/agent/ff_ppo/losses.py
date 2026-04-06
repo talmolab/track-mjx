@@ -417,6 +417,80 @@ def create_ramp_schedule(
     return schedule_fn
 
 
+def create_lr_schedule(
+    init_value: float = 1e-4,
+    end_value: float = 0.0,
+    total_steps: int = 1000,
+    warmup_steps: int = 0,
+    schedule: str = "constant",
+) -> Callable[[int], float]:
+    """Create a learning rate schedule compatible with optax optimizers.
+
+    Supports three schedule types:
+    - "constant": Returns init_value at every step (no annealing).
+    - "linear": Linear decay from init_value to end_value over total_steps.
+    - "cosine": Cosine decay from init_value to end_value over total_steps.
+
+    When warmup_steps > 0, the schedule linearly ramps from end_value to
+    init_value over the warmup period, then applies the decay schedule
+    for the remaining (total_steps - warmup_steps) steps.
+
+    Compatible with optax's ScalarOrSchedule — pass directly to
+    ``optax.adamw(learning_rate=schedule)``.
+
+    Args:
+        init_value: Peak learning rate (reached after warmup, or at step 0
+            if no warmup). Defaults to 1e-4.
+        end_value: Final learning rate at end of schedule. Defaults to 0.0.
+        total_steps: Total number of optimizer steps (including warmup).
+        warmup_steps: Steps for linear warmup from end_value to init_value.
+            Defaults to 0 (no warmup).
+        schedule: Schedule type — "constant", "linear", or "cosine".
+
+    Returns:
+        A function mapping optimizer step count -> learning rate.
+
+    Raises:
+        ValueError: If schedule is not "constant", "linear", or "cosine".
+    """
+    if schedule not in ("constant", "linear", "cosine"):
+        raise ValueError(
+            f"schedule must be 'constant', 'linear', or 'cosine', not {schedule!r}"
+        )
+
+    def schedule_fn(count: int) -> float:
+        count = jnp.asarray(count, dtype=jnp.float32)
+
+        if schedule == "constant":
+            return jnp.asarray(init_value, dtype=jnp.float32)
+
+        # Warmup: linear ramp from end_value to init_value
+        if warmup_steps > 0:
+            warmup_progress = jnp.clip(count / warmup_steps, 0.0, 1.0)
+            warmup_lr = end_value + warmup_progress * (init_value - end_value)
+            decay_count = jnp.clip(count - warmup_steps, 0.0, None)
+            decay_total = max(total_steps - warmup_steps, 1)
+        else:
+            warmup_lr = init_value
+            decay_count = count
+            decay_total = max(total_steps, 1)
+
+        decay_progress = jnp.clip(decay_count / decay_total, 0.0, 1.0)
+
+        if schedule == "linear":
+            decay_lr = init_value + decay_progress * (end_value - init_value)
+        else:  # cosine
+            decay_lr = end_value + 0.5 * (init_value - end_value) * (
+                1 + jnp.cos(jnp.pi * decay_progress)
+            )
+
+        if warmup_steps > 0:
+            return jnp.where(count < warmup_steps, warmup_lr, decay_lr)
+        return decay_lr
+
+    return schedule_fn
+
+
 # ====================================================================== #
 #  Shared-CNN loss function                                                #
 # ====================================================================== #

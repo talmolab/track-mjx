@@ -597,6 +597,7 @@ def make_recurrent_intention_ppo_networks(
     rnn_hidden_sizes: Sequence[int] = (256,),
     proprioception_noise_std: float = 0.0,
     value_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    activation: networks.ActivationFn = nn.silu,
 ) -> RecurrentPPONetworks:
     """Create recurrent intention-based PPO networks.
 
@@ -632,6 +633,7 @@ def make_recurrent_intention_ppo_networks(
         rnn_hidden_sizes=rnn_hidden_sizes,
         cell_type=rnn_type,
         proprioception_noise_std=proprioception_noise_std,
+        activation=activation,
     )
 
     def policy_apply(

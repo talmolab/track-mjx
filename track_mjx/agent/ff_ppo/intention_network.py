@@ -344,6 +344,7 @@ def make_intention_policy(
     encoder_noise_std: float = 0.0,
     proprioception_noise_std: float = 0.0,
     proprioception_noise_mode: str = "multiplicative",
+    activation: networks.ActivationFn = nn.silu,
 ) -> networks.FeedForwardNetwork:
     """Create an intention-based policy network.
 
@@ -378,6 +379,7 @@ def make_intention_policy(
         encoder_noise_std=encoder_noise_std,
         proprioception_noise_std=proprioception_noise_std,
         proprioception_noise_mode=proprioception_noise_mode,
+        activation=activation,
     )
 
     def apply(
@@ -678,6 +680,7 @@ def make_vision_only_policy(
     vision_shape: tuple[int, int, int],
     decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
     vision_channels: Sequence[int] = (2, 4, 8, 16),
+    activation: networks.ActivationFn = nn.silu,
 ) -> networks.FeedForwardNetwork:
     """Create a vision-only policy network (CNN encoder + MLP decoder).
 
@@ -700,6 +703,7 @@ def make_vision_only_policy(
         decoder_layers=list(decoder_hidden_layer_sizes) + [action_param_size],
         latent_size=latent_size,
         vision_channels=vision_channels,
+        activation=activation,
     )
 
     def apply(
@@ -745,6 +749,7 @@ def make_vision_intention_policy(
     encoder_noise_std: float = 0.0,
     proprioception_noise_std: float = 0.0,
     proprioception_noise_mode: str = "multiplicative",
+    activation: networks.ActivationFn = nn.silu,
 ) -> networks.FeedForwardNetwork:
     """Create a vision-enabled intention-based policy network.
 
@@ -785,6 +790,7 @@ def make_vision_intention_policy(
         encoder_noise_std=encoder_noise_std,
         proprioception_noise_std=proprioception_noise_std,
         proprioception_noise_mode=proprioception_noise_mode,
+        activation=activation,
     )
 
     def apply(
@@ -924,6 +930,7 @@ def make_vision_task_obs_policy(
     vision_feature_size: int = 8,
     vision_channels: Sequence[int] = (2, 4, 8, 16),
     fusion_hidden_layer_sizes: Sequence[int] = (256,),
+    activation: networks.ActivationFn = nn.silu,
 ) -> networks.FeedForwardNetwork:
     """Create a vision + task observation policy network.
 
@@ -955,6 +962,7 @@ def make_vision_task_obs_policy(
         vision_feature_size=vision_feature_size,
         vision_channels=vision_channels,
         fusion_layers=list(fusion_hidden_layer_sizes),
+        activation=activation,
     )
 
     def apply(

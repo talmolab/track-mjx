@@ -17,6 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import flax
+import flax.linen as nn
 import jax
 from brax.training import distribution, networks, types
 from brax.training.acme import running_statistics
@@ -280,6 +281,7 @@ def make_intention_ppo_networks(
     proprioception_noise_std: float = 0.0,
     proprioception_noise_mode: str = "multiplicative",
     value_hidden_layer_sizes: Sequence[int] = (1024,) * 2,
+    activation: networks.ActivationFn = nn.silu,
 ) -> PPOImitationNetworks:
     """Create intention-based PPO networks for imitation learning.
 
@@ -317,6 +319,7 @@ def make_intention_ppo_networks(
         encoder_noise_std=encoder_noise_std,
         proprioception_noise_std=proprioception_noise_std,
         proprioception_noise_mode=proprioception_noise_mode,
+        activation=activation,
     )
 
     value_network = make_dict_value_network(
@@ -339,6 +342,7 @@ def make_vision_ppo_networks(
     decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
     value_hidden_layer_sizes: Sequence[int] = (512, 512),
     vision_channels: Sequence[int] = (2, 4, 8, 16),
+    activation: networks.ActivationFn = nn.silu,
 ) -> PPOImitationNetworks:
     """Create vision-based PPO networks (CNN encoder + MLP decoder).
 
@@ -369,6 +373,7 @@ def make_vision_ppo_networks(
         vision_shape=vision_shape,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         vision_channels=vision_channels,
+        activation=activation,
     )
 
     value_network = make_dict_value_network(
@@ -459,6 +464,7 @@ def make_vision_highlvl_ppo_networks(
     decoder_hidden_layer_sizes: Sequence[int] = (512, 512),
     value_hidden_layer_sizes: Sequence[int] = (512, 512),
     vision_channels: Sequence[int] = (2, 4, 8, 16),
+    activation: networks.ActivationFn = nn.silu,
 ) -> PPOImitationNetworks:
     """Create vision-only PPO networks for high-level transfer training.
 
@@ -493,6 +499,7 @@ def make_vision_highlvl_ppo_networks(
         vision_shape=vision_shape,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         vision_channels=vision_channels,
+        activation=activation,
     )
 
     value_network = make_vision_value_network(
@@ -596,6 +603,7 @@ def make_vision_task_obs_highlvl_ppo_networks(
     value_hidden_layer_sizes: Sequence[int] = (512, 512),
     vision_channels: Sequence[int] = (2, 4, 8, 16),
     fusion_hidden_layer_sizes: Sequence[int] = (256,),
+    activation: networks.ActivationFn = nn.silu,
 ) -> PPOImitationNetworks:
     """Create vision + task_obs PPO networks for high-level transfer training.
 
@@ -634,6 +642,7 @@ def make_vision_task_obs_highlvl_ppo_networks(
         vision_feature_size=vision_feature_size,
         vision_channels=vision_channels,
         fusion_hidden_layer_sizes=fusion_hidden_layer_sizes,
+        activation=activation,
     )
 
     task_obs_size = obs_sizes.get("imitation_target", 0)
@@ -663,6 +672,7 @@ def make_shared_vision_task_obs_highlvl_ppo_networks(
     value_hidden_layer_sizes: Sequence[int] = (512, 512),
     vision_channels: Sequence[int] = (4, 8, 16, 32),
     fusion_hidden_layer_sizes: Sequence[int] = (256,),
+    activation: networks.ActivationFn = nn.silu,
 ) -> tuple["PPOImitationNetworks", "SharedVisionPolicyValueModule"]:
     """Create shared-CNN vision + task_obs PPO networks.
 
@@ -697,6 +707,7 @@ def make_shared_vision_task_obs_highlvl_ppo_networks(
         vision_feature_size=vision_feature_size,
         vision_channels=vision_channels,
         fusion_hidden_layer_sizes=fusion_hidden_layer_sizes,
+        activation=activation,
     )
 
     value_network = make_shared_vision_value_stub()
@@ -722,6 +733,7 @@ def make_binocular_shared_vision_task_obs_highlvl_ppo_networks(
     fusion_hidden_layer_sizes: Sequence[int] = (256,),
     mono_channels: int = 1,
     shared_weights: bool = True,
+    activation: networks.ActivationFn = nn.silu,
 ) -> tuple["PPOImitationNetworks", "BinocularSharedVisionPolicyValueModule"]:
     """Create shared binocular-CNN vision + task_obs PPO networks.
 
@@ -762,6 +774,7 @@ def make_binocular_shared_vision_task_obs_highlvl_ppo_networks(
         fusion_hidden_layer_sizes=fusion_hidden_layer_sizes,
         mono_channels=mono_channels,
         shared_weights=shared_weights,
+        activation=activation,
     )
 
     value_network = make_binocular_shared_vision_value_stub()

@@ -197,6 +197,7 @@ def make_shared_vision_policy(
     vision_feature_size: int = 32,
     vision_channels: Sequence[int] = (4, 8, 16, 32),
     fusion_hidden_layer_sizes: Sequence[int] = (256,),
+    activation: networks.ActivationFn = nn.silu,
 ) -> tuple[networks.FeedForwardNetwork, "SharedVisionPolicyValueModule"]:
     """Create a shared-CNN policy network and return the underlying module.
 
@@ -214,6 +215,7 @@ def make_shared_vision_policy(
         vision_channels=list(vision_channels),
         fusion_layers=list(fusion_hidden_layer_sizes),
         value_layers=list(value_hidden_layer_sizes),
+        activation=activation,
     )
 
     def apply(

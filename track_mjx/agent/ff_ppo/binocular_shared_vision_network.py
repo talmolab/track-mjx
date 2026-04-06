@@ -214,6 +214,7 @@ def make_binocular_shared_vision_policy(
     fusion_hidden_layer_sizes: Sequence[int] = (256,),
     mono_channels: int = 1,
     shared_weights: bool = True,
+    activation: networks.ActivationFn = nn.silu,
 ) -> tuple[networks.FeedForwardNetwork, "BinocularSharedVisionPolicyValueModule"]:
     """Create a shared binocular-CNN policy network and return the underlying module.
 
@@ -233,6 +234,7 @@ def make_binocular_shared_vision_policy(
         value_layers=list(value_hidden_layer_sizes),
         shared_weights=shared_weights,
         mono_channels=mono_channels,
+        activation=activation,
     )
 
     def apply(

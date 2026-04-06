@@ -143,7 +143,7 @@ network_config:
   distill_kl_weight: 1.0                    # weight for KL(encoder_sg || distill_head)
   # Pre-trained encoder checkpoint — same-pipeline MoSeq checkpoint with
   # trained continuous encoder [512, 256, 256], latent_dim=4.
-  distillation_encoder_checkpoint: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260326_014031_608396_moseq_encoder/
+  distillation_encoder_checkpoint: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260405_235031_234849/
   distill_logvar_min: null
   distill_logvar_max: null
 

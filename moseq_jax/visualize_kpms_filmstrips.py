@@ -130,9 +130,6 @@ def _render_cropped_poses(
     camera.elevation = -35.0
     camera.azimuth = 90.0
 
-    _blank_rgb = np.full((100, 60, 3), 255, dtype=np.uint8)
-    _blank_mask = np.zeros((100, 60), dtype=bool)
-
     # Fixed crop size (same for all frames/clips so rodents are uniform)
     if fixed_crop is not None:
         crop_half_h = (fixed_crop[1] - fixed_crop[0]) // 2
@@ -397,7 +394,7 @@ def make_clip_figure(
             fig.text(
                 x_cursor + seg_w / 2, (bar_top + bar_bot) / 2,
                 f"$c_{{{code}}}$", ha="center", va="center",
-                fontsize=7, fontweight="bold", color="white", zorder=4,
+                fontsize=12, fontweight="bold", color="white", zorder=4,
             )
 
             seg_lefts.append(x_cursor)

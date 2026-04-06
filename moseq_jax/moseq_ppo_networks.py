@@ -707,6 +707,8 @@ def make_moseq_recurrent_decoder_ppo_networks(
     distill_head_layer_sizes: tuple[int, ...] = (256, 128),
     distill_logvar_min: float | None = None,
     distill_logvar_max: float | None = None,
+    use_pretrained_decoder: bool = False,
+    decoder_layer_sizes_vae: tuple[int, ...] = (512, 256, 256, 256),
 ) -> MoSeqRecurrentPPONetworks:
     """Create recurrent MoSeq decoder PPO networks.
 
@@ -752,6 +754,8 @@ def make_moseq_recurrent_decoder_ppo_networks(
         distill_head_layer_sizes=distill_head_layer_sizes,
         distill_logvar_min=distill_logvar_min,
         distill_logvar_max=distill_logvar_max,
+        use_pretrained_decoder=use_pretrained_decoder,
+        decoder_layer_sizes_vae=decoder_layer_sizes_vae,
     )
 
     init_obs_sizes = {**obs_sizes}

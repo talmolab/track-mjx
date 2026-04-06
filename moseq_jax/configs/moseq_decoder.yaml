@@ -147,6 +147,11 @@ network_config:
   distill_logvar_min: null
   distill_logvar_max: null
 
+  # Pre-trained VAE decoder as readout (replaces single-Dense action head)
+  # h_t → linear(h_to_z_proj) → z_hat → [z_hat, proprio] → VAE decoder → action
+  use_pretrained_decoder: false
+  decoder_layer_sizes_vae: [512, 256, 256, 256]  # Must match mimic_encoder.yaml
+
   # KL schedule: controls kl_weight over training steps
   # Higher KL = z_e pushed toward unit Gaussian = less informative = GRU must use codes
   # "ramp": linear from start_value to end_value over [start_frac, end_frac] of training

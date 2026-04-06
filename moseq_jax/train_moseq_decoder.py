@@ -527,6 +527,12 @@ def main(cfg: DictConfig) -> None:
         distill_logvar_min = float(distill_logvar_min)
     if distill_logvar_max is not None:
         distill_logvar_max = float(distill_logvar_max)
+    use_pretrained_decoder = bool(
+        cfg.network_config.get("use_pretrained_decoder", False)
+    )
+    decoder_layer_sizes_vae = tuple(
+        cfg.network_config.get("decoder_layer_sizes_vae", [512, 256, 256, 256])
+    )
 
     # Auto-disable / auto-override when distillation head is enabled
     if use_distillation_head:
@@ -627,6 +633,8 @@ def main(cfg: DictConfig) -> None:
             distill_head_layer_sizes=distill_head_layer_sizes,
             distill_logvar_min=distill_logvar_min,
             distill_logvar_max=distill_logvar_max,
+            use_pretrained_decoder=use_pretrained_decoder,
+            decoder_layer_sizes_vae=decoder_layer_sizes_vae,
         )
         logging.info(
             f"Using RNN decoder: cell={rnn_cell_type}, hidden={rnn_hidden_sizes}, "
@@ -679,6 +687,15 @@ def main(cfg: DictConfig) -> None:
                 f"Loaded encoder from {distillation_encoder_checkpoint} "
                 f"(step_prefix={_encoder_step_prefix})"
             )
+
+            # Also load decoder if use_pretrained_decoder is enabled
+            if use_pretrained_decoder and "decoder" in loaded_policy_params["params"]:
+                loaded_decoder = loaded_policy_params["params"]["decoder"]
+                training_state.params.policy["params"]["decoder_module"] = loaded_decoder
+                logging.info(
+                    f"Loaded decoder from {distillation_encoder_checkpoint}"
+                )
+
             return training_state
 
     # WandB

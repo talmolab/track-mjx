@@ -31,6 +31,7 @@ import jax
 import jax.numpy as jnp
 
 from track_mjx.agent.ff_ppo.intention_network import (
+    Decoder as IntentionDecoder,
     Encoder as IntentionEncoder,
     reparameterize,
 )
@@ -208,6 +209,8 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
     distill_head_layer_sizes: Sequence[int] = (256, 128)
     distill_logvar_min: float | None = None
     distill_logvar_max: float | None = None
+    use_pretrained_decoder: bool = False
+    decoder_layer_sizes_vae: Sequence[int] = (512, 256, 256, 256)
 
     def setup(self):
         self.code_embedding = nn.Embed(
@@ -265,6 +268,20 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                 self.continuous_latent_dim,
                 kernel_init=self.kernel_init,
                 name="distill_logvar",
+            )
+
+        # Pre-trained VAE decoder as readout (replaces action head)
+        if self.use_pretrained_decoder:
+            # Linear projection: h_t → z_hat (matches latent dim)
+            self.h_to_z_proj = nn.Dense(
+                self.continuous_latent_dim,
+                kernel_init=self.kernel_init,
+                name="h_to_z_proj",
+            )
+            # VAE decoder: [z_hat, proprio] → action_params
+            self.decoder_module = IntentionDecoder(
+                layer_sizes=list(self.decoder_layer_sizes_vae)
+                + [self.action_param_size],
             )
 
     def _distill_head(
@@ -381,6 +398,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         x: jnp.ndarray,
         hidden: list[jnp.ndarray],
         z_e_for_action: jnp.ndarray | None = None,
+        proprio: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, list[jnp.ndarray], jnp.ndarray]:
         """Run one timestep through the stacked GRU and action head.
 
@@ -389,6 +407,8 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             hidden: List of GRU hidden states per layer.
             z_e_for_action: If provided, concatenated with GRU output before
                 the action head (z_e at action head architecture).
+            proprio: Raw proprioception, needed when ``use_pretrained_decoder``
+                is True to form the decoder input ``[z_hat, proprio]``.
 
         Returns:
             ``(action_params, new_hidden, h_t)`` where ``h_t`` is the final
@@ -401,11 +421,20 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             new_hidden.append(new_h)
             rnn_input = new_h
         h_t = rnn_input  # final GRU layer output
-        # Optionally concat z_e at action head
-        action_input = h_t
-        if z_e_for_action is not None:
-            action_input = jnp.concatenate([h_t, z_e_for_action], axis=-1)
-        action_params = self.action_head(action_input)
+
+        if self.use_pretrained_decoder and proprio is not None:
+            # Project h_t to latent-dim z_hat, concat with proprio,
+            # and feed through the pre-trained VAE decoder
+            z_hat = self.h_to_z_proj(h_t)
+            decoder_input = jnp.concatenate([z_hat, proprio], axis=-1)
+            action_params, _ = self.decoder_module(decoder_input)
+        else:
+            # Standard action head
+            action_input = h_t
+            if z_e_for_action is not None:
+                action_input = jnp.concatenate([h_t, z_e_for_action], axis=-1)
+            action_params = self.action_head(action_input)
+
         return action_params, new_hidden, h_t
 
     def __call__(
@@ -440,6 +469,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             z_e_arg = z_e_scaled if self.z_e_at_action_head else None
         action_params, new_hidden, h_t = self._decode_rnn(
             decoder_input, hidden, z_e_for_action=z_e_arg,
+            proprio=obs["proprioception"] if self.use_pretrained_decoder else None,
         )
         if self.use_distillation_head:
             distill_mean, distill_logvar = self._distill_head(h_t)
@@ -537,8 +567,10 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
                         obs_t, keys_t, deterministic, z_e_scale
                     )
+                    _proprio = obs_t["proprioception"] if self.use_pretrained_decoder else None
                     action_params, new_hidden, h_t = self._decode_rnn(
                         decoder_input, hidden_list, z_e_for_action=None,
+                        proprio=_proprio,
                     )
                     d_mean, d_logvar = self._distill_head(h_t)
                     new_hidden = _reset_hidden_on_done(new_hidden, done_t)
@@ -566,8 +598,10 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                         obs_t, keys_t, deterministic, z_e_scale
                     )
                     z_e_arg = _z_e_arg_for_action(z_e_scaled)
+                    _proprio = obs_t["proprioception"] if self.use_pretrained_decoder else None
                     action_params, new_hidden, _h_t = self._decode_rnn(
                         decoder_input, hidden_list, z_e_for_action=z_e_arg,
+                        proprio=_proprio,
                     )
                     new_hidden = _reset_hidden_on_done(new_hidden, done_t)
                     return (new_hidden, code_t), (action_params, mean, logvar)
@@ -597,8 +631,10 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
                         obs_t, step_key, deterministic, z_e_scale
                     )
+                    _proprio = obs_t["proprioception"] if self.use_pretrained_decoder else None
                     action_params, new_hidden, h_t = self._decode_rnn(
                         decoder_input, hidden_list, z_e_for_action=None,
+                        proprio=_proprio,
                     )
                     d_mean, d_logvar = self._distill_head(h_t)
                     new_hidden = _reset_hidden_on_done(new_hidden, done_t)
@@ -626,8 +662,10 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                         obs_t, step_key, deterministic, z_e_scale
                     )
                     z_e_arg = _z_e_arg_for_action(z_e_scaled)
+                    _proprio = obs_t["proprioception"] if self.use_pretrained_decoder else None
                     action_params, new_hidden, _h_t = self._decode_rnn(
                         decoder_input, hidden_list, z_e_for_action=z_e_arg,
+                        proprio=_proprio,
                     )
                     new_hidden = _reset_hidden_on_done(new_hidden, done_t)
                     return (new_hidden, code_t, next_key), (action_params, mean, logvar)

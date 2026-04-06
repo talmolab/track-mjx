@@ -28,6 +28,36 @@ from track_mjx.agent.observation_utils import (
     normalize_dict_obs,
 )
 
+_ACTIVATION_MAP: dict[str, networks.ActivationFn] = {
+    "silu": nn.silu,
+    "relu": nn.relu,
+    "tanh": nn.tanh,
+    "gelu": nn.gelu,
+    "elu": nn.elu,
+}
+
+
+def get_activation_fn(name: str) -> networks.ActivationFn:
+    """Resolve an activation function name to a callable.
+
+    Args:
+        name: Activation function name (case-insensitive). Supported:
+            "silu", "relu", "tanh", "gelu", "elu".
+
+    Returns:
+        The corresponding Flax/JAX activation function.
+
+    Raises:
+        ValueError: If name is not recognized.
+    """
+    fn = _ACTIVATION_MAP.get(name.lower())
+    if fn is None:
+        raise ValueError(
+            f"Unknown activation {name!r}. "
+            f"Supported: {sorted(_ACTIVATION_MAP.keys())}"
+        )
+    return fn
+
 
 class Encoder(nn.Module):
     """VAE encoder that maps observations to latent distribution parameters.

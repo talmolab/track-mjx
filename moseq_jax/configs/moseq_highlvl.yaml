@@ -1,0 +1,208 @@
+# =============================================================================
+# MoSeq High-Level RNN Intention Training (Pipeline B)
+# =============================================================================
+# Trains an RNN high-level policy that maps KPMS codes + proprioception
+# to latent intentions, routed through a frozen pretrained decoder.
+# =============================================================================
+
+env_config:
+  env_name: "RodentImitation"
+  mujoco_impl: "jax"
+
+  solver: "newton"
+  iterations: 5
+  ls_iterations: 5
+  naconmax: 131072
+  njmax: 128
+  noslip_iterations: 0
+
+  sim_dt: 0.002
+  ctrl_dt: 0.01
+  mocap_hz: 50
+
+  clip_length: 250
+  clip_set: "all"
+  reference_length: 5
+  reference_stride: 1
+  start_frame_range: [0, 20]
+  qvel_init: "zeros"
+  keep_clips_idx: null
+  balanced_split_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/data/rodent/rodent_balanced_splits.json
+
+  domain_randomization:
+    use_domain_randomization: true
+    floor_friction: [0.5, 1.0]
+    static_friction_scale: [0.8, 1.2]
+    armature_scale: [0.8, 1.2]
+    com_jitter: [0.0, 0.005]
+    link_mass_scale: [0.9, 1.1]
+    torso_mass_jitter: [0.0, 0.05]
+    qpos0_jitter: [0.0, 0.01]
+
+  reward_terms:
+    root_pos:
+      exp_scale: 0.035
+      weight: 1.0
+    root_quat:
+      exp_scale: 20.0
+      weight: 1.0
+    joints:
+      exp_scale: 1.41
+      weight: 1.0
+    joints_vel:
+      exp_scale: 1.0
+      weight: 0.5
+    bodies_pos:
+      exp_scale: 0.25
+      weight: 0.0
+    end_eff:
+      exp_scale: 0.03
+      weight: 1.0
+    torso_z_range:
+      healthy_z_range: [0.0325, 0.5]
+      weight: 1.0
+    control_cost:
+      weight: 0.02
+    control_diff_cost:
+      weight: 0.02
+    energy_cost:
+      max_value: 50.0
+      weight: 0.01
+
+  termination_criteria:
+    root_too_far:
+      max_distance: 0.2
+    root_too_rotated:
+      max_degrees: 90.0
+    pose_error:
+      max_l2_error: 6.0
+    nan_termination: {}
+
+render_config:
+  render_camera_name: close_profile
+  render_fps: 50
+  render_interval: 5
+  eval_rollouts_for_transition: 16
+  num_eval_rollout_videos: 3
+
+kpms_config:
+  codes_path: null
+
+highlvl_config:
+  mimic_checkpoint: null  # REQUIRED: path to pretrained mimic checkpoint
+
+network_config:
+  arch_name: moseq_highlvl
+
+  num_codes: 50
+  code_embed_dim: 16
+  code_stack_size: 5
+
+  rnn_hidden_sizes: [256, 256]
+  critic_layer_sizes: [512, 512, 256, 256]
+
+train_setup:
+  agent_name: rodent
+  run_name: moseq_highlvl_test
+
+  checkpoint_to_restore: null
+  restore_from_run_state: null
+
+  train_test_split_info: null
+  train_subset_ratio: 0.7
+
+  eval_every: 20_000_000
+  episode_length: 200
+  reset_every: 20_000_000
+
+  train_config:
+    num_envs: 2048
+    num_timesteps: 5_000_000_000
+    batch_size: 512
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2
+    discounting: 0.95
+    action_repeat: 1
+    entropy_cost: 1e-2
+    reward_scaling: 1
+    normalize_observations: true
+    unroll_length: 60
+    seed: 0
+    get_activation: false
+    deterministic_eval: true
+
+logging_config:
+  project_name: moseq_experiments
+  group_name: highlvl_rl
+  exp_name: moseq_highlvl
+  clip_id: 0
+  model_path: /n/holylfs06/LABS/olveczky_lab/Users/charleszhang/track-mjx/moseq_jax/model_checkpoints
+
+walker_config:
+  walker_name: "rodent"
+  torque_actuators: true
+  rescale_factor: 0.9
+
+  joint_names:
+    - vertebra_1_extend
+    - hip_L_supinate
+    - hip_L_abduct
+    - hip_L_extend
+    - knee_L
+    - ankle_L
+    - toe_L
+    - hip_R_supinate
+    - hip_R_abduct
+    - hip_R_extend
+    - knee_R
+    - ankle_R
+    - toe_R
+    - vertebra_C11_extend
+    - vertebra_cervical_1_bend
+    - vertebra_axis_twist
+    - atlas
+    - mandible
+    - scapula_L_supinate
+    - scapula_L_abduct
+    - scapula_L_extend
+    - shoulder_L
+    - shoulder_sup_L
+    - elbow_L
+    - wrist_L
+    - scapula_R_supinate
+    - scapula_R_abduct
+    - scapula_R_extend
+    - shoulder_R
+    - shoulder_sup_R
+    - elbow_R
+    - wrist_R
+    - finger_R
+
+  body_names:
+    - torso
+    - pelvis
+    - upper_leg_L
+    - lower_leg_L
+    - foot_L
+    - upper_leg_R
+    - lower_leg_R
+    - foot_R
+    - skull
+    - jaw
+    - scapula_L
+    - upper_arm_L
+    - lower_arm_L
+    - finger_L
+    - scapula_R
+    - upper_arm_R
+    - lower_arm_R
+    - finger_R
+
+  end_eff_names:
+    - foot_L
+    - foot_R
+    - hand_L
+    - hand_R
+    - skull

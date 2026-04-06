@@ -1,4 +1,8 @@
-"""Experiment 1: MoSeq inference rollouts, reward decomposition, videos, transition matrices.
+"""Experiment 1: Inference rollouts comparing code2act vs mimic-mjx oracle.
+
+Generates reward decomposition plots, K-body videos, and transition matrices.
+Code2Act = KPMS decoder (codes -> RNN -> action).
+Mimic-MJX = pre-trained IntentionNetwork VAE (reference -> encoder -> action).
 
 Usage:
     cd moseq_jax
@@ -39,7 +43,9 @@ from moseq_env_wrapper import MoSeqImitation
 
 from experiments.shared.checkpoint_utils import (
     load_moseq_checkpoint,
+    load_mimic_checkpoint,
     make_inference_fn,
+    make_mimic_inference_fn,
     run_rollout,
 )
 from experiments.shared.clip_selection import load_balanced_splits, select_clips_by_behavior
@@ -55,6 +61,7 @@ from experiments.shared.plotting import (
     get_trajectory_colors,
     get_code_colormap,
     MODE_COLORS,
+    MODE_LABELS,
     BEHAVIOR_COLORS,
 )
 
@@ -91,7 +98,7 @@ def plot_reward_curves(
     for mode, color in MODE_COLORS.items():
         if mode not in results:
             continue
-        mode_label = "Code+z_e" if mode == "full" else "Code only"
+        mode_label = MODE_LABELS.get(mode, mode)
         for comp, ls in COMPONENT_MARKERS.items():
             curve = results[mode].get(comp)
             if curve is None:
@@ -146,9 +153,9 @@ def plot_transition_window(
 # ---------------------------------------------------------------------------
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="inference")
+@hydra.main(version_base=None, config_path="configs", config_name="inference")
 def main(cfg: DictConfig) -> None:
-    log.info("=== MoSeq Inference Experiment ===")
+    log.info("=== MoSeq Inference Experiment (code2act vs mimic-mjx) ===")
 
     # Output dir
     output_dir = Path(cfg.output.base_dir)
@@ -165,7 +172,7 @@ def main(cfg: DictConfig) -> None:
             config=dict(cfg),
         )
 
-    # Load checkpoint
+    # Load code2act (MoSeq decoder) checkpoint
     ckpt_path = cfg.checkpoint.path
     ckpt_step = cfg.checkpoint.get("step")
     ckpt_cfg, norm_state, policy_params, ppo_networks = load_moseq_checkpoint(
@@ -173,7 +180,13 @@ def main(cfg: DictConfig) -> None:
     )
     use_rnn = bool(ckpt_cfg.network_config.get("use_rnn_decoder", False))
     num_codes = int(ckpt_cfg.network_config.num_codes)
-    params = (norm_state, policy_params)
+    code2act_params = (norm_state, policy_params)
+
+    # Load mimic-mjx (oracle VAE) checkpoint
+    mimic_cfg, mimic_norm, mimic_policy, mimic_ppo = load_mimic_checkpoint(
+        cfg.mimic_checkpoint.path, step=cfg.mimic_checkpoint.get("step"),
+    )
+    mimic_params = (mimic_norm, mimic_policy)
 
     # Load data
     codes_data = np.load(cfg.data.codes_path)
@@ -221,12 +234,23 @@ def main(cfg: DictConfig) -> None:
         per_mode_data: dict[str, dict] = {}  # store per-mode codes/rewards
 
         for mode in cfg.inference.modes:
-            z_e_scale = 1.0 if mode == "full" else 0.0
-            log.info(f"  Mode: {mode} (z_e_scale={z_e_scale})")
+            is_mimic = mode == "mimic_mjx"
+            log.info(f"  Mode: {mode}")
 
-            inf_fn = make_inference_fn(
-                ppo_networks, use_rnn=use_rnn, deterministic=True, z_e_scale=z_e_scale,
-            )
+            if is_mimic:
+                inf_fn = make_mimic_inference_fn(mimic_ppo, deterministic=True)
+                mode_params = mimic_params
+                mode_ppo = mimic_ppo
+                mode_rnn = False
+                mode_type = "mimic_mjx"
+            else:
+                inf_fn = make_inference_fn(
+                    ppo_networks, use_rnn=use_rnn, deterministic=True,
+                )
+                mode_params = code2act_params
+                mode_ppo = ppo_networks
+                mode_rnn = use_rnn
+                mode_type = "code2act"
 
             all_qpos: list[np.ndarray] = []
             all_rewards: list[np.ndarray] = []
@@ -236,9 +260,10 @@ def main(cfg: DictConfig) -> None:
             for ci in range(n_clips):
                 key = jax.random.PRNGKey(seed + ci)
                 result = run_rollout(
-                    env, inf_fn, params, ppo_networks, use_rnn, key,
+                    env, inf_fn, mode_params, mode_ppo, mode_rnn, key,
                     max_steps=max_steps,
                     jit_reset=jit_reset, jit_step=jit_step,
+                    model_type=mode_type,
                 )
                 all_qpos.append(result["qpos"])
                 all_rewards.append(result["rewards"])
@@ -284,8 +309,8 @@ def main(cfg: DictConfig) -> None:
                 "all_rewards": list(all_rewards),
             }
 
-            # Collect codes for transition matrix
-            if mode == "full":
+            # Collect codes for transition matrix (code2act only)
+            if mode == "code2act":
                 all_transition_codes.extend(all_codes)
 
         # ---------------------------------------------------------------
@@ -304,11 +329,11 @@ def main(cfg: DictConfig) -> None:
         # ---------------------------------------------------------------
         # Transition window analysis (Claim 2.2)
         # ---------------------------------------------------------------
-        if cfg.analysis.reward_decomposition and "full" in per_mode_data:
+        if cfg.analysis.reward_decomposition and "code2act" in per_mode_data:
             log.info("  Analyzing transition boundaries...")
             window = int(cfg.analysis.transition_window)
-            full_codes = per_mode_data["full"]["all_codes"]
-            full_rewards = per_mode_data["full"]["all_rewards"]
+            full_codes = per_mode_data["code2act"]["all_codes"]
+            full_rewards = per_mode_data["code2act"]["all_rewards"]
             # Aggregate all transition windows across clips
             all_windows = []  # list of [2*window+1] arrays
             for ci in range(min(n_clips, len(full_codes))):
@@ -367,19 +392,32 @@ def main(cfg: DictConfig) -> None:
 
         # Run rollouts for selected clips (both modes)
         for mode in cfg.inference.modes:
-            z_e_scale = 1.0 if mode == "full" else 0.0
-            inf_fn = make_inference_fn(
-                ppo_networks, use_rnn=use_rnn, deterministic=True, z_e_scale=z_e_scale,
-            )
+            is_mimic = mode == "mimic_mjx"
+
+            if is_mimic:
+                inf_fn = make_mimic_inference_fn(mimic_ppo, deterministic=True)
+                mode_params = mimic_params
+                mode_ppo = mimic_ppo
+                mode_rnn = False
+                mode_type = "mimic_mjx"
+            else:
+                inf_fn = make_inference_fn(
+                    ppo_networks, use_rnn=use_rnn, deterministic=True,
+                )
+                mode_params = code2act_params
+                mode_ppo = ppo_networks
+                mode_rnn = use_rnn
+                mode_type = "code2act"
 
             trajectories_qpos = []
             trajectories_codes = []
             for ci in selected_indices:
                 key = jax.random.PRNGKey(seed + ci)
                 result = run_rollout(
-                    env, inf_fn, params, ppo_networks, use_rnn, key,
+                    env, inf_fn, mode_params, mode_ppo, mode_rnn, key,
                     max_steps=max_steps,
                     jit_reset=jit_reset, jit_step=jit_step,
+                    model_type=mode_type,
                 )
                 trajectories_qpos.append(result["qpos"][:-1])  # remove final extra qpos
                 trajectories_codes.append(result["code_indices"])

@@ -21,7 +21,6 @@ from pathlib import Path
 import h5py
 import hydra
 import jax
-import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import wandb
@@ -40,7 +39,9 @@ from moseq_env_wrapper import MoSeqImitation
 
 from experiments.shared.checkpoint_utils import (
     load_moseq_checkpoint,
+    load_mimic_checkpoint,
     make_inference_fn,
+    make_mimic_inference_fn,
     run_rollout,
 )
 from experiments.shared.metrics import compute_transition_matrix, plot_transition_matrix
@@ -375,6 +376,8 @@ def run_free_loop_rollouts(
     num_codes: int,
     output_dir: Path,
     wandb_enabled: bool,
+    jit_reset=None,
+    jit_step=None,
 ) -> dict:
     """Run free-loop rollouts with generated code sequences."""
     log.info(f"  Free-loop rollouts for {method_name} ({len(code_sequences)} sequences)")
@@ -389,6 +392,7 @@ def run_free_loop_rollouts(
             env, inf_fn, params, ppo_networks, use_rnn, key,
             max_steps=min(max_steps, len(seq)),
             code_override=seq,
+            jit_reset=jit_reset, jit_step=jit_step,
         )
         survivals.append(result["survival"])
         all_qpos.append(result["qpos"][:-1])
@@ -423,7 +427,7 @@ def run_free_loop_rollouts(
 # ---------------------------------------------------------------------------
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="code_generation_exp")
+@hydra.main(version_base=None, config_path="configs", config_name="code_generation_exp")
 def main(cfg: DictConfig) -> None:
     log.info("=== Code Generation Experiment ===")
 
@@ -435,11 +439,17 @@ def main(cfg: DictConfig) -> None:
         run_name = f"moseq_code_gen_{datetime.now():%y%m%d_%H%M%S}"
         wandb.init(project=cfg.wandb.project, entity=cfg.wandb.get("entity"), name=run_name, config=dict(cfg))
 
-    # Load checkpoint
+    # Load code2act (MoSeq decoder) checkpoint
     ckpt_cfg, norm_state, policy_params, ppo_networks = load_moseq_checkpoint(cfg.checkpoint.path)
     use_rnn = bool(ckpt_cfg.network_config.get("use_rnn_decoder", False))
     num_codes = int(ckpt_cfg.network_config.num_codes)
-    params = (norm_state, policy_params)
+    code2act_params = (norm_state, policy_params)
+
+    # Load mimic-mjx (oracle VAE) checkpoint
+    mimic_cfg, mimic_norm, mimic_policy, mimic_ppo = load_mimic_checkpoint(
+        cfg.mimic_checkpoint.path, step=cfg.mimic_checkpoint.get("step"),
+    )
+    mimic_params = (mimic_norm, mimic_policy)
 
     # Load KPMS codes
     codes_data = np.load(cfg.data.codes_path)
@@ -463,8 +473,12 @@ def main(cfg: DictConfig) -> None:
     env_cfg.domain_randomization.use_domain_randomization = False
     env = MoSeqImitation(config=env_cfg, clips=test_clips, kpms_codes=test_codes)
 
-    # Code-only inference fn for free-loop
-    inf_fn = make_inference_fn(ppo_networks, use_rnn=use_rnn, deterministic=True, z_e_scale=0.0)
+    # Pre-compile JIT functions ONCE (critical for performance)
+    jit_reset = jax.jit(env.reset)
+    jit_step = jax.jit(env.step)
+
+    # Code2Act inference fn for free-loop
+    inf_fn = make_inference_fn(ppo_networks, use_rnn=use_rnn, deterministic=True)
 
     max_steps = int(cfg.free_loop.max_steps)
     seed = int(cfg.free_loop.seed)
@@ -523,10 +537,28 @@ def main(cfg: DictConfig) -> None:
     for method_name, seqs in all_generated.items():
         result = run_free_loop_rollouts(
             method_name, seqs[:int(cfg.generation.num_sequences)],
-            env, inf_fn, params, ppo_networks, use_rnn,
+            env, inf_fn, code2act_params, ppo_networks, use_rnn,
             max_steps, seed, num_codes, output_dir, wandb_enabled,
+            jit_reset=jit_reset, jit_step=jit_step,
         )
         survival_summary[method_name] = np.mean(result["survivals"])
+
+    # --- Mimic-MJX oracle baseline (survival upper bound) ---
+    log.info("\n--- Mimic-MJX oracle baseline ---")
+    mimic_inf_fn = make_mimic_inference_fn(mimic_ppo, deterministic=True)
+    n_seq = int(cfg.generation.num_sequences)
+    mimic_survivals = []
+    for si in range(n_seq):
+        key = jax.random.PRNGKey(seed + si)
+        result = run_rollout(
+            env, mimic_inf_fn, mimic_params, mimic_ppo, False, key,
+            max_steps=max_steps,
+            jit_reset=jit_reset, jit_step=jit_step,
+            model_type="mimic_mjx",
+        )
+        mimic_survivals.append(result["survival"])
+    survival_summary["mimic_mjx (oracle)"] = np.mean(mimic_survivals)
+    log.info(f"  Mimic-MJX mean survival: {np.mean(mimic_survivals):.1f}")
 
     # -------------------------------------------------------------------
     # Survival comparison plot
@@ -534,10 +566,14 @@ def main(cfg: DictConfig) -> None:
     set_nature_style()
     fig, ax = plt.subplots(figsize=(7.2, 3.0))
     methods_sorted = sorted(survival_summary.keys(), key=lambda x: survival_summary[x], reverse=True)
+    bar_colors = [
+        NATURE_COLORS["orange"] if "mimic" in m.lower() else NATURE_COLORS["blue"]
+        for m in methods_sorted
+    ]
     bars = ax.barh(
         range(len(methods_sorted)),
         [survival_summary[m] for m in methods_sorted],
-        color=NATURE_COLORS["blue"],
+        color=bar_colors,
         edgecolor="none",
     )
     ax.set_yticks(range(len(methods_sorted)))

@@ -33,8 +33,13 @@ CONDITION_COLORS = {
 }
 
 MODE_COLORS = {
-    "full": "#0072B2",
-    "code_only": "#D55E00",
+    "code2act": "#0072B2",
+    "mimic_mjx": "#D55E00",
+}
+
+MODE_LABELS = {
+    "code2act": "Code2Act",
+    "mimic_mjx": "Mimic-MJX (oracle)",
 }
 
 

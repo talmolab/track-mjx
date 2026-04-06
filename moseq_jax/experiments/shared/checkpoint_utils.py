@@ -1,13 +1,15 @@
-"""Load MoSeq checkpoints and create inference functions.
+"""Load MoSeq and mimic-mjx checkpoints and create inference functions.
 
-Works with both feedforward (MLP) and recurrent (RNN/GRU) decoder variants.
+Works with:
+- MoSeq feedforward (MLP) and recurrent (RNN/GRU) decoder variants.
+- Mimic-mjx IntentionNetwork (encoder-decoder VAE) for oracle baseline.
 """
 
 from __future__ import annotations
 
-import functools
 import logging
 import sys
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,6 +28,7 @@ for _p in (str(_MOSEQ_DIR), str(_REPO_ROOT)):
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent.observation_utils import init_dict_normalizer
+from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from moseq_ppo_networks import (
     make_moseq_decoder_ppo_networks,
     make_moseq_recurrent_decoder_ppo_networks,
@@ -34,6 +37,7 @@ from moseq_ppo_networks import (
 )
 
 STEP_PREFIX = "MoSeqPPONetwork"
+MIMIC_STEP_PREFIX = "MimicEncoder"
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +68,34 @@ def _build_ppo_networks(net_cfg: DictConfig) -> tuple[Any, bool, dict]:
     )
 
     if use_rnn:
+        # Distillation / pretrained decoder params — must match checkpoint
+        # architecture or orbax restore will fail with pytree mismatch.
+        # Config key "distillation_head_layer_sizes" maps to function param
+        # "distill_head_layer_sizes".
+        distill_logvar_min = net_cfg.get("distill_logvar_min", None)
+        distill_logvar_max = net_cfg.get("distill_logvar_max", None)
+        if distill_logvar_min is not None:
+            distill_logvar_min = float(distill_logvar_min)
+        if distill_logvar_max is not None:
+            distill_logvar_max = float(distill_logvar_max)
+
         ppo_networks = make_moseq_recurrent_decoder_ppo_networks(
             **common_kwargs,
             rnn_hidden_sizes=tuple(net_cfg.get("rnn_hidden_sizes", [256])),
             rnn_cell_type=str(net_cfg.get("rnn_cell_type", "gru")),
+            z_e_at_action_head=bool(net_cfg.get("z_e_at_action_head", False)),
+            reinit_hidden_on_code=bool(net_cfg.get("reinit_hidden_on_code", False)),
+            learned_hidden_init=bool(net_cfg.get("learned_hidden_init", False)),
+            use_distillation_head=bool(net_cfg.get("use_distillation_head", False)),
+            distill_head_layer_sizes=tuple(
+                net_cfg.get("distillation_head_layer_sizes", [256, 128])
+            ),
+            distill_logvar_min=distill_logvar_min,
+            distill_logvar_max=distill_logvar_max,
+            use_pretrained_decoder=bool(net_cfg.get("use_pretrained_decoder", False)),
+            decoder_layer_sizes_vae=tuple(
+                net_cfg.get("decoder_layer_sizes_vae", [512, 256, 256, 256])
+            ),
         )
     else:
         ppo_networks = make_moseq_decoder_ppo_networks(
@@ -215,6 +243,82 @@ def make_inference_fn(
 
 
 # ---------------------------------------------------------------------------
+# Mimic-MJX (IntentionNetwork VAE) checkpoint loading
+# ---------------------------------------------------------------------------
+
+
+def load_mimic_checkpoint(
+    checkpoint_path: str | Path,
+    step: int | None = None,
+) -> tuple[DictConfig, Any, Any, Any]:
+    """Load a mimic-mjx (IntentionNetwork VAE) checkpoint.
+
+    The mimic-mjx model is a standard encoder-decoder VAE that maps
+    reference trajectories to actions.  It serves as the oracle upper
+    bound in experiment comparisons since it sees the full reference.
+
+    Args:
+        checkpoint_path: Directory containing ``MimicEncoder_*`` folders.
+        step: Checkpoint step to restore (``None`` = latest).
+
+    Returns:
+        ``(cfg, normalizer_state, policy_params, ppo_networks)``
+    """
+    checkpoint_path = str(checkpoint_path)
+
+    eval_data = checkpointing.load_checkpoint_for_eval(
+        checkpoint_path, step_prefix=MIMIC_STEP_PREFIX, step=step,
+    )
+    cfg = eval_data["cfg"]
+    normalizer_state, policy_params = eval_data["policy"]
+
+    net_cfg = cfg.network_config
+    ppo_networks = ff_ppo_networks.make_intention_ppo_networks(
+        obs_sizes=dict(net_cfg.obs_sizes),
+        action_size=int(net_cfg.action_size),
+        intention_latent_size=int(net_cfg.intention_size),
+        encoder_hidden_layer_sizes=tuple(net_cfg.encoder_layer_sizes),
+        decoder_hidden_layer_sizes=tuple(net_cfg.decoder_layer_sizes),
+        value_hidden_layer_sizes=tuple(net_cfg.critic_layer_sizes),
+    )
+
+    logging.info(
+        f"Loaded mimic-mjx checkpoint from {checkpoint_path}: "
+        f"latent_dim={net_cfg.intention_size}"
+    )
+
+    return cfg, normalizer_state, policy_params, ppo_networks
+
+
+def make_mimic_inference_fn(
+    ppo_networks: Any,
+    deterministic: bool = True,
+) -> Callable:
+    """Create a JIT-compiled inference function for the mimic-mjx model.
+
+    The returned function matches the MoSeq MLP logging interface so it
+    can be used interchangeably with :func:`make_inference_fn` in
+    :func:`run_rollout`.
+
+    Signature: ``fn(params, obs, key, prev_indices=None) -> (action, extras)``
+
+    Args:
+        ppo_networks: ``PPOImitationNetworks`` from mimic-mjx checkpoint.
+        deterministic: Use deterministic (mode) actions.
+
+    Returns:
+        JIT-compiled inference function.
+    """
+    make_logging = ff_ppo_networks.make_logging_inference_fn(ppo_networks)
+    raw_fn = make_logging(deterministic=deterministic)
+
+    def adapted_fn(params, obs, key, prev_indices=None):
+        return raw_fn(params, obs, key)
+
+    return jax.jit(adapted_fn)
+
+
+# ---------------------------------------------------------------------------
 # Rollout helper
 # ---------------------------------------------------------------------------
 
@@ -231,22 +335,27 @@ def run_rollout(
     initial_qpos: np.ndarray | None = None,
     jit_reset: Callable | None = None,
     jit_step: Callable | None = None,
+    model_type: str = "code2act",
 ) -> dict[str, Any]:
     """Run a single evaluation rollout and collect trajectory data.
 
     Args:
         env: ``MoSeqImitation`` environment (JIT-ready).
-        inference_fn: From :func:`make_inference_fn`.
+        inference_fn: From :func:`make_inference_fn` or
+            :func:`make_mimic_inference_fn`.
         params: ``(normalizer_state, policy_params)`` tuple.
         ppo_networks: Network object (needed for RNN hidden init).
         use_rnn: Whether this is an RNN architecture.
         key: PRNG key.
         max_steps: Maximum episode length.
         code_override: If provided, ``[max_steps]`` int array to override
-            the environment's KPMS codes at each step.
+            the environment's KPMS codes at each step.  Ignored when
+            ``model_type="mimic_mjx"``.
         initial_qpos: If provided, override the initial qpos after reset.
         jit_reset: Pre-compiled ``jax.jit(env.reset)``. Created if ``None``.
         jit_step: Pre-compiled ``jax.jit(env.step)``. Created if ``None``.
+        model_type: ``"code2act"`` for MoSeq decoder or ``"mimic_mjx"``
+            for the IntentionNetwork VAE oracle.
 
     Returns:
         Dict with keys: ``qpos``, ``rewards``, ``code_indices``,
@@ -257,6 +366,8 @@ def run_rollout(
     if jit_step is None:
         jit_step = jax.jit(env.step)
 
+    is_mimic = model_type == "mimic_mjx"
+
     key, reset_key = jax.random.split(key)
     state = jit_reset(reset_key)
 
@@ -264,17 +375,10 @@ def run_rollout(
     if initial_qpos is not None:
         new_data = state.data.replace(qpos=jnp.array(initial_qpos))
         state = state.replace(data=new_data)
-        # Re-forward to update obs
-        import mujoco
-        from mujoco import mjx
-        # We need mj_forward equivalent — simplest: step with zero action
-        # Actually, just do a step with the current action to sync physics
-        # This is tricky in JAX; instead we re-do reset and accept the default pose
-        # TODO: proper qpos override — for now use env reset
 
     # Initialize RNN hidden state
     hidden = None
-    if use_rnn:
+    if use_rnn and not is_mimic:
         hidden = ppo_networks.policy_network.init_hidden(1)
 
     qpos_list: list[np.ndarray] = []
@@ -282,20 +386,21 @@ def run_rollout(
     code_list: list[int] = []
     metrics_list: list[dict[str, float]] = []
 
+    # Determine whether code_override applies (only for code2act)
+    apply_code_override = code_override is not None and not is_mimic
+
     for t in range(max_steps):
-        # Override code if requested
-        if code_override is not None:
+        # Override code if requested (code2act only)
+        if apply_code_override:
             desired_code = int(code_override[min(t, len(code_override) - 1)])
-            # CRITICAL: preserve OrderedDict type to avoid JAX recompilation
-            # on every step (OrderedDict vs dict are different pytree types)
-            from collections import OrderedDict
-            new_obs = OrderedDict((k, v) for k, v in state.obs.items())
+            # Preserve OrderedDict type to avoid JAX recompilation
+            new_obs = OrderedDict(state.obs)
             new_obs["kpms_code"] = jnp.array([desired_code], dtype=jnp.float32)
             state = state.replace(obs=new_obs)
 
         key, subkey = jax.random.split(key)
 
-        if use_rnn:
+        if use_rnn and not is_mimic:
             batched_obs = jax.tree.map(lambda x: x[None], state.obs)
             action, extras, hidden = inference_fn(params, batched_obs, hidden, subkey)
             action = jax.tree.map(lambda x: x[0], action)
@@ -306,11 +411,12 @@ def run_rollout(
         else:
             action, extras = inference_fn(params, state.obs, subkey, None)
 
-        # Extract code index
-        if "code_idx" in extras:
-            code_list.append(int(extras["code_idx"]))
-        elif "indices" in extras:
-            code_list.append(int(extras["indices"]))
+        # Extract code index (code2act only; mimic-mjx has no codes)
+        if not is_mimic:
+            if "code_idx" in extras:
+                code_list.append(int(extras["code_idx"]))
+            elif "indices" in extras:
+                code_list.append(int(extras["indices"]))
 
         # Collect qpos before step
         qpos_list.append(np.array(state.data.qpos))
@@ -328,7 +434,7 @@ def run_rollout(
         metrics_list.append(step_metrics)
 
         if state.done:
-            if use_rnn:
+            if use_rnn and not is_mimic:
                 hidden = ppo_networks.policy_network.init_hidden(1)
             break
 

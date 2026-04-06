@@ -1,5 +1,9 @@
 """Experiment 2: Temporal order & killer demo (code-sequence experiments).
 
+Compares code2act (KPMS decoder) against mimic-mjx (oracle VAE) to
+demonstrate that codes are causally used: shuffling codes degrades
+code2act but has no effect on mimic-mjx (which ignores codes).
+
 Usage:
     cd moseq_jax
     python -m experiments.run_code_sequence
@@ -18,7 +22,6 @@ from pathlib import Path
 
 import hydra
 import jax
-import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import wandb
@@ -36,7 +39,9 @@ from moseq_env_wrapper import MoSeqImitation
 
 from experiments.shared.checkpoint_utils import (
     load_moseq_checkpoint,
+    load_mimic_checkpoint,
     make_inference_fn,
+    make_mimic_inference_fn,
     run_rollout,
 )
 from experiments.shared.clip_selection import load_balanced_splits, select_clips_by_behavior
@@ -53,6 +58,7 @@ from experiments.shared.plotting import (
     get_code_colormap,
     CONDITION_COLORS,
     BEHAVIOR_COLORS,
+    NATURE_COLORS,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -71,24 +77,39 @@ CONDITION_STYLES = {
 
 
 def plot_divergence_curves(
-    curves: dict[str, dict[str, tuple[np.ndarray, np.ndarray]]],
+    curves: dict[str, tuple[np.ndarray, np.ndarray]],
+    mimic_baseline: tuple[np.ndarray, np.ndarray] | None = None,
     title: str = "Joint divergence over time",
 ) -> plt.Figure:
-    """Divergence curves with std bands: conditions × modes."""
+    """Divergence curves with std bands: code2act conditions + mimic-mjx baseline.
+
+    Args:
+        curves: ``{condition_name: (mean, std)}`` for code2act conditions.
+        mimic_baseline: Optional ``(mean, std)`` for mimic-mjx oracle.
+        title: Plot title.
+    """
     set_nature_style()
     fig, ax = plt.subplots(figsize=(3.5, 2.5))
 
-    for cond, mode_curves in curves.items():
+    for cond, (mean_curve, std_curve) in curves.items():
         style = CONDITION_STYLES.get(cond, {"color": "#999999", "linestyle": "-"})
-        for mode, (mean_curve, std_curve) in mode_curves.items():
-            ls = "-" if mode == "full" else "--"
-            label = f"{cond} ({'code+z_e' if mode == 'full' else 'code only'})"
-            ax.plot(mean_curve, color=style["color"], linestyle=ls, label=label, linewidth=1.2)
-            ax.fill_between(
-                range(len(mean_curve)),
-                mean_curve - std_curve, mean_curve + std_curve,
-                alpha=0.15, color=style["color"],
-            )
+        label = f"Code2Act: {cond}"
+        ax.plot(mean_curve, color=style["color"], linestyle="-", label=label, linewidth=1.2)
+        ax.fill_between(
+            range(len(mean_curve)),
+            mean_curve - std_curve, mean_curve + std_curve,
+            alpha=0.15, color=style["color"],
+        )
+
+    if mimic_baseline is not None:
+        m_mean, m_std = mimic_baseline
+        ax.plot(m_mean, color=NATURE_COLORS["gray"], linestyle="--",
+                label="Mimic-MJX (oracle)", linewidth=1.2)
+        ax.fill_between(
+            range(len(m_mean)),
+            m_mean - m_std, m_mean + m_std,
+            alpha=0.1, color=NATURE_COLORS["gray"],
+        )
 
     ax.set_xlabel("Timestep")
     ax.set_ylabel("Mean pairwise joint L2")
@@ -154,17 +175,26 @@ def plot_root_displacement(
 def run_temporal_order(
     cfg: DictConfig,
     env,
-    inf_fns: dict[str, any],
-    params: tuple,
+    inf_fn_code2act,
+    inf_fn_mimic,
+    params_code2act: tuple,
+    params_mimic: tuple,
     ppo_networks,
+    mimic_ppo,
     use_rnn: bool,
     codes: np.ndarray,
     splits: dict,
     num_codes: int,
     output_dir: Path,
     wandb_enabled: bool,
+    jit_reset=None,
+    jit_step=None,
 ) -> None:
-    """Run temporal order experiment (Claim 3)."""
+    """Run temporal order experiment (Claim 3).
+
+    Shuffling codes degrades code2act but NOT mimic-mjx, proving codes
+    are causally used by the decoder.
+    """
     log.info("\n=== Temporal Order Experiment ===")
     K = int(cfg.temporal_order.K)
     max_steps = int(cfg.temporal_order.max_steps)
@@ -188,72 +218,84 @@ def run_temporal_order(
         "shuffled_trajectory": shuffled_traj_seqs,
     }
 
-    # Run rollouts for each condition × mode
-    divergence_curves: dict[str, dict[str, np.ndarray]] = {}
+    # Run code2act rollouts for each condition
+    divergence_curves: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
     for cond_name, cond_seqs in conditions.items():
-        divergence_curves[cond_name] = {}
+        log.info(f"  Code2Act — condition: {cond_name}")
 
-        for mode, inf_fn in inf_fns.items():
-            log.info(f"  Condition: {cond_name}, Mode: {mode}")
+        trajectories_qpos = []
+        trajectories_codes = []
 
-            trajectories_qpos = []
-            trajectories_codes = []
+        for ki in range(K):
+            key = jax.random.PRNGKey(seed + ki * 100)
+            result = run_rollout(
+                env, inf_fn_code2act, params_code2act, ppo_networks, use_rnn, key,
+                max_steps=max_steps,
+                code_override=cond_seqs[ki],
+                jit_reset=jit_reset, jit_step=jit_step,
+                model_type="code2act",
+            )
+            trajectories_qpos.append(result["qpos"][:-1])
+            trajectories_codes.append(result["code_indices"])
 
-            for ki in range(K):
-                key = jax.random.PRNGKey(seed + ki * 100)
-                result = run_rollout(
-                    env, inf_fn, params, ppo_networks, use_rnn, key,
-                    max_steps=max_steps,
-                    code_override=cond_seqs[ki],
+        # Compute divergence (mean + std)
+        div_mean, div_std = compute_pairwise_joint_divergence(trajectories_qpos)
+        divergence_curves[cond_name] = (div_mean, div_std)
+
+        # Ghost video for code2act (correct condition only)
+        if cond_name == "correct" and len(trajectories_qpos) >= 2:
+            try:
+                from experiments.shared.ghost_rendering import (
+                    build_ghost_model,
+                    render_ghost_video,
                 )
-                trajectories_qpos.append(result["qpos"][:-1])
-                trajectories_codes.append(result["code_indices"])
 
-            # Compute divergence (mean + std)
-            div_mean, div_std = compute_pairwise_joint_divergence(trajectories_qpos)
-            divergence_curves[cond_name][mode] = (div_mean, div_std)
-
-            # Ghost video (3 conditions → 3 bodies per clip not applicable here,
-            # instead K bodies per condition)
-            if mode == "full" and len(trajectories_qpos) >= 2:
-                try:
-                    from experiments.shared.ghost_rendering import (
-                        build_ghost_model,
-                        render_ghost_video,
+                code_colors = get_code_colormap(num_codes)
+                traj_colors = get_trajectory_colors(len(trajectories_qpos))
+                ghost_model, base_nq = build_ghost_model(
+                    env,
+                    num_ghosts=len(trajectories_qpos) - 1,
+                    ghost_colors=traj_colors[1:],
+                    camera_distance=float(cfg.rendering.camera_distance),
+                    camera_elevation=float(cfg.rendering.camera_elevation),
+                    camera_azimuth=float(cfg.rendering.camera_azimuth),
+                    camera_fovy=float(cfg.rendering.camera_fovy),
+                )
+                ghost_path = output_dir / f"temporal_{cond_name}_code2act.mp4"
+                render_ghost_video(
+                    ghost_model, base_nq, trajectories_qpos, trajectories_codes,
+                    traj_colors, ghost_path,
+                    title=f"{cond_name} (code2act)",
+                    fps=int(cfg.rendering.fps),
+                    width=int(cfg.rendering.width),
+                    height=int(cfg.rendering.height),
+                    code_colors=code_colors,
+                )
+                if wandb_enabled:
+                    wandb.log(
+                        {f"temporal_order/{cond_name}/code2act/ghost": wandb.Video(str(ghost_path), format="mp4")},
+                        commit=False,
                     )
+            except Exception as e:
+                log.warning(f"    Ghost rendering failed: {e}")
 
-                    code_colors = get_code_colormap(num_codes)
-                    traj_colors = get_trajectory_colors(len(trajectories_qpos))
-                    ghost_model, base_nq = build_ghost_model(
-                        env,
-                        num_ghosts=len(trajectories_qpos) - 1,
-                        ghost_colors=traj_colors[1:],
-                        camera_distance=float(cfg.rendering.camera_distance),
-                        camera_elevation=float(cfg.rendering.camera_elevation),
-                        camera_azimuth=float(cfg.rendering.camera_azimuth),
-                        camera_fovy=float(cfg.rendering.camera_fovy),
-                    )
-                    ghost_path = output_dir / f"temporal_{cond_name}_{mode}.mp4"
-                    render_ghost_video(
-                        ghost_model, base_nq, trajectories_qpos, trajectories_codes,
-                        traj_colors, ghost_path,
-                        title=f"{cond_name} ({mode})",
-                        fps=int(cfg.rendering.fps),
-                        width=int(cfg.rendering.width),
-                        height=int(cfg.rendering.height),
-                        code_colors=code_colors,
-                    )
-                    if wandb_enabled:
-                        wandb.log(
-                            {f"temporal_order/{cond_name}/{mode}/ghost": wandb.Video(str(ghost_path), format="mp4")},
-                            commit=False,
-                        )
-                except Exception as e:
-                    log.warning(f"    Ghost rendering failed: {e}")
+    # Run mimic-mjx baseline (single run, no code_override — it ignores codes)
+    log.info("  Mimic-MJX oracle baseline")
+    mimic_qpos = []
+    for ki in range(K):
+        key = jax.random.PRNGKey(seed + ki * 100)
+        result = run_rollout(
+            env, inf_fn_mimic, params_mimic, mimic_ppo, False, key,
+            max_steps=max_steps,
+            jit_reset=jit_reset, jit_step=jit_step,
+            model_type="mimic_mjx",
+        )
+        mimic_qpos.append(result["qpos"][:-1])
+    mimic_baseline = compute_pairwise_joint_divergence(mimic_qpos)
 
-    # Plot divergence curves
-    fig = plot_divergence_curves(divergence_curves)
+    # Plot divergence curves with mimic-mjx baseline
+    fig = plot_divergence_curves(divergence_curves, mimic_baseline=mimic_baseline)
     if wandb_enabled:
         wandb.log({"temporal_order/divergence_curves": fig_to_image(fig)}, commit=False)
     fig.savefig(output_dir / "temporal_order_divergence.png", dpi=300)
@@ -279,8 +321,10 @@ def run_killer_demo(
     num_codes: int,
     output_dir: Path,
     wandb_enabled: bool,
+    jit_reset=None,
+    jit_step=None,
 ) -> None:
-    """Run killer demo experiment (Claim 5)."""
+    """Run killer demo experiment (Claim 5) — code2act only."""
     log.info("\n=== Killer Demo Experiment ===")
     K = int(cfg.killer_demo.K)
     max_steps = int(cfg.killer_demo.max_steps)
@@ -326,6 +370,7 @@ def run_killer_demo(
                     env, inf_fn, params, ppo_networks, use_rnn, key,
                     max_steps=max_steps,
                     code_override=code_seqs[ki],
+                    jit_reset=jit_reset, jit_step=jit_step,
                 )
                 trajectories_qpos.append(result["qpos"][:-1])
                 trajectories_codes.append(result["code_indices"])
@@ -389,6 +434,7 @@ def run_killer_demo(
                 result = run_rollout(
                     env, inf_fn, params, ppo_networks, use_rnn, key,
                     max_steps=max_steps,
+                    jit_reset=jit_reset, jit_step=jit_step,
                 )
                 trajectories_qpos.append(result["qpos"][:-1])
                 trajectories_codes.append(result["code_indices"])
@@ -429,9 +475,9 @@ def run_killer_demo(
 # ---------------------------------------------------------------------------
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="code_sequence_exp")
+@hydra.main(version_base=None, config_path="configs", config_name="code_sequence_exp")
 def main(cfg: DictConfig) -> None:
-    log.info("=== Code Sequence Experiments ===")
+    log.info("=== Code Sequence Experiments (code2act vs mimic-mjx) ===")
 
     output_dir = Path(cfg.output.base_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -441,11 +487,17 @@ def main(cfg: DictConfig) -> None:
         run_name = f"moseq_code_seq_{datetime.now():%y%m%d_%H%M%S}"
         wandb.init(project=cfg.wandb.project, entity=cfg.wandb.get("entity"), name=run_name, config=dict(cfg))
 
-    # Load checkpoint
+    # Load code2act (MoSeq decoder) checkpoint
     ckpt_cfg, norm_state, policy_params, ppo_networks = load_moseq_checkpoint(cfg.checkpoint.path)
     use_rnn = bool(ckpt_cfg.network_config.get("use_rnn_decoder", False))
     num_codes = int(ckpt_cfg.network_config.num_codes)
-    params = (norm_state, policy_params)
+    code2act_params = (norm_state, policy_params)
+
+    # Load mimic-mjx (oracle VAE) checkpoint
+    mimic_cfg, mimic_norm, mimic_policy, mimic_ppo = load_mimic_checkpoint(
+        cfg.mimic_checkpoint.path, step=cfg.mimic_checkpoint.get("step"),
+    )
+    mimic_params = (mimic_norm, mimic_policy)
 
     # Load data
     codes_data = np.load(cfg.data.codes_path)
@@ -465,26 +517,30 @@ def main(cfg: DictConfig) -> None:
     env_cfg.domain_randomization.use_domain_randomization = False
     env = MoSeqImitation(config=env_cfg, clips=test_clips, kpms_codes=test_codes)
 
-    # Build inference functions for both modes
-    inf_fns = {}
-    for mode in cfg.temporal_order.modes:
-        z_e_scale = 1.0 if mode == "full" else 0.0
-        inf_fns[mode] = make_inference_fn(
-            ppo_networks, use_rnn=use_rnn, deterministic=True, z_e_scale=z_e_scale,
-        )
+    # Pre-compile JIT functions ONCE (critical for performance)
+    jit_reset = jax.jit(env.reset)
+    jit_step = jax.jit(env.step)
+
+    # Build inference functions
+    inf_fn_code2act = make_inference_fn(
+        ppo_networks, use_rnn=use_rnn, deterministic=True,
+    )
+    inf_fn_mimic = make_mimic_inference_fn(mimic_ppo, deterministic=True)
 
     # --- Temporal Order ---
     run_temporal_order(
-        cfg, env, inf_fns, params, ppo_networks, use_rnn,
+        cfg, env, inf_fn_code2act, inf_fn_mimic,
+        code2act_params, mimic_params,
+        ppo_networks, mimic_ppo, use_rnn,
         test_codes, splits, num_codes, output_dir, wandb_enabled,
+        jit_reset=jit_reset, jit_step=jit_step,
     )
 
-    # --- Killer Demo ---
-    # Use code-only mode for clearest causal demonstration
-    killer_inf_fn = inf_fns.get("code_only", inf_fns.get("full"))
+    # --- Killer Demo (code2act only) ---
     run_killer_demo(
-        cfg, env, killer_inf_fn, params, ppo_networks, use_rnn,
+        cfg, env, inf_fn_code2act, code2act_params, ppo_networks, use_rnn,
         test_codes, test_clips, splits, num_codes, output_dir, wandb_enabled,
+        jit_reset=jit_reset, jit_step=jit_step,
     )
 
     if wandb_enabled:

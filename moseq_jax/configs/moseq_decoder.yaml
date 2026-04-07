@@ -148,8 +148,10 @@ network_config:
   distill_logvar_max: null
 
   # Pre-trained VAE decoder as readout (replaces single-Dense action head)
-  # h_t → linear(h_to_z_proj) → z_hat → [z_hat, proprio] → VAE decoder → action
-  use_pretrained_decoder: false
+  # h_t → VAE head MLP → (mu, logvar) → sample z → [z, proprio] → VAE decoder → action
+  # When use_distillation_head is also on, the same (mu, logvar) serve as the
+  # distill prediction for KL alignment.  Head MLP uses distillation_head_layer_sizes.
+  use_pretrained_decoder: true
   decoder_layer_sizes_vae: [512, 256, 256, 256]  # Must match mimic_encoder.yaml
 
   # KL schedule: controls kl_weight over training steps
@@ -174,6 +176,8 @@ train_setup:
 
   checkpoint_to_restore: null
   restore_from_run_state: null
+
+  freeze_decoder: true
 
   train_test_split_info: null
   train_subset_ratio: 0.7

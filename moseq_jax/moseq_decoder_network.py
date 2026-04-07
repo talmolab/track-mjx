@@ -17,11 +17,17 @@ Two decoder variants are provided:
 When ``use_continuous_encoder=False`` (default), the continuous encoder is
 skipped and behavior is identical to the original decoder-only network.
 
-When ``use_distillation_head=True`` (RNN decoder only), a distillation head
-MLP reads the RNN hidden state ``h_t`` and predicts ``(mu_d, sigma_d)``.
+When ``use_distillation_head=True`` (RNN decoder only), a head MLP reads
+the RNN hidden state ``h_t`` and predicts ``(mu_d, sigma_d)``.
 A frozen pre-trained encoder provides target distributions ``(mu_e, sigma_e)``
 for KL regularization.  In this mode, the encoder output z_e is completely
 excluded from the action path — actions depend only on ``h_t``.
+
+When ``use_pretrained_decoder=True``, a unified VAE head MLP maps ``h_t``
+to ``(mu, logvar)``, samples ``z = reparameterize(key, mu, logvar)``, and
+feeds ``[z, proprio]`` through the pre-trained VAE decoder.  If distillation
+is also active, the same ``(mu, logvar)`` serve as the distill prediction;
+otherwise they receive KL-to-prior regularization via ``kl_weight``.
 """
 
 from collections.abc import Callable, Sequence
@@ -250,7 +256,9 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             ]
 
         # Distillation head: h_t -> MLP -> (mu_d, logvar_d)
-        if self.use_distillation_head:
+        # Only created when distill is on WITHOUT pretrained decoder;
+        # when pretrained decoder is on, the VAE head subsumes this role.
+        if self.use_distillation_head and not self.use_pretrained_decoder:
             self.distill_layers = [
                 nn.Dense(size, kernel_init=self.kernel_init, name=f"distill_{i}")
                 for i, size in enumerate(self.distill_head_layer_sizes)
@@ -270,15 +278,30 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                 name="distill_logvar",
             )
 
-        # Pre-trained VAE decoder as readout (replaces action head)
+        # Pre-trained VAE decoder as readout
         if self.use_pretrained_decoder:
-            # Linear projection: h_t → z_hat (matches latent dim)
-            self.h_to_z_proj = nn.Dense(
+            # VAE head MLP: h_t → (mu, logvar) — unified head for both
+            # action generation (via stochastic z) and distillation alignment.
+            # Replaces the old deterministic h_to_z_proj linear layer.
+            self.vae_head_layers = [
+                nn.Dense(size, kernel_init=self.kernel_init, name=f"vae_head_{i}")
+                for i, size in enumerate(self.distill_head_layer_sizes)
+            ]
+            self.vae_head_lns = [
+                nn.LayerNorm(name=f"vae_head_ln_{i}")
+                for i in range(len(self.distill_head_layer_sizes))
+            ]
+            self.vae_head_mean = nn.Dense(
                 self.continuous_latent_dim,
                 kernel_init=self.kernel_init,
-                name="h_to_z_proj",
+                name="vae_head_mean",
             )
-            # VAE decoder: [z_hat, proprio] → action_params
+            self.vae_head_logvar = nn.Dense(
+                self.continuous_latent_dim,
+                kernel_init=self.kernel_init,
+                name="vae_head_logvar",
+            )
+            # VAE decoder: [z, proprio] → action_params
             self.decoder_module = IntentionDecoder(
                 layer_sizes=list(self.decoder_layer_sizes_vae)
                 + [self.action_param_size],
@@ -309,6 +332,37 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                 a_max=self.distill_logvar_max,
             )
         return mu_d, logvar_d
+
+    def _vae_head(
+        self, h_t: jnp.ndarray
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """VAE head: predict latent distribution from RNN hidden state.
+
+        Used when ``use_pretrained_decoder=True``.  Produces ``(mu, logvar)``
+        for stochastic sampling — the sampled ``z`` feeds into the pretrained
+        VAE decoder.  When distillation is also active, the same ``(mu, logvar)``
+        serve as the distill prediction for KL alignment with the frozen encoder.
+
+        Args:
+            h_t: Final GRU layer output, shape ``[..., H_last]``.
+
+        Returns:
+            ``(mu, logvar)`` each shape ``[..., continuous_latent_dim]``.
+        """
+        x = h_t
+        for dense, ln in zip(self.vae_head_layers, self.vae_head_lns):
+            x = dense(x)
+            x = self.activation(x)
+            x = ln(x)
+        mu = self.vae_head_mean(x)
+        logvar = self.vae_head_logvar(x)
+        if self.distill_logvar_min is not None or self.distill_logvar_max is not None:
+            logvar = jnp.clip(
+                logvar,
+                a_min=self.distill_logvar_min,
+                a_max=self.distill_logvar_max,
+            )
+        return mu, logvar
 
     def _encode(
         self,
@@ -399,7 +453,9 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         hidden: list[jnp.ndarray],
         z_e_for_action: jnp.ndarray | None = None,
         proprio: jnp.ndarray | None = None,
-    ) -> tuple[jnp.ndarray, list[jnp.ndarray], jnp.ndarray]:
+        key=None,
+        deterministic: bool = False,
+    ) -> tuple[jnp.ndarray, list[jnp.ndarray], jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None]:
         """Run one timestep through the stacked GRU and action head.
 
         Args:
@@ -408,11 +464,15 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             z_e_for_action: If provided, concatenated with GRU output before
                 the action head (z_e at action head architecture).
             proprio: Raw proprioception, needed when ``use_pretrained_decoder``
-                is True to form the decoder input ``[z_hat, proprio]``.
+                is True to form the decoder input ``[z, proprio]``.
+            key: PRNG key for reparameterization when
+                ``use_pretrained_decoder=True``.
+            deterministic: If True, use mean (no sampling) for VAE head latent.
 
         Returns:
-            ``(action_params, new_hidden, h_t)`` where ``h_t`` is the final
-            GRU layer output (used by the distillation head).
+            ``(action_params, new_hidden, h_t, vae_mean, vae_logvar)`` where
+            ``h_t`` is the final GRU layer output.  ``vae_mean`` and
+            ``vae_logvar`` are ``None`` when ``use_pretrained_decoder=False``.
         """
         new_hidden = []
         rnn_input = x
@@ -422,11 +482,16 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
             rnn_input = new_h
         h_t = rnn_input  # final GRU layer output
 
+        vae_mean, vae_logvar = None, None
+
         if self.use_pretrained_decoder and proprio is not None:
-            # Project h_t to latent-dim z_hat, concat with proprio,
-            # and feed through the pre-trained VAE decoder
-            z_hat = self.h_to_z_proj(h_t)
-            decoder_input = jnp.concatenate([z_hat, proprio], axis=-1)
+            # Unified VAE head: h_t → MLP → (mu, logvar) → sample z → decoder
+            vae_mean, vae_logvar = self._vae_head(h_t)
+            if deterministic or key is None:
+                z = vae_mean
+            else:
+                z = reparameterize(key, vae_mean, vae_logvar)
+            decoder_input = jnp.concatenate([z, proprio], axis=-1)
             action_params, _ = self.decoder_module(decoder_input)
         else:
             # Standard action head
@@ -435,7 +500,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                 action_input = jnp.concatenate([h_t, z_e_for_action], axis=-1)
             action_params = self.action_head(action_input)
 
-        return action_params, new_hidden, h_t
+        return action_params, new_hidden, h_t, vae_mean, vae_logvar
 
     def __call__(
         self,
@@ -458,20 +523,43 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
         Returns:
             ``(action_params, code_idx, mean, logvar, new_hidden,
             distill_mean, distill_logvar)``.
-            When ``use_distillation_head=False``, distill outputs are ``None``.
+            When ``use_distillation_head=False`` and
+            ``use_pretrained_decoder=False``, distill outputs are ``None``.
         """
+        # Split key: one for encoder z_e, one for VAE head sampling
+        encode_key = key
+        decode_key = None
+        if self.use_pretrained_decoder and key is not None and not deterministic:
+            if key.ndim > 1:
+                encode_key, decode_key = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+            else:
+                encode_key, decode_key = jax.random.split(key)
+
         decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
-            obs, key, deterministic, z_e_scale,
+            obs, encode_key, deterministic, z_e_scale,
         )
         if self.use_distillation_head:
             z_e_arg = None  # z_e NEVER enters action path in distillation mode
         else:
             z_e_arg = z_e_scaled if self.z_e_at_action_head else None
-        action_params, new_hidden, h_t = self._decode_rnn(
+        action_params, new_hidden, h_t, vae_mean, vae_logvar = self._decode_rnn(
             decoder_input, hidden, z_e_for_action=z_e_arg,
             proprio=obs["proprioception"] if self.use_pretrained_decoder else None,
+            key=decode_key, deterministic=deterministic,
         )
-        if self.use_distillation_head:
+
+        # Route outputs to correct return positions
+        if self.use_pretrained_decoder:
+            if self.use_distillation_head:
+                # Encoder (mean, logvar) at positions 2-3 as frozen KL target
+                # VAE head (vae_mean, vae_logvar) at positions 5-6 as distill prediction
+                distill_mean, distill_logvar = vae_mean, vae_logvar
+            else:
+                # No distillation: VAE head outputs go to positions 2-3
+                # for KL-to-prior loss via kl_weight
+                mean, logvar = vae_mean, vae_logvar
+                distill_mean, distill_logvar = None, None
+        elif self.use_distillation_head:
             distill_mean, distill_logvar = self._distill_head(h_t)
         else:
             distill_mean = None
@@ -564,15 +652,27 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     code_changed = (code_t != prev_code) | (prev_code == -1)
                     hidden_list = _reinit_hidden_on_code(hidden_list, code_t, code_changed)
 
+                    # Split keys for encode vs VAE head decode
+                    if self.use_pretrained_decoder:
+                        encode_key, decode_key = jax.vmap(jax.random.split)(keys_t).swapaxes(0, 1)
+                    else:
+                        encode_key = keys_t
+                        decode_key = None
+
                     decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
-                        obs_t, keys_t, deterministic, z_e_scale
+                        obs_t, encode_key, deterministic, z_e_scale
                     )
                     _proprio = obs_t["proprioception"] if self.use_pretrained_decoder else None
-                    action_params, new_hidden, h_t = self._decode_rnn(
+                    action_params, new_hidden, h_t, vae_mean, vae_logvar = self._decode_rnn(
                         decoder_input, hidden_list, z_e_for_action=None,
-                        proprio=_proprio,
+                        proprio=_proprio, key=decode_key, deterministic=deterministic,
                     )
-                    d_mean, d_logvar = self._distill_head(h_t)
+
+                    if self.use_pretrained_decoder:
+                        d_mean, d_logvar = vae_mean, vae_logvar
+                    else:
+                        d_mean, d_logvar = self._distill_head(h_t)
+
                     new_hidden = _reset_hidden_on_done(new_hidden, done_t)
                     return (new_hidden, code_t), (action_params, mean, logvar, d_mean, d_logvar)
 
@@ -594,16 +694,27 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     code_changed = (code_t != prev_code) | (prev_code == -1)
                     hidden_list = _reinit_hidden_on_code(hidden_list, code_t, code_changed)
 
+                    # Split keys for encode vs VAE head decode
+                    if self.use_pretrained_decoder:
+                        encode_key, decode_key = jax.vmap(jax.random.split)(keys_t).swapaxes(0, 1)
+                    else:
+                        encode_key = keys_t
+                        decode_key = None
+
                     decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
-                        obs_t, keys_t, deterministic, z_e_scale
+                        obs_t, encode_key, deterministic, z_e_scale
                     )
                     z_e_arg = _z_e_arg_for_action(z_e_scaled)
                     _proprio = obs_t["proprioception"] if self.use_pretrained_decoder else None
-                    action_params, new_hidden, _h_t = self._decode_rnn(
+                    action_params, new_hidden, _h_t, vae_mean, vae_logvar = self._decode_rnn(
                         decoder_input, hidden_list, z_e_for_action=z_e_arg,
-                        proprio=_proprio,
+                        proprio=_proprio, key=decode_key, deterministic=deterministic,
                     )
                     new_hidden = _reset_hidden_on_done(new_hidden, done_t)
+
+                    if self.use_pretrained_decoder:
+                        # VAE head outputs go to mean/logvar positions for KL-to-prior
+                        return (new_hidden, code_t), (action_params, vae_mean, vae_logvar)
                     return (new_hidden, code_t), (action_params, mean, logvar)
 
                 (final_hidden, _), (logits, means, logvars) = jax.lax.scan(
@@ -622,21 +733,32 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     hidden_list, prev_code, step_key = carry
                     obs_t = {k: inputs[0][k] for k in inputs[0]}
                     done_t = inputs[1]
-                    step_key, next_key = jax.random.split(step_key)
 
                     code_t = jnp.round(obs_t["kpms_code"][..., 0]).astype(jnp.int32)
                     code_changed = (code_t != prev_code) | (prev_code == -1)
                     hidden_list = _reinit_hidden_on_code(hidden_list, code_t, code_changed)
 
+                    # Split keys: encode, decode (VAE head), next carry
+                    if self.use_pretrained_decoder:
+                        encode_key, decode_key, next_key = jax.random.split(step_key, 3)
+                    else:
+                        encode_key, next_key = jax.random.split(step_key)
+                        decode_key = None
+
                     decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
-                        obs_t, step_key, deterministic, z_e_scale
+                        obs_t, encode_key, deterministic, z_e_scale
                     )
                     _proprio = obs_t["proprioception"] if self.use_pretrained_decoder else None
-                    action_params, new_hidden, h_t = self._decode_rnn(
+                    action_params, new_hidden, h_t, vae_mean, vae_logvar = self._decode_rnn(
                         decoder_input, hidden_list, z_e_for_action=None,
-                        proprio=_proprio,
+                        proprio=_proprio, key=decode_key, deterministic=deterministic,
                     )
-                    d_mean, d_logvar = self._distill_head(h_t)
+
+                    if self.use_pretrained_decoder:
+                        d_mean, d_logvar = vae_mean, vae_logvar
+                    else:
+                        d_mean, d_logvar = self._distill_head(h_t)
+
                     new_hidden = _reset_hidden_on_done(new_hidden, done_t)
                     return (new_hidden, code_t, next_key), (action_params, mean, logvar, d_mean, d_logvar)
 
@@ -652,22 +774,32 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
                     hidden_list, prev_code, step_key = carry
                     obs_t = {k: inputs[0][k] for k in inputs[0]}
                     done_t = inputs[1]
-                    step_key, next_key = jax.random.split(step_key)
 
                     code_t = jnp.round(obs_t["kpms_code"][..., 0]).astype(jnp.int32)
                     code_changed = (code_t != prev_code) | (prev_code == -1)
                     hidden_list = _reinit_hidden_on_code(hidden_list, code_t, code_changed)
 
+                    # Split keys: encode, decode (VAE head), next carry
+                    if self.use_pretrained_decoder:
+                        encode_key, decode_key, next_key = jax.random.split(step_key, 3)
+                    else:
+                        encode_key, next_key = jax.random.split(step_key)
+                        decode_key = None
+
                     decoder_input, code_idx, mean, logvar, z_e_scaled = self._encode(
-                        obs_t, step_key, deterministic, z_e_scale
+                        obs_t, encode_key, deterministic, z_e_scale
                     )
                     z_e_arg = _z_e_arg_for_action(z_e_scaled)
                     _proprio = obs_t["proprioception"] if self.use_pretrained_decoder else None
-                    action_params, new_hidden, _h_t = self._decode_rnn(
+                    action_params, new_hidden, _h_t, vae_mean, vae_logvar = self._decode_rnn(
                         decoder_input, hidden_list, z_e_for_action=z_e_arg,
-                        proprio=_proprio,
+                        proprio=_proprio, key=decode_key, deterministic=deterministic,
                     )
                     new_hidden = _reset_hidden_on_done(new_hidden, done_t)
+
+                    if self.use_pretrained_decoder:
+                        # VAE head outputs go to mean/logvar positions for KL-to-prior
+                        return (new_hidden, code_t, next_key), (action_params, vae_mean, vae_logvar)
                     return (new_hidden, code_t, next_key), (action_params, mean, logvar)
 
                 (final_hidden, _, _), (logits, means, logvars) = jax.lax.scan(

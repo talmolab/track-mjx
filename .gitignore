@@ -9,6 +9,7 @@ patch.ipynb
 jax_cache/
 results/
 tmp/
+moseq_jax/figures/
 SCAMPER/
 trained_mimic_ckpts/
 

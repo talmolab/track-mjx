@@ -388,14 +388,21 @@ def run_rollout(
 
     # Determine whether code_override applies (only for code2act)
     apply_code_override = code_override is not None and not is_mimic
+    # Infer code_stack_size from env obs shape (default 1)
+    _reset_obs = state.obs
+    _code_stack_size = int(_reset_obs["kpms_code"].shape[-1]) if "kpms_code" in _reset_obs else 1
 
     for t in range(max_steps):
         # Override code if requested (code2act only)
         if apply_code_override:
-            desired_code = int(code_override[min(t, len(code_override) - 1)])
+            # Build stacked code array [code_t, code_t+1, ..., code_t+N-1]
+            stacked = []
+            for si in range(_code_stack_size):
+                idx = min(t + si, len(code_override) - 1)
+                stacked.append(float(code_override[idx]))
             # Preserve OrderedDict type to avoid JAX recompilation
             new_obs = OrderedDict(state.obs)
-            new_obs["kpms_code"] = jnp.array([desired_code], dtype=jnp.float32)
+            new_obs["kpms_code"] = jnp.array(stacked, dtype=jnp.float32)
             state = state.replace(obs=new_obs)
 
         key, subkey = jax.random.split(key)

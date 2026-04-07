@@ -63,8 +63,8 @@ def _setup_nature_style() -> None:
         "xtick.labelsize": 6,
         "ytick.labelsize": 6,
         "legend.fontsize": 6,
-        "lines.linewidth": 2.0,
-        "axes.linewidth": 0.8,
+        "lines.linewidth": 1.2,
+        "axes.linewidth": 0.7,
         "axes.spines.top": False,
         "axes.spines.right": False,
         "xtick.major.width": 0.6,
@@ -121,7 +121,7 @@ def _plot_curves_on_ax(
     t = np.arange(min_len)
 
     # Mean + SEM
-    ax.plot(t, mean, color=color, linewidth=2.2, linestyle=linestyle, label=label, zorder=3)
+    ax.plot(t, mean, color=color, linewidth=1.4, linestyle=linestyle, label=label, zorder=3)
     ax.fill_between(
         t, mean - sem, mean + sem,
         color=color, alpha=0.18, linewidth=0, zorder=2,
@@ -152,7 +152,7 @@ def load_killer_data() -> dict[str, dict[str, list[np.ndarray]]]:
 
 def _add_rounded_border(fig: plt.Figure, axes_list: list[plt.Axes]) -> mpatches.FancyBboxPatch:
     """Add rounded figure border and restore axis spines. Returns the patch."""
-    fig.patch.set_visible(False)
+    fig.patch.set_facecolor("white")
     rect = mpatches.FancyBboxPatch(
         (0.01, 0.01), 0.98, 0.98,
         boxstyle="round,pad=0.01,rounding_size=0.02",

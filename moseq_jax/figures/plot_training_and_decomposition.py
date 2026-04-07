@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
-from scipy.signal import savgol_filter
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).parent
@@ -53,12 +52,13 @@ TRAIN_SERIES = {
 }
 
 
-def _smooth(y: np.ndarray, window: int = 11, polyorder: int = 2) -> np.ndarray:
+def _smooth(y: np.ndarray, window: int = 11, **_kwargs) -> np.ndarray:
     if len(y) < window:
-        window = max(3, len(y) | 1)
+        window = max(3, len(y))
     if window > len(y):
         return y
-    return savgol_filter(y, window_length=window, polyorder=min(polyorder, window - 1))
+    kernel = np.ones(window) / window
+    return np.convolve(y, kernel, mode="same")
 
 
 def _load_train_data() -> dict[str, pd.DataFrame]:
@@ -89,7 +89,7 @@ def _plot_panel_a(ax: plt.Axes, data: dict[str, pd.DataFrame]) -> None:
             ax.fill_between(x, _smooth(y_min), _smooth(y_max), color=color, alpha=0.12, linewidth=0)
 
         ax.scatter(x, y_mean, color=color, alpha=0.20, s=4, linewidths=0, zorder=1)
-        ax.plot(x, y_smooth, color=color, label=label, zorder=2)
+        ax.plot(x, y_smooth, color=color, label=label, linewidth=1.8, zorder=2)
 
     ax.set_xlabel("Training Steps (millions)")
     ax.set_ylabel("Episode Reward")
@@ -202,7 +202,7 @@ def _setup_nature_style() -> None:
         "xtick.labelsize": 6,
         "ytick.labelsize": 6,
         "legend.fontsize": 7,
-        "lines.linewidth": 2.0,
+        "lines.linewidth": 1.5,
         "lines.markersize": 2,
         "axes.linewidth": 0.8,
         "axes.spines.top": False,
@@ -248,7 +248,7 @@ def main() -> None:
     fig.tight_layout(w_pad=2.5)
 
     # Rounded figure border
-    fig.patch.set_visible(False)
+    fig.patch.set_facecolor("white")
     for ax in (ax_a, ax_b):
         for spine in ax.spines.values():
             spine.set_visible(False)

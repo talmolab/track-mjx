@@ -15,12 +15,14 @@ import jax
 import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
+from track_mjx.agent.amp_ppo import ppo as amp_ppo
+from track_mjx.agent.amp_ppo.wrappers import AMPObsWrapper
 from track_mjx.agent.ff_ppo import ppo as ff_ppo, ppo_networks as ff_networks
 from track_mjx.agent.recurrent_ppo import (
     ppo as recurrent_ppo,
@@ -92,13 +94,42 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
+
+    # Select network factory and train function based on architecture.
+    arch_name = cfg.network_config.get("arch_name", "intention")
+    logging.info(f"Using architecture: {arch_name}")
+
+    # Validate architecture name
+    valid_arch_names = {"intention", "recurrent_intention", "amp_intention"}
+    if arch_name not in valid_arch_names:
+        raise ValueError(
+            f"Unknown architecture '{arch_name}'. "
+            f"Valid options are: {sorted(valid_arch_names)}"
+        )
+
     # Create environments using registry
-    env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
+    base_env = registry.load(
+        env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False
     )
-    test_env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False)
+    base_test_env = registry.load(
+        env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False
     )
+    if arch_name == "amp_intention":
+        amp_config = OmegaConf.to_container(cfg.amp_config, resolve=True)
+        key_bodies = amp_config.get("key_bodies") or []
+        base_env = AMPObsWrapper(
+            base_env,
+            num_disc_obs_steps=amp_config.get("num_disc_obs_steps", 10),
+            key_body_names=key_bodies,
+        )
+        base_test_env = AMPObsWrapper(
+            base_test_env,
+            num_disc_obs_steps=amp_config.get("num_disc_obs_steps", 10),
+            key_body_names=key_bodies,
+        )
+
+    env = rodent_wrappers.TrackMjxObsWrapper(base_env)
+    test_env = rodent_wrappers.TrackMjxObsWrapper(base_test_env)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -112,18 +143,6 @@ def main(cfg: DictConfig) -> None:
     logging.info(f"episode_length {episode_length}")
 
     logging.info("Using PPO Pipeline")
-
-    # Select network factory and train function based on architecture
-    arch_name = cfg.network_config.get("arch_name", "intention")
-    logging.info(f"Using architecture: {arch_name}")
-
-    # Validate architecture name
-    valid_arch_names = {"intention", "recurrent_intention"}
-    if arch_name not in valid_arch_names:
-        raise ValueError(
-            f"Unknown architecture '{arch_name}'. "
-            f"Valid options are: {sorted(valid_arch_names)}"
-        )
 
     if arch_name == "recurrent_intention":
         # Validate required config keys for recurrent architecture
@@ -149,7 +168,7 @@ def main(cfg: DictConfig) -> None:
         )
         ppo_module = recurrent_ppo
     else:
-        # Feedforward intention network (default)
+        # Feedforward intention network (default and AMP v1)
         network_factory = functools.partial(
             ff_networks.make_intention_ppo_networks,
             intention_latent_size=cfg.network_config.intention_size,
@@ -160,7 +179,7 @@ def main(cfg: DictConfig) -> None:
             ),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
         )
-        ppo_module = ff_ppo
+        ppo_module = amp_ppo if arch_name == "amp_intention" else ff_ppo
 
     # Determine wandb run ID for resuming
     wandb_logging.initialize_wandb_logging(
@@ -205,7 +224,8 @@ def main(cfg: DictConfig) -> None:
         eval_env_test_set=test_env,
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(
-            playground_wrappers.wrap_for_brax_training, full_reset=False
+            playground_wrappers.wrap_for_brax_training,
+            full_reset=(arch_name == "amp_intention"),
         ),
         randomization_fn=(
             domain_randomization_maker(
@@ -221,6 +241,12 @@ def main(cfg: DictConfig) -> None:
             else None
         ),
     )
+
+    if arch_name == "amp_intention":
+        train_kwargs["amp_config"] = OmegaConf.to_container(
+            cfg.amp_config, resolve=True
+        )
+        train_kwargs["reference_clips"] = train_clips
 
     # Add get_activation only for feedforward PPO (not supported for recurrent)
     if arch_name != "recurrent_intention":

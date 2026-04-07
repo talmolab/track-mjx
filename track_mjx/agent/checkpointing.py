@@ -485,7 +485,7 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
     network_config = cfg.network_config
     obs_sizes = require_obs_sizes(network_config)
 
-    if arch_name == "intention":
+    if arch_name in {"intention", "amp_intention"}:
         return ff_ppo_networks.make_intention_ppo_networks(
             obs_sizes=obs_sizes,
             action_size=network_config.action_size,

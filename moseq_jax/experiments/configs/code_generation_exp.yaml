@@ -7,8 +7,8 @@
 
 # Code2Act: MoSeq decoder checkpoint
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260326_014031_608396/
-  step: 70
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260406_155304_389732/
+  step: null
 
 # Mimic-MJX: Oracle VAE baseline (survival upper bound)
 mimic_checkpoint:

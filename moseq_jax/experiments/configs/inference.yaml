@@ -10,8 +10,8 @@
 # =============================================================================
 # Code2Act: MoSeq decoder checkpoint (KPMS codes → RNN → action)
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260326_014031_608396/
-  step: 70
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260406_155304_389732/
+  step: null
 
 # Mimic-MJX: Pre-trained IntentionNetwork VAE checkpoint (oracle baseline)
 mimic_checkpoint:

@@ -545,6 +545,7 @@ def main(cfg: DictConfig) -> None:
     # -------------------------------------------------------------------
     log.info("\n--- Free-loop rollouts ---")
     survival_summary = {}
+    all_rollout_data = {}
     for method_name, seqs in all_generated.items():
         result = run_free_loop_rollouts(
             method_name, seqs[:int(cfg.generation.num_sequences)],
@@ -553,6 +554,13 @@ def main(cfg: DictConfig) -> None:
             jit_reset=jit_reset, jit_step=jit_step,
         )
         survival_summary[method_name] = np.mean(result["survivals"])
+        all_rollout_data[method_name] = result
+        # Save per-method rollout data
+        np.savez_compressed(
+            output_dir / f"rollouts_{method_name}.npz",
+            survivals=np.array(result["survivals"]),
+            qpos=np.array(result["qpos"], dtype=object),
+        )
 
     # --- Mimic-MJX oracle baseline (survival upper bound) ---
     log.info("\n--- Mimic-MJX oracle baseline ---")
@@ -570,6 +578,15 @@ def main(cfg: DictConfig) -> None:
         mimic_survivals.append(result["survival"])
     survival_summary["mimic_mjx (oracle)"] = np.mean(mimic_survivals)
     log.info(f"  Mimic-MJX mean survival: {np.mean(mimic_survivals):.1f}")
+
+    # Save survival summary for all methods
+    import json as _json
+    with open(output_dir / "survival_summary.json", "w") as f:
+        _json.dump(survival_summary, f, indent=2)
+    np.savez_compressed(
+        output_dir / "rollouts_mimic_mjx.npz",
+        survivals=np.array(mimic_survivals),
+    )
 
     # -------------------------------------------------------------------
     # Survival comparison plot

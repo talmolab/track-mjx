@@ -549,7 +549,9 @@ def main(cfg: DictConfig) -> None:
     _, _, env_cfg = utils.prepare_config(ckpt_cfg)
     env_cfg.start_frame_range = [0, 0]
     env_cfg.domain_randomization.use_domain_randomization = False
-    env = MoSeqImitation(config=env_cfg, clips=test_clips, kpms_codes=test_codes)
+    code_stack_size = int(ckpt_cfg.network_config.get("code_stack_size", 1))
+    env = MoSeqImitation(config=env_cfg, clips=test_clips, kpms_codes=test_codes,
+                         code_stack_size=code_stack_size)
 
     # Pre-compile JIT functions ONCE (critical for performance)
     jit_reset = jax.jit(env.reset)

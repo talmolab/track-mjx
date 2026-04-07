@@ -197,6 +197,9 @@ def main(cfg: DictConfig) -> None:
     env_cfg.start_frame_range = [0, 0]
     env_cfg.domain_randomization.use_domain_randomization = False
 
+    # Code stack size must match checkpoint training config
+    code_stack_size = int(ckpt_cfg.network_config.get("code_stack_size", 1))
+
     # Code colourmap for rendering
     code_colors = get_code_colormap(num_codes)
 
@@ -215,7 +218,8 @@ def main(cfg: DictConfig) -> None:
             n_frames_per_clip=int(ckpt_cfg.env_config.clip_length),
             keep_clips_idx=np.array(split_indices),
         )
-        env = MoSeqImitation(config=env_cfg, clips=split_clips, kpms_codes=split_codes)
+        env = MoSeqImitation(config=env_cfg, clips=split_clips, kpms_codes=split_codes,
+                            code_stack_size=code_stack_size)
 
         # Pre-compile JIT functions ONCE per env (critical for performance)
         jit_reset = jax.jit(env.reset)

@@ -285,14 +285,16 @@ def main(cfg: DictConfig) -> None:
 
             mode_reward_curves[mode] = decomp_arrays
 
-            # Save to NPZ (use allow_pickle for variable-length arrays)
+            # Save to NPZ — comprehensive data for post-hoc plotting
             save_path = output_dir / f"{split}_{mode}.npz"
-            np.savez_compressed(
-                save_path,
+            save_dict = dict(
                 rewards=reward_matrix,
                 qpos=np.array(all_qpos, dtype=object),
                 code_indices=np.array(all_codes, dtype=object),
             )
+            for comp_name, comp_arr in decomp_arrays.items():
+                save_dict[f"decomp_{comp_name}"] = comp_arr
+            np.savez_compressed(save_path, **save_dict)
             log.info(f"  Saved {save_path}")
 
             # Log per-mode scalar metrics
@@ -358,6 +360,12 @@ def main(cfg: DictConfig) -> None:
                 fig_tw.savefig(output_dir / f"{split}_transition_window.png", dpi=300)
                 plt.close(fig_tw)
                 log.info(f"    {total_transitions} transitions found across all clips")
+                # Save transition window raw data
+                np.savez_compressed(
+                    output_dir / f"{split}_transition_windows.npz",
+                    windows=all_windows, mean=agg_mean, std=agg_std,
+                    window_size=window, n_transitions=total_transitions,
+                )
             else:
                 log.info("    No transitions found (single-code clips)")
 
@@ -371,6 +379,8 @@ def main(cfg: DictConfig) -> None:
             wandb.log({f"inference/{split}/transition_matrix": fig_to_image(fig_tm)}, commit=False)
         fig_tm.savefig(output_dir / f"{split}_transition_matrix.png", dpi=300)
         plt.close(fig_tm)
+        # Save transition matrix
+        np.save(output_dir / f"{split}_transition_matrix.npy", T_matrix)
 
         # ---------------------------------------------------------------
         # K-body ghost videos (Claim 2.3)

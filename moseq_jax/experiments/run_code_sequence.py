@@ -243,6 +243,15 @@ def run_temporal_order(
         div_mean, div_std = compute_pairwise_joint_divergence(trajectories_qpos)
         divergence_curves[cond_name] = (div_mean, div_std)
 
+        # Save per-condition trajectory data
+        np.savez_compressed(
+            output_dir / f"temporal_{cond_name}_code2act.npz",
+            qpos=np.array(trajectories_qpos, dtype=object),
+            code_indices=np.array(trajectories_codes, dtype=object),
+            divergence_mean=div_mean, divergence_std=div_std,
+            code_sequences=np.array(cond_seqs[:K], dtype=object),
+        )
+
         # Ghost video for code2act (correct condition only)
         if cond_name == "correct" and len(trajectories_qpos) >= 2:
             try:
@@ -293,6 +302,22 @@ def run_temporal_order(
         )
         mimic_qpos.append(result["qpos"][:-1])
     mimic_baseline = compute_pairwise_joint_divergence(mimic_qpos)
+
+    # Save mimic baseline data
+    np.savez_compressed(
+        output_dir / "temporal_mimic_baseline.npz",
+        qpos=np.array(mimic_qpos, dtype=object),
+        divergence_mean=mimic_baseline[0], divergence_std=mimic_baseline[1],
+    )
+
+    # Save all divergence curves together for easy replotting
+    div_save = {}
+    for cond_name, (dm, ds) in divergence_curves.items():
+        div_save[f"{cond_name}_mean"] = dm
+        div_save[f"{cond_name}_std"] = ds
+    div_save["mimic_mean"] = mimic_baseline[0]
+    div_save["mimic_std"] = mimic_baseline[1]
+    np.savez_compressed(output_dir / "temporal_divergence_all.npz", **div_save)
 
     # Plot divergence curves with mimic-mjx baseline
     fig = plot_divergence_curves(divergence_curves, mimic_baseline=mimic_baseline)
@@ -376,6 +401,15 @@ def run_killer_demo(
                 trajectories_codes.append(result["code_indices"])
 
             height_beh_trajs[height][beh] = trajectories_qpos
+
+            # Save killer demo trajectories per behavior+height
+            np.savez_compressed(
+                output_dir / f"killer_{beh}_{height}.npz",
+                qpos=np.array(trajectories_qpos, dtype=object),
+                code_indices=np.array(trajectories_codes, dtype=object),
+                code_sequences=np.array(code_seqs, dtype=object),
+                behavior=beh, height=height,
+            )
 
             # Ghost video per behavior+height
             if len(trajectories_qpos) >= 2:

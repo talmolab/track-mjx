@@ -471,7 +471,9 @@ def main(cfg: DictConfig) -> None:
     _, _, env_cfg = utils.prepare_config(ckpt_cfg)
     env_cfg.start_frame_range = [0, 0]
     env_cfg.domain_randomization.use_domain_randomization = False
-    env = MoSeqImitation(config=env_cfg, clips=test_clips, kpms_codes=test_codes)
+    code_stack_size = int(ckpt_cfg.network_config.get("code_stack_size", 1))
+    env = MoSeqImitation(config=env_cfg, clips=test_clips, kpms_codes=test_codes,
+                         code_stack_size=code_stack_size)
 
     # Pre-compile JIT functions ONCE (critical for performance)
     jit_reset = jax.jit(env.reset)
@@ -517,6 +519,14 @@ def main(cfg: DictConfig) -> None:
     ctrl_results = generate_control_sequences(all_codes, num_codes, cfg)
     all_generated.update(ctrl_results)
 
+    # Save all generated sequences for post-hoc analysis
+    for method_name, seqs in all_generated.items():
+        np.savez_compressed(
+            output_dir / f"generated_{method_name}.npz",
+            sequences=np.array(seqs),
+        )
+    log.info(f"  Saved generated sequences for {len(all_generated)} methods")
+
     # -------------------------------------------------------------------
     # Diagnostics: transition matrices per method
     # -------------------------------------------------------------------
@@ -525,6 +535,7 @@ def main(cfg: DictConfig) -> None:
         T = compute_transition_matrix(seqs, num_codes)
         fig = plot_transition_matrix(T, title=f"TM: {method_name}")
         fig.savefig(output_dir / f"tm_{method_name}.png", dpi=300)
+        np.save(output_dir / f"tm_{method_name}.npy", T)
         if wandb_enabled:
             wandb.log({f"code_gen/{method_name}/transition_matrix": fig_to_image(fig)}, commit=False)
         plt.close(fig)

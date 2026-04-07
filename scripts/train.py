@@ -15,11 +15,12 @@ import jax
 import orbax.checkpoint as ocp
 import wandb
 from mujoco_playground import wrapper as playground_wrappers
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from track_mjx.config import utils
+from track_mjx.agent import add as add_utils
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.ff_ppo import ppo as ff_ppo, ppo_networks as ff_networks
 from track_mjx.agent.recurrent_ppo import (
@@ -92,13 +93,27 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
+    add_config_node = cfg.get("add_config", None)
+    add_config = (
+        OmegaConf.to_container(add_config_node, resolve=True)
+        if add_config_node is not None
+        else {"enabled": False}
+    )
+
+    def make_track_env(clips):
+        raw_env = registry.load(
+            env_name,
+            config=env_cfg_ml,
+            clips=clips,
+            flatten_obs=False,
+        )
+        if add_utils.is_enabled(add_config):
+            raw_env = add_utils.ADDDifferentialWrapper(raw_env, add_config)
+        return rodent_wrappers.TrackMjxObsWrapper(raw_env)
+
     # Create environments using registry
-    env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
-    )
-    test_env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False)
-    )
+    env = make_track_env(train_clips)
+    test_env = make_track_env(test_clips)
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -204,6 +219,7 @@ def main(cfg: DictConfig) -> None:
         use_kl_schedule=cfg.network_config.kl_schedule,
         eval_env_test_set=test_env,
         checkpoint_callback=checkpoint_callback,
+        add_config=add_config,
         wrap_for_training=functools.partial(
             playground_wrappers.wrap_for_brax_training, full_reset=False
         ),
@@ -233,9 +249,15 @@ def main(cfg: DictConfig) -> None:
     # Set the render env start frame to always be 0
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=rollout_cfg, clips=None, flatten_obs=False)
+    raw_rollout_env = registry.load(
+        env_name,
+        config=rollout_cfg,
+        clips=None,
+        flatten_obs=False,
     )
+    if add_utils.is_enabled(add_config):
+        raw_rollout_env = add_utils.ADDDifferentialWrapper(raw_rollout_env, add_config)
+    rollout_env = rodent_wrappers.TrackMjxObsWrapper(raw_rollout_env)
 
     # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)

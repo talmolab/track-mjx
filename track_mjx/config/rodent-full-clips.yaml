@@ -164,6 +164,13 @@ network_config:
   latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss
 
 # =============================================================================
+# ADD Reward Variant
+# =============================================================================
+# Disabled by default. Use rodent-add.yaml to train with discriminator rewards.
+add_config:
+  enabled: false
+
+# =============================================================================
 # Training Setup
 # =============================================================================
 train_setup:

@@ -122,6 +122,13 @@ network_config:
   latent_ar1_weight: 1e-2
 
 # =============================================================================
+# ADD Reward Variant
+# =============================================================================
+# Disabled by default. Use rodent-recurrent-add.yaml to train with discriminator rewards.
+add_config:
+  enabled: false
+
+# =============================================================================
 # Training Setup
 # =============================================================================
 train_setup:

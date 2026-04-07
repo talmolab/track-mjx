@@ -41,6 +41,7 @@ from brax.training import acting, pmap, types
 from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
+from track_mjx.agent import add as add_utils
 from track_mjx.agent import checkpointing, gradients
 from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
@@ -73,6 +74,18 @@ class TrainingState:
     params: losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
     env_steps: jnp.ndarray
+
+
+@flax.struct.dataclass
+class ADDTrainingState:
+    """Training state for PPO learner with an ADD discriminator."""
+
+    optimizer_state: optax.OptState
+    params: losses.PPONetworkParams
+    normalizer_params: running_statistics.RunningStatisticsState
+    env_steps: jnp.ndarray
+    discriminator_optimizer_state: optax.OptState
+    discriminator_params: Params
 
 
 def _unpmap(v: Any) -> Any:
@@ -217,6 +230,7 @@ def train(
     kl_ramp_up_frac: float = 0.25,
     checkpoint_callback: Callable[[int], None] | None = None,
     grad_clip_threshold: float = 20.0,
+    add_config: dict[str, Any] | None = None,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
@@ -281,6 +295,7 @@ def train(
       checkpoint_callback: Callback called after checkpointing to update
         run state JSON for preemption recovery.
       grad_clip_threshold: Maximum gradient norm for clipping.
+      add_config: Optional ADD discriminator reward configuration.
       wrap_for_training: Function that wraps environment for training.
       use_pmap_on_reset: whether to use pmap instead of vmap for env.reset across devices.
     Returns:
@@ -293,6 +308,10 @@ def train(
         batch_size * num_minibatches % num_envs
     )
     xt = time.time()
+    add_enabled = add_utils.is_enabled(add_config)
+    rollout_extra_fields = (
+        ("truncation", "add_differential") if add_enabled else ("truncation",)
+    )
 
     process_count = jax.process_count()
     process_id = jax.process_index()
@@ -373,11 +392,47 @@ def train(
         )
         return (optimizer_state, params, key, it), metrics
 
+    def discriminator_minibatch_step(carry, differentials: jnp.ndarray):
+        discriminator_optimizer_state, discriminator_params, key = carry
+        key, key_loss = jax.random.split(key)
+        (_, metrics), discriminator_params, discriminator_optimizer_state = (
+            discriminator_gradient_update_fn(
+                discriminator_params,
+                differentials,
+                key_loss,
+                optimizer_state=discriminator_optimizer_state,
+                params=discriminator_params,
+            )
+        )
+        return (discriminator_optimizer_state, discriminator_params, key), metrics
+
+    def discriminator_sgd_step(carry, unused_t, differentials: jnp.ndarray):
+        discriminator_optimizer_state, discriminator_params, key = carry
+        key, key_perm, key_grad = jax.random.split(key, 3)
+        shuffled = jax.random.permutation(key_perm, differentials)
+        shuffled = jnp.reshape(shuffled, (num_minibatches, -1) + shuffled.shape[1:])
+        (
+            discriminator_optimizer_state,
+            discriminator_params,
+            _,
+        ), metrics = jax.lax.scan(
+            discriminator_minibatch_step,
+            (discriminator_optimizer_state, discriminator_params, key_grad),
+            shuffled,
+            length=num_minibatches,
+        )
+        return (discriminator_optimizer_state, discriminator_params, key), metrics
+
     def training_step(
         carry: Tuple[TrainingState, envs.State, PRNGKey, int], unused_t
     ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey, int], Metrics]:
         training_state, state, key, it = carry
-        key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
+        if add_enabled:
+            key_sgd, key_generate_unroll, key_discriminator, new_key = jax.random.split(
+                key, 4
+            )
+        else:
+            key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
         policy = make_policy(
             (training_state.normalizer_params, training_state.params.policy)
@@ -392,7 +447,7 @@ def train(
                 policy,
                 current_key,
                 unroll_length,
-                extra_fields=("truncation",),
+                extra_fields=rollout_extra_fields,
             )
             return (next_state, next_key), data
 
@@ -408,6 +463,49 @@ def train(
             lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
         )
         assert data.discount.shape[1:] == (unroll_length,)
+
+        add_metrics = {}
+        if add_enabled:
+            differentials = data.extras["state_extras"]["add_differential"]
+            flat_differentials = differentials.reshape((-1, differentials.shape[-1]))
+            (
+                discriminator_optimizer_state,
+                discriminator_params,
+                _,
+            ), add_metrics = jax.lax.scan(
+                functools.partial(
+                    discriminator_sgd_step,
+                    differentials=flat_differentials,
+                ),
+                (
+                    training_state.discriminator_optimizer_state,
+                    training_state.discriminator_params,
+                    key_discriminator,
+                ),
+                (),
+                length=add_disc_updates_per_batch,
+            )
+            add_metrics = jax.tree_util.tree_map(jnp.mean, add_metrics)
+
+            add_rewards = add_utils.discriminator_reward(
+                discriminator_params,
+                differentials,
+                add_discriminator_network,
+                reward_scale=add_disc_reward_scale,
+            )
+            data = types.Transition(
+                observation=data.observation,
+                action=data.action,
+                reward=add_disc_reward_weight * add_rewards
+                + add_task_reward_weight * data.reward,
+                discount=data.discount,
+                next_observation=data.next_observation,
+                extras=data.extras,
+            )
+            add_metrics = {
+                **{f"add/{name}": value for name, value in add_metrics.items()},
+                "add/reward": jnp.mean(add_rewards),
+            }
 
         # Update normalization params (only if normalization is enabled).
         # When disabled, normalizer stays at identity (mean=0, std=1).
@@ -427,15 +525,29 @@ def train(
             length=num_updates_per_batch,
         )
 
-        new_training_state = TrainingState(
-            optimizer_state=optimizer_state,
-            params=params,
-            normalizer_params=normalizer_params,
-            env_steps=jnp.int32(
-                training_state.env_steps
-                + env_step_per_training_step / STEPS_IN_THOUSANDS
-            ),  # env step in thousands
-        )
+        if add_enabled:
+            new_training_state = ADDTrainingState(
+                optimizer_state=optimizer_state,
+                params=params,
+                normalizer_params=normalizer_params,
+                env_steps=jnp.int32(
+                    training_state.env_steps
+                    + env_step_per_training_step / STEPS_IN_THOUSANDS
+                ),
+                discriminator_optimizer_state=discriminator_optimizer_state,
+                discriminator_params=discriminator_params,
+            )
+            metrics = {**metrics, **add_metrics}
+        else:
+            new_training_state = TrainingState(
+                optimizer_state=optimizer_state,
+                params=params,
+                normalizer_params=normalizer_params,
+                env_steps=jnp.int32(
+                    training_state.env_steps
+                    + env_step_per_training_step / STEPS_IN_THOUSANDS
+                ),  # env step in thousands
+            )
         return (new_training_state, state, new_key, it), metrics
 
     def training_epoch(
@@ -495,7 +607,13 @@ def train(
     local_key, key_env, eval_key = jax.random.split(local_key, 3)
     # key_networks should be global, so that networks are initialized the same
     # way for different processes.
-    key_policy, key_value, policy_params_fn_key = jax.random.split(global_key, 3)
+    if add_enabled:
+        key_policy, key_value, key_discriminator, policy_params_fn_key = (
+            jax.random.split(global_key, 4)
+        )
+    else:
+        key_policy, key_value, policy_params_fn_key = jax.random.split(global_key, 3)
+        key_discriminator = None
     del global_key
 
     assert num_envs % device_count == 0
@@ -546,6 +664,41 @@ def train(
         }
     )
 
+    add_discriminator_network = None
+    add_disc_updates_per_batch = 0
+    add_disc_reward_scale = 1.0
+    add_disc_reward_weight = 1.0
+    add_task_reward_weight = 0.0
+    if add_enabled:
+        differential_size = int(env_state.info["add_differential"].shape[-1])
+        if not isinstance(config_dict.get("add_config"), dict):
+            config_dict["add_config"] = {}
+        add_config_dict = config_dict["add_config"]
+        add_config_dict.update(
+            {
+                "enabled": True,
+                "differential_size": differential_size,
+            }
+        )
+        add_discriminator_network = add_utils.make_discriminator_network(
+            differential_size,
+            hidden_layer_sizes=tuple(
+                add_utils.config_get(add_config, "disc_hidden_layer_sizes", (1024, 512))
+            ),
+        )
+        add_disc_updates_per_batch = int(
+            add_utils.config_get(add_config, "disc_updates_per_batch", 1)
+        )
+        add_disc_reward_scale = float(
+            add_utils.config_get(add_config, "disc_reward_scale", 2.0)
+        )
+        add_disc_reward_weight = float(
+            add_utils.config_get(add_config, "disc_reward_weight", 1.0)
+        )
+        add_task_reward_weight = float(
+            add_utils.config_get(add_config, "task_reward_weight", 0.0)
+        )
+
     ppo_network = network_factory(
         obs_sizes,
         env.action_size,
@@ -555,11 +708,40 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    grad_clip_threshold = 20.0
     optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
+    if add_enabled:
+        discriminator_optimizer = optax.chain(
+            optax.clip_by_global_norm(
+                float(
+                    add_utils.config_get(add_config, "disc_grad_clip_threshold", 10.0)
+                )
+            ),
+            optax.adamw(
+                learning_rate=float(
+                    add_utils.config_get(add_config, "disc_learning_rate", 2.5e-4)
+                ),
+                weight_decay=float(
+                    add_utils.config_get(add_config, "disc_weight_decay", 0.0)
+                ),
+                eps=1e-5,
+            ),
+        )
+        discriminator_loss_fn = functools.partial(
+            add_utils.compute_discriminator_loss,
+            discriminator_network=add_discriminator_network,
+            grad_penalty_weight=float(
+                add_utils.config_get(add_config, "disc_grad_penalty", 1.0)
+            ),
+            logit_reg_weight=float(
+                add_utils.config_get(add_config, "disc_logit_reg", 0.0)
+            ),
+        )
+    else:
+        discriminator_optimizer = None
+        discriminator_loss_fn = None
 
     latent_kl_schedule = None
     latent_ar1_schedule = None
@@ -598,12 +780,25 @@ def train(
 
     # Initialize normalizer with pytree structure matching observations
     obs_shape = get_obs_shape(env_state.obs)
-    training_state = TrainingState(
-        optimizer_state=optimizer.init(init_params),
-        params=init_params,
-        normalizer_params=running_statistics.init_state(obs_shape),
-        env_steps=0,
-    )
+    if add_enabled:
+        discriminator_params = add_discriminator_network.init(key_discriminator)
+        training_state = ADDTrainingState(
+            optimizer_state=optimizer.init(init_params),
+            params=init_params,
+            normalizer_params=running_statistics.init_state(obs_shape),
+            env_steps=0,
+            discriminator_optimizer_state=discriminator_optimizer.init(
+                discriminator_params
+            ),
+            discriminator_params=discriminator_params,
+        )
+    else:
+        training_state = TrainingState(
+            optimizer_state=optimizer.init(init_params),
+            params=init_params,
+            normalizer_params=running_statistics.init_state(obs_shape),
+            env_steps=0,
+        )
 
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
@@ -620,6 +815,18 @@ def train(
         has_aux=True,
         clip_threshold=grad_clip_threshold,
     )
+    if add_enabled:
+        discriminator_gradient_update_fn = gradients.gradient_update_fn(
+            discriminator_loss_fn,
+            discriminator_optimizer,
+            pmap_axis_name=_PMAP_AXIS_NAME,
+            has_aux=True,
+            clip_threshold=float(
+                add_utils.config_get(add_config, "disc_grad_clip_threshold", 10.0)
+            ),
+        )
+    else:
+        discriminator_gradient_update_fn = None
 
     training_state = jax.device_put_replicated(
         training_state, jax.local_devices()[:local_devices_to_use]

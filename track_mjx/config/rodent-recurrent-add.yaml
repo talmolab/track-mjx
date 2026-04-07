@@ -1,0 +1,76 @@
+defaults:
+  - rodent-recurrent
+  - _self_
+
+add_config:
+  enabled: true
+  feature_groups:
+    root_pos: true
+    root_rot: true
+    root_vel: true
+    root_ang_vel: true
+    joints: true
+    joints_vel: true
+    end_eff: true
+    bodies_pos: false
+  feature_scales:
+    root_pos: 0.035
+    root_rot: 0.35
+    root_vel: 1.0
+    root_ang_vel: 1.0
+    joints: 1.41
+    joints_vel: 1.0
+    end_eff: 0.03
+    bodies_pos: 0.25
+  disc_hidden_layer_sizes: [1024, 512]
+  disc_learning_rate: 2.5e-4
+  disc_grad_clip_threshold: 10.0
+  disc_grad_penalty: 1.0
+  disc_logit_reg: 0.0
+  disc_reward_scale: 2.0
+  disc_reward_weight: 1.0
+  task_reward_weight: 0.0
+  disc_updates_per_batch: 1
+
+env_config:
+  termination_criteria:
+    root_too_far:
+      max_distance: 1000000.0
+    root_too_rotated:
+      max_degrees: 360.0
+    pose_error:
+      max_l2_error: 1000000.0
+    nan_termination: {}
+  reward_terms:
+    root_pos:
+      exp_scale: 0.035
+      weight: 0.0
+    root_quat:
+      exp_scale: 20.0
+      weight: 0.0
+    joints:
+      exp_scale: 1.41
+      weight: 0.0
+    joints_vel:
+      exp_scale: 1.0
+      weight: 0.0
+    bodies_pos:
+      exp_scale: 0.25
+      weight: 0.0
+    end_eff:
+      exp_scale: 0.03
+      weight: 0.0
+    torso_z_range:
+      healthy_z_range: [0.0325, 0.5]
+      weight: 1.0
+    control_cost:
+      weight: 0.02
+    control_diff_cost:
+      weight: 0.02
+    energy_cost:
+      max_value: 50.0
+      weight: 0.01
+
+logging_config:
+  group_name: recurrent-add
+  exp_name: rodent-recurrent-add

@@ -63,8 +63,8 @@ def _setup_nature_style() -> None:
         "xtick.labelsize": 6,
         "ytick.labelsize": 6,
         "legend.fontsize": 6,
-        "lines.linewidth": 1.2,
-        "axes.linewidth": 0.6,
+        "lines.linewidth": 2.0,
+        "axes.linewidth": 0.8,
         "axes.spines.top": False,
         "axes.spines.right": False,
         "xtick.major.width": 0.6,
@@ -77,6 +77,7 @@ def _setup_nature_style() -> None:
         "savefig.dpi": 300,
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.05,
+        "savefig.facecolor": "white",
         "figure.facecolor": "white",
         "axes.facecolor": "white",
         "axes.grid": False,
@@ -120,7 +121,7 @@ def _plot_curves_on_ax(
     t = np.arange(min_len)
 
     # Mean + SEM
-    ax.plot(t, mean, color=color, linewidth=1.4, linestyle=linestyle, label=label, zorder=3)
+    ax.plot(t, mean, color=color, linewidth=2.2, linestyle=linestyle, label=label, zorder=3)
     ax.fill_between(
         t, mean - sem, mean + sem,
         color=color, alpha=0.18, linewidth=0, zorder=2,

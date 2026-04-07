@@ -333,9 +333,11 @@ def run_rollout(
     max_steps: int = 500,
     code_override: np.ndarray | None = None,
     initial_qpos: np.ndarray | None = None,
+    reset_clip_idx: int | None = None,
     jit_reset: Callable | None = None,
     jit_step: Callable | None = None,
     model_type: str = "code2act",
+    ignore_done: bool = False,
 ) -> dict[str, Any]:
     """Run a single evaluation rollout and collect trajectory data.
 
@@ -352,10 +354,16 @@ def run_rollout(
             the environment's KPMS codes at each step.  Ignored when
             ``model_type="mimic_mjx"``.
         initial_qpos: If provided, override the initial qpos after reset.
+        reset_clip_idx: If provided, reset to this specific clip index
+            instead of a random one.  Bypasses ``jit_reset`` to avoid
+            JIT retracing issues with the ``clip_idx`` branch.
         jit_reset: Pre-compiled ``jax.jit(env.reset)``. Created if ``None``.
         jit_step: Pre-compiled ``jax.jit(env.step)``. Created if ``None``.
         model_type: ``"code2act"`` for MoSeq decoder or ``"mimic_mjx"``
             for the IntentionNetwork VAE oracle.
+        ignore_done: If ``True``, never break on ``state.done``. Use for
+            open-loop experiments where the env's done signal is irrelevant
+            (e.g., code-override with mismatched reference clip).
 
     Returns:
         Dict with keys: ``qpos``, ``rewards``, ``code_indices``,
@@ -369,7 +377,14 @@ def run_rollout(
     is_mimic = model_type == "mimic_mjx"
 
     key, reset_key = jax.random.split(key)
-    state = jit_reset(reset_key)
+
+    # Reset to a specific clip or random
+    if reset_clip_idx is not None:
+        # Bypass jit_reset — env.reset with clip_idx traces a different
+        # code path (no random choice), so we call it directly.
+        state = env.reset(reset_key, clip_idx=jnp.int32(reset_clip_idx))
+    else:
+        state = jit_reset(reset_key)
 
     # Override initial qpos if requested
     if initial_qpos is not None:
@@ -440,7 +455,7 @@ def run_rollout(
                     step_metrics[mk] = float(mv)
         metrics_list.append(step_metrics)
 
-        if state.done:
+        if state.done and not ignore_done:
             if use_rnn and not is_mimic:
                 hidden = ppo_networks.policy_network.init_hidden(1)
             break

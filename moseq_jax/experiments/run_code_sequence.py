@@ -349,7 +349,13 @@ def run_killer_demo(
     jit_reset=None,
     jit_step=None,
 ) -> None:
-    """Run killer demo experiment (Claim 5) — code2act only."""
+    """Run killer demo experiment (Claim 5) — code2act only.
+
+    Two instantiation conditions (high-z / low-z starting position),
+    each tested with groom / walk / rear code sequences.  All bodies
+    within a height condition start at the *same* position — only the
+    codes differ.
+    """
     log.info("\n=== Killer Demo Experiment ===")
     K = int(cfg.killer_demo.K)
     max_steps = int(cfg.killer_demo.max_steps)
@@ -357,34 +363,51 @@ def run_killer_demo(
 
     code_colors = get_code_colormap(num_codes)
 
-    # Determine anchor heights
-    # Low: median root Z across all clips frame 0
-    # High: 90th percentile of max root Z
+    # ------------------------------------------------------------------
+    # Determine anchor clips (proper env.reset to frame 0)
+    # ------------------------------------------------------------------
+    # Low: a clip whose starting z is near the median (typical ground pose)
+    # High: a clip whose starting z is near the 90th percentile (rearing)
     all_z0 = clips.qpos[:, 0, 2]  # root Z at frame 0
-    all_max_z = clips.qpos[:, :, 2].max(axis=1)
-    low_z = float(np.median(all_z0))
-    high_z = float(np.percentile(all_max_z, 90))
-    log.info(f"  Anchor heights: low={low_z:.4f}, high={high_z:.4f}")
+    low_clip_idx = int(np.argmin(np.abs(all_z0 - np.median(all_z0))))
+    high_z_target = float(np.percentile(all_z0, 90))
+    high_clip_idx = int(np.argmin(np.abs(all_z0 - high_z_target)))
 
-    # Collect trajectories: height → behavior → list of qpos
-    height_beh_trajs: dict[str, dict[str, list[np.ndarray]]] = {}
+    height_anchor_clip = {"high": high_clip_idx, "low": low_clip_idx}
+    log.info(
+        f"  Anchor clips: low=clip {low_clip_idx} (z={all_z0[low_clip_idx]:.4f}), "
+        f"high=clip {high_clip_idx} (z={all_z0[high_clip_idx]:.4f})"
+    )
+
+    # ------------------------------------------------------------------
+    # Build code sequences per behavior (shared across heights)
+    # ------------------------------------------------------------------
+    beh_code_seqs: dict[str, list[np.ndarray]] = {}
+    beh_indices_map: dict[str, list[int]] = {}
 
     for beh in cfg.killer_demo.behaviors:
-        log.info(f"  Behavior: {beh}")
-
         selected = select_clips_by_behavior(splits, "test", k_per_behavior=K, seed=seed)
         beh_indices = selected.get(beh, [])[:K]
-
         if len(beh_indices) < 2:
-            log.warning(f"    Only {len(beh_indices)} clips for {beh}, skipping")
+            log.warning(f"  Only {len(beh_indices)} clips for {beh}, skipping")
             continue
+        beh_code_seqs[beh] = make_correct_sequences(codes, beh_indices, max_steps)
+        beh_indices_map[beh] = beh_indices
 
-        code_seqs = make_correct_sequences(codes, beh_indices, max_steps)
+    # ------------------------------------------------------------------
+    # Run rollouts: height (outer) → behavior (inner)
+    # ------------------------------------------------------------------
+    height_beh_trajs: dict[str, dict[str, list[np.ndarray]]] = {}
 
-        for height in cfg.killer_demo.start_heights:
-            log.info(f"    Height: {height}")
-            if height not in height_beh_trajs:
-                height_beh_trajs[height] = {}
+    for height in cfg.killer_demo.start_heights:
+        anchor_clip = height_anchor_clip[height]
+        log.info(f"\n  --- Height: {height} (anchor clip {anchor_clip}, z={all_z0[anchor_clip]:.4f}) ---")
+        height_beh_trajs[height] = {}
+
+        for beh in beh_code_seqs:
+            log.info(f"    Behavior: {beh}")
+            code_seqs = beh_code_seqs[beh]
+            beh_indices = beh_indices_map[beh]
 
             trajectories_qpos = []
             trajectories_codes = []
@@ -395,7 +418,9 @@ def run_killer_demo(
                     env, inf_fn, params, ppo_networks, use_rnn, key,
                     max_steps=max_steps,
                     code_override=code_seqs[ki],
+                    reset_clip_idx=anchor_clip,
                     jit_reset=jit_reset, jit_step=jit_step,
+                    ignore_done=True,
                 )
                 trajectories_qpos.append(result["qpos"][:-1])
                 trajectories_codes.append(result["code_indices"])
@@ -409,20 +434,35 @@ def run_killer_demo(
                 code_indices=np.array(trajectories_codes, dtype=object),
                 code_sequences=np.array(code_seqs, dtype=object),
                 behavior=beh, height=height,
+                anchor_clip=anchor_clip,
             )
 
-            # Ghost video per behavior+height
-            if len(trajectories_qpos) >= 2:
+            # Ghost video — only near-full-length trajectories (>= 90% of max)
+            full_len = max(len(q) for q in trajectories_qpos)
+            min_len_threshold = int(full_len * 0.9)
+            full_qpos = [q for q in trajectories_qpos if len(q) >= min_len_threshold]
+            full_codes = [
+                c for q, c in zip(trajectories_qpos, trajectories_codes)
+                if len(q) >= min_len_threshold
+            ]
+            n_skipped = len(trajectories_qpos) - len(full_qpos)
+            if n_skipped > 0:
+                log.info(
+                    f"      Skipping {n_skipped}/{len(trajectories_qpos)} "
+                    f"early-terminated trajectories for rendering"
+                )
+
+            if len(full_qpos) >= 2:
                 try:
                     from experiments.shared.ghost_rendering import (
                         build_ghost_model,
                         render_ghost_video,
                     )
 
-                    traj_colors = get_trajectory_colors(len(trajectories_qpos))
+                    traj_colors = get_trajectory_colors(len(full_qpos))
                     ghost_model, base_nq = build_ghost_model(
                         env,
-                        num_ghosts=len(trajectories_qpos) - 1,
+                        num_ghosts=len(full_qpos) - 1,
                         ghost_colors=traj_colors[1:],
                         camera_distance=float(cfg.rendering.camera_distance),
                         camera_elevation=float(cfg.rendering.camera_elevation),
@@ -431,7 +471,7 @@ def run_killer_demo(
                     )
                     ghost_path = output_dir / f"killer_{beh}_{height}.mp4"
                     render_ghost_video(
-                        ghost_model, base_nq, trajectories_qpos, trajectories_codes,
+                        ghost_model, base_nq, full_qpos, full_codes,
                         traj_colors, ghost_path,
                         title=f"Killer: {beh} ({height} start)",
                         fps=int(cfg.rendering.fps),
@@ -445,7 +485,7 @@ def run_killer_demo(
                             commit=False,
                         )
                 except Exception as e:
-                    log.warning(f"    Ghost rendering failed: {e}")
+                    log.warning(f"      Ghost rendering failed: {e}")
 
     # Combined displacement plot per height (all behaviors, mean+std)
     for height, beh_trajs in height_beh_trajs.items():
@@ -455,53 +495,6 @@ def run_killer_demo(
         fig.savefig(output_dir / f"killer_{height}_displacement.png", dpi=300)
         plt.close(fig)
         log.info(f"  Displacement plot saved for {height}")
-
-        # Control: original starting positions
-        if cfg.killer_demo.get("include_control", True):
-            log.info(f"    Control: original positions")
-            trajectories_qpos = []
-            trajectories_codes = []
-
-            for ki in range(len(beh_indices)):
-                key = jax.random.PRNGKey(seed + ki * 2000)
-                # No code override — use env's natural codes
-                result = run_rollout(
-                    env, inf_fn, params, ppo_networks, use_rnn, key,
-                    max_steps=max_steps,
-                    jit_reset=jit_reset, jit_step=jit_step,
-                )
-                trajectories_qpos.append(result["qpos"][:-1])
-                trajectories_codes.append(result["code_indices"])
-
-            if len(trajectories_qpos) >= 2:
-                try:
-                    traj_colors = get_trajectory_colors(len(trajectories_qpos))
-                    ghost_model, base_nq = build_ghost_model(
-                        env,
-                        num_ghosts=len(trajectories_qpos) - 1,
-                        ghost_colors=traj_colors[1:],
-                        camera_distance=float(cfg.rendering.camera_distance),
-                        camera_elevation=float(cfg.rendering.camera_elevation),
-                        camera_azimuth=float(cfg.rendering.camera_azimuth),
-                        camera_fovy=float(cfg.rendering.camera_fovy),
-                    )
-                    ghost_path = output_dir / f"killer_{beh}_control.mp4"
-                    render_ghost_video(
-                        ghost_model, base_nq, trajectories_qpos, trajectories_codes,
-                        traj_colors, ghost_path,
-                        title=f"Control: {beh} (original pos)",
-                        fps=int(cfg.rendering.fps),
-                        width=int(cfg.rendering.width),
-                        height=int(cfg.rendering.height),
-                        code_colors=code_colors,
-                    )
-                    if wandb_enabled:
-                        wandb.log(
-                            {f"killer_demo/{beh}/control/ghost": wandb.Video(str(ghost_path), format="mp4")},
-                            commit=False,
-                        )
-                except Exception as e:
-                    log.warning(f"    Control ghost rendering failed: {e}")
 
 
 # ---------------------------------------------------------------------------

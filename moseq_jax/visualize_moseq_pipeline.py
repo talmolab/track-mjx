@@ -602,19 +602,16 @@ def draw_moseq_prior_distill_pipeline(ax):
     # =====================================================================
     # s^p_t + feedback
     # =====================================================================
-    sp_x = rnn_cx
-    sp_y = main_cy - rnn_r - 0.55
-    ax.text(sp_x, sp_y, r"$s_t^p$", ha="center", va="center",
-            fontsize=12, color=C_TEXT, fontweight="bold")
-    _arrow(ax, sp_x, sp_y + 0.15, sp_x, rnn_cy - rnn_r - 0.06,
-           color=C_FEEDBACK, lw=1.2)
-    fb_y = sp_y - 0.35
-    ax.plot([phys_cx, phys_cx, sp_x, sp_x],
-            [phys_by, fb_y, fb_y, sp_y - 0.18],
+    # Feedback: Physics -> dashed line -> arrow up into RNN bottom, labeled s^p_t
+    fb_y = main_cy - rnn_r - 0.30
+    ax.plot([phys_cx, phys_cx, rnn_cx, rnn_cx],
+            [phys_by, fb_y, fb_y, rnn_cy - rnn_r - 0.06],
             color=C_FEEDBACK, lw=1.0, ls="--", zorder=1)
-    ax.annotate("", xy=(sp_x, sp_y - 0.15), xytext=(sp_x, sp_y - 0.18),
-                arrowprops=dict(arrowstyle="-|>", color=C_FEEDBACK, lw=1.0),
-                zorder=2)
+    _arrow(ax, rnn_cx, fb_y, rnn_cx, rnn_cy - rnn_r - 0.06,
+           color=C_FEEDBACK, lw=1.2)
+    mid_fb_y = (fb_y + rnn_cy - rnn_r - 0.06) / 2
+    ax.text(rnn_cx + 0.15, mid_fb_y, r"$s_t^p$", ha="left", va="center",
+            fontsize=10, color=C_TEXT, fontweight="bold")
 
     # =====================================================================
     # DISTILLATION BOX — dashed background around encoder + distill head
@@ -622,14 +619,14 @@ def draw_moseq_prior_distill_pipeline(ax):
     C_DBOX = "#B8A070"
     C_DBOX_BG = "#FFF5E8"
     dbox_x, dbox_y = 0.15, 1.92
-    dbox_w, dbox_h = 3.55, 1.70  # covers up to y=3.62
+    dbox_w, dbox_h = 3.55, 1.30
     ax.add_patch(FancyBboxPatch(
         (dbox_x, dbox_y), dbox_w, dbox_h,
         boxstyle="round,pad=0.08", facecolor=C_DBOX_BG, alpha=0.45,
         edgecolor=C_DBOX, linewidth=1.5, linestyle="--", zorder=1,
     ))
-    ax.text(dbox_x + dbox_w - 0.08, dbox_y + dbox_h - 0.06,
-            "distillation (optional)", ha="right", va="top",
+    ax.text(dbox_x + dbox_w - 0.08, dbox_y + dbox_h + 0.08,
+            "distillation block", ha="right", va="bottom",
             fontsize=8, color=C_DBOX, fontstyle="italic",
             fontweight="bold", zorder=2)
 
@@ -670,14 +667,14 @@ def draw_moseq_prior_distill_pipeline(ax):
 
     # Distill bracket [μ^d, σ^d] above Distill Head
     dist_bkt_cx = dh_cx
-    dist_bkt_cy = dh_ty + 0.23
+    dist_bkt_cy = dh_ty + 0.20
     _bracket_labeled(ax, dist_bkt_cx, dist_bkt_cy,
                      r"$\mu_t^d$", r"$\sigma_t^d$", w=0.35, h=0.30)
 
     # =====================================================================
     # ENCODER ROW — pushed higher, no sampling / z_e
     # =====================================================================
-    enc_cy = 3.30
+    enc_cy = 2.90
 
     sg_x = xg_x
     ax.text(sg_x, enc_cy, r"$s_{t:T}^g$", ha="center", va="center",
@@ -691,6 +688,10 @@ def draw_moseq_prior_distill_pipeline(ax):
     _trapezoid(ax, enc_x, enc_by, enc_w, enc_h, C_BLUE, "Encoder",
                direction="right", fontsize=9.5, border_color=C_BLUE_DARK,
                sublabel=r"$q_\phi(z \mid s_{t:T}^g)$", sublabel_size=6.5)
+    # Frozen snowflake symbol on encoder (bottom-left)
+    ax.text(enc_x + 0.12, enc_by + enc_h * 0.22, "\u2744",
+            ha="center", va="center", fontsize=12, color="white",
+            alpha=0.9, zorder=5)
 
     _arrow(ax, enc_x + enc_w + 0.06, enc_cy, enc_x + enc_w + 0.30, enc_cy)
     enc_bkt_cx = enc_x + enc_w + 0.52
@@ -707,42 +708,48 @@ def draw_moseq_prior_distill_pipeline(ax):
     # =====================================================================
     # KL NODE — junction of encoder (from left) and distill (from below)
     # =====================================================================
-    kl_cx = dh_cx
-    kl_cy = enc_cy
-
-    ax.plot([enc_bkt_cx + 0.22, kl_cx - 0.35], [kl_cy, kl_cy],
-            color=C_KL, lw=1.5, ls="--", zorder=2)
-
-    dist_bkt_top = dist_bkt_cy + 0.15 + 0.05
-    ax.plot([kl_cx, kl_cx], [dist_bkt_top, kl_cy - 0.15],
-            color=C_KL, lw=1.5, ls="--", zorder=2)
-
+    # KL label between encoder bracket and distill bracket
+    kl_cx = (enc_bkt_cx + dh_cx) / 2
+    kl_cy = (enc_cy + dist_bkt_cy) / 2
     ax.text(kl_cx, kl_cy, r"$\mathrm{KL}(p_\psi \| q_\phi)$",
             ha="center", va="center", fontsize=9, fontweight="bold",
             color=C_KL, zorder=5)
 
     # =====================================================================
-    # CODE STRIP
+    # CODE STRIP + GENERATIVE PRIOR (upper-right, dashed box)
     # =====================================================================
-    strip_y = -0.55
-    strip_h = 0.12
+    # Position the whole block to the right of the distillation box
+    gp_box_x = dbox_x + dbox_w + 0.35
+    gp_box_y = dbox_y
+    gp_box_w = 2.20
+    gp_box_h = dbox_h
 
-    _arrow(ax, ct_x, main_cy - 0.22, ct_x, strip_y + strip_h + 0.22,
-           color=C_CODE_DARK, lw=1.3)
-    ax.text(ct_x, strip_y + strip_h + 0.12,
+    # Dashed box around the whole generative prior section
+    ax.add_patch(FancyBboxPatch(
+        (gp_box_x, gp_box_y), gp_box_w, gp_box_h,
+        boxstyle="round,pad=0.08", facecolor="#FFF0F0", alpha=0.35,
+        edgecolor=C_PRIOR_DARK, linewidth=1.5, linestyle="--", zorder=1,
+    ))
+    ax.text(gp_box_x + gp_box_w - 0.08, gp_box_y + gp_box_h + 0.08,
+            "generative block", ha="right", va="bottom",
+            fontsize=8, color=C_PRIOR_DARK, fontstyle="italic",
+            fontweight="bold", zorder=2)
+
+    strip_cx = gp_box_x + gp_box_w / 2
+    strip_y = gp_box_y + gp_box_h - 0.38
+    strip_h = 0.12
+    strip_w = 0.95
+
+    ax.text(strip_cx, strip_y + strip_h + 0.12,
             r"$[c_1, c_2, \ldots, c_T]$",
             ha="center", va="bottom", fontsize=8.5, color=C_TEXT)
+    _code_strip(ax, strip_cx - strip_w / 2, strip_y, strip_w, strip_h, n=10)
 
-    strip_w = 0.95
-    _code_strip(ax, ct_x - strip_w / 2, strip_y, strip_w, strip_h, n=10)
-
-    # =====================================================================
-    # GENERATIVE PRIOR
-    # =====================================================================
-    gen_prior_w = 1.20
-    gen_prior_h = 0.35
-    gen_prior_y = -1.22
-    gen_prior_cx = ct_x
+    # Generative Prior — below the code strip
+    gen_prior_w = 1.30
+    gen_prior_h = 0.42
+    gen_prior_cx = strip_cx
+    gen_prior_y = gp_box_y + 0.18
 
     _block(ax, gen_prior_cx - gen_prior_w / 2, gen_prior_y,
            gen_prior_w, gen_prior_h, C_PRIOR, "Generative Prior",
@@ -750,6 +757,7 @@ def draw_moseq_prior_distill_pipeline(ax):
            sublabel="HMM / Transformer / ...", sublabel_size=7,
            text_color="white")
 
+    # "train" arrow: code strip -> down to Prior (right of center)
     tx = gen_prior_cx + 0.18
     _arrow(ax, tx, strip_y - 0.06, tx, gen_prior_y + gen_prior_h + 0.06,
            color=C_PRIOR_DARK, lw=2.0, zorder=5)
@@ -757,6 +765,7 @@ def draw_moseq_prior_distill_pipeline(ax):
             "train", ha="left", va="center", fontsize=8,
             color=C_PRIOR_DARK, fontstyle="italic", zorder=6)
 
+    # "generate" arrow: Prior -> up to code strip (dashed, left of center)
     gx = gen_prior_cx - 0.18
     ax.annotate(
         "", xy=(gx, strip_y - 0.06),
@@ -769,69 +778,30 @@ def draw_moseq_prior_distill_pipeline(ax):
             "generate", ha="right", va="center", fontsize=8,
             color=C_PRIOR_DARK, fontstyle="italic", zorder=6)
 
-    # =====================================================================
-    # LEGEND — readout options (bottom-right)
-    # =====================================================================
-    leg_x = 4.30
-    leg_y = -1.30
-    leg_w = 1.90
-    leg_h = 0.85
-
-    ax.add_patch(FancyBboxPatch(
-        (leg_x, leg_y), leg_w, leg_h,
-        boxstyle="round,pad=0.06", facecolor="white",
-        edgecolor="#888888", linewidth=1.0, linestyle="--", zorder=3,
-    ))
-    ax.text(leg_x + leg_w / 2, leg_y + leg_h - 0.08,
-            "Readout options", ha="center", va="top",
-            fontsize=8, fontweight="bold", color=C_TEXT, zorder=4)
-
-    # Option 1: Trapezoid = Decoder (narrow left, broad right)
-    t1_x = leg_x + 0.15
-    t1_y = leg_y + leg_h - 0.38
-    t1_w, t1_h = 0.35, 0.18
-    t1_taper = t1_h * 0.22
-    ax.add_patch(Polygon([
-        (t1_x, t1_y), (t1_x + t1_w, t1_y - t1_taper),
-        (t1_x + t1_w, t1_y + t1_h + t1_taper), (t1_x, t1_y + t1_h),
-    ], closed=True, facecolor=C_DECODER,
-       edgecolor=C_DECODER_DARK, linewidth=1.0, zorder=4))
-    ax.text(t1_x + t1_w + 0.10, t1_y + t1_h / 2,
-            "Decoder (mimic-mjx)", ha="left", va="center",
-            fontsize=7.5, color=C_TEXT, zorder=4)
-
-    # Option 2: Rectangle = Simple readout head
-    t2_x = leg_x + 0.15
-    t2_y = leg_y + 0.12
-    t2_w, t2_h = 0.35, 0.18
-    ax.add_patch(FancyBboxPatch(
-        (t2_x, t2_y), t2_w, t2_h, boxstyle="round,pad=0.02",
-        facecolor=C_DECODER, edgecolor=C_DECODER_DARK,
-        linewidth=1.0, zorder=4,
-    ))
-    ax.text(t2_x + t2_w + 0.10, t2_y + t2_h / 2,
-            "Readout head (MLP)", ha="left", va="center",
-            fontsize=7.5, color=C_TEXT, zorder=4)
+    # Readout sublabel: MLP or mimic decoder
+    ax.text(ah_cx, ah_by - 0.12, "MLP or Mimic Decoder",
+            ha="center", va="top", fontsize=7, color=C_DECODER_DARK,
+            fontstyle="italic", zorder=4)
 
 
 def make_prior_distill_figure(
     output_path: str = "outputs/moseq_prior_distill_pipeline",
 ):
     """Generate the Code2Act pipeline figure."""
-    fig, ax = plt.subplots(1, 1, figsize=(14, 10))
+    fig, ax = plt.subplots(1, 1, figsize=(15, 8.5))
 
-    ax.set_xlim(-0.30, 6.50)
-    ax.set_ylim(-1.55, 4.20)
+    ax.set_xlim(-0.30, 6.80)
+    ax.set_ylim(0.20, 3.80)
     ax.set_aspect("equal")
     ax.axis("off")
 
     ax.add_patch(FancyBboxPatch(
-        (-0.15, -1.40), 6.50, 5.40,
+        (-0.15, 0.30), 6.80, 3.30,
         boxstyle="round,pad=0.05", facecolor=C_PANEL_BG,
         edgecolor="#CCCCCC", linewidth=1.0, zorder=0,
     ))
 
-    ax.text(0.05, 3.85, "Code2Act Pipeline",
+    ax.text(0.05, 3.45, "Code2Act Pipeline",
             fontsize=13, fontweight="bold", color=C_TEXT, zorder=5)
 
     draw_moseq_prior_distill_pipeline(ax)

@@ -21,7 +21,7 @@ data:
   reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
 
 generation:
-  methods: ["transition_matrix", "hmm_dynamax", "arhmm_level1", "arhmm_level2"]
+  methods: ["transition_matrix", "hmm_dynamax", "arhmm_level2"]
 
   transition_matrix:
     temperatures: [0.5, 1.0, 2.0]

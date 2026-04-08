@@ -105,6 +105,8 @@ def _compute_displacements(
     return dz_list, dx_list, dy_list
 
 
+
+
 def _plot_curves_on_ax(
     ax: plt.Axes,
     curves: list[np.ndarray],

@@ -25,7 +25,7 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs"
 # Panel (A) — Training curves
 # ═══════════════════════════════════════════════════════════════════════════════
 
-TRAIN_CSV = OUTPUT_DIR / "train_data.csv"
+TRAIN_CSV = DATA_DIR / "train.csv"
 
 TRAIN_COLORS = {
     "RNN Distillation": "#0072B2",                # blue (Wong)
@@ -100,7 +100,7 @@ def _plot_panel_a(ax: plt.Axes, data: dict[str, pd.DataFrame]) -> None:
     ax.set_xlabel("Training Steps (millions)")
     ax.set_ylabel("Episode Reward")
     ax.set_ylim(bottom=0)
-    ax.set_xlim(left=0, right=600)
+    ax.set_xlim(left=0, right=1000)
 
     for ytick in ax.get_yticks():
         if ytick > 0:
@@ -165,9 +165,9 @@ def _plot_decomp_panel(
         global_max = max(d[comp][:, :max_t].mean(axis=0).max() for d in data.values())
         norm_factors[comp] = max(global_max, 1e-8)
 
-    for mode, curves in data.items():
-        color = DECOMP_COLORS[mode]
-        for comp in ("coarse", "fine"):
+    for comp in ("coarse", "fine"):
+        for mode, curves in data.items():
+            color = DECOMP_COLORS[mode]
             arr = curves[comp][:, :max_t]
             mean = arr.mean(axis=0)
             sem = arr.std(axis=0) / np.sqrt(arr.shape[0])
@@ -245,12 +245,12 @@ def main() -> None:
     _setup_nature_style()
 
     train_data = _load_train_data()
-    gen_data = _load_decomp_data("generalization")
+    inf_data = _load_decomp_data("inference")
 
     fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(7.2, 2.8))
 
     _plot_panel_a(ax_a, train_data)
-    _plot_decomp_panel(ax_b, gen_data, "250-Frame Generalization Set")
+    _plot_decomp_panel(ax_b, inf_data, "Inference Test Set")
 
     # Panel labels
     for ax, label in zip([ax_a, ax_b], ["(A)", "(B)"]):

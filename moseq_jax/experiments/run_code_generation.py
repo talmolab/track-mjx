@@ -53,6 +53,25 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 
+CONTROL_METHODS = {"uniform_random", "single_code", "reversed"}
+
+
+def _method_subdir(output_dir: Path, method_name: str) -> Path:
+    """Return the subfolder for a given method name, creating it if needed."""
+    if method_name.startswith("tm_"):
+        sub = output_dir / "tm"
+    elif method_name.startswith("hmm"):
+        sub = output_dir / "hmm"
+    elif method_name.startswith("arhmm"):
+        sub = output_dir / "arhmm"
+    elif method_name in CONTROL_METHODS or "mimic" in method_name:
+        sub = output_dir / "baselines"
+    else:
+        sub = output_dir / "other"
+    sub.mkdir(parents=True, exist_ok=True)
+    return sub
+
+
 # ---------------------------------------------------------------------------
 # Method A: Empirical Transition Matrix
 # ---------------------------------------------------------------------------

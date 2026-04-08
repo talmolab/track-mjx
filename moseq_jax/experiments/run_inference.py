@@ -240,7 +240,17 @@ def main(cfg: DictConfig) -> None:
                 if (ci + 1) % 20 == 0 or ci == n_clips - 1:
                     log.info(f"    Clip {ci+1}/{n_clips}: reward={result['rewards'].mean():.3f}")
 
-            # Aggregate reward curves (pad to same length)
+            # Filter out short rollouts before aggregating
+            min_episode_len = 490
+            keep = [i for i, r in enumerate(all_rewards) if len(r) >= min_episode_len]
+            if len(keep) < len(all_rewards):
+                log.info(f"    Filtered {len(all_rewards) - len(keep)} short clips (< {min_episode_len} steps)")
+            all_rewards = [all_rewards[i] for i in keep]
+            all_qpos = [all_qpos[i] for i in keep]
+            all_codes = [all_codes[i] for i in keep]
+            all_decomposed = [all_decomposed[i] for i in keep]
+
+            # Aggregate reward curves (truncate to same length)
             min_len = min(len(r) for r in all_rewards)
             reward_matrix = np.array([r[:min_len] for r in all_rewards])
 

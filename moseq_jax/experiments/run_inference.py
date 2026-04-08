@@ -50,10 +50,7 @@ from experiments.shared.checkpoint_utils import (
 )
 from experiments.shared.clip_selection import load_balanced_splits, select_clips_by_behavior
 from experiments.shared.metrics import (
-    compute_transition_matrix,
-    plot_transition_matrix,
     decompose_rewards,
-    compute_transition_window_rewards,
 )
 from experiments.shared.plotting import (
     set_nature_style,
@@ -124,26 +121,6 @@ def plot_reward_curves(
     ax.set_ylabel("Normalized reward")
     ax.set_title("Reward decomposition")
     ax.legend(frameon=False, fontsize=5.5, ncol=2)
-    plt.tight_layout()
-    return fig
-
-
-def plot_transition_window(
-    mean_curve: np.ndarray,
-    std_curve: np.ndarray,
-    n_transitions: int,
-    window: int,
-) -> plt.Figure:
-    """Reward around code transitions."""
-    set_nature_style()
-    fig, ax = plt.subplots(figsize=(3.5, 2.5))
-    x = np.arange(-window, window + 1)
-    ax.fill_between(x, mean_curve - std_curve, mean_curve + std_curve, alpha=0.2, color="#0072B2")
-    ax.plot(x, mean_curve, color="#0072B2", linewidth=1.5)
-    ax.axvline(0, color="#999999", linestyle="--", linewidth=0.8)
-    ax.set_xlabel("Frames from transition")
-    ax.set_ylabel("Reward")
-    ax.set_title(f"Reward at code transitions (n={n_transitions})")
     plt.tight_layout()
     return fig
 
@@ -331,60 +308,6 @@ def main(cfg: DictConfig) -> None:
             wandb.log({f"inference/{split}/reward_decomposition": fig_to_image(fig_rewards)}, commit=False)
         fig_rewards.savefig(output_dir / f"{split}_reward_decomposition.png", dpi=300)
         plt.close(fig_rewards)
-
-        # ---------------------------------------------------------------
-        # Transition window analysis (Claim 2.2)
-        # ---------------------------------------------------------------
-        if cfg.analysis.reward_decomposition and "code2act" in per_mode_data:
-            log.info("  Analyzing transition boundaries...")
-            window = int(cfg.analysis.transition_window)
-            full_codes = per_mode_data["code2act"]["all_codes"]
-            full_rewards = per_mode_data["code2act"]["all_rewards"]
-            # Aggregate all transition windows across clips
-            all_windows = []  # list of [2*window+1] arrays
-            for ci in range(min(n_clips, len(full_codes))):
-                codes_i = full_codes[ci]
-                rewards_i = full_rewards[ci]
-                if len(codes_i) < 2 * window + 1:
-                    continue
-                # Get individual transition windows
-                transitions = np.where(codes_i[1:] != codes_i[:-1])[0] + 1
-                valid = transitions[(transitions >= window) & (transitions < len(codes_i) - window)]
-                for t in valid:
-                    all_windows.append(rewards_i[t - window : t + window + 1])
-
-            total_transitions = len(all_windows)
-            if total_transitions > 0:
-                all_windows = np.array(all_windows)
-                agg_mean = all_windows.mean(axis=0)
-                agg_std = all_windows.std(axis=0)
-                fig_tw = plot_transition_window(agg_mean, agg_std, total_transitions, window)
-                if wandb_enabled:
-                    wandb.log({f"inference/{split}/transition_window": fig_to_image(fig_tw)}, commit=False)
-                fig_tw.savefig(output_dir / f"{split}_transition_window.png", dpi=300)
-                plt.close(fig_tw)
-                log.info(f"    {total_transitions} transitions found across all clips")
-                # Save transition window raw data
-                np.savez_compressed(
-                    output_dir / f"{split}_transition_windows.npz",
-                    windows=all_windows, mean=agg_mean, std=agg_std,
-                    window_size=window, n_transitions=total_transitions,
-                )
-            else:
-                log.info("    No transitions found (single-code clips)")
-
-        # ---------------------------------------------------------------
-        # Transition matrix (Claim 2.4)
-        # ---------------------------------------------------------------
-        log.info("  Computing transition matrix...")
-        T_matrix = compute_transition_matrix(all_codes, num_codes)
-        fig_tm = plot_transition_matrix(T_matrix, title=f"Transition Matrix ({split})")
-        if wandb_enabled:
-            wandb.log({f"inference/{split}/transition_matrix": fig_to_image(fig_tm)}, commit=False)
-        fig_tm.savefig(output_dir / f"{split}_transition_matrix.png", dpi=300)
-        plt.close(fig_tm)
-        # Save transition matrix
-        np.save(output_dir / f"{split}_transition_matrix.npy", T_matrix)
 
         # ---------------------------------------------------------------
         # K-body ghost videos (Claim 2.3)

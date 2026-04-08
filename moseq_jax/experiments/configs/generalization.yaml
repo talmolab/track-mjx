@@ -1,0 +1,76 @@
+# =============================================================================
+# Generalization Experiment Configuration
+# =============================================================================
+# Evaluates the KPMS → Code2Act pipeline on unseen continuous data.
+# Samples segments, runs KPMS inference, then decoder rollouts with comparison.
+# =============================================================================
+
+# =============================================================================
+# New Data Configuration
+# =============================================================================
+new_data:
+  path: /home/jovyan/vast/kaiwen/track-mjx/data/transform_art_2020_12_22_1.h5
+  n_segments: 20
+  frames_per_segment: 1000
+  seed: 42
+
+# =============================================================================
+# KPMS Model Configuration
+# =============================================================================
+kpms:
+  model_dir: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/s50_k1e+04_l10_arhmm/seed1
+  model_name: keypoint_arhmm_states50_seed1
+  num_iters: 200
+
+# =============================================================================
+# Reference Data (for FK model setup — needs config/offsets/kp_names)
+# =============================================================================
+stac_xml: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
+reference_h5: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+
+# =============================================================================
+# Checkpoint Configuration
+# =============================================================================
+# Code2Act: MoSeq decoder checkpoint (KPMS codes → RNN → action)
+checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260406_155304_389732/
+  step: null
+
+# Mimic-MJX: Pre-trained IntentionNetwork VAE checkpoint (oracle baseline)
+mimic_checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260405_235031_234849/
+  step: null
+
+# =============================================================================
+# Inference Configuration
+# =============================================================================
+inference:
+  max_steps: 1000
+  seed: 42
+  modes:
+    - code2act
+    - mimic_mjx
+
+# =============================================================================
+# Rendering Configuration
+# =============================================================================
+rendering:
+  K: 6
+  fps: 50
+  width: 800
+  height: 600
+  camera_distance: 0.8
+  camera_elevation: -30.0
+  camera_azimuth: 135.0
+  camera_fovy: 60.0
+  solo_videos: true
+
+# =============================================================================
+# Output Configuration
+# =============================================================================
+output:
+  base_dir: ./outputs/moseq_generalization
+
+wandb:
+  enabled: false
+  project: moseq-generalization

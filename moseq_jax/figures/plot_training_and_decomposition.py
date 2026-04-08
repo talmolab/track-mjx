@@ -25,12 +25,13 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs"
 # Panel (A) — Training curves
 # ═══════════════════════════════════════════════════════════════════════════════
 
-TRAIN_CSV = DATA_DIR / "train_data.csv"
+TRAIN_CSV = OUTPUT_DIR / "train_data.csv"
 
 TRAIN_COLORS = {
-    "RNN Distillation": "#0072B2",       # blue (Wong)
-    "RNN Concat Discrete": "#009E73",    # green (Wong)
-    "RNN Concat Full": "#D55E00",        # orange (Wong)
+    "RNN Distillation": "#0072B2",                # blue (Wong)
+    "RNN Distillation + Decoder": "#009E73",       # green (Wong)
+    "RNN Concat Discrete": "#E69F00",              # vermillion (Wong)
+    "RNN Concat Full": "#D55E00",                  # orange (Wong)
 }
 
 TRAIN_SERIES = {
@@ -38,6 +39,11 @@ TRAIN_SERIES = {
         "mean": "C2A (Distill 1.5KL) - moseq/episode_reward_mean",
         "min": "C2A (Distill 1.5KL) - moseq/episode_reward_mean__MIN",
         "max": "C2A (Distill 1.5KL) - moseq/episode_reward_mean__MAX",
+    },
+    "RNN Distillation + Decoder": {
+        "mean": "C2A (Distill 1.0KL, decoder) - moseq/episode_reward_mean",
+        "min": "C2A (Distill 1.0KL, decoder) - moseq/episode_reward_mean__MIN",
+        "max": "C2A (Distill 1.0KL, decoder) - moseq/episode_reward_mean__MAX",
     },
     "RNN Concat Discrete": {
         "mean": "C2A (readout continuous) - decoder_only/episode_reward_mean",
@@ -239,27 +245,25 @@ def main() -> None:
     _setup_nature_style()
 
     train_data = _load_train_data()
-    inf_data = _load_decomp_data("inference")
     gen_data = _load_decomp_data("generalization")
 
-    fig, (ax_a, ax_b, ax_c) = plt.subplots(1, 3, figsize=(10.5, 2.8))
+    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(7.2, 2.8))
 
     _plot_panel_a(ax_a, train_data)
-    _plot_decomp_panel(ax_b, inf_data, "500-Frame Test Set")
-    _plot_decomp_panel(ax_c, gen_data, "1000-Frame Test Set")
+    _plot_decomp_panel(ax_b, gen_data, "250-Frame Generalization Set")
 
     # Panel labels
-    for ax, label in zip([ax_a, ax_b, ax_c], ["(A)", "(B)", "(C)"]):
+    for ax, label in zip([ax_a, ax_b], ["(A)", "(B)"]):
         ax.text(
             -0.12, 1.08, label, transform=ax.transAxes,
             fontsize=11, fontweight="bold", va="top", ha="left",
         )
 
-    fig.tight_layout(w_pad=2.0)
+    fig.tight_layout(w_pad=2.5)
 
     # Rounded figure border
     fig.patch.set_facecolor("white")
-    for ax in (ax_a, ax_b, ax_c):
+    for ax in (ax_a, ax_b):
         for spine in ax.spines.values():
             spine.set_visible(False)
 
@@ -274,7 +278,7 @@ def main() -> None:
     )
     fig.patches.append(rect)
 
-    for ax in (ax_a, ax_b, ax_c):
+    for ax in (ax_a, ax_b):
         ax.spines["left"].set_visible(True)
         ax.spines["bottom"].set_visible(True)
 

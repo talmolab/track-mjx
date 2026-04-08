@@ -212,6 +212,12 @@ def run_kpms_on_qpos(
         )
     }
 
+    # Use a different seed than the original KPMS run to avoid
+    # deterministic replay (same seed + same data = identical output).
+    import jax as _jax
+    model = dict(model)  # shallow copy to avoid mutating cached checkpoint
+    model["seed"] = _jax.random.PRNGKey(42)
+
     log.info(f"    KPMS inference ({kpms_num_iters} iters, {n_clips} clips)...")
     results = kpms.apply_model(
         model=model, data=data, metadata=metadata,

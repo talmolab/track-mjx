@@ -29,12 +29,12 @@ CONDITION_COLORS = {
 }
 CONDITION_LABELS = {
     "reference": "Reference (ceiling)",
-    "mimic_mjx": "Mimic-MJX (oracle)",
+    "mimic_mjx": "Mimic-MJX",
     "code2act": "Code2Act",
 }
 CONDITIONS = ["reference", "mimic_mjx", "code2act"]
 DATASET_LABELS = {
-    "inference": "500-Frame\nTest Set",
+    "inference": "250-Frame\nTest Set",
     "generalization": "1000-Frame\nTest Set",
 }
 

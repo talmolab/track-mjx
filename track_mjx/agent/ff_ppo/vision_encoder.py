@@ -35,19 +35,32 @@ class VisionEncoder(nn.Module):
     padding: str = "VALID"
 
     @nn.compact
-    def __call__(self, images: jnp.ndarray) -> jnp.ndarray:
+    def __call__(
+        self,
+        images: jnp.ndarray,
+        get_activation: bool = False,
+    ) -> jnp.ndarray | tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
         """Encode images to feature vectors.
 
         Args:
             images: Input images, shape [..., H, W, C] with values in [0, 1].
+            get_activation: If True, also return a dict of per-layer activations.
+                Default False preserves the original return type exactly.
 
         Returns:
-            Feature vectors, shape [..., feature_size].
+            If get_activation is False (default): feature vectors of shape
+            [..., feature_size].
+            If get_activation is True: a tuple (features, activations) where
+            features has shape [..., feature_size] and activations is a dict
+            with keys "conv_0".."conv_N" (post-ReLU spatial maps, shape
+            [..., H', W', C']) and "fc" (shape [..., feature_size]).
         """
         # Handle batched input: remember leading dims
         leading_shape = images.shape[:-3]
         h, w, c = images.shape[-3], images.shape[-2], images.shape[-1]
         x = images.reshape(-1, h, w, c)  # Flatten to (batch, H, W, C)
+
+        layer_activations: dict[str, jnp.ndarray] = {}
 
         for i, (ch, stride) in enumerate(zip(self.channels, self.strides)):
             x = nn.Conv(
@@ -58,6 +71,11 @@ class VisionEncoder(nn.Module):
                 name=f"conv_{i}",
             )(x)
             x = nn.relu(x)
+            if get_activation:
+                # Restore leading dims for the spatial map: (..., H', W', C')
+                layer_activations[f"conv_{i}"] = x.reshape(
+                    *leading_shape, *x.shape[1:]
+                )
 
         # Flatten spatial dims
         x = x.reshape(x.shape[0], -1)
@@ -69,4 +87,9 @@ class VisionEncoder(nn.Module):
 
         # Restore leading dims
         x = x.reshape(*leading_shape, self.feature_size)
+
+        if get_activation:
+            layer_activations["fc"] = x
+            return x, layer_activations
+
         return x

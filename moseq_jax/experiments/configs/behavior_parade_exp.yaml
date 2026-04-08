@@ -18,7 +18,7 @@ data:
 # Experiment parameters
 num_bodies: 10
 x_spacing: 0.15           # meters between bodies on x-axis
-frames_per_behavior: 200  # frames for each behavior segment
+frames_per_behavior: 250  # frames for each behavior segment (matches clip_length)
 behavior_sequence:
   - walk
   - groom

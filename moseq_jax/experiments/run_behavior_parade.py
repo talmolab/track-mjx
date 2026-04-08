@@ -1,8 +1,9 @@
 """Experiment 7: Behavior transition parade.
 
 K bodies spaced on the x-axis, viewed from a top-down camera. All bodies
-receive the same code sequence: walk → groom → rear.  Behavior-representative
-codes are selected from real data via kinematic criteria.
+receive the same code sequence: walk → groom → rear.  For each behavior,
+a real representative clip is selected from the balanced splits via kinematic
+criteria, and its full KPMS code *sequence* is used (not a single held code).
 
 Usage:
     cd moseq_jax
@@ -21,7 +22,6 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 import json
 import logging
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 import h5py
@@ -59,171 +59,140 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Kinematic code analysis
+# Representative clip selection
 # ---------------------------------------------------------------------------
 
 
-def analyze_code_kinematics(
-    all_codes: np.ndarray,
+def select_representative_clips(
+    test_codes: np.ndarray,
+    test_categories: list[str],
+    test_indices: list[int],
     reference_qpos: np.ndarray,
     clip_length: int,
-    min_bout_frames: int = 10,
-) -> dict[int, dict[str, float]]:
-    """Compute per-code kinematic features from reference trajectories.
+) -> dict[str, dict]:
+    """Select the best representative test clip for each behavior.
 
-    For each bout of each code, extracts root XY displacement rate,
-    root Z change (rise), and total XYZ stillness from the reference qpos.
+    Instead of picking a single code, selects a real clip whose KPMS code
+    *sequence* captures the temporal dynamics of the behavior (e.g. rear
+    involves a crouch-to-rise transition, not a single static code).
+
+    Selection criteria:
+        walk: highest XY path length (sustained horizontal movement).
+        rear: highest Z rise from start (rises up and stays high).
+        groom: lowest total XYZ displacement (stays still).
 
     Args:
-        all_codes: ``[n_clips, clip_length]`` KPMS code array.
-        reference_qpos: ``[n_clips * clip_length, 74]`` flat reference qpos.
+        test_codes: ``[n_test, clip_length]`` KPMS code array for test clips.
+        test_categories: Category label per test clip.
+        test_indices: Original clip index per test clip.
+        reference_qpos: ``[n_total_frames, nq]`` flat reference qpos.
         clip_length: Frames per clip.
-        min_bout_frames: Minimum bout length to consider.
 
     Returns:
-        ``{code_id: {"xy_rate": median, "z_rise": median, "xyz_still": median}}``
+        ``{behavior: {"test_pos": int, "clip_idx": int,
+        "code_sequence": ndarray, "kinematics": dict}}``
     """
-    n_clips = all_codes.shape[0]
-    qpos_clips = reference_qpos[:n_clips * clip_length].reshape(n_clips, clip_length, -1)
+    score_fns = {
+        "walk": lambda xy, zr, zrise, xyz: xy,
+        "rear": lambda xy, zr, zrise, xyz: zrise,
+        "groom": lambda xy, zr, zrise, xyz: -xyz,
+    }
 
-    # Collect per-bout kinematics
-    bout_stats: dict[int, dict[str, list[float]]] = defaultdict(
-        lambda: {"xy_rate": [], "z_rise": [], "xyz_still": []}
-    )
-
-    for ci in range(n_clips):
-        codes = all_codes[ci]
-        qpos = qpos_clips[ci]
-
-        current = int(codes[0])
-        start = 0
-        for t in range(1, clip_length):
-            if codes[t] != current or t == clip_length - 1:
-                end = t if codes[t] != current else t + 1
-                length = end - start
-                if length >= min_bout_frames:
-                    seg = qpos[start:end]
-                    # XY displacement rate
-                    xy_diff = np.diff(seg[:, :2], axis=0)
-                    xy_path = np.sum(np.sqrt((xy_diff ** 2).sum(axis=1)))
-                    xy_rate = xy_path / length
-
-                    # Z rise: max Z relative to starting Z
-                    z_rise = float(np.max(seg[:, 2]) - seg[0, 2])
-
-                    # XYZ stillness: total displacement from start to end
-                    xyz_total = float(np.sqrt(((seg[-1, :3] - seg[0, :3]) ** 2).sum()))
-
-                    bout_stats[current]["xy_rate"].append(xy_rate)
-                    bout_stats[current]["z_rise"].append(z_rise)
-                    bout_stats[current]["xyz_still"].append(xyz_total)
-
-                if codes[t] != current:
-                    current = int(codes[t])
-                    start = t
-
-    # Compute medians
     result = {}
-    for code_id, stats in bout_stats.items():
-        result[code_id] = {
-            "xy_rate": float(np.median(stats["xy_rate"])) if stats["xy_rate"] else 0.0,
-            "z_rise": float(np.median(stats["z_rise"])) if stats["z_rise"] else 0.0,
-            "xyz_still": float(np.median(stats["xyz_still"])) if stats["xyz_still"] else 0.0,
-            "n_bouts": len(stats["xy_rate"]),
+    for cat, score_fn in score_fns.items():
+        cat_positions = [i for i, c in enumerate(test_categories) if c == cat]
+
+        best_pos = None
+        best_score = None
+        best_kin = None
+
+        for pos in cat_positions:
+            orig_idx = test_indices[pos]
+            start = orig_idx * clip_length
+            end = start + clip_length
+            if end > len(reference_qpos):
+                continue
+            seg = reference_qpos[start:end]
+
+            xy_diff = np.diff(seg[:, :2], axis=0)
+            xy_path = float(np.sum(np.sqrt((xy_diff ** 2).sum(axis=1))))
+            z_range = float(np.max(seg[:, 2]) - np.min(seg[:, 2]))
+            z_rise = float(np.max(seg[:, 2]) - seg[0, 2])
+            xyz_disp = float(np.sqrt(((seg[-1, :3] - seg[0, :3]) ** 2).sum()))
+
+            score = score_fn(xy_path, z_range, z_rise, xyz_disp)
+            if best_score is None or score > best_score:
+                best_score = score
+                best_pos = pos
+                best_kin = {
+                    "xy_path": xy_path,
+                    "z_range": z_range,
+                    "z_rise": z_rise,
+                    "xyz_disp": xyz_disp,
+                }
+
+        result[cat] = {
+            "test_pos": best_pos,
+            "clip_idx": test_indices[best_pos],
+            "code_sequence": test_codes[best_pos].copy(),
+            "kinematics": best_kin,
         }
+
     return result
 
 
-def select_behavior_codes(
-    kinematics: dict[int, dict[str, float]],
-) -> dict[str, int]:
-    """Select best code for walk, rear, groom based on kinematics.
-
-    Returns:
-        ``{"walk": code_id, "rear": code_id, "groom": code_id}``
-    """
-    codes = list(kinematics.keys())
-
-    # Walk: highest XY displacement rate
-    walk_code = max(codes, key=lambda c: kinematics[c]["xy_rate"])
-
-    # Rear: highest Z rise
-    rear_code = max(codes, key=lambda c: kinematics[c]["z_rise"])
-
-    # Groom: lowest XYZ total displacement (stillest)
-    groom_code = min(codes, key=lambda c: kinematics[c]["xyz_still"])
-
-    # Resolve collisions: if any codes overlap, pick runner-up
-    selected = {"walk": walk_code}
-    remaining = [c for c in codes if c != walk_code]
-    rear_code = max(remaining, key=lambda c: kinematics[c]["z_rise"])
-    selected["rear"] = rear_code
-    remaining = [c for c in remaining if c != rear_code]
-    groom_code = min(remaining, key=lambda c: kinematics[c]["xyz_still"])
-    selected["groom"] = groom_code
-
-    return selected
+def _run_length_encode(codes: np.ndarray) -> list[tuple[int, int]]:
+    """Run-length encode a 1-D code sequence."""
+    runs = []
+    cur, cnt = int(codes[0]), 1
+    for t in range(1, len(codes)):
+        if codes[t] == cur:
+            cnt += 1
+        else:
+            runs.append((cur, cnt))
+            cur, cnt = int(codes[t]), 1
+    runs.append((cur, cnt))
+    return runs
 
 
-def find_longest_bout(
-    all_codes: np.ndarray,
-    target_code: int,
-) -> int:
-    """Find the longest consecutive run of target_code across all clips."""
-    best = 0
-    for clip in all_codes:
-        current_len = 0
-        for t in range(len(clip)):
-            if clip[t] == target_code:
-                current_len += 1
-                best = max(best, current_len)
-            else:
-                current_len = 0
-    return best
-
-
-def plot_code_selection(
-    kinematics: dict[int, dict[str, float]],
-    selected: dict[str, int],
+def plot_code_sequences(
+    selected: dict[str, dict],
     output_path: Path,
 ) -> None:
-    """Plot kinematic features with selected codes highlighted."""
+    """Plot code-sequence timelines for each selected behavior clip."""
     set_nature_style()
-    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.5))
+    behaviors = [b for b in ("walk", "groom", "rear") if b in selected]
+    fig, axes = plt.subplots(len(behaviors), 1, figsize=(7.2, 1.2 * len(behaviors)),
+                             sharex=True)
+    if len(behaviors) == 1:
+        axes = [axes]
 
-    codes = sorted(kinematics.keys())
-    metrics = [
-        ("xy_rate", "XY Displacement Rate", "walk"),
-        ("z_rise", "Z Rise (max - start)", "rear"),
-        ("xyz_still", "XYZ Total Displacement", "groom"),
-    ]
+    for ax, beh in zip(axes, behaviors):
+        codes = selected[beh]["code_sequence"]
+        clip_idx = selected[beh]["clip_idx"]
+        runs = _run_length_encode(codes)
 
-    for ax, (metric, title, beh) in zip(axes, metrics):
-        vals = [kinematics[c][metric] for c in codes]
-        colors = ["#cccccc"] * len(codes)
-        sel_code = selected[beh]
-        if sel_code in codes:
-            colors[codes.index(sel_code)] = BEHAVIOR_COLORS[beh]
+        offset = 0
+        for code_id, dur in runs:
+            ax.barh(0, dur, left=offset, height=0.6,
+                    color=BEHAVIOR_COLORS.get(beh, "#999999"), alpha=0.8,
+                    edgecolor="white", linewidth=0.5)
+            if dur > 10:
+                ax.text(offset + dur / 2, 0, str(code_id),
+                        ha="center", va="center", fontsize=6, fontweight="bold")
+            offset += dur
 
-        ax.bar(range(len(codes)), vals, color=colors, edgecolor="none", width=0.8)
-        ax.set_xlabel("Code")
-        ax.set_title(title, fontsize=7)
-        ax.set_xticks(range(0, len(codes), 5))
-        ax.set_xticklabels([str(codes[i]) for i in range(0, len(codes), 5)], fontsize=5)
+        ax.set_ylabel(f"{beh}\n(clip {clip_idx})", fontsize=7, rotation=0,
+                       labelpad=55, va="center")
+        ax.set_yticks([])
+        ax.set_xlim(0, len(codes))
 
-        # Annotate selected
-        idx = codes.index(sel_code)
-        ax.annotate(
-            f"{beh}\n(code {sel_code})",
-            xy=(idx, vals[idx]), xytext=(idx + 3, vals[idx] * 1.1),
-            fontsize=6, color=BEHAVIOR_COLORS[beh], fontweight="bold",
-            arrowprops=dict(arrowstyle="->", color=BEHAVIOR_COLORS[beh], lw=0.8),
-        )
-
+    axes[-1].set_xlabel("Frame")
+    fig.suptitle("Selected Behavior Code Sequences", fontsize=9, y=1.02)
     plt.tight_layout()
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    log.info(f"  Saved code selection plot: {output_path}")
+    log.info(f"  Saved code sequence plot: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +293,6 @@ def main(cfg: DictConfig) -> None:
 
     # Load codes
     codes_data = np.load(cfg.data.codes_path)
-    all_codes = codes_data["all_codes"]
     test_codes = codes_data["test_codes"]
     splits = load_balanced_splits(cfg.data.balanced_split_path)
     test_indices = splits["balanced"]["test_indices"]
@@ -353,44 +321,42 @@ def main(cfg: DictConfig) -> None:
     inf_fn = make_inference_fn(ppo_networks, use_rnn=use_rnn, deterministic=True)
 
     # ===================================================================
-    # Step 1: Kinematic code analysis
+    # Step 1: Select representative clips per behavior
     # ===================================================================
-    log.info("\n--- Kinematic Code Analysis ---")
+    log.info("\n--- Representative Clip Selection ---")
     clip_length = int(ckpt_cfg.env_config.clip_length)
-    kinematics = analyze_code_kinematics(all_codes, reference_qpos, clip_length)
+    test_categories = splits["balanced"]["test_categories"]
 
-    for c in sorted(kinematics.keys()):
-        k = kinematics[c]
-        log.info(f"  Code {c}: xy_rate={k['xy_rate']:.4f}, z_rise={k['z_rise']:.4f}, "
-                 f"xyz_still={k['xyz_still']:.4f} ({k['n_bouts']} bouts)")
-
-    # ===================================================================
-    # Step 2: Select behavior codes
-    # ===================================================================
-    log.info("\n--- Behavior Code Selection ---")
-    selected = select_behavior_codes(kinematics)
-    for beh, code_id in selected.items():
-        k = kinematics[code_id]
-        longest = find_longest_bout(all_codes, code_id)
-        log.info(f"  {beh}: code {code_id} (xy={k['xy_rate']:.4f}, z_rise={k['z_rise']:.4f}, "
-                 f"xyz={k['xyz_still']:.4f}, longest_bout={longest}f)")
+    selected = select_representative_clips(
+        test_codes, test_categories, test_indices, reference_qpos, clip_length,
+    )
+    for beh, info in selected.items():
+        k = info["kinematics"]
+        codes = info["code_sequence"]
+        unique = np.unique(codes)
+        log.info(
+            f"  {beh}: clip {info['clip_idx']} ({len(unique)} unique codes, "
+            f"xy={k['xy_path']:.4f}, z_rise={k['z_rise']:.4f}, "
+            f"xyz={k['xyz_disp']:.4f})"
+        )
 
     # Save selection
     selection_info = {
         beh: {
-            "code_id": int(code_id),
-            "kinematics": kinematics[code_id],
-            "longest_bout": find_longest_bout(all_codes, code_id),
+            "clip_idx": info["clip_idx"],
+            "test_pos": info["test_pos"],
+            "code_sequence": info["code_sequence"].tolist(),
+            "kinematics": info["kinematics"],
         }
-        for beh, code_id in selected.items()
+        for beh, info in selected.items()
     }
     with open(output_dir / "code_selection.json", "w") as f:
         json.dump(selection_info, f, indent=2)
 
-    plot_code_selection(kinematics, selected, output_dir / "code_selection.png")
+    plot_code_sequences(selected, output_dir / "code_selection.png")
 
     # ===================================================================
-    # Step 3: Build code sequence
+    # Step 2: Build code sequence from representative clips
     # ===================================================================
     log.info("\n--- Building Code Sequence ---")
     frames_per_beh = int(cfg.frames_per_behavior)
@@ -401,19 +367,19 @@ def main(cfg: DictConfig) -> None:
     offset = 0
 
     for beh in behavior_seq:
-        code_id = selected[beh]
-        part = np.full(frames_per_beh, code_id, dtype=np.int32)
-        code_sequence_parts.append(part)
-        behavior_boundaries.append((beh, offset, offset + frames_per_beh))
-        offset += frames_per_beh
-        log.info(f"  {beh}: code {code_id} × {frames_per_beh} frames")
+        clip_codes = selected[beh]["code_sequence"][:frames_per_beh]
+        code_sequence_parts.append(clip_codes)
+        behavior_boundaries.append((beh, offset, offset + len(clip_codes)))
+        offset += len(clip_codes)
+        runs = _run_length_encode(clip_codes)
+        log.info(f"  {beh}: {' -> '.join(f'{c}x{n}' for c, n in runs)}")
 
     code_sequence = np.concatenate(code_sequence_parts)
     total_frames = len(code_sequence)
     log.info(f"  Total sequence: {total_frames} frames")
 
     # ===================================================================
-    # Step 4: Select anchor clip + compute x-offsets
+    # Step 3: Select anchor clip + compute x-offsets
     # ===================================================================
     log.info("\n--- Body Setup ---")
     num_bodies = int(cfg.num_bodies)
@@ -431,7 +397,7 @@ def main(cfg: DictConfig) -> None:
     log.info(f"  {num_bodies} bodies, x_offsets: [{x_offsets[0]:.3f} ... {x_offsets[-1]:.3f}]")
 
     # ===================================================================
-    # Step 5: Run rollouts
+    # Step 4: Run rollouts
     # ===================================================================
     log.info(f"\n--- Running {num_bodies} rollouts ---")
     all_qpos: list[np.ndarray] = []
@@ -455,7 +421,7 @@ def main(cfg: DictConfig) -> None:
         log.info(f"  Body {bi}: {len(qpos)} frames, survival={result['survival']}")
 
     # ===================================================================
-    # Step 6: Save rollout data
+    # Step 5: Save rollout data
     # ===================================================================
     log.info("\n--- Saving rollout data ---")
     data_dir = output_dir / "data"
@@ -469,11 +435,14 @@ def main(cfg: DictConfig) -> None:
         x_offsets=np.array(x_offsets),
         anchor_clip=anchor_clip,
         num_bodies=num_bodies,
+        behavior_names=np.array([b for b, _, _ in behavior_boundaries]),
+        behavior_starts=np.array([s for _, s, _ in behavior_boundaries]),
+        behavior_ends=np.array([e for _, _, e in behavior_boundaries]),
     )
     log.info(f"  Saved rollout data to {data_dir}")
 
     # ===================================================================
-    # Step 7: Render parade video
+    # Step 6: Render parade video
     # ===================================================================
     log.info("\n--- Rendering parade video ---")
     render_parade_video(

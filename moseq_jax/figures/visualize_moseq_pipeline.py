@@ -540,19 +540,15 @@ def make_mimic_figure(output_dir: Path):
     ax.set_aspect("equal")
     ax.axis("off")
 
-    # Dashed rounded border
-    ax.add_patch(FancyBboxPatch(
-        (0.05, 0.08), 8.10, 1.95, boxstyle="round,pad=0.08",
-        facecolor=C_PANEL_BG, edgecolor="#AAAAAA", linewidth=1.5,
-        linestyle="--", zorder=0))
 
     draw_mimic_training(ax)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    for ext in [".pdf", ".png"]:
+    for ext in [".pdf", ".png", ".svg"]:
         p = output_dir / f"mimic_training{ext}"
+        fc = "none" if ext == ".svg" else "white"
         fig.savefig(p, dpi=400, bbox_inches="tight",
-                    facecolor="white", edgecolor="none")
+                    facecolor=fc, edgecolor="none", transparent=(ext == ".svg"))
         print(f"Saved: {p}")
     plt.close(fig)
 
@@ -713,7 +709,7 @@ def draw_code2act_pipeline(ax):
     # =====================================================================
     # Feedback: dashed lines from Physics to RNN and Decoder
     # =====================================================================
-    fb_y = main_y - rnn_r - 0.45
+    fb_y = main_y - rnn_r - 0.25
 
     # Physics -> down -> left (all dashed)
     ax.plot([phys_cx, phys_cx, rnn_cx],
@@ -767,9 +763,7 @@ def draw_code2act_pipeline(ax):
     # KL label
     ax.text(enc_bkt_cx, kl_y, r"$\mathrm{KL}$",
             ha="center", va="center", fontsize=10, fontweight="bold",
-            color=C_KL, zorder=5,
-            bbox=dict(boxstyle="round,pad=0.06", facecolor="white",
-                      edgecolor=C_KL, linewidth=1.0, alpha=0.9))
+            color=C_KL, zorder=5)
     # Arrow FROM KL UP to encoder bracket
     _arrow(ax, enc_bkt_cx, kl_y + 0.14, enc_bkt_cx, enc_cy - enc_h / 2 - 0.02,
            color=C_KL, lw=1.3)
@@ -780,26 +774,23 @@ def draw_code2act_pipeline(ax):
 
 def make_code2act_figure(output_dir: Path):
     """Generate Figure 2: Code2Act inference pipeline."""
-    fig, ax = plt.subplots(1, 1, figsize=(15, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(15, 5))
 
-    ax.set_xlim(-0.25, 9.00)
-    ax.set_ylim(-0.25, 3.20)
+    ax.set_xlim(-0.25, 9.40)
+    ax.set_ylim(0.05, 3.10)
     ax.set_aspect("equal")
     ax.axis("off")
 
-    # Dashed rounded border
-    ax.add_patch(FancyBboxPatch(
-        (-0.15, -0.15), 8.95, 3.25, boxstyle="round,pad=0.08",
-        facecolor=C_PANEL_BG, edgecolor="#AAAAAA", linewidth=1.5,
-        linestyle="--", zorder=0))
 
     draw_code2act_pipeline(ax)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    for ext in [".pdf", ".png"]:
+    for ext in [".pdf", ".png", ".svg"]:
         p = output_dir / f"code2act_pipeline{ext}"
+        fc = "none" if ext == ".svg" else "white"
         fig.savefig(
-            p, dpi=400, bbox_inches="tight", facecolor="white", edgecolor="none"
+            p, dpi=400, bbox_inches="tight", facecolor=fc, edgecolor="none",
+            transparent=(ext == ".svg"),
         )
         print(f"Saved: {p}")
     plt.close(fig)
@@ -807,6 +798,48 @@ def make_code2act_figure(output_dir: Path):
 
 # =============================================================================
 # Entry point
+def make_combined_figure(output_dir: Path):
+    """Generate combined (A) Mimic-MJX + (B) Code2Act stacked figure."""
+    fig, (ax_a, ax_b) = plt.subplots(2, 1, figsize=(14, 9),
+                                      gridspec_kw={"height_ratios": [1, 1.5]})
+
+    # --- Panel (A): Mimic-MJX ---
+    ax_a.set_xlim(-0.05, 8.30)
+    ax_a.set_ylim(0.00, 2.15)
+    ax_a.set_aspect("equal")
+    ax_a.axis("off")
+    ax_a.add_patch(FancyBboxPatch(
+        (0.05, 0.08), 8.10, 1.95, boxstyle="round,pad=0.08",
+        facecolor=C_PANEL_BG, edgecolor="#AAAAAA", linewidth=1.5,
+        linestyle="--", zorder=0))
+    draw_mimic_training(ax_a)
+    ax_a.text(-0.02, 2.05, "(A) Mimic-MJX", fontsize=12, fontweight="bold",
+              color=C_TEXT, va="top", ha="left", zorder=10)
+
+    # --- Panel (B): Code2Act ---
+    ax_b.set_xlim(-0.25, 9.00)
+    ax_b.set_ylim(0.05, 3.10)
+    ax_b.set_aspect("equal")
+    ax_b.axis("off")
+    ax_b.add_patch(FancyBboxPatch(
+        (-0.15, 0.12), 8.95, 2.88, boxstyle="round,pad=0.08",
+        facecolor=C_PANEL_BG, edgecolor="#AAAAAA", linewidth=1.5,
+        linestyle="--", zorder=0))
+    draw_code2act_pipeline(ax_b)
+    ax_b.text(-0.22, 3.00, "(B) Code2Act", fontsize=12, fontweight="bold",
+              color=C_TEXT, va="top", ha="left", zorder=10)
+
+    fig.tight_layout(h_pad=0.5)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for ext in [".pdf", ".png"]:
+        p = output_dir / f"combined_pipeline{ext}"
+        fig.savefig(p, dpi=400, bbox_inches="tight",
+                    facecolor="white", edgecolor="none")
+        print(f"Saved: {p}")
+    plt.close(fig)
+
+
 # =============================================================================
 
 if __name__ == "__main__":

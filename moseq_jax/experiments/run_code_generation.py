@@ -415,7 +415,8 @@ def run_free_loop_rollouts(
         if si < 3:  # Render first 3 as solo videos
             try:
                 from experiments.shared.ghost_rendering import render_solo_video
-                vid_path = output_dir / f"{method_name}_solo_{si}.mp4"
+                sub = _method_subdir(output_dir, method_name)
+                vid_path = sub / f"{method_name}_solo_{si}.mp4"
                 render_solo_video(
                     env, result["qpos"][:-1], result["code_indices"], vid_path,
                     fps=50, num_codes=num_codes, title=f"{method_name} #{si}",
@@ -523,8 +524,9 @@ def main(cfg: DictConfig) -> None:
 
     # Save all generated sequences for post-hoc analysis
     for method_name, seqs in all_generated.items():
+        sub = _method_subdir(output_dir, method_name)
         np.savez_compressed(
-            output_dir / f"generated_{method_name}.npz",
+            sub / f"generated_{method_name}.npz",
             sequences=np.array(seqs),
         )
     log.info(f"  Saved generated sequences for {len(all_generated)} methods")
@@ -534,10 +536,11 @@ def main(cfg: DictConfig) -> None:
     # -------------------------------------------------------------------
     log.info("\n--- Transition matrix diagnostics ---")
     for method_name, seqs in all_generated.items():
+        sub = _method_subdir(output_dir, method_name)
         T = compute_transition_matrix(seqs, num_codes)
         fig = plot_transition_matrix(T, title=f"TM: {method_name}")
-        fig.savefig(output_dir / f"tm_{method_name}.png", dpi=300)
-        np.save(output_dir / f"tm_{method_name}.npy", T)
+        fig.savefig(sub / f"tm_{method_name}.png", dpi=300)
+        np.save(sub / f"tm_{method_name}.npy", T)
         plt.close(fig)
 
     # -------------------------------------------------------------------
@@ -556,8 +559,9 @@ def main(cfg: DictConfig) -> None:
         survival_summary[method_name] = np.mean(result["survivals"])
         all_rollout_data[method_name] = result
         # Save per-method rollout data
+        sub = _method_subdir(output_dir, method_name)
         np.savez_compressed(
-            output_dir / f"rollouts_{method_name}.npz",
+            sub / f"rollouts_{method_name}.npz",
             survivals=np.array(result["survivals"]),
             qpos=np.array(result["qpos"], dtype=object),
         )
@@ -583,8 +587,9 @@ def main(cfg: DictConfig) -> None:
     import json as _json
     with open(output_dir / "survival_summary.json", "w") as f:
         _json.dump(survival_summary, f, indent=2)
+    mimic_sub = _method_subdir(output_dir, "mimic_mjx")
     np.savez_compressed(
-        output_dir / "rollouts_mimic_mjx.npz",
+        mimic_sub / "rollouts_mimic_mjx.npz",
         survivals=np.array(mimic_survivals),
     )
 

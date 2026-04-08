@@ -1,6 +1,4 @@
-"""Nature-style matplotlib configuration and WandB plotting helpers."""
-
-import io
+"""Nature-style matplotlib configuration and plotting helpers."""
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -71,19 +69,6 @@ def set_nature_style() -> None:
             "lines.markersize": 4,
         }
     )
-
-
-def fig_to_image(fig: plt.Figure):
-    """Convert matplotlib figure to wandb.Image (import wandb lazily)."""
-    import wandb
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight", pad_inches=0.05)
-    buf.seek(0)
-    from PIL import Image
-
-    img = Image.open(buf)
-    return wandb.Image(img)
 
 
 def get_trajectory_colors(k: int) -> list[list[float]]:

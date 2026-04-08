@@ -21,14 +21,12 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 import json
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import hydra
 import jax
 import matplotlib.pyplot as plt
 import numpy as np
-import wandb
 from omegaconf import DictConfig
 
 MOSEQ_DIR = Path(__file__).resolve().parent.parent
@@ -54,7 +52,6 @@ from experiments.shared.metrics import (
 )
 from experiments.shared.plotting import (
     set_nature_style,
-    fig_to_image,
     get_trajectory_colors,
     get_code_colormap,
     MODE_COLORS,
@@ -137,17 +134,6 @@ def main(cfg: DictConfig) -> None:
     # Output dir
     output_dir = Path(cfg.output.base_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # WandB init
-    wandb_enabled = cfg.wandb.get("enabled", False)
-    if wandb_enabled:
-        run_name = cfg.wandb.get("run_name") or f"moseq_inference_{datetime.now():%y%m%d_%H%M%S}"
-        wandb.init(
-            project=cfg.wandb.project,
-            entity=cfg.wandb.get("entity"),
-            name=run_name,
-            config=dict(cfg),
-        )
 
     # Load code2act (MoSeq decoder) checkpoint
     ckpt_path = cfg.checkpoint.path
@@ -278,14 +264,6 @@ def main(cfg: DictConfig) -> None:
             np.savez_compressed(save_path, **save_dict)
             log.info(f"  Saved {save_path}")
 
-            # Log per-mode scalar metrics
-            mean_reward = reward_matrix.mean()
-            if wandb_enabled:
-                wandb.log(
-                    {f"inference/{split}/{mode}/mean_reward": mean_reward},
-                    commit=False,
-                )
-
             # Store per-mode data for later analysis
             per_mode_data[mode] = {
                 "all_codes": list(all_codes),
@@ -304,8 +282,6 @@ def main(cfg: DictConfig) -> None:
             {m: {k: v.mean(axis=0) for k, v in curves.items()} for m, curves in mode_reward_curves.items()},
             max_steps,
         )
-        if wandb_enabled:
-            wandb.log({f"inference/{split}/reward_decomposition": fig_to_image(fig_rewards)}, commit=False)
         fig_rewards.savefig(output_dir / f"{split}_reward_decomposition.png", dpi=300)
         plt.close(fig_rewards)
 
@@ -393,11 +369,6 @@ def main(cfg: DictConfig) -> None:
                         code_colors=code_colors,
                     )
 
-                    if wandb_enabled:
-                        wandb.log(
-                            {f"inference/{split}/{mode}/ghost_video": wandb.Video(str(ghost_path), format="mp4")},
-                            commit=False,
-                        )
                     log.info(f"    Ghost video: {ghost_path}")
                 except Exception as e:
                     log.warning(f"    Ghost rendering failed: {e}")
@@ -420,19 +391,8 @@ def main(cfg: DictConfig) -> None:
                             num_codes=num_codes,
                             title=f"Clip {ci} ({mode})",
                         )
-                        if wandb_enabled:
-                            wandb.log(
-                                {f"inference/{split}/{mode}/solo_{vi}": wandb.Video(str(solo_path), format="mp4")},
-                                commit=False,
-                            )
                     except Exception as e:
                         log.warning(f"    Solo video {vi} failed: {e}")
-
-    # Commit all WandB logs
-    if wandb_enabled:
-        wandb.log({}, commit=True)
-        wandb.finish()
-        log.info("WandB run finished")
 
     log.info("=== Inference experiment complete ===")
 

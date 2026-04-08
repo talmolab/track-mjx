@@ -33,7 +33,7 @@ reference_h5: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_cl
 # =============================================================================
 # Code2Act: MoSeq decoder checkpoint (KPMS codes → RNN → action)
 checkpoint:
-  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260406_155304_389732/
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260407_031233_484020/
   step: null
 
 # Mimic-MJX: Pre-trained IntentionNetwork VAE checkpoint (oracle baseline)

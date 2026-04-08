@@ -17,14 +17,12 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import hydra
 import jax
 import matplotlib.pyplot as plt
 import numpy as np
-import wandb
 from omegaconf import DictConfig
 
 MOSEQ_DIR = Path(__file__).resolve().parent.parent
@@ -53,7 +51,6 @@ from experiments.shared.code_sequences import (
 from experiments.shared.metrics import compute_pairwise_joint_divergence
 from experiments.shared.plotting import (
     set_nature_style,
-    fig_to_image,
     get_trajectory_colors,
     get_code_colormap,
     CONDITION_COLORS,
@@ -186,7 +183,6 @@ def run_temporal_order(
     splits: dict,
     num_codes: int,
     output_dir: Path,
-    wandb_enabled: bool,
     jit_reset=None,
     jit_step=None,
 ) -> None:
@@ -281,11 +277,6 @@ def run_temporal_order(
                     height=int(cfg.rendering.height),
                     code_colors=code_colors,
                 )
-                if wandb_enabled:
-                    wandb.log(
-                        {f"temporal_order/{cond_name}/code2act/ghost": wandb.Video(str(ghost_path), format="mp4")},
-                        commit=False,
-                    )
             except Exception as e:
                 log.warning(f"    Ghost rendering failed: {e}")
 
@@ -321,8 +312,6 @@ def run_temporal_order(
 
     # Plot divergence curves with mimic-mjx baseline
     fig = plot_divergence_curves(divergence_curves, mimic_baseline=mimic_baseline)
-    if wandb_enabled:
-        wandb.log({"temporal_order/divergence_curves": fig_to_image(fig)}, commit=False)
     fig.savefig(output_dir / "temporal_order_divergence.png", dpi=300)
     plt.close(fig)
     log.info("  Divergence plot saved")
@@ -345,7 +334,6 @@ def run_killer_demo(
     splits: dict,
     num_codes: int,
     output_dir: Path,
-    wandb_enabled: bool,
     jit_reset=None,
     jit_step=None,
 ) -> None:
@@ -479,19 +467,12 @@ def run_killer_demo(
                         height=int(cfg.rendering.height),
                         code_colors=code_colors,
                     )
-                    if wandb_enabled:
-                        wandb.log(
-                            {f"killer_demo/{beh}/{height}/ghost": wandb.Video(str(ghost_path), format="mp4")},
-                            commit=False,
-                        )
                 except Exception as e:
                     log.warning(f"      Ghost rendering failed: {e}")
 
     # Combined displacement plot per height (all behaviors, mean+std)
     for height, beh_trajs in height_beh_trajs.items():
         fig = plot_root_displacement(beh_trajs, title=f"Root displacement ({height} start)")
-        if wandb_enabled:
-            wandb.log({f"killer_demo/{height}/root_displacement": fig_to_image(fig)}, commit=False)
         fig.savefig(output_dir / f"killer_{height}_displacement.png", dpi=300)
         plt.close(fig)
         log.info(f"  Displacement plot saved for {height}")
@@ -508,11 +489,6 @@ def main(cfg: DictConfig) -> None:
 
     output_dir = Path(cfg.output.base_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    wandb_enabled = cfg.wandb.get("enabled", False)
-    if wandb_enabled:
-        run_name = f"moseq_code_seq_{datetime.now():%y%m%d_%H%M%S}"
-        wandb.init(project=cfg.wandb.project, entity=cfg.wandb.get("entity"), name=run_name, config=dict(cfg))
 
     # Load code2act (MoSeq decoder) checkpoint
     ckpt_cfg, norm_state, policy_params, ppo_networks = load_moseq_checkpoint(cfg.checkpoint.path)
@@ -561,20 +537,16 @@ def main(cfg: DictConfig) -> None:
         cfg, env, inf_fn_code2act, inf_fn_mimic,
         code2act_params, mimic_params,
         ppo_networks, mimic_ppo, use_rnn,
-        test_codes, splits, num_codes, output_dir, wandb_enabled,
+        test_codes, splits, num_codes, output_dir,
         jit_reset=jit_reset, jit_step=jit_step,
     )
 
     # --- Killer Demo (code2act only) ---
     run_killer_demo(
         cfg, env, inf_fn_code2act, code2act_params, ppo_networks, use_rnn,
-        test_codes, test_clips, splits, num_codes, output_dir, wandb_enabled,
+        test_codes, test_clips, splits, num_codes, output_dir,
         jit_reset=jit_reset, jit_step=jit_step,
     )
-
-    if wandb_enabled:
-        wandb.log({}, commit=True)
-        wandb.finish()
 
     log.info("=== Code Sequence Experiments Complete ===")
 

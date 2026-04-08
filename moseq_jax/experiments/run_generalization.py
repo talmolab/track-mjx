@@ -16,8 +16,6 @@ os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 import logging
 import sys
-import tempfile
-from datetime import datetime
 from pathlib import Path
 
 import h5py
@@ -25,7 +23,6 @@ import hydra
 import jax
 import matplotlib.pyplot as plt
 import numpy as np
-import wandb
 from omegaconf import DictConfig
 
 MOSEQ_DIR = Path(__file__).resolve().parent.parent
@@ -49,7 +46,6 @@ from experiments.shared.keypoint_fk import setup_stac_model, qpos_to_keypoints_f
 from experiments.shared.metrics import decompose_rewards
 from experiments.shared.plotting import (
     set_nature_style,
-    fig_to_image,
     get_trajectory_colors,
     get_code_colormap,
     MODE_COLORS,
@@ -335,16 +331,6 @@ def main(cfg: DictConfig) -> None:
     output_dir = Path(cfg.output.base_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    wandb_enabled = cfg.wandb.get("enabled", False)
-    if wandb_enabled:
-        run_name = f"moseq_gen_{datetime.now():%y%m%d_%H%M%S}"
-        wandb.init(
-            project=cfg.wandb.project,
-            entity=cfg.wandb.get("entity"),
-            name=run_name,
-            config=dict(cfg),
-        )
-
     n_segments = int(cfg.new_data.n_segments)
     frames_per_seg = int(cfg.new_data.frames_per_segment)
     seed = int(cfg.new_data.seed)
@@ -567,11 +553,6 @@ def main(cfg: DictConfig) -> None:
                     title=f"Seg {si} ({mode})",
                 )
                 log.info(f"    Solo video: {solo_path}")
-                if wandb_enabled:
-                    wandb.log(
-                        {f"generalization/seg{si}/{mode}": wandb.Video(str(solo_path), format="mp4")},
-                        commit=False,
-                    )
             except Exception as e:
                 log.warning(f"    Solo video failed for seg{si}/{mode}: {e}")
 
@@ -585,8 +566,6 @@ def main(cfg: DictConfig) -> None:
         max_steps,
     )
     fig.savefig(output_dir / "reward_decomposition.png", dpi=300)
-    if wandb_enabled:
-        wandb.log({"generalization/reward_decomposition": fig_to_image(fig)}, commit=False)
     plt.close(fig)
 
     # Mean reward bar chart
@@ -602,8 +581,6 @@ def main(cfg: DictConfig) -> None:
     ax_bar.set_title("Generalization Performance")
     plt.tight_layout()
     fig_bar.savefig(output_dir / "mean_reward_comparison.png", dpi=300)
-    if wandb_enabled:
-        wandb.log({"generalization/mean_reward": fig_to_image(fig_bar)}, commit=False)
     plt.close(fig_bar)
 
     # ===================================================================
@@ -618,13 +595,6 @@ def main(cfg: DictConfig) -> None:
         dst = figures_data_dir / f"generalization_{mode}.npz"
         shutil.copy2(src, dst)
         log.info(f"  Copied {src.name} → figures/data/")
-
-    # ===================================================================
-    # Done
-    # ===================================================================
-    if wandb_enabled:
-        wandb.log({}, commit=True)
-        wandb.finish()
 
     log.info("\n=== Generalization Experiment Complete ===")
     log.info(f"  Output: {output_dir}")

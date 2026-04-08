@@ -15,7 +15,6 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import h5py
@@ -23,7 +22,6 @@ import hydra
 import jax
 import matplotlib.pyplot as plt
 import numpy as np
-import wandb
 from omegaconf import DictConfig
 from scipy.special import softmax
 
@@ -47,7 +45,6 @@ from experiments.shared.checkpoint_utils import (
 from experiments.shared.metrics import compute_transition_matrix, plot_transition_matrix
 from experiments.shared.plotting import (
     set_nature_style,
-    fig_to_image,
     get_code_colormap,
     NATURE_COLORS,
 )
@@ -375,7 +372,6 @@ def run_free_loop_rollouts(
     seed: int,
     num_codes: int,
     output_dir: Path,
-    wandb_enabled: bool,
     jit_reset=None,
     jit_step=None,
 ) -> dict:
@@ -405,19 +401,11 @@ def run_free_loop_rollouts(
                     env, result["qpos"][:-1], result["code_indices"], vid_path,
                     fps=50, num_codes=num_codes, title=f"{method_name} #{si}",
                 )
-                if wandb_enabled:
-                    wandb.log(
-                        {f"code_gen/{method_name}/solo_{si}": wandb.Video(str(vid_path), format="mp4")},
-                        commit=False,
-                    )
             except Exception as e:
                 log.warning(f"    Solo video {si} failed: {e}")
 
     mean_surv = np.mean(survivals)
     log.info(f"    Mean survival: {mean_surv:.1f} steps")
-
-    if wandb_enabled:
-        wandb.log({f"code_gen/{method_name}/mean_survival": mean_surv}, commit=False)
 
     return {"survivals": survivals, "qpos": all_qpos}
 
@@ -433,11 +421,6 @@ def main(cfg: DictConfig) -> None:
 
     output_dir = Path(cfg.output.base_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    wandb_enabled = cfg.wandb.get("enabled", False)
-    if wandb_enabled:
-        run_name = f"moseq_code_gen_{datetime.now():%y%m%d_%H%M%S}"
-        wandb.init(project=cfg.wandb.project, entity=cfg.wandb.get("entity"), name=run_name, config=dict(cfg))
 
     # Load code2act (MoSeq decoder) checkpoint
     ckpt_cfg, norm_state, policy_params, ppo_networks = load_moseq_checkpoint(cfg.checkpoint.path)
@@ -536,8 +519,6 @@ def main(cfg: DictConfig) -> None:
         fig = plot_transition_matrix(T, title=f"TM: {method_name}")
         fig.savefig(output_dir / f"tm_{method_name}.png", dpi=300)
         np.save(output_dir / f"tm_{method_name}.npy", T)
-        if wandb_enabled:
-            wandb.log({f"code_gen/{method_name}/transition_matrix": fig_to_image(fig)}, commit=False)
         plt.close(fig)
 
     # -------------------------------------------------------------------
@@ -550,7 +531,7 @@ def main(cfg: DictConfig) -> None:
         result = run_free_loop_rollouts(
             method_name, seqs[:int(cfg.generation.num_sequences)],
             env, inf_fn, code2act_params, ppo_networks, use_rnn,
-            max_steps, seed, num_codes, output_dir, wandb_enabled,
+            max_steps, seed, num_codes, output_dir,
             jit_reset=jit_reset, jit_step=jit_step,
         )
         survival_summary[method_name] = np.mean(result["survivals"])
@@ -609,14 +590,8 @@ def main(cfg: DictConfig) -> None:
     ax.set_xlabel("Mean survival (steps)")
     ax.set_title("Free-loop survival by generation method")
     plt.tight_layout()
-    if wandb_enabled:
-        wandb.log({"code_gen/survival_comparison": fig_to_image(fig)}, commit=False)
     fig.savefig(output_dir / "survival_comparison.png", dpi=300)
     plt.close(fig)
-
-    if wandb_enabled:
-        wandb.log({}, commit=True)
-        wandb.finish()
 
     log.info("=== Code Generation Experiment Complete ===")
 

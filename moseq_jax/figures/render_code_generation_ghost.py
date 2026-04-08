@@ -55,21 +55,12 @@ METHOD_BASE_RGB = {
 }
 
 
-def get_method_ghost_colors(method: str, k: int) -> list[list[float]]:
-    """Return k RGBA colours as shades of the method's base colour."""
-    r, g, b = METHOD_BASE_RGB[method]
-    colors = []
-    for i in range(k):
-        t = i / max(k - 1, 1)
-        lighten = 0.3 * t
-        alpha = max(0.85 - 0.12 * i, 0.2)
-        colors.append([
-            min(r + lighten, 1.0),
-            min(g + lighten, 1.0),
-            min(b + lighten, 1.0),
-            alpha,
-        ])
-    return colors
+def get_distinct_ghost_colors(k: int) -> list[list[float]]:
+    """Return k visually distinct RGBA colours for ghost bodies (tab10)."""
+    import matplotlib.pyplot as plt
+
+    cmap = plt.cm.get_cmap("tab10")
+    return [list(cmap(i % 10)) for i in range(k)]
 
 
 def _center_qpos(trajectories_qpos: list[np.ndarray]) -> list[np.ndarray]:
@@ -217,7 +208,7 @@ def main():
         K = len(trajs)
         log.info(f"  {K} trajectories, {len(trajs[0])} frames")
 
-        traj_colors = get_method_ghost_colors(method, K)
+        traj_colors = get_distinct_ghost_colors(K)
 
         frames = render_panel_frames(
             env, trajs, traj_colors,

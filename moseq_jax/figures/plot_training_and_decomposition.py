@@ -28,9 +28,9 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs"
 TRAIN_CSV = DATA_DIR / "train_data.csv"
 
 TRAIN_COLORS = {
-    "RNN Distillation": "#0072B2",   # Nature blue
-    "RNN Concat Discrete": "#009E73", # Nature green
-    "RNN Concat Full": "#D55E00",     # Nature orange
+    "RNN Distillation": "#0072B2",       # blue (Wong)
+    "RNN Concat Discrete": "#009E73",    # green (Wong)
+    "RNN Concat Full": "#D55E00",        # orange (Wong)
 }
 
 TRAIN_SERIES = {
@@ -120,13 +120,13 @@ def _plot_panel_a(ax: plt.Axes, data: dict[str, pd.DataFrame]) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 DECOMP_MODES = {
-    "Code2Act": DATA_DIR / "test_code2act.npz",
-    "Mimic-MJX": DATA_DIR / "test_mimic_mjx.npz",
+    "Code2Act": DATA_DIR / "generalization_code2act.npz",
+    "Mimic-MJX": DATA_DIR / "generalization_mimic_mjx.npz",
 }
 
 DECOMP_COLORS = {
-    "Code2Act": "#0072B2",   # Nature blue
-    "Mimic-MJX": "#D55E00",  # Nature orange
+    "Code2Act": "#0072B2",   # blue (Wong)
+    "Mimic-MJX": "#D55E00",  # orange (Wong)
 }
 
 COMP_LINESTYLE = {"coarse": "-", "fine": "--"}

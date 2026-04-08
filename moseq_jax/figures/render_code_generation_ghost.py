@@ -18,7 +18,7 @@ from pathlib import Path
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
-import imageio
+import cv2
 import mujoco
 import numpy as np
 
@@ -40,18 +40,37 @@ log = logging.getLogger(__name__)
 
 CODE_GEN_DIR = MOSEQ_DIR / "outputs" / "moseq_code_generation"
 
-METHODS = ["arhmm_level2", "hmm_dynamax", "tm_T1.0"]
-METHOD_LABELS = {
-    "arhmm_level2": "ARHMM Inference",
-    "hmm_dynamax": "HMM Fit + Inference",
-    "tm_T1.0": "TM Sample",
+# ── Triptych configurations ─────────────────────────────────────────────────
+
+TRIPTYCH_CONFIGS = {
+    "methods": {
+        "methods": ["arhmm_level2", "hmm_dynamax", "tm_T1.0"],
+        "labels": {
+            "arhmm_level2": "ARHMM Inference",
+            "hmm_dynamax": "HMM Fit + Inference",
+            "tm_T1.0": "TM Sample",
+        },
+        "output_name": "code_generation_triptych",
+    },
+    "baselines": {
+        "methods": ["uniform_random", "single_code", "reversed"],
+        "labels": {
+            "uniform_random": "Uniform Random",
+            "single_code": "Single Code",
+            "reversed": "Reversed",
+        },
+        "output_name": "code_generation_baselines_triptych",
+    },
 }
 
-# Nature Wong palette base colours per method
-METHOD_BASE_RGB = {
-    "arhmm_level2": (0.0, 0.45, 0.70),   # #0072B2 blue
-    "hmm_dynamax": (0.84, 0.37, 0.0),     # #D55E00 orange
-    "tm_T1.0": (0.0, 0.62, 0.45),         # #009E73 green
+# Method name → rollout .npz path
+METHOD_ROLLOUT_PATHS = {
+    "arhmm_level2": CODE_GEN_DIR / "arhmm" / "rollouts_arhmm_level2.npz",
+    "hmm_dynamax": CODE_GEN_DIR / "hmm" / "rollouts_hmm_dynamax.npz",
+    "tm_T1.0": CODE_GEN_DIR / "tm" / "rollouts_tm_T1.0.npz",
+    "uniform_random": CODE_GEN_DIR / "baselines" / "rollouts_uniform_random.npz",
+    "single_code": CODE_GEN_DIR / "baselines" / "rollouts_single_code.npz",
+    "reversed": CODE_GEN_DIR / "baselines" / "rollouts_reversed.npz",
 }
 
 
@@ -130,7 +149,8 @@ def load_method_trajectories(
     max_samples: int = 6,
 ) -> list[np.ndarray]:
     """Load full-length trajectories for a method, sorted by length."""
-    roll = np.load(CODE_GEN_DIR / f"rollouts_{method}.npz", allow_pickle=True)
+    rollout_path = METHOD_ROLLOUT_PATHS[method]
+    roll = np.load(rollout_path, allow_pickle=True)
     survivals = roll["survivals"]
 
     # Sort by survival descending, pick longest
@@ -148,8 +168,101 @@ def load_method_trajectories(
     return trajs
 
 
+def render_triptych_for_config(
+    env,
+    config_name: str,
+    args: argparse.Namespace,
+) -> None:
+    """Render a single triptych video for a given config (methods or baselines)."""
+    tcfg = TRIPTYCH_CONFIGS[config_name]
+    methods = tcfg["methods"]
+    labels = tcfg["labels"]
+    output_name = tcfg["output_name"]
+
+    all_panel_frames: dict[str, list[np.ndarray]] = {}
+
+    for method in methods:
+        rollout_path = METHOD_ROLLOUT_PATHS[method]
+        if not rollout_path.exists():
+            log.warning(f"  Skipping {method}: {rollout_path} not found")
+            continue
+
+        label = labels[method]
+        log.info(f"\n=== {label} ({method}) ===")
+
+        trajs = load_method_trajectories(method, max_samples=args.max_traj)
+        K = len(trajs)
+        log.info(f"  {K} trajectories, {len(trajs[0])} frames")
+
+        traj_colors = get_distinct_ghost_colors(K)
+
+        frames = render_panel_frames(
+            env, trajs, traj_colors,
+            panel_width=args.panel_size, panel_height=args.panel_size,
+            max_frames=args.max_frames,
+            camera_distance=args.cam_dist, camera_elevation=args.cam_elev,
+            camera_azimuth=args.cam_azim, camera_fovy=args.cam_fovy,
+        )
+        all_panel_frames[method] = frames
+        log.info(f"  Rendered {len(frames)} frames")
+
+    if not all_panel_frames:
+        log.error(f"No panels rendered for '{config_name}'")
+        return
+
+    # ── Stitch into triptych ─────────────────────────────────────────
+    rendered_methods = [m for m in methods if m in all_panel_frames]
+    log.info(f"\n=== Compositing {config_name} triptych ({len(rendered_methods)} panels) ===")
+    panel_w = args.panel_size
+    panel_h = args.panel_size
+    min_frames = min(len(f) for f in all_panel_frames.values())
+
+    label_height = 36
+    total_width = panel_w * len(rendered_methods)
+    total_height = panel_h + label_height
+    total_height = ((total_height + 15) // 16) * 16
+    total_width = ((total_width + 15) // 16) * 16
+
+    output_path = OUTPUT_DIR / f"{output_name}.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, args.fps, (total_width, total_height))
+
+    for t in range(min_frames):
+        combined = np.ones((total_height, total_width, 3), dtype=np.uint8) * 40
+
+        for mi, method in enumerate(rendered_methods):
+            panel = all_panel_frames[method][t]
+            x_off = mi * panel_w
+            combined[label_height:label_height + panel_h, x_off:x_off + panel_w] = panel
+
+        # Labels
+        for mi, method in enumerate(rendered_methods):
+            label = labels[method]
+            x_center = mi * panel_w + panel_w // 2 - len(label) * 3
+            combined = add_multi_line_overlay(
+                combined, [label],
+                start_position=(max(x_center, 5), 6),
+                font_size=16,
+            )
+
+        # Timestep
+        combined = add_multi_line_overlay(
+            combined, [f"t={t}"],
+            start_position=(total_width - 60, total_height - 20),
+            font_size=12,
+        )
+
+        writer.write(cv2.cvtColor(combined, cv2.COLOR_RGB2BGR))
+
+    writer.release()
+    log.info(f"  Wrote triptych: {output_path}")
+    log.info(f"  Size: {total_width} x {total_height}, {min_frames} frames")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Render code generation triptych")
+    parser.add_argument("--mode", choices=["methods", "baselines", "both"], default="both",
+                        help="Which triptych to render (default: both)")
     parser.add_argument("--max-traj", type=int, default=5,
                         help="Max trajectories per panel (default: 5)")
     parser.add_argument("--max-frames", type=int, default=400,
@@ -196,74 +309,12 @@ def main():
     env = MoSeqImitation(config=env_cfg, clips=test_clips, kpms_codes=test_codes)
     log.info("Environment loaded")
 
-    # ── Render each method panel ─────────────────────────────────────
-    all_panel_frames: dict[str, list[np.ndarray]] = {}
-
-    for method in METHODS:
-        label = METHOD_LABELS[method]
-        log.info(f"\n=== {label} ({method}) ===")
-
-        trajs = load_method_trajectories(method, max_samples=args.max_traj)
-        K = len(trajs)
-        log.info(f"  {K} trajectories, {len(trajs[0])} frames")
-
-        traj_colors = get_distinct_ghost_colors(K)
-
-        frames = render_panel_frames(
-            env, trajs, traj_colors,
-            panel_width=args.panel_size, panel_height=args.panel_size,
-            max_frames=args.max_frames,
-            camera_distance=args.cam_dist, camera_elevation=args.cam_elev,
-            camera_azimuth=args.cam_azim, camera_fovy=args.cam_fovy,
-        )
-        all_panel_frames[method] = frames
-        log.info(f"  Rendered {len(frames)} frames")
-
-    # ── Stitch into triptych ─────────────────────────────────────────
-    log.info("\n=== Compositing triptych ===")
-    panel_w = args.panel_size
-    panel_h = args.panel_size
-    min_frames = min(len(f) for f in all_panel_frames.values())
-
-    label_height = 36
-    total_width = panel_w * len(METHODS)
-    total_height = panel_h + label_height
-    total_height = ((total_height + 15) // 16) * 16
-    total_width = ((total_width + 15) // 16) * 16
-
-    output_path = OUTPUT_DIR / "code_generation_triptych.mp4"
-    writer = imageio.get_writer(str(output_path), fps=args.fps)
-
-    for t in range(min_frames):
-        combined = np.ones((total_height, total_width, 3), dtype=np.uint8) * 40
-
-        for mi, method in enumerate(METHODS):
-            panel = all_panel_frames[method][t]
-            x_off = mi * panel_w
-            combined[label_height:label_height + panel_h, x_off:x_off + panel_w] = panel
-
-        # Labels
-        for mi, method in enumerate(METHODS):
-            label = METHOD_LABELS[method]
-            x_center = mi * panel_w + panel_w // 2 - len(label) * 3
-            combined = add_multi_line_overlay(
-                combined, [label],
-                start_position=(max(x_center, 5), 6),
-                font_size=16,
-            )
-
-        # Timestep
-        combined = add_multi_line_overlay(
-            combined, [f"t={t}"],
-            start_position=(total_width - 60, total_height - 20),
-            font_size=12,
-        )
-
-        writer.append_data(combined)
-
-    writer.close()
-    log.info(f"  Wrote triptych: {output_path}")
-    log.info(f"  Size: {total_width} x {total_height}, {min_frames} frames")
+    modes = ["methods", "baselines"] if args.mode == "both" else [args.mode]
+    for mode in modes:
+        log.info(f"\n{'='*60}")
+        log.info(f"Rendering triptych: {mode}")
+        log.info(f"{'='*60}")
+        render_triptych_for_config(env, mode, args)
 
 
 if __name__ == "__main__":

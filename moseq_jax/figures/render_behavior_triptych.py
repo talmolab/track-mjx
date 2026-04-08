@@ -255,7 +255,7 @@ def main():
     from vnl_playground.tasks.rodent.imitation import ReferenceClips
     from moseq_env_wrapper import MoSeqImitation
 
-    ckpt_path = str(MOSEQ_DIR / "model_checkpoints" / "260406_155304_389732")
+    ckpt_path = str(MOSEQ_DIR / "model_checkpoints" / "260407_031233_484020")
     cfg = checkpointing.load_config_from_checkpoint(ckpt_path, step_prefix="MoSeqPPONetwork")
     cfg = OmegaConf.create(cfg)
     _, _, env_cfg = utils.prepare_config(cfg)

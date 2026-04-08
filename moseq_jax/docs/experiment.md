@@ -2,15 +2,17 @@
 
 ## Overview
 
-Five experiment scripts evaluate the KPMS Code2Act decoder against a Mimic-MJX oracle baseline:
+Seven experiment scripts evaluate the KPMS Code2Act decoder:
 
 | # | Script | Config | Purpose |
 |---|--------|--------|---------|
 | 1 | `run_inference.py` | `inference.yaml` | Trajectory matching, reward decomposition, K-body videos, transition matrices |
 | 2 | `run_code_sequence.py` | `code_sequence_exp.yaml` | Temporal order of codes, killer demo (instructional/discriminative codes) |
-| 3 | `run_code_generation.py` | `code_generation_exp.yaml` | Generative models (empirical TM, dynamax HMM, ARHMM L1/L2) + free-loop rollouts |
+| 3 | `run_code_generation.py` | `code_generation_exp.yaml` | Generative models (empirical TM, dynamax HMM, ARHMM L2) + free-loop rollouts |
 | 4 | `run_generalization.py` | `generalization.yaml` | Generalization to unseen continuous data via KPMS re-inference |
 | 5 | `run_roundtrip.py` | `roundtrip.yaml` | Round-trip code consistency (qpos -> FK -> KPMS -> codes, compare to original) |
+| 6 | `run_single_code.py` | `single_code_exp.yaml` | Single-code sustain grid — each code held for K frames, 2 body poses, 5×10 grid video |
+| 7 | `run_behavior_parade.py` | `behavior_parade_exp.yaml` | Behavior transition parade — 10 bodies, top-down view, walk→groom→rear sequence |
 
 All experiments save outputs (plots, videos, npz data) to disk under `outputs/`.
 
@@ -123,6 +125,43 @@ with rollout qpos for each mode).
 - Confusion matrices per condition per dataset
 - Accuracy comparison bar chart (PNG + SVG)
 - `roundtrip_summary.json` — frame-level accuracy per condition
+
+### Experiment 6: Single-Code Sustain Grid
+
+```bash
+python -m experiments.run_single_code
+
+# Override sustain duration:
+python -m experiments.run_single_code sustain_frames=200
+```
+
+For each of the 50 KPMS codes (ordered most→least popular), holds the code
+constant for K frames (default 100) with two body instantiations (low-z and
+high-z starting pose). Outputs a 5×10 grid video showing all codes.
+
+**Outputs** (`outputs/moseq_single_code/`):
+- `code_frequency.png` — code distribution histogram
+- `bout_stats.json` — per-code bout duration statistics
+- `single_code_grid.mp4` — 5-column grid video of all codes
+
+### Experiment 7: Behavior Transition Parade
+
+```bash
+python -m experiments.run_behavior_parade
+
+# Fewer bodies:
+python -m experiments.run_behavior_parade num_bodies=5
+```
+
+10 bodies spaced on the x-axis, viewed from a top-down camera. All bodies
+receive the same code sequence: walk → groom → rear. Behavior-representative
+codes are automatically selected from real data via kinematic criteria
+(XY displacement for walk, Z rise for rear, XYZ stillness for groom).
+
+**Outputs** (`outputs/moseq_behavior_parade/`):
+- `behavior_parade.mp4` — top-down parade video with behavior labels
+- `code_selection.json` — selected codes and kinematic rationale
+- `code_selection.png` — kinematic analysis plot with highlighted codes
 
 ## Architecture Support
 

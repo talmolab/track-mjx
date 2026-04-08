@@ -327,7 +327,8 @@ def plot_accuracy_comparison(
             )
 
     ax.set_xticks(x)
-    ax.set_xticklabels([ds.replace("_", " ").title() for ds in datasets])
+    ds_labels = {"inference": "250-Frame\nTest Set", "generalization": "1000-Frame\nTest Set"}
+    ax.set_xticklabels([ds_labels.get(ds, ds) for ds in datasets])
     ax.set_ylabel("Frame-Level Accuracy")
     ax.set_title("Round-Trip Code Consistency")
     ax.set_ylim(0, 1.15)
@@ -368,7 +369,7 @@ def main(cfg: DictConfig) -> None:
     all_accuracies: dict[str, dict[str, float]] = {}
 
     datasets = {
-        "inference": (cfg.inference, load_inference_qpos),
+        "inference": (cfg.inference, load_generalization_qpos),
         "generalization": (cfg.generalization, load_generalization_qpos),
     }
 

@@ -22,15 +22,15 @@ stac_xml: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
 # new data for generalization (each has its own optimized offsets)
 
 # =============================================================================
-# Inference Dataset (148 test clips × 250 frames)
+# 250-Frame Dataset (generalization_short — 20 segments × 250 frames, ignore_done)
 # =============================================================================
 inference:
-  code2act_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_inference/test_code2act.npz
-  mimic_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_inference/test_mimic_mjx.npz
-  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
-  reference_h5: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+  code2act_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization_short/generalization_code2act.npz
+  mimic_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization_short/generalization_mimic_mjx.npz
+  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization_short/generalization_codes.npz
+  reference_h5: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization_short/segmented_new_data.h5
   clip_length: 250
-  fk_h5: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+  fk_h5: /home/jovyan/vast/kaiwen/track-mjx/data/transform_art_2020_12_22_1.h5
 
 # =============================================================================
 # Generalization Dataset (20 segments × 1000 frames)

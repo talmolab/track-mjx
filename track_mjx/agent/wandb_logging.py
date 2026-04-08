@@ -66,12 +66,11 @@ def rollout_logging_fn(
     latent_logvars = []
 
     # Calculate episode length from config
-    physics_steps_per_ctrl = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
-    steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
-        cfg.env_config.sim_dt * physics_steps_per_ctrl
+    physics_steps_per_ctrl = env._config.ctrl_dt / env._config.sim_dt
+    steps_per_mocap_frame = (1 / env._config.mocap_hz) / (
+        env._config.sim_dt * physics_steps_per_ctrl
     )
-
-    episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
+    episode_length = int(env._clip_length() * steps_per_mocap_frame)
 
     # Check if using recurrent policy
     arch_name = cfg.network_config.get("arch_name", "intention")

@@ -23,6 +23,7 @@ import jax
 import orbax.checkpoint as ocp
 from brax.training.acme import running_statistics, specs
 from brax.training.distribution import NormalTanhDistribution
+from track_mjx.agent.distribution import NormalSigmoidDistribution
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
@@ -486,10 +487,17 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
         arch_name = "intention"
     network_config = cfg.network_config
     obs_sizes = require_obs_sizes(network_config)
-
+    action_dist_key = cfg.network_config.get("action_distribution", "tanh")
+    if action_dist_key.lower() == "sigmoid":
+        print("Using sigmoid action distribution")
+        action_distribution = NormalSigmoidDistribution
+    else:
+        print("Using tanh action distribution")
+        action_distribution = NormalTanhDistribution
     if arch_name == "intention":
         return ff_ppo_networks.make_intention_ppo_networks(
             obs_sizes=obs_sizes,
+            action_distribution=action_distribution,
             action_size=network_config.action_size,
             intention_latent_size=network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
@@ -500,13 +508,6 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
         )
     elif arch_name == "recurrent_intention":
-        action_dist_key = cfg.network_config.get("action_distribution", "tanh")
-        if action_dist_key.lower() == "sigmoid":
-            print("Using sigmoid action distribution")
-            action_distribution = NormalSigmoidDistribution
-        else:
-            print("Using tanh action distribution")
-            action_distribution = NormalTanhDistribution
         return recurrent_ppo_networks.make_recurrent_intention_ppo_networks(
             action_distribution=action_distribution,
             obs_sizes=obs_sizes,

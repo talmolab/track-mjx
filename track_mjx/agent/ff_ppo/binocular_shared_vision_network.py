@@ -162,7 +162,12 @@ class BinocularSharedVisionPolicyValueModule(nn.Module):
         egocentric_obs = obs["proprioception"]
         vision = obs["vision"]
 
-        vision_features = self.vision_encoder(vision)
+        if get_activation:
+            vision_features, cnn_activations = self.vision_encoder(
+                vision, get_activation=True
+            )
+        else:
+            vision_features = self.vision_encoder(vision)
 
         combined = jnp.concatenate([vision_features, task_obs], axis=-1)
         z = combined
@@ -187,6 +192,7 @@ class BinocularSharedVisionPolicyValueModule(nn.Module):
                 {
                     "decoder": decoder_activations,
                     "vision_features": vision_features,
+                    "cnn": cnn_activations,
                     "egocentric_obs": egocentric_obs,
                     "task_obs": task_obs,
                     "intention": z,

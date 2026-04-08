@@ -164,11 +164,14 @@ def make_logging_inference_fn(
             (params, obs, key) -> (action, extras)
     """
 
-    def make_logging_policy(deterministic: bool = False) -> Callable:
+    def make_logging_policy(
+        deterministic: bool = False, get_activation: bool = False
+    ) -> Callable:
         """Create a logging policy that takes params as input.
 
         Args:
             deterministic: If True, return mode of action distribution.
+            get_activation: If True, include network activations in extras.
 
         Returns:
             Policy function: (params, obs, key) -> (action, extras_dict).
@@ -195,15 +198,30 @@ def make_logging_inference_fn(
                 # Unbatched observation - use single key
                 per_sample_keys = key_network
 
-            logits, latent_mean, latent_logvar = policy_network.apply(
-                *params, observations, per_sample_keys
-            )
+            if get_activation:
+                logits, latent_mean, latent_logvar, activations = (
+                    policy_network.apply(
+                        *params,
+                        observations,
+                        per_sample_keys,
+                        deterministic=deterministic,
+                        get_activation=True,
+                    )
+                )
+            else:
+                logits, latent_mean, latent_logvar = policy_network.apply(
+                    *params, observations, per_sample_keys
+                )
+                activations = None
 
             if deterministic:
-                return jnp.array(parametric_action_distribution.mode(logits)), {
+                extras = {
                     "latent_mean": latent_mean,
                     "latent_logvar": latent_logvar,
                 }
+                if get_activation:
+                    extras["activations"] = activations
+                return jnp.array(parametric_action_distribution.mode(logits)), extras
 
             raw_actions = parametric_action_distribution.sample_no_postprocessing(
                 logits, key_sample
@@ -213,13 +231,16 @@ def make_logging_inference_fn(
                 raw_actions
             )
 
-            return jnp.array(postprocessed_actions), {
+            extras = {
                 "latent_mean": latent_mean,
                 "latent_logvar": latent_logvar,
                 "log_prob": log_prob,
                 "raw_action": raw_actions,
                 "logits": logits,
             }
+            if get_activation:
+                extras["activations"] = activations
+            return jnp.array(postprocessed_actions), extras
 
         return logging_policy
 

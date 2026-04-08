@@ -73,26 +73,43 @@ class BinocularVisionEncoder(nn.Module):
                 channels=self.channels,
             )
 
-    def __call__(self, binocular_images: jnp.ndarray) -> jnp.ndarray:
+    def __call__(
+        self,
+        binocular_images: jnp.ndarray,
+        get_activation: bool = False,
+    ) -> jnp.ndarray | tuple[jnp.ndarray, dict[str, dict[str, jnp.ndarray]]]:
         """Encode binocular images to feature vectors.
 
         Args:
             binocular_images: Shape [..., H, W, 2*C] channel-stacked stereo input.
                 Channels 0:C are left eye, channels C:2C are right eye.
+            get_activation: If True, also return per-eye per-layer activations.
+                Default False preserves the original return type exactly.
 
         Returns:
-            Feature vectors, shape [..., 2 * feature_size].
-            Layout: [left_features, right_features].
+            If get_activation is False (default): feature vectors of shape
+            [..., 2 * feature_size]. Layout: [left_features, right_features].
+
+            If get_activation is True: a tuple (features, activations) where
+            features has shape [..., 2 * feature_size] and activations is a
+            dict with keys "left" and "right", each mapping to the
+            layer_acts_dict from VisionEncoder (keys "conv_0".."conv_N", "fc").
         """
         c = self.mono_channels
         left = binocular_images[..., :c]    # [..., H, W, C]
         right = binocular_images[..., c:]   # [..., H, W, C]
 
         if self.shared_weights:
-            left_features = self.shared_cnn(left)    # [..., feature_size]
-            right_features = self.shared_cnn(right)  # [..., feature_size]
+            left_out = self.shared_cnn(left, get_activation=get_activation)
+            right_out = self.shared_cnn(right, get_activation=get_activation)
         else:
-            left_features = self.left_cnn(left)      # [..., feature_size]
-            right_features = self.right_cnn(right)   # [..., feature_size]
+            left_out = self.left_cnn(left, get_activation=get_activation)
+            right_out = self.right_cnn(right, get_activation=get_activation)
 
-        return jnp.concatenate([left_features, right_features], axis=-1)
+        if get_activation:
+            left_features, left_acts = left_out
+            right_features, right_acts = right_out
+            features = jnp.concatenate([left_features, right_features], axis=-1)
+            return features, {"left": left_acts, "right": right_acts}
+
+        return jnp.concatenate([left_out, right_out], axis=-1)

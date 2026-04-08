@@ -33,8 +33,6 @@ from brax.training import types
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.types import Params
 
-from track_mjx.agent.mlp_ppo.jacobians import exact_frobenius_sq, hutchinson_frobenius_sq
-
 
 @flax.struct.dataclass
 class PPONetworkParams:
@@ -99,49 +97,6 @@ def compute_ar1_temporal_loss(
     l2_diff = jnp.mean(jnp.square(z_curr - z_prev), axis=-1)  # [T-1, B]
     masked_l2 = l2_diff * valid_mask
     return jnp.sum(masked_l2) / jnp.maximum(jnp.sum(valid_mask), 1.0)
-
-
-def compute_jacobian_penalty(
-    policy_apply: Callable,
-    normalizer_params: Any,
-    policy_params: Params,
-    observations: Any,
-    policy_key: jnp.ndarray,
-    probe_rng: jnp.ndarray,
-    n_probes: int = 1,
-    method: str = "hutchinson",
-) -> jnp.ndarray:
-    """Compute ||J||_F^2 penalty for the policy Jacobian.
-
-    J = d(action_logits) / d(observations). Supports both a stochastic
-    Hutchinson estimator and exact computation via jacrev.
-
-    Args:
-        policy_apply: Policy network apply function.
-        normalizer_params: Running statistics for observation normalization.
-        policy_params: Policy network parameters.
-        observations: Dict observation pytree with shape [T, B, ...] per key.
-        policy_key: JAX random key for policy forward pass (reparameterization).
-        probe_rng: JAX random key for Hutchinson probe sampling.
-        n_probes: Number of Hutchinson probes (only used when method="hutchinson").
-        method: "hutchinson" for stochastic estimate, "exact" for full jacrev.
-
-    Returns:
-        Scalar mean ||J||_F^2 over all samples.
-    """
-
-    def policy_fwd(obs):
-        action_logits, _, _ = policy_apply(
-            normalizer_params, policy_params, obs, policy_key
-        )
-        return action_logits
-
-    if method == "hutchinson":
-        return hutchinson_frobenius_sq(policy_fwd, observations, probe_rng, n_probes)
-    elif method == "exact":
-        return exact_frobenius_sq(policy_fwd, observations)
-    else:
-        raise ValueError(f"Unknown jacobian method: {method!r}")
 
 
 def compute_gae(
@@ -228,9 +183,6 @@ def compute_ppo_loss(
     vf_coefficient: float = 0.5,
     latent_kl_schedule: Callable[[int], float] | None = None,
     latent_ar1_schedule: Callable[[int], float] | None = None,
-    jacobian_weight: float = 0.0,
-    jacobian_n_probes: int = 1,
-    jacobian_method: str = "hutchinson",
 ) -> tuple[jnp.ndarray, types.Metrics]:
     """Compute PPO loss with VAE KL divergence for intention networks.
 
@@ -263,9 +215,6 @@ def compute_ppo_loss(
         vf_coefficient: Coefficient for value function loss
         latent_kl_schedule: Optional schedule function(step) -> latent_kl_weight.
         latent_ar1_schedule: Optional schedule function(step) -> latent_ar1_weight.
-        jacobian_weight: Weight for Jacobian Frobenius norm penalty (0 = disabled).
-        jacobian_n_probes: Number of Hutchinson probes (when method="hutchinson").
-        jacobian_method: "hutchinson" for stochastic estimate, "exact" for jacrev.
 
     Returns:
         Tuple of:
@@ -348,23 +297,7 @@ def compute_ppo_loss(
     ar1_loss_weighted = current_ar1_weight * ar1_loss
     latent_loss = kl_gaussian_weighted + ar1_loss_weighted
 
-    # Jacobian regularization
-    jacobian_loss = jnp.float32(0.0)
-    if jacobian_weight > 0.0:
-        _, probe_key = jax.random.split(rng)
-        jacobian_loss = compute_jacobian_penalty(
-            policy_apply,
-            normalizer_params,
-            params.policy,
-            data.observation,
-            policy_key,
-            probe_key,
-            n_probes=jacobian_n_probes,
-            method=jacobian_method,
-        )
-    jacobian_loss_weighted = jacobian_weight * jacobian_loss
-
-    total_loss = policy_loss + v_loss + entropy_loss + latent_loss + jacobian_loss_weighted
+    total_loss = policy_loss + v_loss + entropy_loss + latent_loss
 
     return total_loss, {
         "total_loss": total_loss,
@@ -376,8 +309,6 @@ def compute_ppo_loss(
         "entropy_loss": entropy_loss,
         "latent_kl_weight": current_kl_weight,
         "latent_ar1_weight": current_ar1_weight,
-        "jacobian_loss": jacobian_loss,
-        "jacobian_loss_weighted": jacobian_loss_weighted,
     }
 
 

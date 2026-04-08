@@ -231,9 +231,6 @@ def train(
     freeze_decoder: bool = False,
     checkpoint_callback: Callable[[int], None] | None = None,
     grad_clip_threshold: float = 20.0,
-    jacobian_weight: float = 0.0,
-    jacobian_n_probes: int = 1,
-    jacobian_method: str = "hutchinson",
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
@@ -621,9 +618,6 @@ def train(
         vf_coefficient=vf_loss_coefficient,
         latent_kl_schedule=latent_kl_schedule,
         latent_ar1_schedule=latent_ar1_schedule,
-        jacobian_weight=jacobian_weight,
-        jacobian_n_probes=jacobian_n_probes,
-        jacobian_method=jacobian_method,
     )
 
     init_params = losses.PPONetworkParams(

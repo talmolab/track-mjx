@@ -58,8 +58,7 @@ METHOD_BASE_RGB = {
 def get_distinct_ghost_colors(k: int) -> list[list[float]]:
     """Return k visually distinct RGBA colours for ghost bodies (tab10)."""
     import matplotlib.pyplot as plt
-
-    cmap = plt.cm.get_cmap("tab10")
+    cmap = plt.colormaps["tab10"]
     return [list(cmap(i % 10)) for i in range(k)]
 
 

@@ -1,0 +1,50 @@
+# =============================================================================
+# Round-Trip Code Consistency Experiment
+# =============================================================================
+# Tests whether Code2Act behavior, re-encoded by KPMS, recovers original codes.
+# Runs on two datasets (inference test set + generalization) with three
+# conditions each (reference ceiling, mimic-mjx, code2act).
+# =============================================================================
+
+# =============================================================================
+# KPMS Model
+# =============================================================================
+kpms:
+  model_dir: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/s50_k1e+04_l10_arhmm/seed1
+  model_name: keypoint_arhmm_states50_seed1
+  num_iters: 200
+
+# =============================================================================
+# FK Setup
+# =============================================================================
+stac_xml: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
+# H5 for FK site config (config/offsets/kp_names) — use reference for inference,
+# new data for generalization (each has its own optimized offsets)
+
+# =============================================================================
+# Inference Dataset (148 test clips × 250 frames)
+# =============================================================================
+inference:
+  code2act_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_inference/test_code2act.npz
+  mimic_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_inference/test_mimic_mjx.npz
+  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
+  reference_h5: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+  clip_length: 250
+  fk_h5: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+
+# =============================================================================
+# Generalization Dataset (20 segments × 1000 frames)
+# =============================================================================
+generalization:
+  code2act_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization/generalization_code2act.npz
+  mimic_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization/generalization_mimic_mjx.npz
+  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization/generalization_codes.npz
+  reference_h5: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization/segmented_new_data.h5
+  clip_length: 1000
+  fk_h5: /home/jovyan/vast/kaiwen/track-mjx/data/transform_art_2020_12_22_1.h5
+
+# =============================================================================
+# Output
+# =============================================================================
+output:
+  base_dir: ./outputs/moseq_roundtrip

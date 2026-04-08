@@ -116,12 +116,18 @@ def _plot_panel_a(ax: plt.Axes, data: dict[str, pd.DataFrame]) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Panel (B) — Reward decomposition
+# Panels (B) & (C) — Reward decomposition (inference + generalization)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-DECOMP_MODES = {
-    "Code2Act": DATA_DIR / "generalization_code2act.npz",
-    "Mimic-MJX": DATA_DIR / "generalization_mimic_mjx.npz",
+DECOMP_DATASETS = {
+    "inference": {
+        "Code2Act": DATA_DIR / "test_code2act.npz",
+        "Mimic-MJX": DATA_DIR / "test_mimic_mjx.npz",
+    },
+    "generalization": {
+        "Code2Act": DATA_DIR / "generalization_code2act.npz",
+        "Mimic-MJX": DATA_DIR / "generalization_mimic_mjx.npz",
+    },
 }
 
 DECOMP_COLORS = {
@@ -133,15 +139,19 @@ COMP_LINESTYLE = {"coarse": "-", "fine": "--"}
 COMP_LABELS = {"coarse": "Coarse (root)", "fine": "Fine (joints + end-eff)"}
 
 
-def _load_decomp_data() -> dict[str, dict[str, np.ndarray]]:
+def _load_decomp_data(dataset: str) -> dict[str, dict[str, np.ndarray]]:
     data = {}
-    for mode, path in DECOMP_MODES.items():
+    for mode, path in DECOMP_DATASETS[dataset].items():
         d = np.load(path, allow_pickle=True)
         data[mode] = {"coarse": d["decomp_coarse"], "fine": d["decomp_fine"]}
     return data
 
 
-def _plot_panel_b(ax: plt.Axes, data: dict[str, dict[str, np.ndarray]]) -> None:
+def _plot_decomp_panel(
+    ax: plt.Axes,
+    data: dict[str, dict[str, np.ndarray]],
+    title: str,
+) -> None:
     max_t = min(d[comp].shape[1] for d in data.values() for comp in ("coarse", "fine"))
 
     norm_factors = {}
@@ -166,6 +176,7 @@ def _plot_panel_b(ax: plt.Axes, data: dict[str, dict[str, np.ndarray]]) -> None:
 
     ax.set_xlabel("Episode Timestep")
     ax.set_ylabel("Normalized Reward")
+    ax.set_title(title, fontsize=7)
     ax.set_ylim(bottom=0, top=1.08)
     ax.set_xlim(left=0)
 
@@ -181,7 +192,7 @@ def _plot_panel_b(ax: plt.Axes, data: dict[str, dict[str, np.ndarray]]) -> None:
         handlelength=2.0,
         handletextpad=0.4,
         fancybox=True,
-        fontsize=7,
+        fontsize=5.5,
     )
     leg.get_frame().set_linewidth(0)
     leg.get_frame().set_boxstyle("round,pad=0.3,rounding_size=0.2")
@@ -228,28 +239,27 @@ def main() -> None:
     _setup_nature_style()
 
     train_data = _load_train_data()
-    decomp_data = _load_decomp_data()
+    inf_data = _load_decomp_data("inference")
+    gen_data = _load_decomp_data("generalization")
 
-    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(7.2, 2.8))
+    fig, (ax_a, ax_b, ax_c) = plt.subplots(1, 3, figsize=(10.5, 2.8))
 
     _plot_panel_a(ax_a, train_data)
-    _plot_panel_b(ax_b, decomp_data)
+    _plot_decomp_panel(ax_b, inf_data, "500-Frame Test Set")
+    _plot_decomp_panel(ax_c, gen_data, "1000-Frame Test Set")
 
-    # Panel labels (A) and (B)
-    ax_a.text(
-        -0.12, 1.08, "(A)", transform=ax_a.transAxes,
-        fontsize=11, fontweight="bold", va="top", ha="left",
-    )
-    ax_b.text(
-        -0.12, 1.08, "(B)", transform=ax_b.transAxes,
-        fontsize=11, fontweight="bold", va="top", ha="left",
-    )
+    # Panel labels
+    for ax, label in zip([ax_a, ax_b, ax_c], ["(A)", "(B)", "(C)"]):
+        ax.text(
+            -0.12, 1.08, label, transform=ax.transAxes,
+            fontsize=11, fontweight="bold", va="top", ha="left",
+        )
 
-    fig.tight_layout(w_pad=2.5)
+    fig.tight_layout(w_pad=2.0)
 
     # Rounded figure border
     fig.patch.set_facecolor("white")
-    for ax in (ax_a, ax_b):
+    for ax in (ax_a, ax_b, ax_c):
         for spine in ax.spines.values():
             spine.set_visible(False)
 
@@ -264,7 +274,7 @@ def main() -> None:
     )
     fig.patches.append(rect)
 
-    for ax in (ax_a, ax_b):
+    for ax in (ax_a, ax_b, ax_c):
         ax.spines["left"].set_visible(True)
         ax.spines["bottom"].set_visible(True)
 
@@ -273,7 +283,6 @@ def main() -> None:
     out_svg = OUTPUT_DIR / "training_and_decomposition.svg"
     fig.savefig(out_pdf)
     fig.savefig(out_png)
-    # SVG: transparent fill but keep rounded edge
     rect.set_facecolor("none")
     fig.savefig(out_svg, transparent=True)
     rect.set_facecolor("white")

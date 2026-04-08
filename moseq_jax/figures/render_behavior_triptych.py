@@ -52,35 +52,11 @@ BEHAVIOR_LABELS = {
     "rear": "Rear Pose Instantiation",
 }
 
-# Nature colorblind-safe palette (Wong, Nature Methods 2011)
-# Each behavior gets shades of its base colour for the K ghost bodies.
-BEHAVIOR_BASE_RGB = {
-    "groom": (0.0, 0.45, 0.70),   # #0072B2 blue
-    "walk": (0.84, 0.37, 0.0),    # #D55E00 orange
-    "rear": (0.0, 0.62, 0.45),    # #009E73 green
-}
-
-
-def get_nature_ghost_colors(behavior: str, k: int) -> list[list[float]]:
-    """Return k RGBA colours as shades of the behavior's Nature colour.
-
-    First body is fully opaque, subsequent ghosts fade progressively
-    with lightened hue for visibility against the dark floor.
-    """
-    r, g, b = BEHAVIOR_BASE_RGB[behavior]
-    colors = []
-    for i in range(k):
-        # Progressively lighten and reduce alpha
-        t = i / max(k - 1, 1)  # 0 → 1
-        lighten = 0.3 * t  # shift toward white
-        alpha = max(0.85 - 0.12 * i, 0.2)
-        colors.append([
-            min(r + lighten, 1.0),
-            min(g + lighten, 1.0),
-            min(b + lighten, 1.0),
-            alpha,
-        ])
-    return colors
+def get_distinct_ghost_colors(k: int) -> list[list[float]]:
+    """Return k visually distinct RGBA colours for ghost bodies (tab10)."""
+    import matplotlib.pyplot as plt
+    cmap = plt.colormaps["tab10"]
+    return [list(cmap(i % 10)) for i in range(k)]
 
 
 def _center_qpos(trajectories_qpos: list[np.ndarray]) -> list[np.ndarray]:
@@ -179,7 +155,7 @@ def render_triptych(
         lens = [len(q) for q in qpos_list]
         log.info(f"  {beh}: {K} trajectories, lengths={lens}, min={min(lens)}")
 
-        traj_colors = get_nature_ghost_colors(beh, K)
+        traj_colors = get_distinct_ghost_colors(K)
 
         frames = render_panel_frames(
             env, qpos_list, traj_colors,

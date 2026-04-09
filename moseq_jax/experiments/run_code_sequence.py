@@ -164,6 +164,111 @@ def plot_root_displacement(
     return fig
 
 
+def plot_kinematic_signatures(
+    panels: dict[str, list[np.ndarray]],
+    ctrl_dt: float = 0.01,
+    title: str = "Kinematic signatures",
+) -> plt.Figure:
+    """Three-panel bar chart: XY speed, root Z height, joint velocity per behavior.
+
+    Each bar = mean over clips for one behavior, with individual clip dots and
+    error bars.  Directly shows that walk = fast XY, rear = high Z, groom = still.
+
+    Args:
+        panels: ``{behavior_name: [qpos_array, ...]}`` where each qpos is
+            ``(T, 74)`` at control rate.
+        ctrl_dt: Control timestep in seconds (for speed units).
+        title: Suptitle for the figure.
+    """
+    set_nature_style()
+    fig, axes = plt.subplots(1, 3, figsize=(7, 2.5))
+
+    behaviors = list(panels.keys())
+    colors = [BEHAVIOR_COLORS.get(b, "#999999") for b in behaviors]
+    x = np.arange(len(behaviors))
+
+    # Ensure float arrays (saved npz may have dtype=object)
+    panels_f = {
+        beh: [np.asarray(q, dtype=np.float64) for q in trajs]
+        for beh, trajs in panels.items()
+    }
+
+    # --- Panel 1: Mean XY speed (m/s) ---
+    xy_speeds = {}
+    for beh, trajs in panels_f.items():
+        speeds = []
+        for qpos in trajs:
+            xy = qpos[:, :2]
+            dists = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+            speeds.append(np.mean(dists) / ctrl_dt)
+        xy_speeds[beh] = np.array(speeds)
+
+    means = [xy_speeds[b].mean() for b in behaviors]
+    stds = [xy_speeds[b].std() for b in behaviors]
+    axes[0].bar(x, means, yerr=stds, color=colors, alpha=0.8, capsize=3, width=0.6)
+    for i, beh in enumerate(behaviors):
+        jitter = np.random.default_rng(0).uniform(-0.15, 0.15, size=len(xy_speeds[beh]))
+        axes[0].scatter(
+            x[i] + jitter, xy_speeds[beh], color=colors[i],
+            s=8, alpha=0.4, edgecolors="none", zorder=3,
+        )
+    axes[0].set_ylabel("XY speed (m/s)")
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels(behaviors)
+    axes[0].set_title("Locomotion")
+
+    # --- Panel 2: Mean root Z height ---
+    z_heights = {}
+    for beh, trajs in panels_f.items():
+        heights = []
+        for qpos in trajs:
+            heights.append(np.mean(qpos[:, 2]))
+        z_heights[beh] = np.array(heights)
+
+    means = [z_heights[b].mean() for b in behaviors]
+    stds = [z_heights[b].std() for b in behaviors]
+    axes[1].bar(x, means, yerr=stds, color=colors, alpha=0.8, capsize=3, width=0.6)
+    for i, beh in enumerate(behaviors):
+        jitter = np.random.default_rng(1).uniform(-0.15, 0.15, size=len(z_heights[beh]))
+        axes[1].scatter(
+            x[i] + jitter, z_heights[beh], color=colors[i],
+            s=8, alpha=0.4, edgecolors="none", zorder=3,
+        )
+    axes[1].set_ylabel("Root Z height (m)")
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(behaviors)
+    axes[1].set_title("Posture")
+
+    # --- Panel 3: Mean joint angular velocity ---
+    joint_vels = {}
+    for beh, trajs in panels_f.items():
+        vels = []
+        for qpos in trajs:
+            # Joint angles start at index 7 (after root pos 3 + root quat 4)
+            joints = qpos[:, 7:]
+            angular_vel = np.abs(np.diff(joints, axis=0)) / ctrl_dt
+            vels.append(np.mean(angular_vel))
+        joint_vels[beh] = np.array(vels)
+
+    means = [joint_vels[b].mean() for b in behaviors]
+    stds = [joint_vels[b].std() for b in behaviors]
+    axes[2].bar(x, means, yerr=stds, color=colors, alpha=0.8, capsize=3, width=0.6)
+    for i, beh in enumerate(behaviors):
+        jitter = np.random.default_rng(2).uniform(-0.15, 0.15, size=len(joint_vels[beh]))
+        axes[2].scatter(
+            x[i] + jitter, joint_vels[beh], color=colors[i],
+            s=8, alpha=0.4, edgecolors="none", zorder=3,
+        )
+    axes[2].set_ylabel("Joint angular vel (rad/s)")
+    axes[2].set_xticks(x)
+    axes[2].set_xticklabels(behaviors)
+    axes[2].set_title("Activity")
+
+    fig.suptitle(title, fontsize=9, y=1.02)
+    plt.tight_layout()
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Temporal order experiment
 # ---------------------------------------------------------------------------
@@ -471,11 +576,24 @@ def run_killer_demo(
                     log.warning(f"      Ghost rendering failed: {e}")
 
     # Combined displacement plot per height (all behaviors, mean+std)
+    ctrl_dt = float(cfg.env_config.ctrl_dt)
     for height, beh_trajs in height_beh_trajs.items():
         fig = plot_root_displacement(beh_trajs, title=f"Root displacement ({height} start)")
         fig.savefig(output_dir / f"killer_{height}_displacement.png", dpi=300)
         plt.close(fig)
         log.info(f"  Displacement plot saved for {height}")
+
+        fig = plot_kinematic_signatures(
+            beh_trajs, ctrl_dt=ctrl_dt,
+            title=f"Kinematic signatures ({height} start)",
+        )
+        for ext in ("png", "pdf"):
+            fig.savefig(
+                output_dir / f"killer_{height}_kinematic_signatures.{ext}",
+                dpi=300, bbox_inches="tight",
+            )
+        plt.close(fig)
+        log.info(f"  Kinematic signatures plot saved for {height}")
 
 
 # ---------------------------------------------------------------------------

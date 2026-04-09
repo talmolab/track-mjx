@@ -262,7 +262,7 @@ def plot_kinematic_signatures(
     axes[2].set_ylabel("Joint angular vel (rad/s)")
     axes[2].set_xticks(x)
     axes[2].set_xticklabels(behaviors)
-    axes[2].set_title("Activity")
+    axes[2].set_title("Joint Motion")
 
     fig.suptitle(title, fontsize=9, y=1.02)
     plt.tight_layout()

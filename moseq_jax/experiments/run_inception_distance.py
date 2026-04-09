@@ -249,8 +249,8 @@ def train_vae(
     target_beta: float,
     beta_warmup_epochs: int,
     seed: int,
-) -> Tuple[dict, tuple, Dict]:
-    """Train VAE on real data. Returns (params, network_fns, final_metrics)."""
+) -> Tuple[dict, tuple, Dict, list]:
+    """Train VAE. Returns (params, network_fns, final_metrics, epoch_losses)."""
     vae, init_fn, apply_fn, encode_fn = make_vae_network(
         input_size=input_size,
         latent_dim=latent_dim,
@@ -282,6 +282,7 @@ def train_vae(
 
     rng = np.random.default_rng(seed)
     final_metrics = {}
+    epoch_losses = []
 
     for epoch in tqdm(range(num_epochs), desc=f"VAE training (seed={seed})"):
         if beta_warmup_epochs > 0:
@@ -308,8 +309,42 @@ def train_vae(
                 k: float(np.mean([m[k] for m in epoch_metrics]))
                 for k in epoch_metrics[0]
             }
+            epoch_losses.append({
+                "epoch": epoch + 1,
+                "recon_loss": final_metrics["recon_loss"],
+                "kl_loss": final_metrics["kl_loss"],
+                "total_loss": final_metrics["total_loss"],
+            })
 
-    return state.params, (vae, init_fn, apply_fn, encode_fn), final_metrics
+    return state.params, (vae, init_fn, apply_fn, encode_fn), final_metrics, epoch_losses
+
+
+def _plot_vae_loss(epoch_losses: list[dict], output_path: str) -> None:
+    """Save VAE training loss curve (2-panel: recon+KL, total)."""
+    set_nature_style()
+    epochs = [e["epoch"] for e in epoch_losses]
+    recon = [e["recon_loss"] for e in epoch_losses]
+    kl = [e["kl_loss"] for e in epoch_losses]
+    total = [e["total_loss"] for e in epoch_losses]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 2.5))
+
+    ax1.plot(epochs, recon, color="#0072B2", linewidth=1, label="Recon (MSE)")
+    ax1.plot(epochs, kl, color="#D55E00", linewidth=1, label="KL")
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Loss")
+    ax1.set_title("Component Losses")
+    ax1.legend(frameon=False, fontsize=6)
+
+    ax2.plot(epochs, total, color="#333333", linewidth=1)
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Loss")
+    ax2.set_title("Total Loss")
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    log.info(f"VAE loss plot saved to: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +696,7 @@ def collect_code_driven_rollouts(
             reset_clip_idx=0,
             jit_reset=jit_reset,
             jit_step=jit_step,
-            ignore_done=False,
+            ignore_done=True,
         )
         all_qpos.append(result["qpos"])  # (T+1, 74), variable length
 
@@ -694,7 +729,7 @@ def collect_mimic_rollouts(
             jit_reset=jit_reset,
             jit_step=jit_step,
             model_type="mimic_mjx",
-            ignore_done=False,
+            ignore_done=True,
         )
         all_qpos.append(result["qpos"])
 
@@ -795,41 +830,31 @@ def _save_csv(csv_path: Path, aggregated: dict) -> None:
 
 def _create_plots(output_dir: Path, aggregated: dict, methods: list[str]) -> None:
     """Create FID and KID bar plots."""
-    fake_plot_data = {
+    plot_data = {
         name: vals
         for name, vals in aggregated.items()
         if name not in ("self_comparison", "split_baseline")
     }
 
-    if not fake_plot_data:
+    if not plot_data:
         return
 
     # FID barplot
     fid_data = {
         name: {"mean": vals["fid_mean"], "std": vals["fid_std"]}
-        for name, vals in fake_plot_data.items()
+        for name, vals in plot_data.items()
     }
-    split_fid_ref = aggregated["split_baseline"]["fid_mean"]
     create_barplot(
-        fid_data,
-        "FID",
-        split_fid_ref,
-        f"Split baseline ({split_fid_ref:.2f})",
-        str(output_dir / "fid_barplot.png"),
+        fid_data, "FID", None, "", str(output_dir / "fid_barplot.png"),
     )
 
     # KID barplot
     kid_data = {
         name: {"mean": vals["kid_mean"], "std": vals["kid_std"]}
-        for name, vals in fake_plot_data.items()
+        for name, vals in plot_data.items()
     }
-    split_kid_ref = aggregated["split_baseline"]["kid_mean"]
     create_barplot(
-        kid_data,
-        "KID",
-        split_kid_ref,
-        f"Split baseline ({split_kid_ref:.6f})",
-        str(output_dir / "kid_barplot.png"),
+        kid_data, "KID", None, "", str(output_dir / "kid_barplot.png"),
     )
 
 
@@ -885,12 +910,6 @@ def main(cfg: DictConfig) -> None:
         f"= {mocap_eval_frames} mocap frames"
     )
 
-    # Load ALL reference clips for VAE training
-    all_ref_clips = ReferenceClips(
-        data_path=cfg.data.reference_data_path,
-        n_frames_per_clip=clip_length,
-    )
-
     # Load balanced clips for rollouts (decoder needs codes)
     balanced_clips = ReferenceClips(
         data_path=cfg.data.reference_data_path,
@@ -898,22 +917,19 @@ def main(cfg: DictConfig) -> None:
         keep_clips_idx=balanced_indices,
     )
 
-    # ==================================================================
-    # Stage 2: Build "real" data
-    # ==================================================================
-    real_qpos = np.array(all_ref_clips.qpos)  # (842, 250, 74)
-    real_qpos = real_qpos[:, :mocap_eval_frames, :]  # truncate to eval length
-    n_real = len(real_qpos)
-
     n_rollouts_cfg = cfg.inception_distance.get("num_rollout_clips", None)
     n_rollouts = int(n_rollouts_cfg) if n_rollouts_cfg else len(all_codes)
-    log.info(f"Real data shape: {real_qpos.shape} ({n_real} clips)")
     log.info(f"Rollouts per method: {n_rollouts}")
 
     # ==================================================================
-    # Stage 3: Collect rollouts per method
+    # Stage 2: Collect ALL rollouts (mimic-mjx first — used as VAE data)
     # ==================================================================
     methods = list(cfg.inception_distance.methods)
+    # Ensure mimic_mjx is first so its rollouts are ready for VAE training
+    if "mimic_mjx" in methods:
+        methods.remove("mimic_mjx")
+        methods.insert(0, "mimic_mjx")
+
     gen_cfg = _make_generation_cfg(cfg, clip_length, n_rollouts)
 
     # Load ARHMM params if needed
@@ -956,25 +972,21 @@ def main(cfg: DictConfig) -> None:
         if rollout_path.exists():
             log.info(f"\n--- Loading cached rollouts: {method} ---")
             cached = np.load(rollout_path, allow_pickle=True)
-            if "raw_qpos" in cached:
-                raw_list = [cached[f"raw_{i}"] for i in range(int(cached["n_clips"]))]
+            if "n_clips" not in cached:
+                log.warning(f"  Stale cache format for {method}, re-collecting")
+                rollout_path.unlink()
             else:
-                # Legacy format: pre-filtered (N, T, 74)
-                fake_datasets[method] = cached["qpos"][:, :mocap_eval_frames, :]
-                n_k = len(fake_datasets[method])
-                survival_rates[method] = (n_k, n_k)
-                log.info(f"  Loaded legacy cache: {fake_datasets[method].shape}")
+                raw_list = [cached[f"raw_{i}"] for i in range(int(cached["n_clips"]))]
+                qpos_arr, n_kept, n_total = filter_and_truncate(
+                    raw_list, survival_threshold, steps_per_frame,
+                )
+                fake_datasets[method] = qpos_arr
+                survival_rates[method] = (n_kept, n_total)
+                log.info(
+                    f"  Loaded from cache: {qpos_arr.shape} "
+                    f"({n_kept}/{n_total} survived)"
+                )
                 continue
-            qpos_arr, n_kept, n_total = filter_and_truncate(
-                raw_list, survival_threshold, steps_per_frame,
-            )
-            fake_datasets[method] = qpos_arr
-            survival_rates[method] = (n_kept, n_total)
-            log.info(
-                f"  Loaded from cache: {qpos_arr.shape} "
-                f"({n_kept}/{n_total} survived)"
-            )
-            continue
 
         log.info(f"\n--- Collecting: {method} ---")
 
@@ -1033,12 +1045,31 @@ def main(cfg: DictConfig) -> None:
             f"rate={100*n_kept/n_total:.1f}%)"
         )
 
-    # Log survival summary
+    # Log survival summary + warnings
     log.info("\n--- Survival Summary ---")
     for method in methods:
         if method in survival_rates:
             n_k, n_t = survival_rates[method]
-            log.info(f"  {method}: {n_k}/{n_t} ({100*n_k/n_t:.1f}%)")
+            rate = 100 * n_k / n_t if n_t > 0 else 0
+            msg = f"  {method}: {n_k}/{n_t} ({rate:.1f}%)"
+            if n_k < n_t * 0.5:
+                log.warning(f"{msg}  ** LOW SURVIVAL — KID may be unreliable **")
+            else:
+                log.info(msg)
+
+    # ==================================================================
+    # Stage 3: Build "real" data from mimic-mjx rollouts
+    # ==================================================================
+    # The VAE is trained on mimic-mjx rollouts (oracle behavior), not raw
+    # mocap.  This gives cleaner training data and makes KID measure
+    # "distance from oracle behavior" rather than "distance from noisy mocap."
+    if "mimic_mjx" not in fake_datasets:
+        raise RuntimeError(
+            "mimic_mjx must be in methods — its rollouts are used as VAE training data"
+        )
+    real_qpos = fake_datasets["mimic_mjx"]  # (N_survived, mocap_eval_frames, 74)
+    n_real = len(real_qpos)
+    log.info(f"VAE training data: mimic-mjx rollouts, shape {real_qpos.shape}")
 
     # ==================================================================
     # Stage 4: Preprocess all datasets
@@ -1127,7 +1158,7 @@ def main(cfg: DictConfig) -> None:
                 warmup = int(vae_cfg.num_epochs) // 2
 
             t0 = time.time()
-            trained_params, network_fns, train_metrics = train_vae(
+            trained_params, network_fns, train_metrics, epoch_losses = train_vae(
                 data=real_data,
                 input_size=input_size,
                 latent_dim=int(vae_cfg.latent_dim),
@@ -1145,6 +1176,9 @@ def main(cfg: DictConfig) -> None:
                 seed=int(seed),
             )
             _save_vae_cache(cache_dir, cache_key, int(seed), trained_params)
+            _plot_vae_loss(
+                epoch_losses, str(output_dir / f"vae_loss_seed{seed}.png")
+            )
             log.info(f"  VAE trained in {time.time() - t0:.1f}s: {train_metrics}")
 
         _, _, _, encode_fn = network_fns
@@ -1226,7 +1260,7 @@ def main(cfg: DictConfig) -> None:
             "codes_path": str(cfg.data.codes_path),
             "methods": methods,
             "num_real_clips": n_real,
-            "num_fake_clips": n_fake,
+            "num_rollout_clips": n_rollouts,
             "clip_length": clip_length,
             "latent_dim": int(vae_cfg.latent_dim),
             "hidden_layers": list(vae_cfg.hidden_layers),

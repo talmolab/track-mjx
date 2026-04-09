@@ -62,7 +62,7 @@ inception_distance:
   vae:
     latent_dim: 64
     hidden_layers: [512, 256]
-    num_epochs: 100
+    num_epochs: 5000
     learning_rate: 0.001
     batch_size: 32
     beta: 1.0

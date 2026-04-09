@@ -24,20 +24,27 @@ RESULTS_PATH = SCRIPT_DIR.parent / "outputs" / "moseq_inception_distance" / "res
 # Display names and colors (Nature colorblind-safe)
 DISPLAY_NAMES = {
     "split_baseline": "Split Baseline\n(noise floor)",
-    "mimic_mjx_inference": "Mimic-MJX\n(oracle)",
-    "code2act_inference": "Code2Act\n(real codes)",
-    "arhmm_level2": "ARHMM L2\n(generated codes)",
+    "mimic_mjx": "Mimic-MJX\n(oracle)",
+    "decoder_original_codes": "Code2Act\n(real codes)",
+    "transition_matrix": "Transition\nMatrix",
+    "arhmm_level2": "ARHMM L2",
+    "hmm_dynamax": "HMM",
 }
 
 COLORS = {
     "split_baseline": "#999999",       # gray
-    "mimic_mjx_inference": "#009E73",  # green
-    "code2act_inference": "#0072B2",   # blue
+    "mimic_mjx": "#009E73",            # green
+    "decoder_original_codes": "#0072B2",  # blue
+    "transition_matrix": "#56B4E9",    # light blue
     "arhmm_level2": "#D55E00",         # orange
+    "hmm_dynamax": "#CC79A7",          # pink
 }
 
-# Order for display
-DISPLAY_ORDER = ["split_baseline", "mimic_mjx_inference", "code2act_inference", "arhmm_level2"]
+# Order for display (best to worst KID, no split baseline)
+DISPLAY_ORDER = [
+    "mimic_mjx", "decoder_original_codes",
+    "transition_matrix", "arhmm_level2", "hmm_dynamax",
+]
 
 
 def _setup_nature_style() -> None:
@@ -107,7 +114,7 @@ def main():
     kid_stds = [aggregated[d]["kid_std"] for d in datasets]
 
     x = np.arange(len(datasets))
-    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    fig, ax = plt.subplots(figsize=(5.5, 3.0))
 
     bars = ax.bar(
         x, kid_means, yerr=kid_stds,

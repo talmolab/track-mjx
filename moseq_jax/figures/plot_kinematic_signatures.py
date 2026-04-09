@@ -44,8 +44,8 @@ BEHAVIOR_LABELS = {
 }
 
 HEIGHT_LABELS = {
-    "low": "Walk Pose Instantiation",
-    "high": "Rear Pose Instantiation",
+    "low": "Instructing the Body Starting from Walk Pose",
+    "high": "Instructing the Body Starting from Rear Pose",
 }
 
 
@@ -143,7 +143,7 @@ def plot_kinematic_signatures(
     Panels: XY speed | Root Z height | Joint angular velocity.
     """
     title = HEIGHT_LABELS[height]
-    fig, axes = plt.subplots(1, 3, figsize=(5.5, 2.4))
+    fig, axes = plt.subplots(1, 3, figsize=(5.5, 2.5))
     x = np.arange(len(BEHAVIORS))
     colors = [BEHAVIOR_COLORS[b] for b in BEHAVIORS]
     labels = [BEHAVIOR_LABELS[b] for b in BEHAVIORS]
@@ -199,15 +199,15 @@ def plot_kinematic_signatures(
     for i, beh in enumerate(BEHAVIORS):
         _strip_plot(axes[2], x[i], joint_vels[beh], colors[i], jitter_seed=i + 20)
     axes[2].set_ylabel("Joint angular vel (rad/s)")
-    axes[2].set_title("Activity")
+    axes[2].set_title("Joint Motion")
 
     # Shared formatting
     for ax in axes:
         ax.set_xticks(x)
         ax.set_xticklabels(labels)
 
-    fig.suptitle(title, fontsize=9, fontweight="bold", y=1.0)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.suptitle(title, fontsize=9, fontweight="bold", y=0.97)
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
     border_rect = _add_rounded_border(fig, list(axes))
     return fig, border_rect
 

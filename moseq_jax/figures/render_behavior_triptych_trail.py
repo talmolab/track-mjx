@@ -340,8 +340,8 @@ def main():
         max_span = max(extent[0], extent[1], extent[2])
         fovy_rad = math.radians(args.cam_fovy)
         cam_dist = max(
-            (max_span + 0.15) / (2 * math.tan(fovy_rad / 2)),
-            0.25,
+            (max_span + 0.25) / (2 * math.tan(fovy_rad / 2)),
+            0.35,
         )
         if args.cam_dist > 0:
             cam_dist = args.cam_dist
@@ -385,10 +385,10 @@ def main():
     # ── Assemble figure: trail + gait diagram per panel ──────────────
     n_cols = len(panel_data)
     n_limbs = len(LIMBS)
-    fig = plt.figure(figsize=(4.8 * n_cols, 5.5))
+    fig = plt.figure(figsize=(4.8 * n_cols, 6.5))
     gs = gridspec.GridSpec(
-        2, n_cols, height_ratios=[10, 3],
-        hspace=0.08, wspace=0.08,
+        2, n_cols, height_ratios=[10, 3.5],
+        hspace=0.02, wspace=0.08,
     )
 
     for ci, beh in enumerate(BEHAVIORS):
@@ -445,7 +445,7 @@ def main():
         ax_gait.set_xlim(0, total_sec)
         ax_gait.set_ylim(-0.6, n_limbs - 0.4)
         ax_gait.set_yticks(range(n_limbs))
-        ax_gait.set_yticklabels(LIMBS, fontsize=6)
+        ax_gait.set_yticklabels(LIMBS, fontsize=7.5, fontweight="bold")
         ax_gait.set_xlabel("Time (s)", fontsize=7)
         ax_gait.tick_params(axis="x", labelsize=6)
         ax_gait.tick_params(axis="y", length=0)

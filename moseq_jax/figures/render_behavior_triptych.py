@@ -24,7 +24,7 @@ from pathlib import Path
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
-import imageio
+import cv2
 import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
@@ -133,10 +133,10 @@ def render_triptych(
     output_name: str | None = None,
     camera_distance: float = 0.55,
     camera_elevation: float = -25.0,
-    camera_azimuth: float = 135.0,
+    camera_azimuth: float = 0.0,
     camera_fovy: float = 50.0,
 ):
-    """Render 3-panel triptych: [Groom | Walk | Rear]."""
+    """Render 3-panel triptych: [Groom | Walk | Rear] with gait diagrams."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     all_panel_frames = {}
 
@@ -175,7 +175,7 @@ def render_triptych(
     min_frames = min(len(f) for f in all_panel_frames.values())
     log.info(f"  Stitching {min_frames} frames across {len(all_panel_frames)} panels")
 
-    # Label bar at top
+    # Layout
     label_height = 36
     total_width = panel_width * len(BEHAVIORS)
     total_height = panel_height + label_height
@@ -187,7 +187,8 @@ def render_triptych(
         output_name = f"behavior_triptych_{height}"
     output_path = OUTPUT_DIR / f"{output_name}.mp4"
 
-    writer = imageio.get_writer(str(output_path), fps=fps)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (total_width, total_height))
 
     for t in range(min_frames):
         combined = np.ones((total_height, total_width, 3), dtype=np.uint8) * 40  # dark grey bg
@@ -219,9 +220,9 @@ def render_triptych(
             font_size=12,
         )
 
-        writer.append_data(combined)
+        writer.write(cv2.cvtColor(combined, cv2.COLOR_RGB2BGR))
 
-    writer.close()
+    writer.release()
     log.info(f"  Wrote triptych: {output_path}")
     return str(output_path)
 
@@ -241,8 +242,8 @@ def main():
                         help="Camera distance (default: 0.55)")
     parser.add_argument("--cam-elev", type=float, default=-25.0,
                         help="Camera elevation degrees (default: -25)")
-    parser.add_argument("--cam-azim", type=float, default=135.0,
-                        help="Camera azimuth degrees (default: 135)")
+    parser.add_argument("--cam-azim", type=float, default=0.0,
+                        help="Camera azimuth degrees (default: 0, front-facing)")
     parser.add_argument("--cam-fovy", type=float, default=50.0,
                         help="Camera vertical FOV degrees (default: 50)")
     args = parser.parse_args()

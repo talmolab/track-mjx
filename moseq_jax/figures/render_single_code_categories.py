@@ -41,6 +41,7 @@ for _p in (str(MOSEQ_DIR), str(REPO_ROOT)):
         sys.path.insert(0, _p)
 
 from experiments.shared.ghost_rendering import build_ghost_model
+from figures.gait_diagram import compute_foot_contacts, render_gait_bar
 from vqvae_jax.analysis.rendering import add_multi_line_overlay
 
 logging.basicConfig(level=logging.INFO)
@@ -72,9 +73,10 @@ def classify_codes(
 ) -> dict[str, list[int]]:
     """Classify each code into groom / walk / rear from qpos_low kinematics.
 
-    Rear: z rises from start (max_z - start_z > z_rise_thresh) AND the rise
-          is sustained (mean z in second half > start_z + z_rise_thresh/2).
-    Walk: high xy displacement rate (> xy_rate_thresh), not rear.
+    Rear: z rises significantly in EITHER qpos_low or qpos_high AND the
+          rise is sustained (mean z in second half > start_z + thresh/2).
+    Walk: high xy displacement rate (> xy_rate_thresh) in either variant,
+          not rear.
     Groom: everything else (low movement).
     """
     categories: dict[str, list[int]] = {"groom": [], "walk": [], "rear": []}
@@ -84,22 +86,30 @@ def classify_codes(
         if not fp.exists():
             continue
         d = np.load(fp)
-        qpos = d["qpos_low"]
-        T = len(qpos)
 
-        # XY displacement rate
-        xy_diff = np.diff(qpos[:, :2], axis=0)
-        xy_path = np.sum(np.sqrt((xy_diff**2).sum(axis=1))) / T
+        is_rear = False
+        max_xy_rate = 0.0
+        for variant in ("qpos_low", "qpos_high"):
+            qpos = d[variant]
+            T = len(qpos)
 
-        # Z rise: max z relative to starting z
-        z_rise = float(np.max(qpos[:, 2]) - qpos[0, 2])
+            # XY displacement rate
+            xy_diff = np.diff(qpos[:, :2], axis=0)
+            xy_path = np.sum(np.sqrt((xy_diff**2).sum(axis=1))) / T
+            max_xy_rate = max(max_xy_rate, xy_path)
 
-        # Z sustained: mean z in second half relative to start
-        z_sustained = float(np.mean(qpos[T // 2 :, 2]) - qpos[0, 2])
+            # Z rise: max z relative to starting z
+            z_rise = float(np.max(qpos[:, 2]) - qpos[0, 2])
 
-        if z_rise > z_rise_thresh and z_sustained > z_rise_thresh / 2:
+            # Z sustained: mean z in second half relative to start
+            z_sustained = float(np.mean(qpos[T // 2 :, 2]) - qpos[0, 2])
+
+            if z_rise > z_rise_thresh and z_sustained > z_rise_thresh / 2:
+                is_rear = True
+
+        if is_rear:
             categories["rear"].append(code_id)
-        elif xy_path > xy_rate_thresh:
+        elif max_xy_rate > xy_rate_thresh:
             categories["walk"].append(code_id)
         else:
             categories["groom"].append(code_id)
@@ -135,15 +145,22 @@ def render_panel_frames(
     camera_elevation: float = -25.0,
     camera_azimuth: float = 135.0,
     camera_fovy: float = 50.0,
-) -> list[np.ndarray]:
+) -> tuple[list[np.ndarray], np.ndarray]:
     """Render centered ghost frames for one category panel.
 
     All ghost bodies use the same colour.
+
+    Returns:
+        ``(frames, contacts)`` where contacts is ``[n_frames, 4]`` bool
+        (foot contacts for the lead body).
     """
     K = len(trajectories_qpos)
     centered = _center_qpos(trajectories_qpos)
     min_len = min(len(q) for q in centered)
     n_frames = min(min_len, max_frames)
+
+    # Compute foot contacts on base model (lead body)
+    contacts = compute_foot_contacts(env.mj_model, centered[0][:n_frames])
 
     # All ghosts same colour
     ghost_colors = [body_color] * (K - 1)
@@ -176,7 +193,7 @@ def render_panel_frames(
         frames.append(frame)
 
     renderer.close()
-    return frames
+    return frames, contacts
 
 
 def main():
@@ -271,6 +288,7 @@ def main():
     # ── Load trajectories and render each panel ──────────────────────
     qpos_key = f"qpos_{args.variant}"
     all_panel_frames: dict[str, list[np.ndarray]] = {}
+    all_panel_contacts: dict[str, np.ndarray] = {}
 
     for beh in BEHAVIOR_ORDER:
         code_ids = categories[beh]
@@ -291,7 +309,7 @@ def main():
         )
 
         body_color = BEHAVIOR_RGBA[beh]
-        frames = render_panel_frames(
+        frames, contacts = render_panel_frames(
             env,
             trajs,
             body_color,
@@ -304,6 +322,7 @@ def main():
             camera_fovy=args.cam_fovy,
         )
         all_panel_frames[beh] = frames
+        all_panel_contacts[beh] = contacts
         log.info(f"  Rendered {len(frames)} frames")
 
     if not all_panel_frames:
@@ -321,8 +340,9 @@ def main():
     panel_w = args.panel_size
     panel_h = args.panel_size
     label_height = 36
+    gait_bar_height = 48
     total_width = panel_w * len(rendered_behs)
-    total_height = panel_h + label_height
+    total_height = label_height + panel_h + gait_bar_height
     total_height = ((total_height + 15) // 16) * 16
     total_width = ((total_width + 15) // 16) * 16
 
@@ -338,9 +358,19 @@ def main():
         for bi, beh in enumerate(rendered_behs):
             panel = all_panel_frames[beh][t]
             x_off = bi * panel_w
+            # Render panel
             combined[
                 label_height : label_height + panel_h, x_off : x_off + panel_w
             ] = panel
+            # Gait bar beneath panel
+            contacts = all_panel_contacts[beh]
+            gait_img = render_gait_bar(
+                contacts[:min_frames], t, panel_w, bar_height=gait_bar_height,
+            )
+            gait_y = label_height + panel_h
+            combined[gait_y : gait_y + gait_bar_height, x_off : x_off + panel_w] = (
+                gait_img
+            )
 
         # Labels with code count
         for bi, beh in enumerate(rendered_behs):

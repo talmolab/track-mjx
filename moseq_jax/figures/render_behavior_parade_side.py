@@ -67,7 +67,7 @@ def load_parade_data() -> dict:
 
     # Reconstruct behavior boundaries from per-behavior code_sequence lengths.
     # The parade concatenates behaviors in config order: walk → groom → rear.
-    behavior_order = ["walk", "groom", "rear"]
+    behavior_order = ["rear", "walk", "groom"]
     boundaries = []
     offset = 0
     for beh in behavior_order:

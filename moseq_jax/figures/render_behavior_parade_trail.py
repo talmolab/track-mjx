@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 PARADE_DATA = MOSEQ_DIR / "outputs" / "moseq_behavior_parade" / "data" / "parade_rollouts.npz"
 PARADE_META = MOSEQ_DIR / "outputs" / "moseq_behavior_parade" / "code_selection.json"
 
-BEHAVIOR_ORDER = ["walk", "groom", "rear"]
+BEHAVIOR_ORDER = ["rear", "walk", "groom"]
 BEHAVIOR_LABELS = {"walk": "Walk", "groom": "Groom", "rear": "Rear"}
 
 # Behavior colors (matching experiments/shared/plotting.py)

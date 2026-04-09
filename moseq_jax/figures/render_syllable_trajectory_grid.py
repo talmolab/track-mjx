@@ -178,7 +178,8 @@ def render_syllable_grid(
     results: dict,
     bodyparts: list[str],
     use_bodyparts: list[str],
-    n_cols: int = 5,
+    n_cols: int = 2,
+    top_n: int | None = 6,
     cell_width: float = 2.0,
     fps: int = 30,
     pre: float = 0.167,
@@ -187,13 +188,15 @@ def render_syllable_grid(
     min_duration: int = 3,
     keypoint_colormap: str = "autumn",
 ) -> plt.Figure:
-    """Render all syllable trajectories in a grid figure.
+    """Render syllable trajectories in a grid figure.
 
     Each cell shows XY (top-down) on the left and XZ (side view) on
-    the right, with a shared syllable title above.
+    the right, with a centred syllable title above.
 
     Args:
         n_cols: Number of syllable columns in the grid.
+        top_n: Keep only the *top_n* most popular syllables.
+            ``None`` keeps all that pass the frequency filter.
         cell_width: Width of each cell pair in inches.
 
     Returns:
@@ -214,7 +217,18 @@ def render_syllable_grid(
         sampling_options={"n_neighbors": 50},
     )
 
-    syllable_ixs = sorted(typical.keys())
+    # Rank syllables by frequency and keep top_n
+    all_sylls = np.concatenate(
+        [results[k]["syllable"] for k in sorted(results.keys())]
+    )
+    unique, counts = np.unique(all_sylls, return_counts=True)
+    freq_order = unique[np.argsort(-counts)]
+    available = sorted(typical.keys())
+    ranked = [s for s in freq_order if s in available]
+    if top_n is not None:
+        ranked = ranked[:top_n]
+
+    syllable_ixs = ranked
     n_syll = len(syllable_ixs)
     n_rows = math.ceil(n_syll / n_cols)
     print(f"Rendering {n_syll} syllables in {n_rows}x{n_cols} grid (xy + xz)")
@@ -266,11 +280,12 @@ def render_syllable_grid(
             _draw_trajectory(ax_xy, X_xy, edges, colors, num_ts)
             _draw_trajectory(ax_xz, X_xz, edges, colors, num_ts)
 
-            # Shared title spanning both sub-axes
-            # Position it centred above the xy subplot
+            # Centred title spanning both sub-axes:
+            # place at x=1.0 of the xy axis (= the boundary between xy/xz)
             ax_xy.set_title(
-                f"Syllable {syll_ix}", fontsize=6, pad=2,
-                loc="right",
+                f"Syllable {syll_ix}", fontsize=7, fontweight="bold",
+                pad=3, loc="center",
+                x=1.0,  # right edge of xy = midpoint of the pair
             )
 
             # Small plane labels
@@ -312,6 +327,10 @@ def main():
     parser.add_argument("--kpms-dir", default=DEFAULT_KPMS_DIR)
     parser.add_argument("--model-name", default=DEFAULT_MODEL)
     parser.add_argument("--cols", type=int, default=2)
+    parser.add_argument(
+        "--top-n", type=int, default=6,
+        help="Show only the top N most popular syllables (0 = all)",
+    )
     parser.add_argument("--cell-width", type=float, default=2.0)
     parser.add_argument(
         "--output", default=str(OUTPUT_DIR / "syllable_trajectory_grid"),
@@ -326,6 +345,7 @@ def main():
     fig = render_syllable_grid(
         coordinates, results, bodyparts, use_bodyparts,
         n_cols=args.cols,
+        top_n=args.top_n or None,
         cell_width=args.cell_width,
     )
 

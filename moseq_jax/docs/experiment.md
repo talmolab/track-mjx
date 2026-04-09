@@ -2,7 +2,7 @@
 
 ## Overview
 
-Seven experiment scripts evaluate the KPMS Code2Act decoder:
+Nine experiment scripts evaluate the KPMS Code2Act decoder:
 
 | # | Script | Config | Purpose |
 |---|--------|--------|---------|
@@ -14,6 +14,7 @@ Seven experiment scripts evaluate the KPMS Code2Act decoder:
 | 6 | `run_single_code.py` | `single_code_exp.yaml` | Single-code sustain grid — each code held for K frames, 2 body poses, 5×10 grid video |
 | 7 | `run_behavior_parade.py` | `behavior_parade_exp.yaml` | Behavior transition parade — 10 bodies, top-down view, walk→groom→rear sequence |
 | 8 | `run_syllable_viz.py` | `syllable_viz_exp.yaml` | KPMS syllable 3D visualization — interactive Plotly trajectories, frequency/duration stats, dendrogram |
+| 9 | `run_inception_distance.py` | `inception_distance_exp.yaml` | FID/KID inception distance — generative model distribution quality vs real mocap |
 
 All experiments save outputs (plots, videos, npz data) to disk under `outputs/`.
 
@@ -192,6 +193,44 @@ sweep pipeline).
 - `duration_distribution.pdf/.png` — syllable duration distribution
 - `similarity_dendrogram.pdf/.png` — hierarchical clustering of syllable trajectories
 - `summary.json` — experiment metadata
+
+### Experiment 9: Inception Distance (FID/KID)
+
+```bash
+# Full run (default: ARHMM L2, 3 VAE seeds)
+python -m experiments.run_inception_distance
+
+# Multiple methods
+python -m experiments.run_inception_distance \
+  inception_distance.methods='["arhmm_level2","uniform_random","decoder_original_codes"]'
+
+# Quick smoke test
+python -m experiments.run_inception_distance \
+  inception_distance.methods='["uniform_random"]' \
+  inception_distance.num_clips=10 \
+  inception_distance.vae.num_epochs=5 \
+  inception_distance.vae.seeds='[0]'
+```
+
+Trains a VAE feature extractor on real mocap qpos, then computes FID and KID
+between real motion capture and decoder rollouts driven by generative code
+models. Measures how well the full generative pipeline (code model + decoder)
+reproduces the distribution of natural mouse behavior.
+
+Adapts the evaluation methodology from SCAMPER (Aidan's prior network
+evaluation pipeline). VAE weights are cached after first training; subsequent
+runs with the same config skip training and load directly.
+
+**Available methods**: `arhmm_level2`, `arhmm_level1`, `hmm_dynamax`,
+`transition_matrix`, `decoder_original_codes` (ceiling), `uniform_random`.
+
+**Outputs** (`outputs/moseq_inception_distance/`):
+- `results.json` — per-seed + aggregated FID/KID metrics
+- `results.csv` — summary table
+- `fid_barplot.png` — FID comparison with split baseline
+- `kid_barplot.png` — KID comparison with split baseline
+- `rollouts_{method}.npz` — raw rollout qpos per method
+- `vae_cache/` — cached VAE weights (reused across runs)
 
 ## Architecture Support
 

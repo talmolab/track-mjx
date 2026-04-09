@@ -1,0 +1,132 @@
+# =============================================================================
+# Inception Distance (FID/KID) Experiment Configuration
+# =============================================================================
+# Trains a VAE on real mocap qpos, then computes FID/KID between real
+# distribution and decoder rollouts driven by generative code models.
+#
+# Usage:
+#   cd moseq_jax
+#   python -m experiments.run_inception_distance
+# =============================================================================
+
+# Code2Act: MoSeq decoder checkpoint
+checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260407_031233_484020/
+  step: null
+
+data:
+  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
+  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+
+inception_distance:
+  # Generative methods to compare against real data.
+  # Options: arhmm_level2, arhmm_level1, hmm_dynamax, transition_matrix,
+  #          decoder_original_codes, uniform_random
+  methods: ["arhmm_level2"]
+
+  # Number of clips per method. null = match number of real clips.
+  num_clips: null
+
+  # ARHMM model parameters (for arhmm_level1 / arhmm_level2)
+  arhmm:
+    model_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/s50_k1e+04_l10_arhmm/seed1/keypoint_arhmm_states50_seed1/checkpoint.h5
+    snapshot_idx: 50
+
+  # Code generation parameters
+  generation:
+    seed: 42
+    # HMM config (used when hmm_dynamax in methods)
+    hmm_dynamax:
+      num_states_sweep: [4, 8, 16, 32]
+      num_em_iters: 100
+      train_ratio: 0.8
+      seed: 0
+    # Transition matrix config (used when transition_matrix in methods)
+    transition_matrix:
+      temperatures: [1.0]
+
+  # VAE feature extractor configuration
+  vae:
+    latent_dim: 64
+    hidden_layers: [512, 256]
+    num_epochs: 100
+    learning_rate: 0.001
+    batch_size: 128
+    beta: 1.0
+    beta_warmup_epochs: null  # null = num_epochs // 2
+    weight_decay: 0.00001
+    grad_clip_norm: 1.0
+    dropout_rate: 0.1
+    use_layer_norm: true
+    seeds: [0, 1, 2]  # multiple VAE seeds for variance estimation
+    cache_dir: null  # null = {output_dir}/vae_cache
+
+  # Preprocessing options
+  preprocessing:
+    exclude_xy: true         # remove absolute x,y position
+    handle_rotation: true    # quaternion -> yaw-removed 6D rotation
+    normalize_joints: true   # z-score joints using real-data stats
+
+  # KID computation parameters
+  kid:
+    degree: 3
+    num_subsets: 100
+    subset_size: null  # null = min(N, M, 1000)
+    split_seed: 42
+
+# Rollout parameters
+rollout:
+  seed: 42
+
+output:
+  base_dir: ./outputs/moseq_inception_distance
+
+# --- Environment config (deterministic evaluation, no DR) ---
+env_config:
+  mujoco_impl: "jax"
+  solver: "newton"
+  iterations: 5
+  ls_iterations: 5
+  nconmax: 256
+  njmax: 128
+  noslip_iterations: 0
+  sim_dt: 0.002
+  ctrl_dt: 0.01
+  mocap_hz: 50
+  clip_length: 250
+  clip_set: "all"
+  reference_length: 5
+  start_frame_range: [0, 0]
+  qvel_init: "zeros"
+  keep_clips_idx: null
+  domain_randomization:
+    use_domain_randomization: false
+    floor_friction: [0.7, 0.7]
+    static_friction_scale: [1.0, 1.0]
+    armature_scale: [1.0, 1.0]
+    com_jitter: [0.0, 0.0]
+    link_mass_scale: [1.0, 1.0]
+    torso_mass_jitter: [0.0, 0.0]
+    qpos0_jitter: [0.0, 0.0]
+  reward_terms:
+    root_pos: {exp_scale: 0.035, weight: 1.0}
+    root_quat: {exp_scale: 20.0, weight: 1.0}
+    joints: {exp_scale: 1.41, weight: 1.0}
+    joints_vel: {exp_scale: 1.0, weight: 0.5}
+    bodies_pos: {exp_scale: 0.25, weight: 0.0}
+    end_eff: {exp_scale: 0.03, weight: 1.0}
+    torso_z_range: {healthy_z_range: [0.0325, 0.5], weight: 1.0}
+    control_cost: {weight: 0.02}
+    control_diff_cost: {weight: 0.02}
+    energy_cost: {max_value: 50.0, weight: 0.01}
+  termination_criteria:
+    root_too_far: {max_distance: 0.2}
+    root_too_rotated: {max_degrees: 90.0}
+    pose_error: {max_l2_error: 6.0}
+    nan_termination: {}
+
+walker_config:
+  walker_name: "rodent"
+  torque_actuators: true
+  rescale_factor: 0.9

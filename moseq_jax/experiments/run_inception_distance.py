@@ -52,7 +52,9 @@ from moseq_env_wrapper import MoSeqImitation
 
 from experiments.shared.checkpoint_utils import (
     load_moseq_checkpoint,
+    load_mimic_checkpoint,
     make_inference_fn,
+    make_mimic_inference_fn,
     run_rollout,
 )
 from experiments.shared.vae_network import make_vae_network
@@ -541,16 +543,11 @@ def _make_generation_cfg(
     clip_length: int,
     n_seqs: int,
 ) -> DictConfig:
-    """Build a config compatible with run_code_generation's generation functions.
-
-    Maps our cfg.inception_distance.* paths to cfg.generation.* paths that
-    the imported functions expect.
-    """
+    """Build a config compatible with run_code_generation's generation functions."""
     arhmm_cfg = OmegaConf.to_container(
         cfg.inception_distance.arhmm, resolve=True
     )
     gen_seed = int(cfg.inception_distance.generation.seed)
-
     tm_cfg = OmegaConf.to_container(
         cfg.inception_distance.generation.get(
             "transition_matrix", {"temperatures": [1.0]}
@@ -569,7 +566,6 @@ def _make_generation_cfg(
         ),
         resolve=True,
     )
-
     return OmegaConf.create(
         {
             "generation": {
@@ -597,39 +593,26 @@ def generate_method_codes(
     Returns list of N arrays, each shape (clip_length,).
     """
     if method_name == "arhmm_level2":
-        assert arhmm_params is not None, "ARHMM params required for arhmm_level2"
+        assert arhmm_params is not None
         return generate_arhmm_level2_sequences(arhmm_params, gen_cfg)[:n_seqs]
-
     elif method_name == "arhmm_level1":
-        assert arhmm_params is not None, "ARHMM params required for arhmm_level1"
+        assert arhmm_params is not None
         return generate_arhmm_level1_sequences(arhmm_params, gen_cfg)[:n_seqs]
-
     elif method_name == "hmm_dynamax":
         return generate_hmm_sequences(all_codes, num_codes, gen_cfg)[:n_seqs]
-
     elif method_name == "transition_matrix":
         tm_results = generate_empirical_tm_sequences(all_codes, num_codes, gen_cfg)
-        # Pick the first temperature variant
         first_key = next(iter(tm_results))
         return tm_results[first_key][:n_seqs]
-
-    elif method_name == "decoder_original_codes":
-        # Use real KPMS codes from reference clips (ceiling baseline)
-        rng = np.random.RandomState(int(gen_cfg.generation.seed) + 7000)
-        clip_len = int(gen_cfg.generation.sequence_length)
-        indices = rng.choice(len(all_codes), size=n_seqs, replace=(n_seqs > len(all_codes)))
-        return [all_codes[i, :clip_len].astype(np.int32) for i in indices]
-
     elif method_name == "uniform_random":
         rng = np.random.RandomState(int(gen_cfg.generation.seed) + 9000)
         clip_len = int(gen_cfg.generation.sequence_length)
         return [rng.randint(0, num_codes, size=clip_len) for _ in range(n_seqs)]
-
     else:
-        raise ValueError(f"Unknown method: {method_name}")
+        raise ValueError(f"Unknown generative method: {method_name}")
 
 
-def collect_fake_rollouts(
+def collect_code_driven_rollouts(
     code_sequences_mocap: list[np.ndarray],
     env,
     inf_fn,
@@ -640,12 +623,18 @@ def collect_fake_rollouts(
     clip_length: int,
     steps_per_frame: int,
     seed: int,
+    per_clip_indices: np.ndarray | None = None,
     jit_reset=None,
     jit_step=None,
-) -> np.ndarray:
-    """Run decoder rollouts and collect qpos at mocap rate.
+) -> list[np.ndarray]:
+    """Run decoder rollouts with code sequences. Returns list of raw qpos arrays.
 
-    Returns array of shape (N, clip_length, 74).
+    Each returned array has shape (T_i, 74) where T_i is the number of
+    control steps before termination (or max_steps if survived).
+
+    Args:
+        per_clip_indices: If provided, use clip i's initial qpos from
+            reference_clips[per_clip_indices[i]]. Otherwise sample randomly.
     """
     n_clips_ref = reference_clips.qpos.shape[0]
     rng = np.random.RandomState(seed)
@@ -655,41 +644,89 @@ def collect_fake_rollouts(
     for i, codes_mocap in enumerate(
         tqdm(code_sequences_mocap, desc="Collecting rollouts")
     ):
-        # Sample random reference clip for initial pose
-        ref_idx = rng.randint(0, n_clips_ref)
+        if per_clip_indices is not None:
+            ref_idx = per_clip_indices[i]
+        else:
+            ref_idx = rng.randint(0, n_clips_ref)
         initial_qpos = np.array(reference_clips.qpos[ref_idx, 0])
 
-        # Repeat codes from mocap rate to control rate
         codes_ctrl = np.repeat(codes_mocap, steps_per_frame)
 
         key = jax.random.PRNGKey(seed + i)
         result = run_rollout(
-            env,
-            inf_fn,
-            params,
-            ppo_networks,
-            use_rnn,
-            key,
+            env, inf_fn, params, ppo_networks, use_rnn, key,
             max_steps=max_control_steps,
             code_override=codes_ctrl,
             initial_qpos=initial_qpos,
             reset_clip_idx=0,
             jit_reset=jit_reset,
             jit_step=jit_step,
-            ignore_done=True,
+            ignore_done=False,
         )
+        all_qpos.append(result["qpos"])  # (T+1, 74), variable length
 
-        # Subsample to mocap rate
-        qpos_mocap = result["qpos"][::steps_per_frame][:clip_length]
+    return all_qpos
 
-        # Pad if needed (shouldn't happen with ignore_done=True)
-        if len(qpos_mocap) < clip_length:
-            pad = np.tile(qpos_mocap[-1:], (clip_length - len(qpos_mocap), 1))
-            qpos_mocap = np.concatenate([qpos_mocap, pad], axis=0)
 
-        all_qpos.append(qpos_mocap)
+def collect_mimic_rollouts(
+    env,
+    inf_fn,
+    params: tuple,
+    ppo_networks,
+    n_clips: int,
+    clip_length: int,
+    steps_per_frame: int,
+    seed: int,
+    jit_reset=None,
+    jit_step=None,
+) -> list[np.ndarray]:
+    """Run oracle Mimic-MJX rollouts per clip. Returns list of raw qpos arrays."""
+    max_control_steps = clip_length * steps_per_frame
 
-    return np.stack(all_qpos, axis=0)
+    all_qpos = []
+    for i in tqdm(range(n_clips), desc="Mimic-MJX rollouts"):
+        key = jax.random.PRNGKey(seed + i)
+        result = run_rollout(
+            env, inf_fn, params, ppo_networks,
+            use_rnn=False, key=key,
+            max_steps=max_control_steps,
+            reset_clip_idx=i,
+            jit_reset=jit_reset,
+            jit_step=jit_step,
+            model_type="mimic_mjx",
+            ignore_done=False,
+        )
+        all_qpos.append(result["qpos"])
+
+    return all_qpos
+
+
+def filter_and_truncate(
+    raw_qpos_list: list[np.ndarray],
+    survival_threshold: int,
+    steps_per_frame: int,
+) -> tuple[np.ndarray, int, int]:
+    """Filter clips by survival and truncate to threshold length.
+
+    Args:
+        raw_qpos_list: List of (T_i, 74) arrays at control rate.
+        survival_threshold: Minimum control steps to include a clip.
+        steps_per_frame: Subsampling factor for mocap rate.
+
+    Returns:
+        (qpos_array, n_kept, n_total) where qpos_array is
+        (n_kept, mocap_frames, 74) at mocap rate.
+    """
+    mocap_frames = survival_threshold // steps_per_frame
+    kept = []
+    for q in raw_qpos_list:
+        if len(q) >= survival_threshold:
+            q_trunc = q[:survival_threshold]
+            q_mocap = q_trunc[::steps_per_frame][:mocap_frames]
+            kept.append(q_mocap)
+    if len(kept) == 0:
+        return np.zeros((0, mocap_frames, 74)), 0, len(raw_qpos_list)
+    return np.stack(kept, axis=0), len(kept), len(raw_qpos_list)
 
 
 # ---------------------------------------------------------------------------
@@ -821,105 +858,187 @@ def main(cfg: DictConfig) -> None:
     )
     use_rnn = bool(ckpt_cfg.network_config.get("use_rnn_decoder", False))
     num_codes = int(ckpt_cfg.network_config.num_codes)
-    params = (norm_state, policy_params)
+    c2a_params = (norm_state, policy_params)
 
     codes_data = np.load(cfg.data.codes_path)
-    all_codes = codes_data["all_codes"]
+    all_codes = codes_data["all_codes"]  # (N_balanced, 250)
 
     with open(cfg.data.balanced_split_path) as f:
         splits = json.load(f)
-    test_indices = splits["balanced"]["test_indices"]
+    balanced_indices = np.array(
+        splits["balanced"]["train_indices"] + splits["balanced"]["test_indices"]
+    )
 
     clip_length = int(ckpt_cfg.env_config.clip_length)
-    ref_clips = ReferenceClips(
+    ctrl_dt = float(ckpt_cfg.env_config.ctrl_dt)
+    mocap_hz = float(ckpt_cfg.env_config.mocap_hz)
+    steps_per_frame = compute_steps_per_frame(ctrl_dt, mocap_hz)
+    survival_threshold = int(cfg.inception_distance.survival_threshold)
+    mocap_eval_frames = survival_threshold // steps_per_frame
+
+    log.info(
+        f"Timing: ctrl_dt={ctrl_dt}, mocap_hz={mocap_hz}, "
+        f"steps_per_frame={steps_per_frame}"
+    )
+    log.info(
+        f"Survival threshold: {survival_threshold} control steps "
+        f"= {mocap_eval_frames} mocap frames"
+    )
+
+    # Load ALL reference clips for VAE training
+    all_ref_clips = ReferenceClips(
         data_path=cfg.data.reference_data_path,
         n_frames_per_clip=clip_length,
-        keep_clips_idx=np.array(test_indices),
+    )
+
+    # Load balanced clips for rollouts (decoder needs codes)
+    balanced_clips = ReferenceClips(
+        data_path=cfg.data.reference_data_path,
+        n_frames_per_clip=clip_length,
+        keep_clips_idx=balanced_indices,
     )
 
     # ==================================================================
     # Stage 2: Build "real" data
     # ==================================================================
-    real_qpos = np.array(ref_clips.qpos)  # (N_test, 250, 74)
+    real_qpos = np.array(all_ref_clips.qpos)  # (842, 250, 74)
+    real_qpos = real_qpos[:, :mocap_eval_frames, :]  # truncate to eval length
     n_real = len(real_qpos)
 
-    num_clips = cfg.inception_distance.get("num_clips", None)
-    if num_clips is not None and num_clips < n_real:
-        rng_sel = np.random.RandomState(int(cfg.inception_distance.generation.seed))
-        sel = rng_sel.choice(n_real, size=num_clips, replace=False)
-        real_qpos = real_qpos[sel]
-        n_real = num_clips
-
-    n_fake = n_real  # Match real count
+    n_rollouts_cfg = cfg.inception_distance.get("num_rollout_clips", None)
+    n_rollouts = int(n_rollouts_cfg) if n_rollouts_cfg else len(all_codes)
     log.info(f"Real data shape: {real_qpos.shape} ({n_real} clips)")
-    log.info(f"Fake clips per method: {n_fake}")
+    log.info(f"Rollouts per method: {n_rollouts}")
 
     # ==================================================================
-    # Stage 3: Generate fake data per method
+    # Stage 3: Collect rollouts per method
     # ==================================================================
-    ctrl_dt = float(ckpt_cfg.env_config.ctrl_dt)
-    mocap_hz = float(ckpt_cfg.env_config.mocap_hz)
-    steps_per_frame = compute_steps_per_frame(ctrl_dt, mocap_hz)
-    log.info(
-        f"Timing: ctrl_dt={ctrl_dt}, mocap_hz={mocap_hz}, "
-        f"steps_per_frame={steps_per_frame}"
-    )
-
-    # Build generation config adapter
     methods = list(cfg.inception_distance.methods)
-    gen_cfg = _make_generation_cfg(cfg, clip_length, n_fake)
+    gen_cfg = _make_generation_cfg(cfg, clip_length, n_rollouts)
 
     # Load ARHMM params if needed
     arhmm_params = None
     if any(m.startswith("arhmm") for m in methods):
         arhmm_params = load_arhmm_params(gen_cfg)
 
-    # Create env for rollouts
-    test_codes = codes_data["test_codes"]
+    # Load mimic checkpoint if needed
+    mimic_inf_fn = mimic_params = mimic_ppo = None
+    if "mimic_mjx" in methods:
+        log.info("Loading mimic-mjx checkpoint...")
+        mimic_cfg, mimic_norm, mimic_policy, mimic_ppo = load_mimic_checkpoint(
+            cfg.mimic_checkpoint.path, step=cfg.mimic_checkpoint.get("step"),
+        )
+        mimic_params = (mimic_norm, mimic_policy)
+        mimic_inf_fn = make_mimic_inference_fn(mimic_ppo, deterministic=True)
+
+    # Create env with balanced clips for code-driven rollouts
     _, _, env_cfg = utils.prepare_config(ckpt_cfg)
     env_cfg.start_frame_range = [0, 0]
     env_cfg.domain_randomization.use_domain_randomization = False
     code_stack_size = int(ckpt_cfg.network_config.get("code_stack_size", 1))
     env = MoSeqImitation(
         config=env_cfg,
-        clips=ref_clips,
-        kpms_codes=test_codes,
+        clips=balanced_clips,
+        kpms_codes=all_codes,
         code_stack_size=code_stack_size,
     )
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
-    inf_fn = make_inference_fn(ppo_networks, use_rnn=use_rnn, deterministic=True)
+    c2a_inf_fn = make_inference_fn(ppo_networks, use_rnn=use_rnn, deterministic=True)
 
-    fake_datasets = {}
+    seed = int(cfg.rollout.seed)
+    raw_rollouts = {}  # method -> list of (T_i, 74) arrays
+    fake_datasets = {}  # method -> (N_kept, mocap_eval_frames, 74)
+    survival_rates = {}  # method -> (n_kept, n_total)
+
     for method in methods:
-        log.info(f"\n--- Generating: {method} ---")
-        codes_mocap = generate_method_codes(
-            method, gen_cfg, all_codes, num_codes, n_fake,
-            arhmm_params=arhmm_params,
-        )
-        log.info(f"  Generated {len(codes_mocap)} code sequences at mocap rate")
+        rollout_path = output_dir / f"rollouts_{method}.npz"
+        if rollout_path.exists():
+            log.info(f"\n--- Loading cached rollouts: {method} ---")
+            cached = np.load(rollout_path, allow_pickle=True)
+            if "raw_qpos" in cached:
+                raw_list = [cached[f"raw_{i}"] for i in range(int(cached["n_clips"]))]
+            else:
+                # Legacy format: pre-filtered (N, T, 74)
+                fake_datasets[method] = cached["qpos"][:, :mocap_eval_frames, :]
+                n_k = len(fake_datasets[method])
+                survival_rates[method] = (n_k, n_k)
+                log.info(f"  Loaded legacy cache: {fake_datasets[method].shape}")
+                continue
+            qpos_arr, n_kept, n_total = filter_and_truncate(
+                raw_list, survival_threshold, steps_per_frame,
+            )
+            fake_datasets[method] = qpos_arr
+            survival_rates[method] = (n_kept, n_total)
+            log.info(
+                f"  Loaded from cache: {qpos_arr.shape} "
+                f"({n_kept}/{n_total} survived)"
+            )
+            continue
 
-        fake_qpos = collect_fake_rollouts(
-            codes_mocap,
-            env,
-            inf_fn,
-            params,
-            ppo_networks,
-            use_rnn,
-            ref_clips,
-            clip_length,
-            steps_per_frame,
-            seed=int(cfg.rollout.seed),
-            jit_reset=jit_reset,
-            jit_step=jit_step,
-        )
-        fake_datasets[method] = fake_qpos
-        log.info(f"  Fake data shape: {fake_qpos.shape}")
+        log.info(f"\n--- Collecting: {method} ---")
 
-        np.savez_compressed(
-            output_dir / f"rollouts_{method}.npz",
-            qpos=fake_qpos,
+        if method == "mimic_mjx":
+            raw_list = collect_mimic_rollouts(
+                env, mimic_inf_fn, mimic_params, mimic_ppo,
+                n_clips=n_rollouts,
+                clip_length=clip_length,
+                steps_per_frame=steps_per_frame,
+                seed=seed,
+                jit_reset=jit_reset,
+                jit_step=jit_step,
+            )
+        elif method == "decoder_original_codes":
+            # Use each balanced clip's real KPMS codes
+            codes_mocap = [
+                all_codes[i, :clip_length].astype(np.int32)
+                for i in range(n_rollouts)
+            ]
+            per_clip_idx = np.arange(n_rollouts)
+            raw_list = collect_code_driven_rollouts(
+                codes_mocap, env, c2a_inf_fn, c2a_params, ppo_networks,
+                use_rnn, balanced_clips, clip_length, steps_per_frame,
+                seed=seed, per_clip_indices=per_clip_idx,
+                jit_reset=jit_reset, jit_step=jit_step,
+            )
+        else:
+            # Generative methods (arhmm, hmm, tm, uniform_random)
+            codes_mocap = generate_method_codes(
+                method, gen_cfg, all_codes, num_codes, n_rollouts,
+                arhmm_params=arhmm_params,
+            )
+            log.info(f"  Generated {len(codes_mocap)} code sequences")
+            raw_list = collect_code_driven_rollouts(
+                codes_mocap, env, c2a_inf_fn, c2a_params, ppo_networks,
+                use_rnn, balanced_clips, clip_length, steps_per_frame,
+                seed=seed,
+                jit_reset=jit_reset, jit_step=jit_step,
+            )
+
+        # Save raw rollouts (variable length, as separate arrays)
+        save_dict = {"n_clips": len(raw_list)}
+        for i, q in enumerate(raw_list):
+            save_dict[f"raw_{i}"] = q
+        np.savez_compressed(rollout_path, **save_dict)
+
+        # Filter and truncate
+        qpos_arr, n_kept, n_total = filter_and_truncate(
+            raw_list, survival_threshold, steps_per_frame,
         )
+        fake_datasets[method] = qpos_arr
+        survival_rates[method] = (n_kept, n_total)
+        log.info(
+            f"  {method}: {qpos_arr.shape} "
+            f"({n_kept}/{n_total} survived >= {survival_threshold} steps, "
+            f"rate={100*n_kept/n_total:.1f}%)"
+        )
+
+    # Log survival summary
+    log.info("\n--- Survival Summary ---")
+    for method in methods:
+        if method in survival_rates:
+            n_k, n_t = survival_rates[method]
+            log.info(f"  {method}: {n_k}/{n_t} ({100*n_k/n_t:.1f}%)")
 
     # ==================================================================
     # Stage 4: Preprocess all datasets
@@ -1069,13 +1188,11 @@ def main(cfg: DictConfig) -> None:
         for method, processed_fake in processed_fakes.items():
             mu_fake = extract_features(trained_params, encode_fn, processed_fake)
 
-            # Use identical split: same indices for real and fake
-            mu_fake_half = mu_fake[split_indices[:mid]]
-
-            fid = compute_fid(mu_real_a, mu_fake_half)
+            # Compare real half vs full fake (sizes may differ)
+            fid = compute_fid(mu_real_a, mu_fake)
             kid_mean, kid_std = compute_kid(
                 mu_real_a,
-                mu_fake_half,
+                mu_fake,
                 degree=int(kid_cfg.degree),
                 num_subsets=int(kid_cfg.num_subsets),
                 subset_size=kid_cfg.get("subset_size", None),
@@ -1099,7 +1216,8 @@ def main(cfg: DictConfig) -> None:
     log.info("AGGREGATING ACROSS SEEDS")
     log.info(f"{'='*60}")
 
-    aggregated = _aggregate_results(all_seed_results, methods)
+    all_dataset_names = list(processed_fakes.keys())
+    aggregated = _aggregate_results(all_seed_results, all_dataset_names)
 
     # Save JSON
     output_data = {
@@ -1131,7 +1249,7 @@ def main(cfg: DictConfig) -> None:
     log.info(f"Results saved to: {json_path}")
 
     _save_csv(output_dir / "results.csv", aggregated)
-    _create_plots(output_dir, aggregated, methods)
+    _create_plots(output_dir, aggregated, all_dataset_names)
 
     # Print summary
     log.info(f"\n{'='*80}")

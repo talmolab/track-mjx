@@ -4,6 +4,9 @@
 # Trains a VAE on real mocap qpos, then computes FID/KID between real
 # distribution and decoder rollouts driven by generative code models.
 #
+# All methods generate the same number of rollouts (= number of balanced
+# clips). Clips shorter than survival_threshold are excluded from KID.
+#
 # Usage:
 #   cd moseq_jax
 #   python -m experiments.run_inception_distance
@@ -14,19 +17,30 @@ checkpoint:
   path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260407_031233_484020/
   step: null
 
+# Mimic-MJX: Oracle VAE checkpoint (for mimic_mjx method)
+mimic_checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260405_235031_234849/
+  step: null
+
 data:
   codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
   balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
   reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
 
 inception_distance:
-  # Generative methods to compare against real data.
-  # Options: arhmm_level2, arhmm_level1, hmm_dynamax, transition_matrix,
-  #          decoder_original_codes, uniform_random
-  methods: ["arhmm_level2"]
+  # Methods to compare. All generate fresh rollouts.
+  # Options: decoder_original_codes, mimic_mjx, arhmm_level2, arhmm_level1,
+  #          hmm_dynamax, transition_matrix, uniform_random
+  methods: ["decoder_original_codes", "mimic_mjx", "arhmm_level2", "hmm_dynamax", "transition_matrix"]
 
-  # Number of clips per method. null = match number of real clips.
-  num_clips: null
+  # Number of rollout clips per method. null = use all balanced clips.
+  num_rollout_clips: 100
+
+  # Minimum control steps for a clip to be included in KID.
+  # Clips shorter than this are saved but excluded.
+  # All included clips are truncated to exactly this length.
+  # Default 450 -> 225 mocap frames at steps_per_frame=2.
+  survival_threshold: 450
 
   # ARHMM model parameters (for arhmm_level1 / arhmm_level2)
   arhmm:
@@ -36,13 +50,11 @@ inception_distance:
   # Code generation parameters
   generation:
     seed: 42
-    # HMM config (used when hmm_dynamax in methods)
     hmm_dynamax:
       num_states_sweep: [4, 8, 16, 32]
       num_em_iters: 100
       train_ratio: 0.8
       seed: 0
-    # Transition matrix config (used when transition_matrix in methods)
     transition_matrix:
       temperatures: [1.0]
 
@@ -52,27 +64,27 @@ inception_distance:
     hidden_layers: [512, 256]
     num_epochs: 100
     learning_rate: 0.001
-    batch_size: 128
+    batch_size: 32
     beta: 1.0
-    beta_warmup_epochs: null  # null = num_epochs // 2
+    beta_warmup_epochs: null
     weight_decay: 0.00001
     grad_clip_norm: 1.0
     dropout_rate: 0.1
     use_layer_norm: true
-    seeds: [0, 1, 2]  # multiple VAE seeds for variance estimation
-    cache_dir: null  # null = {output_dir}/vae_cache
+    seeds: [0, 1, 2]
+    cache_dir: null
 
   # Preprocessing options
   preprocessing:
-    exclude_xy: true         # remove absolute x,y position
-    handle_rotation: true    # quaternion -> yaw-removed 6D rotation
-    normalize_joints: true   # z-score joints using real-data stats
+    exclude_xy: true
+    handle_rotation: true
+    normalize_joints: true
 
   # KID computation parameters
   kid:
     degree: 3
     num_subsets: 100
-    subset_size: null  # null = min(N, M, 1000)
+    subset_size: null
     split_seed: 42
 
 # Rollout parameters

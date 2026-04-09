@@ -13,6 +13,7 @@ Seven experiment scripts evaluate the KPMS Code2Act decoder:
 | 5 | `run_roundtrip.py` | `roundtrip.yaml` | Round-trip code consistency (qpos -> FK -> KPMS -> codes, compare to original) |
 | 6 | `run_single_code.py` | `single_code_exp.yaml` | Single-code sustain grid — each code held for K frames, 2 body poses, 5×10 grid video |
 | 7 | `run_behavior_parade.py` | `behavior_parade_exp.yaml` | Behavior transition parade — 10 bodies, top-down view, walk→groom→rear sequence |
+| 8 | `run_syllable_viz.py` | `syllable_viz_exp.yaml` | KPMS syllable 3D visualization — interactive Plotly trajectories, frequency/duration stats, dendrogram |
 
 All experiments save outputs (plots, videos, npz data) to disk under `outputs/`.
 
@@ -162,6 +163,35 @@ codes are automatically selected from real data via kinematic criteria
 - `behavior_parade.mp4` — top-down parade video with behavior labels
 - `code_selection.json` — selected codes and kinematic rationale
 - `code_selection.png` — kinematic analysis plot with highlighted codes
+
+### Experiment 8: KPMS Syllable 3D Visualization
+
+```bash
+python -m experiments.run_syllable_viz
+
+# Skip dendrogram (faster):
+python -m experiments.run_syllable_viz dendrogram.enabled=false
+```
+
+Visualizes the KPMS syllable decomposition on the original reference data
+using keypoint_moseq's built-in 3D visualization tools. **No decoder needed.**
+
+Loads 3D keypoints via forward kinematics from the reference clips, then
+feeds them to keypoint_moseq's trajectory plot, frequency, duration, and
+dendrogram functions with the existing KPMS model results.
+
+**Prerequisites**: KPMS model checkpoint at
+`outputs/kpms_sweep/s50_k1e+04_l10_arhmm/seed1/` (produced by the KPMS
+sweep pipeline).
+
+**Outputs** (`outputs/moseq_syllable_viz/`):
+- `trajectory_plots/all_trajectories.html` — interactive 3D Plotly visualization
+- `trajectory_plots/*.xy.pdf`, `*.xz.pdf` — 2D projection trajectory plots per syllable
+- `trajectory_plots/*.xy.gif`, `*.xz.gif` — animated trajectory GIFs per syllable
+- `syllable_frequencies.pdf/.png` — syllable frequency histogram
+- `duration_distribution.pdf/.png` — syllable duration distribution
+- `similarity_dendrogram.pdf/.png` — hierarchical clustering of syllable trajectories
+- `summary.json` — experiment metadata
 
 ## Architecture Support
 

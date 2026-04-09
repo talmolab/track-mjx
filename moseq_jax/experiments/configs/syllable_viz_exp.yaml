@@ -1,0 +1,48 @@
+# =============================================================================
+# Experiment 8: KPMS Syllable 3D Visualization
+# =============================================================================
+# No decoder needed.  Visualizes KPMS syllable decomposition on the original
+# reference data using keypoint_moseq's built-in 3D visualization tools.
+#
+# Usage:
+#   cd moseq_jax
+#   python -m experiments.run_syllable_viz
+# =============================================================================
+
+data:
+  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+
+kpms_model:
+  project_dir: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/s50_k1e+04_l10_arhmm/seed1
+  model_name: keypoint_arhmm_states50_seed1
+
+keypoints:
+  n_frames_per_clip: 250
+  fk_batch_size: 1000
+
+trajectory_plots:
+  pre: 0.167        # seconds before syllable onset
+  post: 0.5         # seconds after syllable onset
+  min_frequency: 0.005
+  min_duration: 3
+  fps: 30
+  projection_planes:
+    - xy
+    - xz
+  interactive: true  # generate 3D Plotly HTML
+  save_gifs: true
+  save_mp4s: false
+  save_individually: true
+  keypoint_colormap: autumn
+  density_sample: true
+
+dendrogram:
+  enabled: true
+  metric: cosine
+  figsize: [10, 5]
+
+seed: 42
+
+output:
+  base_dir: ./outputs/moseq_syllable_viz

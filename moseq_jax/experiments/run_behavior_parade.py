@@ -278,9 +278,11 @@ def render_parade_video(
 
 @hydra.main(version_base=None, config_path="configs", config_name="behavior_parade_exp")
 def main(cfg: DictConfig) -> None:
-    log.info("=== Behavior Transition Parade Experiment ===")
+    behavior_seq = list(cfg.behavior_sequence)
+    seq_name = "_".join(behavior_seq)
+    log.info(f"=== Behavior Transition Parade: {' → '.join(behavior_seq)} ===")
 
-    output_dir = Path(cfg.output.base_dir)
+    output_dir = Path(cfg.output.base_dir) / seq_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load checkpoint

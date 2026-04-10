@@ -602,7 +602,10 @@ def draw_code2act_pipeline(ax):
     # Encoder x position (defined later, but we know it from the distill head)
     # dh_x is ~rnn_cx + rnn_r + 0.46; enc_x = dh_x. For now use enc_cy row.
     sg_arrow_start_x = rod_cx + 0.30
-    sg_arrow_end_x = kpms_x + kpms_w + 1.10 + 0.48 + 0.46 + 0.40 - 0.05  # enc_x approx
+    # enc_x = dh_x = rnn_right + 0.40; stop arrow before the trapezoid
+    rnn_cx_approx = kpms_x + kpms_w + 1.10
+    rnn_r_approx = 0.48
+    sg_arrow_end_x = rnn_cx_approx + rnn_r_approx + 0.06 + 0.40 - 0.10
     _arrow(ax, sg_arrow_start_x, enc_cy, sg_arrow_end_x, enc_cy,
            color=C_STAC, lw=1.3)
     sg_label_x = (sg_arrow_start_x + sg_arrow_end_x) / 2

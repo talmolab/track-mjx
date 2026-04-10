@@ -145,19 +145,42 @@ def _compute_shared_limits(
 # ── Data loading ─────────────────────────────────────────────────────────────
 
 
-def load_hidden_data() -> dict[str, np.ndarray]:
+def load_hidden_data() -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Load hidden dynamics NPZ.
 
     Returns:
-        ``{behavior: ndarray [K, T, hidden_dim]}``.
+        hiddens: ``{behavior: ndarray [K, T, hidden_dim]}``
+        codes: ``{behavior: ndarray [K, T]}``
     """
     raw = np.load(DATA_DIR / "hidden_dynamics.npz", allow_pickle=True)
-    data = {}
+    hiddens = {}
+    codes = {}
     for beh in BEHAVIORS:
-        key = f"hidden_{beh}"
-        if key in raw:
-            data[beh] = np.array(raw[key])
-    return data
+        h_key = f"hidden_{beh}"
+        c_key = f"codes_{beh}"
+        if h_key in raw:
+            hiddens[beh] = np.array(raw[h_key])
+        if c_key in raw:
+            codes[beh] = np.array(raw[c_key])
+    return hiddens, codes
+
+
+def find_single_code_clips(
+    codes: dict[str, np.ndarray],
+) -> dict[str, list[int]]:
+    """Find clips with exactly 1 unique code (stationary dynamics).
+
+    Returns:
+        ``{behavior: [clip_indices]}``
+    """
+    result = {}
+    for beh, code_arr in codes.items():
+        indices = []
+        for ki in range(code_arr.shape[0]):
+            if len(np.unique(code_arr[ki])) == 1:
+                indices.append(ki)
+        result[beh] = indices
+    return result
 
 
 # ── Embedding ────────────────────────────────────────────────────────────────
@@ -198,15 +221,19 @@ def plot_scatter_3d(
     emb_3d: np.ndarray,
     beh_slices: dict[str, tuple[int, int]],
     var_explained: np.ndarray,
+    show_behaviors: list[str] | None = None,
 ) -> tuple[plt.Figure, mpatches.FancyBboxPatch]:
-    """3-panel scatter: Walk | Groom | Rear, shared PCA axes."""
-    fig = plt.figure(figsize=(9.0, 3.2))
+    """N-panel scatter, one per behavior, shared PCA axes."""
+    if show_behaviors is None:
+        show_behaviors = BEHAVIORS
+    show_behaviors = [b for b in show_behaviors if b in beh_slices]
+    n_panels = len(show_behaviors)
+
+    fig = plt.figure(figsize=(3.0 * n_panels, 3.2))
     xlim, ylim, zlim = _compute_shared_limits(emb_3d)
 
-    for pi, beh in enumerate(BEHAVIORS):
-        if beh not in beh_slices:
-            continue
-        ax = fig.add_subplot(1, 3, pi + 1, projection="3d")
+    for pi, beh in enumerate(show_behaviors):
+        ax = fig.add_subplot(1, n_panels, pi + 1, projection="3d")
         s, e = beh_slices[beh]
         pts = emb_3d[s:e]
 
@@ -246,25 +273,39 @@ def plot_trajectories_3d(
     beh_slices: dict[str, tuple[int, int]],
     beh_shapes: dict[str, tuple[int, int]],
     var_explained: np.ndarray,
+    show_behaviors: list[str] | None = None,
+    clip_filter: dict[str, list[int]] | None = None,
 ) -> tuple[plt.Figure, mpatches.FancyBboxPatch]:
-    """3-panel trajectories: Walk | Groom | Rear, shared PCA axes.
+    """N-panel trajectories, one per behavior, shared PCA axes.
 
-    Each panel shows one behavior's trajectories colored by time
-    (light -> dark). Open circle = start, filled = end.
+    Each panel shows trajectories colored by time (light -> dark).
+    Open circle = start, filled = end.
+
+    Args:
+        clip_filter: if provided, ``{behavior: [clip_indices]}`` — only
+            plot the listed clips for each behavior.
     """
-    fig = plt.figure(figsize=(9.0, 3.2))
+    if show_behaviors is None:
+        show_behaviors = BEHAVIORS
+    show_behaviors = [b for b in show_behaviors if b in beh_slices]
+    n_panels = len(show_behaviors)
+
+    fig = plt.figure(figsize=(3.0 * n_panels, 3.2))
     xlim, ylim, zlim = _compute_shared_limits(emb_3d)
 
-    for pi, beh in enumerate(BEHAVIORS):
-        if beh not in beh_slices:
-            continue
-        ax = fig.add_subplot(1, 3, pi + 1, projection="3d")
+    for pi, beh in enumerate(show_behaviors):
+        ax = fig.add_subplot(1, n_panels, pi + 1, projection="3d")
         K_beh, T_beh = beh_shapes[beh]
         s, _ = beh_slices[beh]
         cmap = BEHAVIOR_CMAPS[beh]
         t_norm = np.linspace(0, 1, T_beh)
 
-        for ki in range(K_beh):
+        # Which clips to plot
+        clip_indices = range(K_beh)
+        if clip_filter is not None and beh in clip_filter:
+            clip_indices = clip_filter[beh]
+
+        for ki in clip_indices:
             start = s + ki * T_beh
             pts = emb_3d[start : start + T_beh]
 
@@ -303,8 +344,9 @@ def plot_trajectories_3d(
                 depthshade=False,
             )
 
+        n_shown = len(list(clip_indices))
         ax.set_title(
-            BEHAVIOR_LABELS[beh],
+            f"{BEHAVIOR_LABELS[beh]} (n={n_shown})",
             fontsize=8, fontweight="bold", pad=-2,
             color=BEHAVIOR_COLORS[beh],
         )
@@ -333,7 +375,7 @@ def plot_trajectories_3d(
     ).get_frame().set_linewidth(0)
 
     fig.suptitle(
-        "PCA of RNN Hidden State",
+        "PCA of RNN Hidden State (Single-Code Clips)",
         fontsize=9, fontweight="bold", y=0.98,
     )
     fig.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.88, wspace=0.05)
@@ -365,18 +407,25 @@ def main() -> None:
     _setup_nature_style()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    data = load_hidden_data()
+    hiddens, codes = load_hidden_data()
 
-    # Build flat array with behavior boundaries
+    # Find single-code clips for trajectory filtering
+    single_code_clips = find_single_code_clips(codes)
+    for beh, indices in single_code_clips.items():
+        if indices:
+            code_ids = [int(codes[beh][i, 0]) for i in indices]
+            print(f"  {beh}: {len(indices)} single-code clips (codes: {code_ids})")
+
+    # Build flat array with behavior boundaries (all 3 behaviors for PCA)
     all_points: list[np.ndarray] = []
     beh_slices: dict[str, tuple[int, int]] = {}
     beh_shapes: dict[str, tuple[int, int]] = {}
     offset = 0
 
     for beh in BEHAVIORS:
-        if beh not in data:
+        if beh not in hiddens:
             continue
-        arr = data[beh]  # [K, T, hidden_dim]
+        arr = hiddens[beh]  # [K, T, hidden_dim]
         K_beh, T_beh = arr.shape[0], arr.shape[1]
         beh_shapes[beh] = (K_beh, T_beh)
         flat = arr.reshape(-1, arr.shape[-1])
@@ -398,10 +447,18 @@ def main() -> None:
     print("\nFitting 3D PCA...")
     emb, var = fit_pca_3d(all_points_arr)
 
-    fig, rect = plot_scatter_3d(emb, beh_slices, var)
+    # Scatter: walk + groom only (all clips)
+    fig, rect = plot_scatter_3d(
+        emb, beh_slices, var, show_behaviors=["walk", "groom"],
+    )
     _save_figure(fig, rect, "hidden_scatter_pca3d")
 
-    fig, rect = plot_trajectories_3d(emb, beh_slices, beh_shapes, var)
+    # Trajectories: walk + rear, single-code clips only
+    fig, rect = plot_trajectories_3d(
+        emb, beh_slices, beh_shapes, var,
+        show_behaviors=["walk", "rear"],
+        clip_filter=single_code_clips,
+    )
     _save_figure(fig, rect, "hidden_trajectories_pca3d")
 
     print("\nDone.")

@@ -169,8 +169,8 @@ def plot_kinematic_signatures(
             xy = qpos[:, :2]
             dists = np.linalg.norm(np.diff(xy, axis=0), axis=1)
             speeds.append(np.mean(dists) / CTRL_DT)
-            # Root Z height
-            heights_z.append(np.mean(qpos[:, 2]))
+            # Root Z height (clamp to >= 0; slight negative from contact penetration)
+            heights_z.append(max(0.0, np.mean(qpos[:, 2])))
             # Fore / hind angular velocity
             fv.append(np.mean(np.abs(np.diff(qpos[:, fore_idx], axis=0)) / CTRL_DT))
             hv.append(np.mean(np.abs(np.diff(qpos[:, hind_idx], axis=0)) / CTRL_DT))
@@ -179,44 +179,83 @@ def plot_kinematic_signatures(
         fore_vels[beh] = np.array(fv)
         hind_vels[beh] = np.array(hv)
 
-    # --- Panel 1: XY speed ---
-    means = [xy_speeds[b].mean() for b in BEHAVIORS]
-    sems = [xy_speeds[b].std() / np.sqrt(len(xy_speeds[b])) for b in BEHAVIORS]
-    axes[0].bar(x, means, yerr=sems, color=colors, alpha=0.8, capsize=3, width=0.6,
-                error_kw={"linewidth": 0.8})
+    # --- Panel 1: XY speed (violin) ---
+    vp1 = axes[0].violinplot(
+        [xy_speeds[b] for b in BEHAVIORS], positions=x,
+        showmeans=True, showmedians=False, widths=0.6,
+    )
+    for i, body in enumerate(vp1["bodies"]):
+        body.set_facecolor(colors[i])
+        body.set_alpha(0.35)
+        body.set_edgecolor(colors[i])
+        body.set_linewidth(0.8)
+    for part in ("cmeans", "cmins", "cmaxes", "cbars"):
+        if part in vp1:
+            vp1[part].set_color("#333333")
+            vp1[part].set_linewidth(0.6)
     for i, beh in enumerate(BEHAVIORS):
         _strip_plot(axes[0], x[i], xy_speeds[beh], colors[i], jitter_seed=i)
     axes[0].set_ylabel("XY speed (m/s)")
     axes[0].set_title("Locomotion")
 
-    # --- Panel 2: Z height ---
-    means = [z_heights[b].mean() for b in BEHAVIORS]
-    sems = [z_heights[b].std() / np.sqrt(len(z_heights[b])) for b in BEHAVIORS]
-    axes[1].bar(x, means, yerr=sems, color=colors, alpha=0.8, capsize=3, width=0.6,
-                error_kw={"linewidth": 0.8})
+    # --- Panel 2: Z height (violin) ---
+    vp2 = axes[1].violinplot(
+        [z_heights[b] for b in BEHAVIORS], positions=x,
+        showmeans=True, showmedians=False, widths=0.6,
+    )
+    for i, body in enumerate(vp2["bodies"]):
+        body.set_facecolor(colors[i])
+        body.set_alpha(0.35)
+        body.set_edgecolor(colors[i])
+        body.set_linewidth(0.8)
+    for part in ("cmeans", "cmins", "cmaxes", "cbars"):
+        if part in vp2:
+            vp2[part].set_color("#333333")
+            vp2[part].set_linewidth(0.6)
     for i, beh in enumerate(BEHAVIORS):
         _strip_plot(axes[1], x[i], z_heights[beh], colors[i], jitter_seed=i + 10)
     axes[1].set_ylabel("Root Z height (m)")
     axes[1].set_title("Posture")
 
-    # --- Panel 3: Joint motion (forelimbs vs hindlimbs) ---
+    # --- Panel 3: Joint motion (forelimbs vs hindlimbs, side-by-side violins) ---
     w = 0.28
     for i, beh in enumerate(BEHAVIORS):
-        fm = fore_vels[beh].mean()
-        fs = fore_vels[beh].std() / np.sqrt(len(fore_vels[beh]))
-        hm = hind_vels[beh].mean()
-        hs = hind_vels[beh].std() / np.sqrt(len(hind_vels[beh]))
-        axes[2].bar(x[i] - w / 2, fm, w, yerr=fs, color=colors[i], alpha=0.50,
-                    capsize=2, error_kw={"linewidth": 0.8}, edgecolor=colors[i], linewidth=0.8)
-        axes[2].bar(x[i] + w / 2, hm, w, yerr=hs, color=colors[i], alpha=0.90,
-                    capsize=2, error_kw={"linewidth": 0.8})
+        # Fore violin (left)
+        vf = axes[2].violinplot(
+            [fore_vels[beh]], positions=[x[i] - w / 2],
+            showmeans=True, showmedians=False, widths=w * 0.9,
+        )
+        for body in vf["bodies"]:
+            body.set_facecolor(colors[i])
+            body.set_alpha(0.30)
+            body.set_edgecolor(colors[i])
+            body.set_linewidth(0.6)
+        for part in ("cmeans", "cmins", "cmaxes", "cbars"):
+            if part in vf:
+                vf[part].set_color("#333333")
+                vf[part].set_linewidth(0.5)
         _strip_plot(axes[2], x[i] - w / 2, fore_vels[beh], colors[i], jitter_seed=i + 20)
+
+        # Hind violin (right)
+        vh = axes[2].violinplot(
+            [hind_vels[beh]], positions=[x[i] + w / 2],
+            showmeans=True, showmedians=False, widths=w * 0.9,
+        )
+        for body in vh["bodies"]:
+            body.set_facecolor(colors[i])
+            body.set_alpha(0.70)
+            body.set_edgecolor(colors[i])
+            body.set_linewidth(0.6)
+        for part in ("cmeans", "cmins", "cmaxes", "cbars"):
+            if part in vh:
+                vh[part].set_color("#333333")
+                vh[part].set_linewidth(0.5)
         _strip_plot(axes[2], x[i] + w / 2, hind_vels[beh], colors[i], jitter_seed=i + 30)
 
     from matplotlib.patches import Patch
     axes[2].legend(
-        handles=[Patch(facecolor="gray", alpha=0.50, label="Fore"),
-                 Patch(facecolor="gray", alpha=0.90, label="Hind")],
+        handles=[Patch(facecolor="gray", alpha=0.30, label="Fore"),
+                 Patch(facecolor="gray", alpha=0.70, label="Hind")],
         frameon=False, fontsize=5.5, loc="upper right",
     )
     axes[2].set_ylabel("Angular vel (rad/s)")

@@ -57,7 +57,7 @@ def _setup_nature_style() -> None:
         "axes.titlesize": 9,
         "axes.titleweight": "bold",
         "axes.labelsize": 8,
-        "xtick.labelsize": 7,
+        "xtick.labelsize": 9,
         "ytick.labelsize": 7,
         "legend.fontsize": 6,
         "lines.linewidth": 1.2,
@@ -136,7 +136,7 @@ def main():
         )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(names, ha="center")
+    ax.set_xticklabels(names, ha="right", rotation=25)
     ax.set_ylabel("KID (Kernel Inception Distance)")
     ax.set_title("Distribution Quality: Real vs Generated Behavior")
     ax.set_ylim(bottom=0, top=max(kid_means) + max(kid_stds) + 0.04)

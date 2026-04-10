@@ -29,6 +29,7 @@ DISPLAY_NAMES = {
     "transition_matrix": "Transition\nMatrix",
     "arhmm_level2": "ARHMM L2",
     "hmm_dynamax": "HMM",
+    "uniform_random": "Random\nCodes",
 }
 
 COLORS = {
@@ -38,12 +39,13 @@ COLORS = {
     "transition_matrix": "#56B4E9",    # light blue
     "arhmm_level2": "#D55E00",         # orange
     "hmm_dynamax": "#CC79A7",          # pink
+    "uniform_random": "#999999",       # gray
 }
 
 # Order for display (best to worst KID, no split baseline)
 DISPLAY_ORDER = [
     "decoder_original_codes",
-    "transition_matrix", "arhmm_level2",
+    "transition_matrix", "arhmm_level2", "uniform_random",
 ]
 
 

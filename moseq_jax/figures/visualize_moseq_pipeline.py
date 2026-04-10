@@ -535,10 +535,10 @@ def draw_mimic_training(ax):
 
 def make_mimic_figure(output_dir: Path):
     """Generate Figure 1: Mimic-MJX encoder-decoder training."""
-    fig, ax = plt.subplots(1, 1, figsize=(14, 3.5))
+    fig, ax = plt.subplots(1, 1, figsize=(11, 3.0))
 
-    ax.set_xlim(-0.05, 8.30)
-    ax.set_ylim(0.00, 2.15)
+    ax.set_xlim(0.10, 7.80)
+    ax.set_ylim(0.20, 2.10)
     ax.set_aspect("equal")
     ax.axis("off")
 
@@ -565,56 +565,53 @@ def draw_code2act_pipeline(ax):
     main_y = 1.10
     enc_cy = 2.50
 
-    # --- Rodent image (centered between rows, no arrows to/from it) ---
-    rod_cy = (main_y + enc_cy) / 2
+    # --- Rodent image above KPMS block ---
+    kpms_x = 1.67  # defined here for positioning; block drawn below
+    kpms_w = 0.82
+    rod_cx = kpms_x + kpms_w / 2
+    rod_cy = enc_cy + 0.15
     img_path = SCRIPT_DIR / "data" / "rodent_stac.png"
-    rod_cx = 0.45
     if img_path.exists():
         img = mpimg.imread(str(img_path))
         h_img, w_img = img.shape[:2]
-        # Crop aggressively to remove arrow artifact from source image
         img_rodent = img[:, int(w_img * 0.75) :, :]
         rh, rw = img_rodent.shape[:2]
         aspect_r = rw / rh
         display_h = 0.85
         display_w = display_h * aspect_r
-        rod_cx = 0.15 + display_w / 2
         extent = [
             rod_cx - display_w / 2, rod_cx + display_w / 2,
             rod_cy - display_h / 2, rod_cy + display_h / 2,
         ]
         ax.imshow(img_rodent, extent=extent, aspect="auto", zorder=3,
                   clip_on=True)
-        rod_right = rod_cx + display_w / 2
     else:
-        rod_right = 0.55
         ax.text(rod_cx, rod_cy, "[Rodent]", ha="center", va="center",
                 fontsize=9, color=C_TEXT)
 
-    # --- Tilted arrow DOWN to x^g_t (keypoints below) ---
-    xg_x = 1.20
-    _arrow(ax, rod_right + 0.02, rod_cy - 0.20, xg_x - 0.12, main_y + 0.12,
+    # --- Straight-down arrow: Rodent -> x^g_t -> KPMS ---
+    xg_label_y = (rod_cy - 0.42 + main_y + 0.30) / 2
+    _arrow(ax, rod_cx, rod_cy - 0.48, rod_cx, main_y + 0.30,
            color=C_STAC, lw=1.3)
-    ax.text(xg_x, main_y, r"$x_t^g$", ha="center", va="center",
+    ax.text(rod_cx + 0.18, xg_label_y, r"$x_t^g$", ha="left", va="center",
             fontsize=11, color=C_TEXT, zorder=5)
-    ax.text(xg_x, main_y - 0.16, "keypoints", ha="center", va="top",
+    ax.text(rod_cx + 0.18, xg_label_y - 0.16, "keypoints", ha="left", va="top",
             fontsize=7.5, color=C_STAC, fontstyle="italic")
 
-    # --- Tilted arrow UP to s^g_t (joint angles on top) ---
-    _arrow(ax, rod_right + 0.02, rod_cy + 0.20, xg_x - 0.12, enc_cy - 0.12,
+    # --- Straight-right arrow: Rodent -> s^g_t -> Encoder ---
+    # Encoder x position (defined later, but we know it from the distill head)
+    # dh_x is ~rnn_cx + rnn_r + 0.46; enc_x = dh_x. For now use enc_cy row.
+    sg_arrow_start_x = rod_cx + 0.30
+    sg_arrow_end_x = kpms_x + kpms_w + 1.10 + 0.48 + 0.46 + 0.40 - 0.05  # enc_x approx
+    _arrow(ax, sg_arrow_start_x, enc_cy, sg_arrow_end_x, enc_cy,
            color=C_STAC, lw=1.3)
-    sg_x = xg_x
-    ax.text(sg_x, enc_cy, r"$s_t^g$", ha="center", va="center",
+    sg_label_x = (sg_arrow_start_x + sg_arrow_end_x) / 2
+    ax.text(sg_label_x, enc_cy + 0.14, r"$s_t^g$", ha="center", va="bottom",
             fontsize=11, color=C_TEXT, zorder=5)
-    ax.text(sg_x, enc_cy + 0.16, "joint angles", ha="center", va="bottom",
+    ax.text(sg_label_x, enc_cy + 0.30, "joint angles", ha="center", va="bottom",
             fontsize=7.5, color=C_STAC, fontstyle="italic")
 
-    # --- Arrow x^g_t to KPMS ---
-    _arrow(ax, xg_x + 0.16, main_y, 1.62, main_y)
-
-    # --- KPMS block ---
-    kpms_x = 1.67
-    kpms_w = 0.82
+    # --- KPMS block (kpms_x, kpms_w defined above for rodent positioning) ---
     kpms_h = 0.46
     kpms_by = main_y - kpms_h / 2
     _block(ax, kpms_x, kpms_by, kpms_w, kpms_h, C_BLUE,
@@ -769,8 +766,7 @@ def draw_code2act_pipeline(ax):
             ha="center", va="center", fontsize=11, color="white",
             alpha=0.9, zorder=5)
 
-    # Arrow from s^g_t to Encoder
-    _arrow(ax, sg_x + 0.16, enc_cy, enc_x - 0.05, enc_cy)
+    # Arrow from s^g_t to Encoder (drawn above with rodent arrows)
 
     # --- [mu^e, sigma^e] bracket (no arrow, height matches head) ---
     enc_bkt_cx = enc_x + enc_w + 0.22
@@ -791,6 +787,34 @@ def draw_code2act_pipeline(ax):
     # Arrow FROM KL DOWN to distill bracket
     _arrow(ax, enc_bkt_cx, kl_y - 0.14, enc_bkt_cx, main_y + dh_h / 2 + 0.02,
            color=C_KL, lw=1.3)
+
+    # =====================================================================
+    # Dashed box around Encoder + Distill Head + KL (optional block)
+    # =====================================================================
+    box_pad = 0.15
+    box_left = dh_x - box_pad
+    box_bottom = main_y - dh_h / 2 - box_pad
+    box_right = enc_bkt_cx + 0.22 + box_pad
+    box_top = enc_cy + enc_h / 2 + box_pad
+    ax.add_patch(
+        FancyBboxPatch(
+            (box_left, box_bottom),
+            box_right - box_left,
+            box_top - box_bottom,
+            boxstyle="round,pad=0.05",
+            facecolor="none",
+            edgecolor="#999999",
+            linewidth=1.2,
+            linestyle="--",
+            zorder=1,
+        )
+    )
+    ax.text(
+        (box_left + box_right) / 2, box_bottom - 0.08,
+        "optional",
+        ha="center", va="top",
+        fontsize=8, fontstyle="italic", color="#888888", zorder=5,
+    )
 
 
 def make_code2act_figure(output_dir: Path):
@@ -862,6 +886,142 @@ def make_combined_figure(output_dir: Path):
 
 
 # =============================================================================
+# Figure 3: High-level Code2Act overview
+# =============================================================================
+
+
+def make_highlevel_figure(output_dir: Path):
+    """Generate high-level Code2Act overview with code timeline strip.
+
+    Layout:
+      [c₆ c₄ c₁ c₃ c₁ colored bar]  →  [Recurrent Action Decoder]  →  [Physics Sim]
+       current code highlighted           ← ─ ─  s_t^p  ─ ─ ─ ─ ─ ┘
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(11, 2.8))
+    ax.set_xlim(-0.2, 9.2)
+    ax.set_ylim(-0.3, 2.2)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    y = 1.0
+    bh = 0.70
+
+    # =====================================================================
+    # Block 1: Code timeline strip (colored rectangles)
+    # =====================================================================
+    CODE_COLORS = {
+        "c₆": "#E07070",  # red
+        "c₄": "#7BC47F",  # green
+        "c₁": "#7BA3CC",  # blue
+        "c₃": "#E8A050",  # orange
+    }
+    codes = [
+        ("c₆", "c₆", True),   # (label, key, highlighted)
+        ("c₄", "c₄", False),
+        ("c₁", "c₁", False),
+        ("c₃", "c₃", False),
+        ("c₁", "c₁", False),
+    ]
+
+    strip_x = 0.0
+    seg_w = 0.50
+    seg_h = 0.50
+    seg_y = y - seg_h / 2
+    total_strip_w = len(codes) * seg_w
+
+    # Label above strip
+    ax.text(strip_x + total_strip_w / 2, y + seg_h / 2 + 0.35,
+            "Discrete Behavior Motif Generator",
+            ha="center", va="bottom", fontsize=9, fontweight="bold",
+            color=C_TEXT, zorder=5)
+
+    for i, (label, key, highlighted) in enumerate(codes):
+        sx = strip_x + i * seg_w
+        color = CODE_COLORS[key]
+        alpha = 1.0 if highlighted else 0.45
+        lw = 2.5 if highlighted else 0.8
+        ec = "#333333" if highlighted else color
+
+        ax.add_patch(FancyBboxPatch(
+            (sx + 0.02, seg_y), seg_w - 0.04, seg_h,
+            boxstyle="round,pad=0.02",
+            facecolor=color, alpha=alpha, edgecolor=ec,
+            linewidth=lw, zorder=3,
+        ))
+        ax.text(sx + seg_w / 2, y, label, ha="center", va="center",
+                fontsize=9, fontweight="bold", color="white", zorder=4)
+
+    # Highlight arrow pointing to current code
+    ax.annotate("", xy=(strip_x + seg_w / 2, seg_y - 0.02),
+                xytext=(strip_x + seg_w / 2, seg_y - 0.22),
+                arrowprops=dict(arrowstyle="-|>", color="#333333", lw=1.5),
+                zorder=5)
+    ax.text(strip_x + seg_w / 2, seg_y - 0.28, "current",
+            ha="center", va="top", fontsize=6.5, color="#555555",
+            fontstyle="italic")
+
+    # --- Arrow strip -> decoder ---
+    gap = 0.55
+    arr_start = strip_x + total_strip_w + 0.08
+    arr_end = strip_x + total_strip_w + gap - 0.08
+    _arrow(ax, arr_start, y, arr_end, y, lw=2.0)
+    ax.text((arr_start + arr_end) / 2, y + 0.16, r"$c_t$",
+            ha="center", va="bottom", fontsize=12, fontweight="bold",
+            color="#C04040", zorder=5)
+
+    # =====================================================================
+    # Block 2: Recurrent Action Decoder
+    # =====================================================================
+    b2_w = 2.0
+    b2_x = strip_x + total_strip_w + gap
+    _block(ax, b2_x, y - bh / 2, b2_w, bh, C_DECODER,
+           "Recurrent Action\nDecoder", fontsize=10,
+           border_color=C_DECODER_DARK, text_color="white",
+           sublabel=r"$a_t = f_\theta(c_t, h_t, s_t^p)$", sublabel_size=8)
+
+    # --- Arrow decoder -> physics ---
+    _arrow(ax, b2_x + b2_w + 0.08, y, b2_x + b2_w + gap - 0.08, y, lw=2.0)
+    ax.text(b2_x + b2_w + gap / 2, y + 0.16, r"$a_t$",
+            ha="center", va="bottom", fontsize=12, fontweight="bold",
+            color=C_TEXT, zorder=5)
+
+    # =====================================================================
+    # Block 3: Physics Simulation
+    # =====================================================================
+    b3_w = 1.8
+    b3_x = b2_x + b2_w + gap
+    _block(ax, b3_x, y - bh / 2, b3_w, bh, C_PHYSICS,
+           "Physics\nSimulation", fontsize=10, border_color="#666666",
+           text_color="white",
+           sublabel=r"$s_{t+1}^p$", sublabel_size=8)
+    b3_cx = b3_x + b3_w / 2
+
+    # =====================================================================
+    # Feedback: Physics -> Decoder
+    # =====================================================================
+    fb_y = y - bh / 2 - 0.28
+    b2_cx = b2_x + b2_w / 2
+    ax.plot([b3_cx, b3_cx], [y - bh / 2, fb_y],
+            color=C_FEEDBACK, lw=1.2, ls="--", zorder=1)
+    ax.plot([b3_cx, b2_cx], [fb_y, fb_y],
+            color=C_FEEDBACK, lw=1.2, ls="--", zorder=1)
+    _arrow(ax, b2_cx, fb_y, b2_cx, y - bh / 2 - 0.02,
+           color=C_FEEDBACK, lw=1.2)
+    ax.text((b2_cx + b3_cx) / 2, fb_y, r"$s_t^p$", ha="center", va="center",
+            fontsize=10, color=C_TEXT, fontweight="bold", zorder=5,
+            bbox=dict(facecolor="white", edgecolor="none", pad=1.5))
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for ext in [".pdf", ".png", ".svg"]:
+        p = output_dir / f"code2act_highlevel{ext}"
+        fc = "none" if ext == ".svg" else "white"
+        fig.savefig(p, dpi=400, bbox_inches="tight",
+                    facecolor=fc, edgecolor="none", transparent=(ext == ".svg"))
+        print(f"Saved: {p}")
+    plt.close(fig)
+
+
+# =============================================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -877,3 +1037,4 @@ if __name__ == "__main__":
     output_dir = Path(args.output_dir)
     make_mimic_figure(output_dir)
     make_code2act_figure(output_dir)
+    make_highlevel_figure(output_dir)

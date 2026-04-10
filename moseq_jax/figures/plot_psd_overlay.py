@@ -46,11 +46,9 @@ JOINT_DISPLAY = {
 }
 
 FS = 100
+NPERSEG = 128  # match experiment's Welch parameters
 FMIN = 1.0
 FMAX = 10.0
-# Use full signal length as nperseg for best frequency resolution,
-# and zero-pad with nfft for smoother spectral estimate.
-NFFT = 1024  # zero-pad to 1024 -> resolution = 100/1024 ≈ 0.098 Hz
 
 
 def _setup_nature_style() -> None:
@@ -119,12 +117,13 @@ def get_joint_addrs():
     return addrs
 
 
-def compute_psd(angles, fs=FS, nfft=NFFT):
-    """Compute PSD using Welch with full-signal window and zero-padding."""
-    n = len(angles)
-    # Use full signal as one segment (best resolution), zero-pad with nfft
-    freqs, psd = welch(angles, fs=fs, nperseg=min(n, 256), nfft=nfft,
-                       noverlap=min(n, 256) // 2)
+def compute_psd(angles, fs=FS, nperseg=NPERSEG):
+    """Compute PSD using Welch's method with zero-padding for smooth curves.
+
+    nperseg=128 matches the experiment's spectral resolution.
+    nfft=1024 zero-pads for visual interpolation (smoother plot, same info).
+    """
+    freqs, psd = welch(angles, fs=fs, nperseg=nperseg, nfft=1024)
     return freqs, psd
 
 
@@ -164,8 +163,8 @@ def main():
                 psd_data[cond][jn].append((freqs, psd))
                 dom_freqs[cond][jn].append(dominant_frequency(freqs, psd))
 
-    freq_res = FS / NFFT
-    print(f"Frequency resolution: {freq_res:.3f} Hz (nfft={NFFT}, fs={FS})")
+    freq_res = FS / NPERSEG
+    print(f"Frequency resolution: {freq_res:.3f} Hz (nperseg={NPERSEG}, fs={FS})")
 
     # ── Figure 1: PSD overlay — one image per side (R / L) ──────────
     SIDES = {

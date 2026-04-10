@@ -316,8 +316,22 @@ def main():
             np.asarray(d["qpos"][i], dtype=np.float64)
             for i in range(len(d["qpos"]))
         ]
-        all_qpos.sort(key=lambda q: len(q), reverse=True)
+        # Select best trajectory per behavior:
+        #   walk: highest XY path length (clearest locomotion)
+        #   rear: highest Z rise (clearest rearing)
+        #   groom: lowest XY path length (most stationary)
+        def _xy_path(q):
+            return float(np.sum(np.linalg.norm(np.diff(q[:, :2], axis=0), axis=1)))
+        def _z_rise(q):
+            return float(q[:, 2].max() - q[0, 2])
+        if beh == "walk":
+            all_qpos.sort(key=_xy_path, reverse=True)
+        elif beh == "rear":
+            all_qpos.sort(key=_z_rise, reverse=True)
+        else:  # groom — stationary but upright (highest z while low xy)
+            all_qpos.sort(key=lambda q: float(q[:, 2].mean()), reverse=True)
         traj = all_qpos[0][:args.max_frames]
+        log.info(f"  {beh}: selected best trajectory (xy_path={_xy_path(traj):.3f}m, z_rise={_z_rise(traj):.3f}m)")
         n_frames = len(traj)
         log.info(f"  {beh}: {n_frames} frames")
 

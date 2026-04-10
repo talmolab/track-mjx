@@ -31,7 +31,7 @@ inception_distance:
   # Methods to compare. All generate fresh rollouts.
   # Options: decoder_original_codes, mimic_mjx, arhmm_level2, arhmm_level1,
   #          hmm_dynamax, transition_matrix, uniform_random
-  methods: ["decoder_original_codes", "mimic_mjx", "arhmm_level2", "hmm_dynamax", "transition_matrix"]
+  methods: ["decoder_original_codes", "mimic_mjx", "arhmm_level2", "hmm_dynamax", "transition_matrix", "uniform_random"]
 
   # Number of rollout clips per method. null = use all balanced clips.
   num_rollout_clips: 100

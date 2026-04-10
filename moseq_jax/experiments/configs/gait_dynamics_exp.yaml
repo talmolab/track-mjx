@@ -24,7 +24,7 @@ data:
 
 gait_dynamics:
   k_clips: 10
-  min_xy_speed: 0.03  # m/s — minimum per-frame XY speed to qualify
+  min_xy_speed: 0.01  # m/s — minimum per-frame XY speed to qualify
   joints: ["hip_R_extend", "knee_R", "hip_L_extend", "knee_L"]
   psd:
     fs: 100      # Hz (control rate)

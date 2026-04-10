@@ -42,8 +42,8 @@ COLORS = {
 
 # Order for display (best to worst KID, no split baseline)
 DISPLAY_ORDER = [
-    "mimic_mjx", "decoder_original_codes",
-    "transition_matrix", "arhmm_level2", "hmm_dynamax",
+    "decoder_original_codes",
+    "transition_matrix", "arhmm_level2",
 ]
 
 
@@ -114,7 +114,7 @@ def main():
     kid_stds = [aggregated[d]["kid_std"] for d in datasets]
 
     x = np.arange(len(datasets))
-    fig, ax = plt.subplots(figsize=(5.5, 3.0))
+    fig, ax = plt.subplots(figsize=(5.0, 3.5))
 
     bars = ax.bar(
         x, kid_means, yerr=kid_stds,
@@ -123,12 +123,12 @@ def main():
         edgecolor="white", linewidth=0.5,
     )
 
-    # Add value labels on bars
+    # Add value labels at top of error bars
     for bar, mean, std in zip(bars, kid_means, kid_stds):
         label = f"{abs(mean):.2f}" if abs(mean) < 0.005 else f"{mean:.2f}"
         ax.text(
             bar.get_x() + bar.get_width() / 2,
-            max(bar.get_height(), 0) + std + 0.05,
+            mean + std + 0.01,
             label,
             ha="center", va="bottom", fontsize=6.5, fontweight="bold",
         )
@@ -137,7 +137,7 @@ def main():
     ax.set_xticklabels(names, ha="center")
     ax.set_ylabel("KID (Kernel Inception Distance)")
     ax.set_title("Distribution Quality: Real vs Generated Behavior")
-    ax.set_ylim(bottom=0)
+    ax.set_ylim(bottom=0, top=max(kid_means) + max(kid_stds) + 0.04)
     ax.axhline(0, color="#e0e0e0", linewidth=0.4, zorder=0)
 
     fig.tight_layout()

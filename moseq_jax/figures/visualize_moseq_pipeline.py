@@ -929,11 +929,7 @@ def make_highlevel_figure(output_dir: Path):
     seg_y = y - seg_h / 2
     total_strip_w = len(codes) * seg_w
 
-    # Label above strip
-    ax.text(strip_x + total_strip_w / 2, y + seg_h / 2 + 0.35,
-            "Discrete Behavior Motif Generator",
-            ha="center", va="bottom", fontsize=9, fontweight="bold",
-            color=C_TEXT, zorder=5)
+
 
     for i, (label, key, highlighted) in enumerate(codes):
         sx = strip_x + i * seg_w

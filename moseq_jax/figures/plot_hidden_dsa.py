@@ -1,24 +1,26 @@
 """DSA (Dynamical Similarity Analysis) of RNN hidden states per behavior.
 
-Loads hidden_dynamics.npz (from run_hidden_dynamics), treats each clip as
-a separate "system" (30 total: 10 walk + 10 groom + 10 rear), fits a linear
-dynamical system via delay-embedded DMD, and compares all pairs.
+Loads hidden_dynamics.npz (from run_hidden_dynamics), splits each behavior's
+K=10 clips into two random groups of 5, fits one DSA model per group
+(6 systems total: 2 per behavior), and compares all pairs.
+
+This split-half design lets DSA compare *systems* with multiple trials:
+  - Within-behavior: walk_A vs walk_B, groom_A vs groom_B, rear_A vs rear_B
+  - Between-behavior: all cross-behavior pairs
 
 Produces:
-  - 30x30 DSA distance heatmap showing block-diagonal structure
+  - 6x6 DSA distance heatmap
   - Within-behavior vs between-behavior bar chart
 
-If the ``dsa-metric`` package is installed (``pip install dsa-metric``),
-uses the full Procrustes-aligned DSA metric.  Otherwise falls back to a
-lightweight eigenvalue-spectrum comparison (Wasserstein on eigenvalues
-in the complex plane).
+Requires: ``pip install dsa-metric``
 
 Adapted from mech-complexity/dsa.py (Charles Xu).
 
 Usage:
     cd moseq_jax/figures
-    python plot_hidden_dsa.py            # compute + plot
-    python plot_hidden_dsa.py --replot   # replot from cached distances
+    python plot_hidden_dsa.py                 # compute + plot
+    python plot_hidden_dsa.py --replot        # replot from cached distances
+    python plot_hidden_dsa.py --n_delays 10 --rank 15
 """
 
 import argparse
@@ -31,7 +33,6 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).parent
@@ -41,9 +42,9 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs" / "hidden_dynamics"
 # ── Behavior config ─────────────────────────────────────────────────────────
 BEHAVIORS = ["walk", "groom", "rear"]
 BEHAVIOR_LABELS = {
-    "walk": "Walking Code",
-    "groom": "Grooming Code",
-    "rear": "Rearing Code",
+    "walk": "Walking",
+    "groom": "Grooming",
+    "rear": "Rearing",
 }
 BEHAVIOR_COLORS = {
     "walk": "#D55E00",
@@ -101,19 +102,21 @@ def _add_rounded_border(fig: plt.Figure) -> mpatches.FancyBboxPatch:
     return rect
 
 
-# ── Data loading ─────────────────────────────────────────────────────────────
+# ── Data loading + split-half ────────────────────────────────────────────────
 
 
-def load_hidden_trajectories() -> tuple[list[np.ndarray], list[str], list[str]]:
-    """Load hidden states and return as list of individual trajectories.
+def load_and_split(seed: int = 42) -> tuple[list[np.ndarray], list[str], list[str]]:
+    """Load hidden states and split each behavior into two random groups.
 
     Returns:
-        trajectories: list of 30 arrays, each ``[T, hidden_dim]``
-        names: list of 30 labels (e.g. ``"walk_0"``, ``"groom_3"``)
-        behaviors: list of 30 behavior categories
+        systems: list of 6 arrays, each ``[K//2, T, hidden_dim]``
+        names: list of 6 labels (e.g. ``"walk_A"``, ``"walk_B"``)
+        behaviors: list of 6 behavior categories
     """
     raw = np.load(DATA_DIR / "hidden_dynamics.npz", allow_pickle=True)
-    trajectories = []
+    rng = np.random.default_rng(seed)
+
+    systems = []
     names = []
     behaviors = []
 
@@ -122,164 +125,57 @@ def load_hidden_trajectories() -> tuple[list[np.ndarray], list[str], list[str]]:
         if key not in raw:
             continue
         arr = np.array(raw[key])  # [K, T, hidden_dim]
-        for ki in range(arr.shape[0]):
-            trajectories.append(arr[ki])  # [T, hidden_dim]
-            names.append(f"{beh}_{ki}")
-            behaviors.append(beh)
+        K = arr.shape[0]
+        indices = rng.permutation(K)
+        half = K // 2
 
-    return trajectories, names, behaviors
+        group_a = arr[indices[:half]]  # [half, T, hidden_dim]
+        group_b = arr[indices[half : 2 * half]]
 
+        systems.append(group_a)
+        names.append(f"{beh}_A")
+        behaviors.append(beh)
 
-def group_by_behavior(
-    behaviors: list[str],
-) -> tuple[list[str], dict[str, list[int]]]:
-    """Group trajectory indices by behavior, preserving BEHAVIORS order."""
-    beh_indices: dict[str, list[int]] = {}
-    for i, beh in enumerate(behaviors):
-        if beh not in beh_indices:
-            beh_indices[beh] = []
-        beh_indices[beh].append(i)
+        systems.append(group_b)
+        names.append(f"{beh}_B")
+        behaviors.append(beh)
 
-    ordered = [b for b in BEHAVIORS if b in beh_indices]
-    return ordered, beh_indices
+    return systems, names, behaviors
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# DSA computation
-# ═════════════════════════════════════════════════════════════════════════════
-
-
-def _try_dsa_package(
-    trajectories: list[np.ndarray],
-    n_delays: int,
-    rank: int,
-    score_method: str,
-) -> np.ndarray | None:
-    """Try to compute DSA using the dsa-metric package. Returns None if unavailable."""
-    try:
-        from DSA import DSA as PlainDSA
-
-        print("  Using DSA package (dsa-metric)")
-        dsa = PlainDSA(
-            X=trajectories,
-            n_delays=n_delays,
-            rank=rank,
-            score_method=score_method,
-            device="cpu",
-            verbose=True,
-        )
-        return np.array(dsa.fit_score())
-    except ImportError:
-        return None
-
-
-# ── Fallback: manual delay-embed DMD + eigenvalue comparison ─────────────
-
-
-def _delay_embed(X: np.ndarray, n_delays: int) -> np.ndarray:
-    """Construct delay-embedded (Hankel) matrix.
-
-    Args:
-        X: ``[T, N]`` time series.
-        n_delays: number of delays.
-
-    Returns:
-        ``[T - n_delays + 1, n_delays * N]`` Hankel matrix.
-    """
-    T, N = X.shape
-    rows = T - n_delays + 1
-    H = np.zeros((rows, n_delays * N), dtype=X.dtype)
-    for d in range(n_delays):
-        H[:, d * N : (d + 1) * N] = X[d : d + rows]
-    return H
-
-
-def _fit_dmd(X: np.ndarray, n_delays: int, rank: int) -> np.ndarray:
-    """Fit a linear dynamical system via delay-embedded DMD.
-
-    Returns:
-        A: ``[rank, rank]`` dynamics matrix.
-    """
-    H = _delay_embed(X, n_delays)
-    # Center
-    H = H - H.mean(axis=0, keepdims=True)
-    # SVD truncation
-    U, S, Vt = np.linalg.svd(H, full_matrices=False)
-    U_r = U[:, :rank]
-    S_r = S[:rank]
-    Vt_r = Vt[:rank]
-    # Project into reduced space
-    X_r = U_r * S_r  # [T', rank]
-    # Fit A: X_r[1:] ≈ X_r[:-1] @ A.T  →  A = X_r[1:].T @ X_r[:-1] @ inv(...)
-    X1 = X_r[:-1]
-    X2 = X_r[1:]
-    A = np.linalg.lstsq(X1, X2, rcond=None)[0].T  # [rank, rank]
-    return A
-
-
-def _eigenvalue_wasserstein(eig1: np.ndarray, eig2: np.ndarray) -> float:
-    """Wasserstein distance between eigenvalue sets in the complex plane."""
-    n = len(eig1)
-    m = len(eig2)
-    cost = np.zeros((n, m))
-    for i in range(n):
-        for j in range(m):
-            cost[i, j] = abs(eig1[i] - eig2[j])
-    row_ind, col_ind = linear_sum_assignment(cost)
-    return float(cost[row_ind, col_ind].sum() / max(n, m))
-
-
-def _compute_dsa_fallback(
-    trajectories: list[np.ndarray],
-    n_delays: int,
-    rank: int,
-) -> np.ndarray:
-    """Compute DSA distance matrix via manual DMD + eigenvalue comparison."""
-    print("  DSA package not available, using eigenvalue-spectrum fallback")
-    n = len(trajectories)
-
-    # Fit DMD for each trajectory
-    print(f"  Fitting {n} DMD models (n_delays={n_delays}, rank={rank})...")
-    A_matrices = []
-    eigenvalues = []
-    for i, traj in enumerate(trajectories):
-        A = _fit_dmd(traj.astype(np.float64), n_delays, rank)
-        A_matrices.append(A)
-        eigenvalues.append(np.linalg.eigvals(A))
-        if (i + 1) % 10 == 0:
-            print(f"    {i + 1}/{n} done")
-
-    # Pairwise eigenvalue Wasserstein distance
-    print(f"  Computing {n * (n - 1) // 2} pairwise distances...")
-    dist_matrix = np.zeros((n, n))
-    for i in range(n):
-        for j in range(i + 1, n):
-            d = _eigenvalue_wasserstein(eigenvalues[i], eigenvalues[j])
-            dist_matrix[i, j] = d
-            dist_matrix[j, i] = d
-
-    return dist_matrix
+# ── DSA computation ──────────────────────────────────────────────────────────
 
 
 def compute_dsa_matrix(
-    trajectories: list[np.ndarray],
+    systems: list[np.ndarray],
     n_delays: int = DEFAULT_N_DELAYS,
     rank: int = DEFAULT_RANK,
     score_method: str = DEFAULT_SCORE_METHOD,
 ) -> np.ndarray:
-    """Compute pairwise DSA distances. Tries dsa-metric, falls back to manual."""
-    result = _try_dsa_package(trajectories, n_delays, rank, score_method)
-    if result is not None:
-        # DSA package returns [n, n] or [n, n, k]; handle both
-        if result.ndim == 3:
-            return result[:, :, 0]  # take joint distance
-        return result
-    return _compute_dsa_fallback(trajectories, n_delays, rank)
+    """Compute pairwise DSA distances between split-half systems."""
+    from DSA import DSA as PlainDSA
+
+    print(f"  DSA config: n_delays={n_delays}, rank={rank}, method={score_method}")
+    for i, (s, name) in enumerate(zip(systems, ["walk_A", "walk_B", "groom_A", "groom_B", "rear_A", "rear_B"])):
+        print(f"    {name}: {s.shape}")
+
+    dsa = PlainDSA(
+        X=systems,
+        n_delays=n_delays,
+        rank=rank,
+        score_method=score_method,
+        device="cpu",
+        verbose=True,
+    )
+    result = np.array(dsa.fit_score())
+
+    # Handle multi-component output
+    if result.ndim == 3:
+        return result[:, :, 0]
+    return result
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# Plotting (adapted from mech-complexity/dsa.py)
-# ═════════════════════════════════════════════════════════════════════════════
+# ── Plotting ─────────────────────────────────────────────────────────────────
 
 
 def plot_heatmap(
@@ -287,49 +183,45 @@ def plot_heatmap(
     names: list[str],
     behaviors: list[str],
 ) -> tuple[plt.Figure, mpatches.FancyBboxPatch]:
-    """30x30 DSA distance heatmap with behavior block annotations."""
-    beh_order, beh_indices = group_by_behavior(behaviors)
+    """6x6 DSA distance heatmap with behavior block annotations."""
     n = len(names)
+    fig, ax = plt.subplots(figsize=(3.8, 3.4))
 
-    # Reorder by behavior
-    order = []
-    for beh in beh_order:
-        order.extend(beh_indices[beh])
-    reordered = dist_matrix[np.ix_(order, order)]
+    im = ax.imshow(dist_matrix, cmap="viridis", aspect="equal", interpolation="none")
 
-    fig, ax = plt.subplots(figsize=(4.0, 3.6))
-    im = ax.imshow(reordered, cmap="viridis", aspect="equal", interpolation="none")
+    # Block boundaries between behaviors (every 2 systems)
+    for b in [2, 4]:
+        ax.axhline(y=b - 0.5, color="white", linewidth=1.5)
+        ax.axvline(x=b - 0.5, color="white", linewidth=1.5)
 
-    # Behavior block boundaries + labels
-    boundaries = []
-    tick_positions = []
-    offset = 0
-    for beh in beh_order:
-        k = len(beh_indices[beh])
-        tick_positions.append(offset + k / 2 - 0.5)
-        offset += k
-        if beh != beh_order[-1]:
-            boundaries.append(offset - 0.5)
+    # Tick labels
+    tick_labels = []
+    for name in names:
+        beh = name.split("_")[0]
+        group = name.split("_")[1]
+        tick_labels.append(f"{BEHAVIOR_LABELS[beh]} {group}")
 
-    for b in boundaries:
-        ax.axhline(y=b, color="white", linewidth=1.2)
-        ax.axvline(x=b, color="white", linewidth=1.2)
+    ax.set_xticks(range(n))
+    ax.set_xticklabels(tick_labels, fontsize=5.5, rotation=45, ha="right")
+    ax.set_yticks(range(n))
+    ax.set_yticklabels(tick_labels, fontsize=5.5)
 
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels(
-        [BEHAVIOR_LABELS[b] for b in beh_order], fontsize=6,
-    )
-    ax.set_yticks(tick_positions)
-    ax.set_yticklabels(
-        [BEHAVIOR_LABELS[b] for b in beh_order], fontsize=6,
-    )
+    # Annotate cells with values
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                ax.text(
+                    j, i, f"{dist_matrix[i, j]:.2f}",
+                    ha="center", va="center", fontsize=4.5,
+                    color="white" if dist_matrix[i, j] < dist_matrix.max() * 0.6 else "black",
+                )
 
     cbar = fig.colorbar(im, ax=ax, shrink=0.75, pad=0.02)
     cbar.set_label("DSA Distance", fontsize=6)
     cbar.ax.tick_params(labelsize=5)
 
     ax.set_title(
-        "DSA Distance Matrix",
+        "DSA Distance Matrix (Split-Half)",
         fontsize=8, fontweight="bold", pad=6,
     )
 
@@ -340,25 +232,22 @@ def plot_heatmap(
 
 def plot_within_between(
     dist_matrix: np.ndarray,
+    names: list[str],
     behaviors: list[str],
 ) -> tuple[plt.Figure, mpatches.FancyBboxPatch]:
     """Bar chart: within-behavior vs between-behavior DSA distance."""
-    beh_order, beh_indices = group_by_behavior(behaviors)
+    n = len(names)
 
     within_dists = []
     between_dists = []
 
-    for beh in beh_order:
-        indices = beh_indices[beh]
-        for ii in range(len(indices)):
-            for jj in range(ii + 1, len(indices)):
-                within_dists.append(dist_matrix[indices[ii], indices[jj]])
-
-    for bi in range(len(beh_order)):
-        for bj in range(bi + 1, len(beh_order)):
-            for idx_i in beh_indices[beh_order[bi]]:
-                for idx_j in beh_indices[beh_order[bj]]:
-                    between_dists.append(dist_matrix[idx_i, idx_j])
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = dist_matrix[i, j]
+            if behaviors[i] == behaviors[j]:
+                within_dists.append(d)
+            else:
+                between_dists.append(d)
 
     within_arr = np.array(within_dists)
     between_arr = np.array(between_dists)
@@ -367,8 +256,8 @@ def plot_within_between(
 
     means = [within_arr.mean(), between_arr.mean()]
     sems = [
-        within_arr.std(ddof=1) / np.sqrt(len(within_arr)),
-        between_arr.std(ddof=1) / np.sqrt(len(between_arr)),
+        within_arr.std(ddof=1) / np.sqrt(len(within_arr)) if len(within_arr) > 1 else 0,
+        between_arr.std(ddof=1) / np.sqrt(len(between_arr)) if len(between_arr) > 1 else 0,
     ]
 
     bar_colors = ["#3498db", "#e74c3c"]
@@ -379,26 +268,26 @@ def plot_within_between(
         error_kw={"linewidth": 0.8},
     )
 
-    # Strip plot (individual pairwise distances)
+    # Strip plot
     rng = np.random.default_rng(42)
     jitter_w = rng.uniform(-0.12, 0.12, size=len(within_arr))
     jitter_b = rng.uniform(-0.12, 0.12, size=len(between_arr))
     ax.scatter(
         0 + jitter_w, within_arr,
-        c=bar_colors[0], s=4, alpha=0.3, edgecolors="none", zorder=3,
+        c=bar_colors[0], s=15, alpha=0.6, edgecolors="none", zorder=3,
     )
     ax.scatter(
         1 + jitter_b, between_arr,
-        c=bar_colors[1], s=4, alpha=0.3, edgecolors="none", zorder=3,
+        c=bar_colors[1], s=15, alpha=0.6, edgecolors="none", zorder=3,
     )
 
     # Annotations
     for bar, m, s in zip(bars, means, sems):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + s + 0.01 * ax.get_ylim()[1],
-            f"{m:.3f}",
-            ha="center", va="bottom", fontsize=6,
+            bar.get_height() + s + 0.02 * max(means),
+            f"{m:.2f}",
+            ha="center", va="bottom", fontsize=6.5,
         )
 
     ax.set_xticks(x)
@@ -446,6 +335,7 @@ def main() -> None:
     parser.add_argument("--n_delays", type=int, default=DEFAULT_N_DELAYS)
     parser.add_argument("--rank", type=int, default=DEFAULT_RANK)
     parser.add_argument("--score_method", type=str, default=DEFAULT_SCORE_METHOD)
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for split-half")
     args = parser.parse_args()
 
     _setup_nature_style()
@@ -460,20 +350,16 @@ def main() -> None:
         names = list(cached["names"])
         behaviors = list(cached["behaviors"])
     else:
-        # Load data
-        trajectories, names, behaviors = load_hidden_trajectories()
-        print(
-            f"Loaded {len(trajectories)} trajectories, "
-            f"shape: {trajectories[0].shape}"
-        )
-        for beh in BEHAVIORS:
-            n = sum(1 for b in behaviors if b == beh)
-            print(f"  {beh}: {n} clips")
+        # Load and split
+        systems, names, behaviors = load_and_split(seed=args.seed)
+        print(f"Split-half: {len(systems)} systems")
+        for name, s in zip(names, systems):
+            print(f"  {name}: {s.shape}")
 
         # Compute DSA
         print("\nComputing DSA distances...")
         dist_matrix = compute_dsa_matrix(
-            trajectories,
+            systems,
             n_delays=args.n_delays,
             rank=args.rank,
             score_method=args.score_method,
@@ -491,34 +377,27 @@ def main() -> None:
         print(f"Cached to: {cache_path}")
 
     # Print summary
-    beh_order, beh_indices = group_by_behavior(behaviors)
-    print("\nDSA Distance Summary:")
-    for bi, beh_i in enumerate(beh_order):
-        within = []
-        for ii in range(len(beh_indices[beh_i])):
-            for jj in range(ii + 1, len(beh_indices[beh_i])):
-                within.append(
-                    dist_matrix[beh_indices[beh_i][ii], beh_indices[beh_i][jj]]
-                )
-        print(f"  {beh_i} within: {np.mean(within):.4f} +/- {np.std(within):.4f}")
+    n = len(names)
+    within_dists = []
+    between_dists = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = dist_matrix[i, j]
+            if behaviors[i] == behaviors[j]:
+                within_dists.append(d)
+                print(f"  WITHIN  {names[i]} vs {names[j]}: {d:.4f}")
+            else:
+                between_dists.append(d)
 
-    for bi in range(len(beh_order)):
-        for bj in range(bi + 1, len(beh_order)):
-            between = []
-            for idx_i in beh_indices[beh_order[bi]]:
-                for idx_j in beh_indices[beh_order[bj]]:
-                    between.append(dist_matrix[idx_i, idx_j])
-            print(
-                f"  {beh_order[bi]} vs {beh_order[bj]}: "
-                f"{np.mean(between):.4f} +/- {np.std(between):.4f}"
-            )
+    print(f"\n  Within-behavior mean:  {np.mean(within_dists):.4f} (n={len(within_dists)})")
+    print(f"  Between-behavior mean: {np.mean(between_dists):.4f} (n={len(between_dists)})")
 
     # Plot
     print("\nGenerating figures...")
     fig, rect = plot_heatmap(dist_matrix, names, behaviors)
     _save_figure(fig, rect, "dsa_heatmap")
 
-    fig, rect = plot_within_between(dist_matrix, behaviors)
+    fig, rect = plot_within_between(dist_matrix, names, behaviors)
     _save_figure(fig, rect, "dsa_within_between")
 
     print("\nDone.")

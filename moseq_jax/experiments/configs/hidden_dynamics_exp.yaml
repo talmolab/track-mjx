@@ -1,0 +1,23 @@
+# =============================================================================
+# RNN Hidden State Dynamics Experiment
+# =============================================================================
+# Records GRU hidden states at each timestep for walk/groom/rear code
+# sequences to visualize behavior-specific dynamical regimes in the
+# recurrent latent space.
+# =============================================================================
+
+checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260407_031233_484020/
+  step: null
+
+data:
+  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
+  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+
+K: 10
+max_steps: 250
+seed: 42
+
+output:
+  base_dir: ./outputs/moseq_hidden_dynamics

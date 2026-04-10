@@ -672,18 +672,25 @@ def draw_code2act_pipeline(ax):
         linewidth=1.2, zorder=3))
     ax.text(z0_x + z0_w / 2, main_y, r"$z$", ha="center", va="center",
             fontsize=12, color=C_Z0_DARK, fontweight="bold", zorder=4)
+    ax.text(z0_x + z0_w / 2, main_y + z0_h / 2 + 0.06, "continuous\nlatent",
+            ha="center", va="bottom", fontsize=6.5, color=C_Z0_DARK,
+            fontstyle="italic", zorder=5, linespacing=0.9)
 
     # --- Clear arrow z -> Decoder ---
     dec_x = z0_x + z0_w + 0.28
     _arrow(ax, z0_x + z0_w + 0.05, main_y, dec_x - 0.05, main_y, lw=1.8)
 
-    # --- Decoder ---
-    dec_w = 0.72
+    # --- Decoder (Inverse Dynamics Model) ---
+    dec_w = 0.90
     dec_h = 0.50
     dec_by = main_y - dec_h / 2
-    _trapezoid(ax, dec_x, dec_by, dec_w, dec_h, C_DECODER, "Decoder",
+    _trapezoid(ax, dec_x, dec_by, dec_w, dec_h, C_DECODER, "Inverse\nDynamics",
                direction="left", fontsize=9, border_color=C_DECODER_DARK,
                sublabel=r"$[z, s_t^p] \to a_t$", sublabel_size=7.5)
+    # Frozen symbol on decoder
+    ax.text(dec_x + 0.12, dec_by + dec_h * 0.22, "\u2744",
+            ha="center", va="center", fontsize=11, color="white",
+            alpha=0.9, zorder=5)
     dec_cx = dec_x + dec_w / 2
 
     # --- a_t ---
@@ -692,6 +699,8 @@ def draw_code2act_pipeline(ax):
            color="#222222", lw=2.0)
     ax.text(at_x, main_y, r"$a_t$", ha="center", va="center",
             fontsize=13, fontweight="bold", color=C_TEXT, zorder=5)
+    ax.text(at_x, main_y + 0.18, "action", ha="center", va="bottom",
+            fontsize=6.5, color=C_TEXT, fontstyle="italic", zorder=5)
 
     # --- Physics Sim ---
     phys_x = at_x + 0.35
@@ -720,6 +729,9 @@ def draw_code2act_pipeline(ax):
     ax.text(sp_label_x, fb_y, r"$s_t^p$", ha="center", va="center",
             fontsize=10, color=C_TEXT, fontweight="bold", zorder=5,
             bbox=dict(facecolor="white", edgecolor="none", pad=1.5))
+    ax.text(sp_label_x, fb_y - 0.14, "proprioceptive state",
+            ha="center", va="top", fontsize=6.5, color=C_TEXT,
+            fontstyle="italic", zorder=5)
 
     # Dashed up to RNN
     ax.plot([rnn_cx, rnn_cx], [fb_y, rnn_cy - rnn_r - 0.06],
@@ -789,12 +801,12 @@ def draw_code2act_pipeline(ax):
            color=C_KL, lw=1.3)
 
     # =====================================================================
-    # Dashed box around Encoder + Distill Head + KL (optional block)
+    # Dashed box tight around Encoder + Distill Head + KL + brackets
     # =====================================================================
-    box_pad = 0.15
-    box_left = dh_x - box_pad
+    box_pad = 0.08
+    box_left = dh_x - 0.04  # tight to trapezoid base
     box_bottom = main_y - dh_h / 2 - box_pad
-    box_right = enc_bkt_cx + 0.22 + box_pad
+    box_right = enc_bkt_cx + 0.22  # right of bracket
     box_top = enc_cy + enc_h / 2 + box_pad
     ax.add_patch(
         FancyBboxPatch(
@@ -815,6 +827,32 @@ def draw_code2act_pipeline(ax):
         ha="center", va="top",
         fontsize=8, fontstyle="italic", color="#888888", zorder=5,
     )
+
+    # =====================================================================
+    # "MIMIC-MJX Pre-trained" above Inverse Dynamics, arrows to both
+    # =====================================================================
+    pretrained_x = dec_cx
+    pretrained_y = enc_cy + 0.10
+    ax.text(pretrained_x, pretrained_y, "MIMIC-MJX\nPre-trained",
+            ha="center", va="center", fontsize=7.5, fontweight="bold",
+            color=C_STAC, fontstyle="italic", zorder=5)
+
+    # Arrow from MIMIC-MJX: up above dashed box, then left, then down toward Encoder
+    enc_mid_x = enc_x + enc_w / 2
+    turn_y = box_top + 0.18  # above the dashed box
+    ax.plot([pretrained_x, pretrained_x], [pretrained_y + 0.12, turn_y],
+            color=C_STAC, lw=1.0, zorder=4)
+    ax.plot([pretrained_x, enc_mid_x], [turn_y, turn_y],
+            color=C_STAC, lw=1.0, zorder=4)
+    ax.plot([enc_mid_x, enc_mid_x], [turn_y, box_top + 0.10],
+            color=C_STAC, lw=1.0, zorder=4)
+    _arrow(ax, enc_mid_x, box_top + 0.10,
+           enc_mid_x, box_top + 0.02,
+           color=C_STAC, lw=1.0)
+
+    # Straight-down arrow from MIMIC-MJX to Inverse Dynamics (with gap)
+    _arrow(ax, pretrained_x, pretrained_y - 0.22, dec_cx, main_y + dec_h / 2 + 0.12,
+           color=C_STAC, lw=1.0)
 
 
 def make_code2act_figure(output_dir: Path):
@@ -890,22 +928,16 @@ def make_combined_figure(output_dir: Path):
 # =============================================================================
 
 
-def make_highlevel_figure(output_dir: Path):
-    """Generate high-level Code2Act overview with code timeline strip.
+def _draw_highlevel_pipeline(ax, y: float = 1.0, bh: float = 0.70,
+                             draw_legend: bool = True):
+    """Draw the high-level Code2Act pipeline on *ax*.
 
-    Layout:
-      [c₆ c₄ c₁ c₃ c₁ colored bar]  →  [Recurrent Action Decoder]  →  [Physics Sim]
-       current code highlighted           ← ─ ─  s_t^p  ─ ─ ─ ─ ─ ┘
+    Args:
+        ax: Matplotlib axes.
+        y: Vertical centre of the main row.
+        bh: Block height.
+        draw_legend: If True, draw the legend above the diagram.
     """
-    fig, ax = plt.subplots(1, 1, figsize=(11, 2.8))
-    ax.set_xlim(-0.2, 9.2)
-    ax.set_ylim(-0.3, 2.2)
-    ax.set_aspect("equal")
-    ax.axis("off")
-
-    y = 1.0
-    bh = 0.70
-
     # =====================================================================
     # Block 1: Code timeline strip (colored rectangles)
     # =====================================================================
@@ -929,8 +961,6 @@ def make_highlevel_figure(output_dir: Path):
     seg_y = y - seg_h / 2
     total_strip_w = len(codes) * seg_w
 
-
-
     for i, (label, key, highlighted) in enumerate(codes):
         sx = strip_x + i * seg_w
         color = CODE_COLORS[key]
@@ -946,6 +976,27 @@ def make_highlevel_figure(output_dir: Path):
         ))
         ax.text(sx + seg_w / 2, y, label, ha="center", va="center",
                 fontsize=9, fontweight="bold", color="white", zorder=4)
+
+    # Label above code strip
+    ax.text(strip_x + total_strip_w / 2, y + seg_h / 2 + 0.08,
+            "Keypoint-MoSeq code", ha="center", va="bottom",
+            fontsize=7.5, color="#555555", fontstyle="italic", zorder=5)
+
+    # Legend above the code strip (centered over full diagram)
+    if draw_legend:
+        legend_y = y + seg_h / 2 + 0.55
+        legend_items = [
+            (r"$c_t$ = code", "#C04040"),
+            (r"$a_t$ = action", C_TEXT),
+            (r"$s_t^p$ = state", C_TEXT),
+        ]
+        total_legend_w = 5.0
+        spacing = total_legend_w / len(legend_items)
+        center_x = 4.5  # center of canvas
+        start_x = center_x - total_legend_w / 2 + spacing / 2
+        for i, (label, color) in enumerate(legend_items):
+            ax.text(start_x + i * spacing, legend_y, label,
+                    ha="center", va="center", fontsize=8, color=color, zorder=5)
 
     # Highlight arrow pointing to current code
     ax.annotate("", xy=(strip_x + seg_w / 2, seg_y - 0.02),
@@ -966,14 +1017,13 @@ def make_highlevel_figure(output_dir: Path):
             color="#C04040", zorder=5)
 
     # =====================================================================
-    # Block 2: Recurrent Action Decoder
+    # Block 2: Recurrent Code Decoder (with small RNN icon)
     # =====================================================================
     b2_w = 2.0
     b2_x = strip_x + total_strip_w + gap
-    _block(ax, b2_x, y - bh / 2, b2_w, bh, C_DECODER,
-           "Recurrent Action\nDecoder", fontsize=10,
-           border_color=C_DECODER_DARK, text_color="white",
-           sublabel=r"$a_t = f_\theta(c_t, h_t, s_t^p)$", sublabel_size=8)
+    _block(ax, b2_x, y - bh / 2, b2_w, bh, "#E8E8E8",
+           "Recurrent Code\nDecoder", fontsize=10,
+           border_color="#AAAAAA", text_color="#333333")
 
     # --- Arrow decoder -> physics ---
     _arrow(ax, b2_x + b2_w + 0.08, y, b2_x + b2_w + gap - 0.08, y, lw=2.0)
@@ -988,8 +1038,7 @@ def make_highlevel_figure(output_dir: Path):
     b3_x = b2_x + b2_w + gap
     _block(ax, b3_x, y - bh / 2, b3_w, bh, C_PHYSICS,
            "Physics\nSimulation", fontsize=10, border_color="#666666",
-           text_color="white",
-           sublabel=r"$s_{t+1}^p$", sublabel_size=8)
+           text_color="white")
     b3_cx = b3_x + b3_w / 2
 
     # =====================================================================
@@ -1007,7 +1056,45 @@ def make_highlevel_figure(output_dir: Path):
             fontsize=10, color=C_TEXT, fontweight="bold", zorder=5,
             bbox=dict(facecolor="white", edgecolor="none", pad=1.5))
 
+
+def _draw_highlevel_legend(ax):
+    """Draw only the legend for the high-level Code2Act pipeline on *ax*."""
+    legend_items = [
+        (r"$c_t$ = code", "#C04040"),
+        (r"$a_t$ = action", C_TEXT),
+        (r"$s_t^p$ = state", C_TEXT),
+    ]
+    total_w = 5.0
+    spacing = total_w / len(legend_items)
+    center_x = total_w / 2
+    start_x = center_x - total_w / 2 + spacing / 2
+    for i, (label, color) in enumerate(legend_items):
+        ax.text(start_x + i * spacing, 0.5, label,
+                ha="center", va="center", fontsize=8, color=color, zorder=5)
+
+
+def make_highlevel_figure(output_dir: Path):
+    """Generate high-level Code2Act overview with code timeline strip.
+
+    Outputs:
+      - code2act_highlevel.{pdf,png,svg} — full figure with legend
+      - code2act_highlevel_nolegend.svg   — pipeline only (no legend)
+      - code2act_highlevel_legend.svg     — legend only
+
+    Layout:
+      [c₆ c₄ c₁ c₃ c₁ colored bar]  →  [Recurrent Action Decoder]  →  [Physics Sim]
+       current code highlighted           ← ─ ─  s_t^p  ─ ─ ─ ─ ─ ┘
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Full figure (pipeline + legend) ---
+    fig, ax = plt.subplots(1, 1, figsize=(11, 3.2))
+    ax.set_xlim(-0.2, 9.2)
+    ax.set_ylim(-0.3, 2.5)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    _draw_highlevel_pipeline(ax, draw_legend=True)
+
     for ext in [".pdf", ".png", ".svg"]:
         p = output_dir / f"code2act_highlevel{ext}"
         fc = "none" if ext == ".svg" else "white"
@@ -1015,6 +1102,34 @@ def make_highlevel_figure(output_dir: Path):
                     facecolor=fc, edgecolor="none", transparent=(ext == ".svg"))
         print(f"Saved: {p}")
     plt.close(fig)
+
+    # --- Pipeline only (no legend) ---
+    fig_nl, ax_nl = plt.subplots(1, 1, figsize=(11, 2.8))
+    ax_nl.set_xlim(-0.2, 9.2)
+    ax_nl.set_ylim(-0.3, 2.0)
+    ax_nl.set_aspect("equal")
+    ax_nl.axis("off")
+    _draw_highlevel_pipeline(ax_nl, draw_legend=False)
+
+    p_nl = output_dir / "code2act_highlevel_nolegend.svg"
+    fig_nl.savefig(p_nl, dpi=400, bbox_inches="tight",
+                   facecolor="none", edgecolor="none", transparent=True)
+    print(f"Saved: {p_nl}")
+    plt.close(fig_nl)
+
+    # --- Legend only ---
+    fig_lg, ax_lg = plt.subplots(1, 1, figsize=(6, 0.6))
+    ax_lg.set_xlim(0, 5.0)
+    ax_lg.set_ylim(0, 1.0)
+    ax_lg.set_aspect("auto")
+    ax_lg.axis("off")
+    _draw_highlevel_legend(ax_lg)
+
+    p_lg = output_dir / "code2act_highlevel_legend.svg"
+    fig_lg.savefig(p_lg, dpi=400, bbox_inches="tight",
+                   facecolor="none", edgecolor="none", transparent=True)
+    print(f"Saved: {p_lg}")
+    plt.close(fig_lg)
 
 
 # =============================================================================

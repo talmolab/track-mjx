@@ -477,6 +477,81 @@ def main():
     plt.close(fig)
     log.info(f"Saved: {out_base}.pdf / .png")
 
+    # --- Separate renders-only figure ---
+    fig_r, axes_r = plt.subplots(1, n_cols, figsize=(4.8 * n_cols, 4.5))
+    for ci, beh in enumerate(BEHAVIORS):
+        if beh not in panel_data:
+            continue
+        pd = panel_data[beh]
+        color = BEHAVIOR_RGB[beh]
+        axes_r[ci].imshow(pd["frame"])
+        axes_r[ci].set_title(
+            BEHAVIOR_LABELS[beh], fontsize=14, fontweight="bold",
+            color=color, pad=6,
+        )
+        axes_r[ci].set_axis_off()
+    fig_r.tight_layout(pad=0.1)
+    out_r = OUTPUT_DIR / f"triptych_renders_{args.height}"
+    for ext in (".pdf", ".png"):
+        fig_r.savefig(str(out_r) + ext, dpi=300, bbox_inches="tight",
+                      facecolor="white", pad_inches=0.01)
+    plt.close(fig_r)
+    log.info(f"Saved: {out_r}.pdf / .png")
+
+    # --- Separate gait-only figure ---
+    fig_g, axes_g = plt.subplots(1, n_cols, figsize=(4.8 * n_cols, 1.8))
+    for ci, beh in enumerate(BEHAVIORS):
+        if beh not in panel_data:
+            continue
+        pd_g = panel_data[beh]
+        color = BEHAVIOR_RGB[beh]
+        total_sec = pd_g["n_frames"] / FPS
+        contacts = pd_g["contacts"]
+        for li, limb in enumerate(LIMBS):
+            stance = contacts[limb]
+            in_stance = False
+            start_t = 0
+            for t in range(len(stance)):
+                if stance[t] and not in_stance:
+                    start_t = t
+                    in_stance = True
+                elif not stance[t] and in_stance:
+                    axes_g[ci].fill_between(
+                        [start_t / FPS, t / FPS],
+                        li - 0.4, li + 0.4,
+                        color=color, alpha=0.7, edgecolor="none",
+                    )
+                    in_stance = False
+            if in_stance:
+                axes_g[ci].fill_between(
+                    [start_t / FPS, pd_g["n_frames"] / FPS],
+                    li - 0.4, li + 0.4,
+                    color=color, alpha=0.7, edgecolor="none",
+                )
+        for t in pd_g["trail_indices"]:
+            axes_g[ci].axvline(
+                t / FPS, color="black", linewidth=0.8, alpha=0.4,
+                linestyle="--", zorder=1,
+            )
+        axes_g[ci].set_xlim(0, total_sec)
+        axes_g[ci].set_ylim(-0.6, n_limbs - 0.4)
+        axes_g[ci].set_yticks(range(n_limbs))
+        axes_g[ci].set_yticklabels(LIMBS, fontsize=7.5, fontweight="bold")
+        axes_g[ci].set_xlabel("Time (s)", fontsize=7)
+        axes_g[ci].tick_params(axis="x", labelsize=6)
+        axes_g[ci].tick_params(axis="y", length=0)
+        axes_g[ci].spines["top"].set_visible(False)
+        axes_g[ci].spines["right"].set_visible(False)
+        axes_g[ci].spines["left"].set_visible(False)
+        axes_g[ci].invert_yaxis()
+    fig_g.tight_layout(pad=0.1)
+    out_g = OUTPUT_DIR / f"triptych_gaits_{args.height}"
+    for ext in (".pdf", ".png"):
+        fig_g.savefig(str(out_g) + ext, dpi=300, bbox_inches="tight",
+                      facecolor="white", pad_inches=0.01)
+    plt.close(fig_g)
+    log.info(f"Saved: {out_g}.pdf / .png")
+
 
 if __name__ == "__main__":
     main()

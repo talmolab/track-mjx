@@ -25,9 +25,9 @@ RESULTS_PATH = SCRIPT_DIR.parent / "outputs" / "moseq_inception_distance" / "res
 DISPLAY_NAMES = {
     "split_baseline": "Split Baseline\n(noise floor)",
     "mimic_mjx": "Mimic-MJX\n(oracle)",
-    "decoder_original_codes": "Code2Act\n(real codes)",
-    "transition_matrix": "Transition\nMatrix",
-    "arhmm_level2": "ARHMM L2",
+    "decoder_original_codes": "Code2Act\n(actual codes)",
+    "transition_matrix": "Code2Act\n(transition matrix)",
+    "arhmm_level2": "Code2Act\n(ARHMM generation)",
     "hmm_dynamax": "HMM",
     "uniform_random": "Random\nCodes",
 }
@@ -35,11 +35,11 @@ DISPLAY_NAMES = {
 COLORS = {
     "split_baseline": "#999999",       # gray
     "mimic_mjx": "#009E73",            # green
-    "decoder_original_codes": "#0072B2",  # blue
+    "decoder_original_codes": "#56B4E9",  # light blue
     "transition_matrix": "#56B4E9",    # light blue
-    "arhmm_level2": "#D55E00",         # orange
-    "hmm_dynamax": "#CC79A7",          # pink
-    "uniform_random": "#999999",       # gray
+    "arhmm_level2": "#56B4E9",         # light blue
+    "hmm_dynamax": "#56B4E9",          # light blue
+    "uniform_random": "#56B4E9",       # light blue
 }
 
 # Order for display (best to worst KID, no split baseline)

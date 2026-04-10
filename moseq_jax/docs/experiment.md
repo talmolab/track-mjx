@@ -2,7 +2,7 @@
 
 ## Overview
 
-Nine experiment scripts evaluate the KPMS Code2Act decoder:
+Eleven experiment scripts evaluate the KPMS Code2Act decoder:
 
 | # | Script | Config | Purpose |
 |---|--------|--------|---------|
@@ -16,6 +16,7 @@ Nine experiment scripts evaluate the KPMS Code2Act decoder:
 | 8 | `run_syllable_viz.py` | `syllable_viz_exp.yaml` | KPMS syllable 3D visualization — interactive Plotly trajectories, frequency/duration stats, dendrogram |
 | 9 | `run_inception_distance.py` | `inception_distance_exp.yaml` | FID/KID inception distance — generative model distribution quality vs real mocap |
 | 10 | `run_gait_dynamics.py` | `gait_dynamics_exp.yaml` | Gait dynamics PSD — Code2Act vs Mimic-MJX walking frequency comparison |
+| 11 | `run_hidden_dynamics.py` | `hidden_dynamics_exp.yaml` | RNN hidden state dynamics — PCA/t-SNE/UMAP of GRU hidden states per behavior |
 
 All experiments save outputs (plots, videos, npz data) to disk under `outputs/`.
 
@@ -255,6 +256,48 @@ frequencies match, the decoder preserves the temporal dynamics of locomotion.
 - `dominant_frequencies.{png,pdf}` — grouped bar chart of peak gait frequencies
 - `trajectory_overlay.{png,pdf}` — time-domain joint angle overlay for best walking clip
 - `summary.json` — per-clip dominant frequencies and metadata
+
+### Experiment 11: RNN Hidden State Dynamics
+
+```bash
+python -m experiments.run_hidden_dynamics
+
+# Fewer clips per behavior
+python -m experiments.run_hidden_dynamics K=5
+
+# Longer rollouts
+python -m experiments.run_hidden_dynamics max_steps=500
+```
+
+Records the GRU hidden state at every timestep for K clips per behavior
+category (walk, groom, rear). The resulting hidden state trajectories are
+then visualized with PCA, t-SNE, and UMAP to show that the RNN learns
+distinct dynamical regimes for different behavioral syllables.
+
+The experiment selects clips via balanced splits, feeds each clip's own
+KPMS code sequence, and collects the last GRU layer's hidden state
+(256-dim) at each of the `max_steps` timesteps. All trajectories are
+uniform length (the rollout does not break on done).
+
+**Requires**: RNN decoder checkpoint (`use_rnn_decoder=true`).
+
+**Outputs** (`outputs/moseq_hidden_dynamics/`):
+- `data/hidden_dynamics.npz` — per-behavior hidden states `[K, T, 256]`, codes, survivals
+- Also copied to `figures/data/hidden_dynamics.npz` for the figure script
+
+**Figure script** (`figures/plot_hidden_dynamics.py`):
+
+```bash
+cd moseq_jax/figures
+python plot_hidden_dynamics.py
+```
+
+Produces 6 figures (3 methods x 2 plot types):
+- `hidden_scatter_{pca,tsne,umap}.{pdf,png,svg}` — point cloud per behavior
+- `hidden_trajectories_{pca,tsne,umap}.{pdf,png,svg}` — connected paths colored by time (light=early, dark=late)
+
+Each figure has 3 panels (Walk | Groom | Rear) sharing the same embedding
+axes so the reader can compare which regions each behavior occupies.
 
 ## Architecture Support
 

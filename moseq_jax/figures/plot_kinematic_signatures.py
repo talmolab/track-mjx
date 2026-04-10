@@ -191,13 +191,37 @@ def plot_kinematic_signatures(
     axes[1].set_ylabel("Root Z height (m)")
     axes[1].set_title("Posture")
 
-    # --- Panel 3: Joint angular velocity ---
-    means = [joint_vels[b].mean() for b in BEHAVIORS]
-    sems = [joint_vels[b].std() / np.sqrt(len(joint_vels[b])) for b in BEHAVIORS]
-    axes[2].bar(x, means, yerr=sems, color=colors, alpha=0.8, capsize=3, width=0.6,
-                error_kw={"linewidth": 0.8})
+    # --- Panel 3: Joint motion (forelimbs vs hindlimbs) ---
+    fore_idx = list(range(25, 32)) + list(range(32, 40))
+    hind_idx = list(range(8, 14)) + list(range(14, 20))
+    fore_vels, hind_vels = {}, {}
+    for beh in BEHAVIORS:
+        fv, hv = [], []
+        for qpos in [np.asarray(q, dtype=np.float64) for q in data[beh][height]]:
+            fv.append(np.mean(np.abs(np.diff(qpos[:, fore_idx], axis=0)) / CTRL_DT))
+            hv.append(np.mean(np.abs(np.diff(qpos[:, hind_idx], axis=0)) / CTRL_DT))
+        fore_vels[beh] = np.array(fv)
+        hind_vels[beh] = np.array(hv)
+
+    w = 0.28
     for i, beh in enumerate(BEHAVIORS):
-        _strip_plot(axes[2], x[i], joint_vels[beh], colors[i], jitter_seed=i + 20)
+        fm = fore_vels[beh].mean()
+        fs = fore_vels[beh].std() / np.sqrt(len(fore_vels[beh]))
+        hm = hind_vels[beh].mean()
+        hs = hind_vels[beh].std() / np.sqrt(len(hind_vels[beh]))
+        axes[2].bar(x[i] - w / 2, fm, w, yerr=fs, color=colors[i], alpha=0.50,
+                    capsize=2, error_kw={"linewidth": 0.8}, edgecolor=colors[i], linewidth=0.8)
+        axes[2].bar(x[i] + w / 2, hm, w, yerr=hs, color=colors[i], alpha=0.90,
+                    capsize=2, error_kw={"linewidth": 0.8})
+        _strip_plot(axes[2], x[i] - w / 2, fore_vels[beh], colors[i], jitter_seed=i + 20)
+        _strip_plot(axes[2], x[i] + w / 2, hind_vels[beh], colors[i], jitter_seed=i + 30)
+
+    from matplotlib.patches import Patch
+    axes[2].legend(
+        handles=[Patch(facecolor="gray", alpha=0.50, label="Fore"),
+                 Patch(facecolor="gray", alpha=0.90, label="Hind")],
+        frameon=False, fontsize=5.5, loc="upper right",
+    )
     axes[2].set_ylabel("Joint angular vel (rad/s)")
     axes[2].set_title("Joint Motion")
 
@@ -212,26 +236,110 @@ def plot_kinematic_signatures(
     return fig, border_rect
 
 
+# Joint index groups (qpos indices, joints start at 7)
+# Rodent joint order: vertebra_1_extend(7), hip_L_supinate(8), hip_L_abduct(9),
+# hip_L_extend(10), knee_L(11), ankle_L(12), toe_L(13), hip_R_supinate(14),
+# hip_R_abduct(15), hip_R_extend(16), knee_R(17), ankle_R(18), toe_R(19),
+# vertebra_C11_extend(20), vertebra_cervical_1_bend(21), vertebra_axis_twist(22),
+# atlas(23), mandible(24), scapula_L_supinate(25), scapula_L_abduct(26),
+# scapula_L_extend(27), shoulder_L(28), shoulder_sup_L(29), elbow_L(30), wrist_L(31),
+# scapula_R_supinate(32), scapula_R_abduct(33), scapula_R_extend(34),
+# shoulder_R(35), shoulder_sup_R(36), elbow_R(37), wrist_R(38), finger_R(39)
+
+BODY_PART_INDICES = {
+    "Forelimbs": list(range(25, 32)) + list(range(32, 40)),  # scap+shoulder+elbow+wrist+finger
+    "Hindlimbs": list(range(8, 14)) + list(range(14, 20)),    # hip+knee+ankle+toe
+    "Spine": [7, 20, 21, 22, 23],                             # vertebra + atlas
+    "Head": [24],                                              # mandible
+}
+
+BODY_PART_COLORS_MAP = {
+    "Forelimbs": "#0072B2",
+    "Hindlimbs": "#D55E00",
+    "Spine": "#009E73",
+    "Head": "#CC79A7",
+}
+
+
+def plot_joint_motion_by_bodypart(
+    data: dict[str, dict[str, list[np.ndarray]]],
+    height: str,
+) -> tuple[plt.Figure, mpatches.FancyBboxPatch]:
+    """Bar chart: joint angular velocity broken down by body part per behavior.
+
+    Layout: one panel per body part, bars = behaviors (walk/groom/rear).
+    """
+    title = HEIGHT_LABELS[height]
+    body_parts = ["Forelimbs", "Hindlimbs", "Spine", "Head"]
+    n_parts = len(body_parts)
+    fig, axes = plt.subplots(1, n_parts, figsize=(7.5, 2.5))
+    x = np.arange(len(BEHAVIORS))
+    beh_colors = [BEHAVIOR_COLORS[b] for b in BEHAVIORS]
+    labels = [BEHAVIOR_LABELS[b] for b in BEHAVIORS]
+
+    # Ensure float arrays
+    panels_f = {
+        beh: [np.asarray(q, dtype=np.float64) for q in data[beh][height]]
+        for beh in BEHAVIORS
+    }
+
+    for pi, part in enumerate(body_parts):
+        ax = axes[pi]
+        indices = BODY_PART_INDICES[part]
+
+        part_vels = {}
+        for beh in BEHAVIORS:
+            vels = []
+            for qpos in panels_f[beh]:
+                joint_subset = qpos[:, indices]
+                angular_vel = np.abs(np.diff(joint_subset, axis=0)) / CTRL_DT
+                vels.append(np.mean(angular_vel))
+            part_vels[beh] = np.array(vels)
+
+        means = [part_vels[b].mean() for b in BEHAVIORS]
+        sems = [part_vels[b].std() / np.sqrt(len(part_vels[b])) for b in BEHAVIORS]
+        ax.bar(x, means, yerr=sems, color=beh_colors, alpha=0.8, capsize=3,
+               width=0.6, error_kw={"linewidth": 0.8})
+        for i, beh in enumerate(BEHAVIORS):
+            _strip_plot(ax, x[i], part_vels[beh], beh_colors[i], jitter_seed=pi * 10 + i)
+
+        ax.set_title(part)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        if pi == 0:
+            ax.set_ylabel("Joint angular vel (rad/s)")
+
+    fig.suptitle(title, fontsize=9, fontweight="bold", y=0.97)
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
+    border_rect = _add_rounded_border(fig, list(axes))
+    return fig, border_rect
+
+
 def main() -> None:
     _setup_nature_style()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     data = load_killer_data()
 
     for height in HEIGHTS:
+        # Original 3-panel figure
         fig, border_rect = plot_kinematic_signatures(data, height)
         stem = f"kinematic_signatures_{height}"
-        out_pdf = OUTPUT_DIR / f"{stem}.pdf"
-        out_png = OUTPUT_DIR / f"{stem}.png"
-        out_svg = OUTPUT_DIR / f"{stem}.svg"
-        fig.savefig(out_pdf)
-        fig.savefig(out_png)
+        for ext in ("pdf", "png"):
+            fig.savefig(OUTPUT_DIR / f"{stem}.{ext}")
         border_rect.set_facecolor("none")
-        fig.savefig(out_svg, transparent=True)
-        border_rect.set_facecolor("white")
+        fig.savefig(OUTPUT_DIR / f"{stem}.svg", transparent=True)
         plt.close(fig)
-        print(f"Saved: {out_pdf}")
-        print(f"Saved: {out_png}")
-        print(f"Saved: {out_svg}")
+        print(f"Saved: {stem}")
+
+        # Body-part breakdown figure
+        fig2, border_rect2 = plot_joint_motion_by_bodypart(data, height)
+        stem2 = f"joint_motion_bodypart_{height}"
+        for ext in ("pdf", "png"):
+            fig2.savefig(OUTPUT_DIR / f"{stem2}.{ext}")
+        border_rect2.set_facecolor("none")
+        fig2.savefig(OUTPUT_DIR / f"{stem2}.svg", transparent=True)
+        plt.close(fig2)
+        print(f"Saved: {stem2}")
 
 
 if __name__ == "__main__":

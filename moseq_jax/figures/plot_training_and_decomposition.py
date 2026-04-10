@@ -31,7 +31,6 @@ TRAIN_COLORS = {
     "RNN Distillation": "#0072B2",                # blue (Wong)
     "RNN Distillation + Decoder": "#009E73",       # green (Wong)
     "RNN Concat Discrete": "#E69F00",              # vermillion (Wong)
-    "RNN Concat Full": "#D55E00",                  # orange (Wong)
 }
 
 TRAIN_SERIES = {
@@ -49,11 +48,6 @@ TRAIN_SERIES = {
         "mean": "C2A (readout continuous) - decoder_only/episode_reward_mean",
         "min": "C2A (readout continuous) - decoder_only/episode_reward_mean__MIN",
         "max": "C2A (readout continuous) - decoder_only/episode_reward_mean__MAX",
-    },
-    "RNN Concat Full": {
-        "mean": "C2A (readout continuous) - moseq/episode_reward_mean",
-        "min": "C2A (readout continuous) - moseq/episode_reward_mean__MIN",
-        "max": "C2A (readout continuous) - moseq/episode_reward_mean__MAX",
     },
 }
 
@@ -107,7 +101,7 @@ def _plot_panel_a(ax: plt.Axes, data: dict[str, pd.DataFrame]) -> None:
             ax.axhline(ytick, color="#e0e0e0", linewidth=0.3, zorder=0)
 
     leg = ax.legend(
-        loc="upper left",
+        loc="lower right",
         frameon=True,
         framealpha=0.9,
         edgecolor="none",
@@ -198,7 +192,7 @@ def _plot_decomp_panel(
         handlelength=2.0,
         handletextpad=0.4,
         fancybox=True,
-        fontsize=5.5,
+        fontsize=7,
     )
     leg.get_frame().set_linewidth(0)
     leg.get_frame().set_boxstyle("round,pad=0.3,rounding_size=0.2")

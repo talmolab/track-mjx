@@ -1,13 +1,13 @@
-"""Render all KPMS syllable trajectories in a 5-column grid figure.
+"""Render selected KPMS syllable trajectories in a grid figure.
 
 Each cell shows XY (top-down) and XZ (side) projections side-by-side
-for one syllable.  5 columns, rows grow with number of syllables.
+for one syllable.  Default: syllables 0, 3, 5, 4 in a 2x2 grid.
 Transparent background.  Outputs SVG, PDF, and PNG.
 
 Usage:
     cd moseq_jax
     python figures/render_syllable_trajectory_grid.py
-    python figures/render_syllable_trajectory_grid.py --cols 4
+    python figures/render_syllable_trajectory_grid.py --syllables 0 3 5 4 --cols 2
 """
 
 import argparse
@@ -179,7 +179,8 @@ def render_syllable_grid(
     bodyparts: list[str],
     use_bodyparts: list[str],
     n_cols: int = 2,
-    top_n: int | None = 6,
+    top_n: int | None = 4,
+    syllable_ids: list[int] | None = None,
     cell_width: float = 2.0,
     fps: int = 30,
     pre: float = 0.167,
@@ -197,6 +198,9 @@ def render_syllable_grid(
         n_cols: Number of syllable columns in the grid.
         top_n: Keep only the *top_n* most popular syllables.
             ``None`` keeps all that pass the frequency filter.
+            Ignored when *syllable_ids* is provided.
+        syllable_ids: Explicit list of syllable indices to render,
+            in the given order.  Overrides *top_n*.
         cell_width: Width of each cell pair in inches.
 
     Returns:
@@ -217,18 +221,25 @@ def render_syllable_grid(
         sampling_options={"n_neighbors": 50},
     )
 
-    # Rank syllables by frequency and keep top_n
-    all_sylls = np.concatenate(
-        [results[k]["syllable"] for k in sorted(results.keys())]
-    )
-    unique, counts = np.unique(all_sylls, return_counts=True)
-    freq_order = unique[np.argsort(-counts)]
-    available = sorted(typical.keys())
-    ranked = [s for s in freq_order if s in available]
-    if top_n is not None:
-        ranked = ranked[:top_n]
-
-    syllable_ixs = ranked
+    if syllable_ids is not None:
+        # Use the explicit list; warn about missing syllables
+        available = set(typical.keys())
+        missing = [s for s in syllable_ids if s not in available]
+        if missing:
+            print(f"WARNING: syllables {missing} not in typical trajectories")
+        syllable_ixs = [s for s in syllable_ids if s in available]
+    else:
+        # Rank syllables by frequency and keep top_n
+        all_sylls = np.concatenate(
+            [results[k]["syllable"] for k in sorted(results.keys())]
+        )
+        unique, counts = np.unique(all_sylls, return_counts=True)
+        freq_order = unique[np.argsort(-counts)]
+        available = sorted(typical.keys())
+        ranked = [s for s in freq_order if s in available]
+        if top_n is not None:
+            ranked = ranked[:top_n]
+        syllable_ixs = ranked
     n_syll = len(syllable_ixs)
     n_rows = math.ceil(n_syll / n_cols)
     print(f"Rendering {n_syll} syllables in {n_rows}x{n_cols} grid (xy + xz)")
@@ -328,8 +339,13 @@ def main():
     parser.add_argument("--model-name", default=DEFAULT_MODEL)
     parser.add_argument("--cols", type=int, default=2)
     parser.add_argument(
-        "--top-n", type=int, default=6,
-        help="Show only the top N most popular syllables (0 = all)",
+        "--syllables", type=int, nargs="+", default=[0, 3, 5, 4],
+        help="Explicit syllable indices to render (in order)",
+    )
+    parser.add_argument(
+        "--top-n", type=int, default=4,
+        help="Show only the top N most popular syllables (0 = all). "
+        "Ignored when --syllables is given.",
     )
     parser.add_argument("--cell-width", type=float, default=2.0)
     parser.add_argument(
@@ -346,6 +362,7 @@ def main():
         coordinates, results, bodyparts, use_bodyparts,
         n_cols=args.cols,
         top_n=args.top_n or None,
+        syllable_ids=args.syllables,
         cell_width=args.cell_width,
     )
 

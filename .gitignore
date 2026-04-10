@@ -12,6 +12,7 @@ tmp/
 moseq_jax/figures/outputs
 SCAMPER/
 trained_mimic_ckpts/
+mech-complexity/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

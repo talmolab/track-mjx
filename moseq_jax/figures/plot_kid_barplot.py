@@ -18,7 +18,7 @@ import matplotlib.patches as mpatches
 import numpy as np
 
 SCRIPT_DIR = Path(__file__).parent
-OUTPUT_DIR = SCRIPT_DIR / "outputs"
+OUTPUT_DIR = SCRIPT_DIR / "outputs" / "kid_barplot"
 RESULTS_PATH = SCRIPT_DIR.parent / "outputs" / "moseq_inception_distance" / "results.json"
 
 # Display names and colors (Nature colorblind-safe)

@@ -35,7 +35,7 @@ import numpy as np
 SCRIPT_DIR = Path(__file__).parent
 MOSEQ_DIR = SCRIPT_DIR.parent
 REPO_ROOT = MOSEQ_DIR.parent
-OUTPUT_DIR = SCRIPT_DIR / "outputs"
+OUTPUT_DIR = SCRIPT_DIR / "outputs" / "behavior_parade_trail"
 
 for _p in (str(MOSEQ_DIR), str(REPO_ROOT)):
     if _p not in sys.path:

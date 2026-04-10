@@ -27,7 +27,7 @@ from sklearn.decomposition import PCA
 # ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = SCRIPT_DIR / "data"
-OUTPUT_DIR = SCRIPT_DIR / "outputs"
+OUTPUT_DIR = SCRIPT_DIR / "outputs" / "hidden_dynamics"
 
 # ── Behavior config ─────────────────────────────────────────────────────────
 BEHAVIORS = ["walk", "groom", "rear"]

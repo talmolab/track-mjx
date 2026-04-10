@@ -1140,8 +1140,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--output-dir",
-        default=str(SCRIPT_DIR / "outputs"),
-        help="Output directory for figures (default: outputs/)",
+        default=str(SCRIPT_DIR / "outputs" / "pipeline"),
+        help="Output directory for figures (default: outputs/pipeline/)",
     )
     args = parser.parse_args()
 

@@ -21,7 +21,7 @@ import numpy as np
 # ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = SCRIPT_DIR / "data"
-OUTPUT_DIR = SCRIPT_DIR / "outputs"
+OUTPUT_DIR = SCRIPT_DIR / "outputs" / "code_sequence_displacement"
 
 # ── Behaviors and conditions ─────────────────────────────────────────────────
 BEHAVIORS = ["groom", "walk", "rear"]

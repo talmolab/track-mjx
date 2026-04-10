@@ -21,7 +21,7 @@ from scipy.signal import welch
 
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = SCRIPT_DIR.parent / "outputs" / "moseq_gait_dynamics"
-OUTPUT_DIR = SCRIPT_DIR / "outputs"
+OUTPUT_DIR = SCRIPT_DIR / "outputs" / "psd_overlay"
 
 CONDITION_COLORS = {
     "mimic_mjx": "#D55E00",

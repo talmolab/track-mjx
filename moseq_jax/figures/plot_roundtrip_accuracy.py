@@ -19,7 +19,7 @@ import numpy as np
 
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = SCRIPT_DIR / "data"
-OUTPUT_DIR = SCRIPT_DIR / "outputs"
+OUTPUT_DIR = SCRIPT_DIR / "outputs" / "roundtrip_accuracy"
 
 # Wong Nature Methods 2011 palette
 CONDITION_COLORS = {

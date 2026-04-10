@@ -33,7 +33,7 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs" / "hidden_dynamics"
 BEHAVIORS = ["walk", "groom", "rear"]
 BEHAVIOR_LABELS = {
     "walk": "Walking Code",
-    "groom": "Grooming Code",
+    "groom": "Immobility Code",
     "rear": "Rearing Code",
 }
 BEHAVIOR_COLORS = {

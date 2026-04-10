@@ -39,7 +39,7 @@ BEHAVIOR_COLORS = {
 
 BEHAVIOR_LABELS = {
     "walk": "Walk",
-    "groom": "Groom",
+    "groom": "Immobility",
     "rear": "Rear",
 }
 
@@ -140,7 +140,7 @@ def plot_kinematic_signatures(
 ) -> tuple[plt.Figure, mpatches.FancyBboxPatch]:
     """1-row x 3-col bar chart for one height condition.
 
-    Panels: XY speed | Root Z height | Joint angular velocity.
+    Panels: XY speed | Root Z height | Joint angular velocity (fore vs hind).
     """
     title = HEIGHT_LABELS[height]
     fig, axes = plt.subplots(1, 3, figsize=(5.5, 2.5))
@@ -151,25 +151,33 @@ def plot_kinematic_signatures(
     # --- Compute per-behavior kinematic features ---
     xy_speeds = {}
     z_heights = {}
-    joint_vels = {}
+
+    # Pure limb-swing joints only (6 per group, matched):
+    #   Fore: shoulder, elbow, wrist (L+R)
+    #   Hind: hip_extend, knee, ankle (L+R)
+    fore_idx = [28, 30, 31, 35, 37, 38]
+    hind_idx = [10, 11, 12, 16, 17, 18]
+    fore_vels, hind_vels = {}, {}
 
     for beh in BEHAVIORS:
         trajs = data[beh][height]
-        speeds, heights_z, vels = [], [], []
+        speeds, heights_z = [], []
+        fv, hv = [], []
         for qpos in trajs:
+            qpos = np.asarray(qpos, dtype=np.float64)
             # XY speed
             xy = qpos[:, :2]
             dists = np.linalg.norm(np.diff(xy, axis=0), axis=1)
             speeds.append(np.mean(dists) / CTRL_DT)
             # Root Z height
             heights_z.append(np.mean(qpos[:, 2]))
-            # Joint angular velocity (joints start at index 7)
-            joints = qpos[:, 7:]
-            angular_vel = np.abs(np.diff(joints, axis=0)) / CTRL_DT
-            vels.append(np.mean(angular_vel))
+            # Fore / hind angular velocity
+            fv.append(np.mean(np.abs(np.diff(qpos[:, fore_idx], axis=0)) / CTRL_DT))
+            hv.append(np.mean(np.abs(np.diff(qpos[:, hind_idx], axis=0)) / CTRL_DT))
         xy_speeds[beh] = np.array(speeds)
         z_heights[beh] = np.array(heights_z)
-        joint_vels[beh] = np.array(vels)
+        fore_vels[beh] = np.array(fv)
+        hind_vels[beh] = np.array(hv)
 
     # --- Panel 1: XY speed ---
     means = [xy_speeds[b].mean() for b in BEHAVIORS]
@@ -192,17 +200,6 @@ def plot_kinematic_signatures(
     axes[1].set_title("Posture")
 
     # --- Panel 3: Joint motion (forelimbs vs hindlimbs) ---
-    fore_idx = list(range(25, 32)) + list(range(32, 40))
-    hind_idx = list(range(8, 14)) + list(range(14, 20))
-    fore_vels, hind_vels = {}, {}
-    for beh in BEHAVIORS:
-        fv, hv = [], []
-        for qpos in [np.asarray(q, dtype=np.float64) for q in data[beh][height]]:
-            fv.append(np.mean(np.abs(np.diff(qpos[:, fore_idx], axis=0)) / CTRL_DT))
-            hv.append(np.mean(np.abs(np.diff(qpos[:, hind_idx], axis=0)) / CTRL_DT))
-        fore_vels[beh] = np.array(fv)
-        hind_vels[beh] = np.array(hv)
-
     w = 0.28
     for i, beh in enumerate(BEHAVIORS):
         fm = fore_vels[beh].mean()
@@ -222,7 +219,7 @@ def plot_kinematic_signatures(
                  Patch(facecolor="gray", alpha=0.90, label="Hind")],
         frameon=False, fontsize=5.5, loc="upper right",
     )
-    axes[2].set_ylabel("Joint angular vel (rad/s)")
+    axes[2].set_ylabel("Angular vel (rad/s)")
     axes[2].set_title("Joint Motion")
 
     # Shared formatting
@@ -231,7 +228,13 @@ def plot_kinematic_signatures(
         ax.set_xticklabels(labels)
 
     fig.suptitle(title, fontsize=9, fontweight="bold", y=0.97)
-    fig.tight_layout(rect=[0, 0, 1, 0.90])
+    fig.tight_layout(rect=[0, 0.06, 1, 0.90])
+
+    # Bottom legend: which joints are Fore vs Hind
+    fig.text(0.5, 0.01,
+             "Fore: shoulder, elbow, wrist (L+R)    |    Hind: hip, knee, ankle (L+R)",
+             ha="center", va="bottom", fontsize=5.5, color="#555555",
+             fontstyle="italic")
     border_rect = _add_rounded_border(fig, list(axes))
     return fig, border_rect
 
@@ -247,10 +250,10 @@ def plot_kinematic_signatures(
 # shoulder_R(35), shoulder_sup_R(36), elbow_R(37), wrist_R(38), finger_R(39)
 
 BODY_PART_INDICES = {
-    "Forelimbs": list(range(25, 32)) + list(range(32, 40)),  # scap+shoulder+elbow+wrist+finger
-    "Hindlimbs": list(range(8, 14)) + list(range(14, 20)),    # hip+knee+ankle+toe
-    "Spine": [7, 20, 21, 22, 23],                             # vertebra + atlas
-    "Head": [24],                                              # mandible
+    "Forelimbs": [28, 30, 31, 35, 37, 38],   # shoulder+elbow+wrist (L+R)
+    "Hindlimbs": [10, 11, 12, 16, 17, 18],   # hip_extend+knee+ankle (L+R)
+    "Spine": [7, 20, 21, 22, 23],             # vertebra + atlas
+    "Head": [24],                              # mandible
 }
 
 BODY_PART_COLORS_MAP = {

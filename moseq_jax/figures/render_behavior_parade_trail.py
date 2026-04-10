@@ -51,7 +51,7 @@ PARADE_DATA = MOSEQ_DIR / "outputs" / "moseq_behavior_parade" / "data" / "parade
 PARADE_META = MOSEQ_DIR / "outputs" / "moseq_behavior_parade" / "code_selection.json"
 
 BEHAVIOR_ORDER = ["rear", "walk", "groom"]
-BEHAVIOR_LABELS = {"walk": "Walk", "groom": "Groom", "rear": "Rear"}
+BEHAVIOR_LABELS = {"walk": "Walk", "groom": "Immobility", "rear": "Rear"}
 
 # Behavior colors (matching experiments/shared/plotting.py)
 BEHAVIOR_RGB = {

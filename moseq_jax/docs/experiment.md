@@ -285,19 +285,44 @@ uniform length (the rollout does not break on done).
 - `data/hidden_dynamics.npz` — per-behavior hidden states `[K, T, 256]`, codes, survivals
 - Also copied to `figures/data/hidden_dynamics.npz` for the figure script
 
-**Figure script** (`figures/plot_hidden_dynamics.py`):
+**Figure script 1 — 3D PCA** (`figures/plot_hidden_dynamics.py`):
 
 ```bash
 cd moseq_jax/figures
 python plot_hidden_dynamics.py
 ```
 
-Produces 6 figures (3 methods x 2 plot types):
-- `hidden_scatter_{pca,tsne,umap}.{pdf,png,svg}` — point cloud per behavior
-- `hidden_trajectories_{pca,tsne,umap}.{pdf,png,svg}` — connected paths colored by time (light=early, dark=late)
+Produces 2 figures (3 panels each: Walk | Groom | Rear, shared PCA axes):
+- `hidden_scatter_pca3d.{pdf,png,svg}` — 3D point cloud per behavior
+- `hidden_trajectories_pca3d.{pdf,png,svg}` — 3D connected paths colored by time (light=early, dark=late)
 
-Each figure has 3 panels (Walk | Groom | Rear) sharing the same embedding
-axes so the reader can compare which regions each behavior occupies.
+PCA is fitted on all behaviors jointly so panels share the same coordinate
+system. Each panel shows one behavior to reveal which regions it occupies.
+
+**Figure script 2 — DSA** (`figures/plot_hidden_dsa.py`):
+
+```bash
+cd moseq_jax/figures
+python plot_hidden_dsa.py                 # compute + plot
+python plot_hidden_dsa.py --replot        # replot from cached distances
+python plot_hidden_dsa.py --n_delays 10 --rank 15   # custom DSA params
+```
+
+Dynamical Similarity Analysis (Ostrow et al. 2023): treats each clip as a
+separate dynamical system (30 total), fits delay-embedded DMD, and compares
+pairwise. Shows that clips with the same behavior code have similar dynamics
+(low within-behavior distance) while clips with different codes have
+dissimilar dynamics (high between-behavior distance).
+
+Uses the `dsa-metric` package if installed (`pip install dsa-metric`),
+otherwise falls back to a lightweight eigenvalue-spectrum comparison.
+Adapted from `mech-complexity/dsa.py` (Charles Xu).
+
+Produces 2 figures:
+- `dsa_heatmap.{pdf,png,svg}` — 30×30 pairwise distance heatmap (block-diagonal structure)
+- `dsa_within_between.{pdf,png,svg}` — within-behavior vs between-behavior distance bar chart
+
+Cached distance matrix saved to `figures/data/dsa_distances.npz` for fast replotting.
 
 ## Architecture Support
 

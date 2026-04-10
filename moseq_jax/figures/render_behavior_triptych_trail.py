@@ -48,7 +48,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 BEHAVIORS = ["walk", "groom", "rear"]
-BEHAVIOR_LABELS = {"walk": "Walk", "groom": "Groom", "rear": "Rear"}
+BEHAVIOR_LABELS = {"walk": "Walk", "groom": "Immobility", "rear": "Rear"}
 
 # Behavior colors (matching experiments/shared/plotting.py)
 BEHAVIOR_RGB = {

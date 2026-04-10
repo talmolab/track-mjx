@@ -196,3 +196,7 @@ cython_debug/
 .claude
 scratch
 .nodeenv/
+.local/node/
+node_modules/
+package.json
+package-lock.json

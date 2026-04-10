@@ -15,6 +15,7 @@ Nine experiment scripts evaluate the KPMS Code2Act decoder:
 | 7 | `run_behavior_parade.py` | `behavior_parade_exp.yaml` | Behavior transition parade — 10 bodies, top-down view, walk→groom→rear sequence |
 | 8 | `run_syllable_viz.py` | `syllable_viz_exp.yaml` | KPMS syllable 3D visualization — interactive Plotly trajectories, frequency/duration stats, dendrogram |
 | 9 | `run_inception_distance.py` | `inception_distance_exp.yaml` | FID/KID inception distance — generative model distribution quality vs real mocap |
+| 10 | `run_gait_dynamics.py` | `gait_dynamics_exp.yaml` | Gait dynamics PSD — Code2Act vs Mimic-MJX walking frequency comparison |
 
 All experiments save outputs (plots, videos, npz data) to disk under `outputs/`.
 
@@ -231,6 +232,29 @@ runs with the same config skip training and load directly.
 - `kid_barplot.png` — KID comparison with split baseline
 - `rollouts_{method}.npz` — raw rollout qpos per method
 - `vae_cache/` — cached VAE weights (reused across runs)
+
+### Experiment 10: Gait Dynamics PSD
+
+```bash
+python -m experiments.run_gait_dynamics
+
+# Fewer clips for quick test
+python -m experiments.run_gait_dynamics gait_dynamics.k_clips=3
+
+# Looser walking filter
+python -m experiments.run_gait_dynamics gait_dynamics.min_xy_speed=0.01
+```
+
+Selects K clips that are purely walking (XY speed always above threshold),
+runs both Code2Act and Mimic-MJX on the same clips, and compares the power
+spectral density (PSD) of hind limb joint angles. If the dominant gait
+frequencies match, the decoder preserves the temporal dynamics of locomotion.
+
+**Outputs** (`outputs/moseq_gait_dynamics/`):
+- `psd_overlay.{png,pdf}` — per-joint PSD curves: Mimic (solid) vs Code2Act (dashed)
+- `dominant_frequencies.{png,pdf}` — grouped bar chart of peak gait frequencies
+- `trajectory_overlay.{png,pdf}` — time-domain joint angle overlay for best walking clip
+- `summary.json` — per-clip dominant frequencies and metadata
 
 ## Architecture Support
 

@@ -53,6 +53,8 @@ C_DISTILL_DARK = "#C07030"
 C_Z0 = "#5B83AC"
 C_Z0_DARK = "#3A6390"
 C_STAC = "#777777"
+C_REWARD = "#E06040"
+C_REWARD_DARK = "#B84030"
 
 STRIPE_COLORS = ["#7BA3CC", "#B090C0", "#7BC47F", "#CC9966", "#6699BB", "#C08080"]
 
@@ -735,6 +737,25 @@ def draw_code2act_pipeline(ax):
            color=C_FEEDBACK, lw=1.2)
 
     # =====================================================================
+    # Reward arrow: upward from Physics Sim with rodent reward image
+    # =====================================================================
+    # --- Rodent reward image directly above Physics Sim ---
+    reward_img_path = SCRIPT_DIR / "data" / "rodent_reward.png"
+    if reward_img_path.exists():
+        reward_img = mpimg.imread(str(reward_img_path))
+        rh, rw = reward_img.shape[:2]
+        aspect = rw / rh
+        display_h = 2.00
+        display_w = display_h * aspect
+        img_bottom = main_y + phys_h / 2 - 0.20
+        extent = [
+            phys_cx - display_w / 2, phys_cx + display_w / 2,
+            img_bottom, img_bottom + display_h,
+        ]
+        ax.imshow(reward_img, extent=extent, aspect="auto", zorder=3,
+                  clip_on=True)
+
+    # =====================================================================
     # Top row: Encoder (frozen) directly above Distill Head
     # =====================================================================
     enc_x = dh_x
@@ -774,10 +795,10 @@ def draw_code2act_pipeline(ax):
 
 def make_code2act_figure(output_dir: Path):
     """Generate Figure 2: Code2Act inference pipeline."""
-    fig, ax = plt.subplots(1, 1, figsize=(15, 5))
+    fig, ax = plt.subplots(1, 1, figsize=(15, 7))
 
     ax.set_xlim(-0.25, 9.40)
-    ax.set_ylim(0.05, 3.10)
+    ax.set_ylim(0.05, 4.80)
     ax.set_aspect("equal")
     ax.axis("off")
 

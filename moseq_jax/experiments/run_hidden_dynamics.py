@@ -1,8 +1,9 @@
 """Experiment: RNN Hidden State Dynamics.
 
-Records GRU hidden states at each timestep for walk/groom/rear code
-sequences to visualize behavior-specific dynamical regimes in the
-recurrent latent space.
+Analyzes per-code kinematics in the reference data to find the most
+representative code for each behavior type (walking, rearing, immobility),
+then holds each code for 250 frames with K bodies to collect hidden states,
+qpos, and render verification ghost videos.
 
 Usage:
     cd moseq_jax
@@ -21,6 +22,7 @@ import sys
 from collections import OrderedDict
 from pathlib import Path
 
+import h5py
 import hydra
 import jax
 import jax.numpy as jnp
@@ -41,17 +43,116 @@ from experiments.shared.checkpoint_utils import (
     load_moseq_checkpoint,
     make_inference_fn,
 )
-from experiments.shared.clip_selection import (
-    load_balanced_splits,
-    select_clips_by_behavior,
+from experiments.shared.clip_selection import load_balanced_splits
+from experiments.shared.ghost_rendering import (
+    build_ghost_model,
+    render_ghost_video,
 )
-from experiments.shared.code_sequences import make_correct_sequences
+from experiments.shared.plotting import get_trajectory_colors
 
 log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Custom rollout that captures hidden states
+# Per-code kinematic analysis on reference data
+# ---------------------------------------------------------------------------
+
+
+def analyze_code_kinematics(
+    ref_qpos: np.ndarray,
+    all_codes: np.ndarray,
+    min_bout_frames: int = 5,
+) -> dict[int, dict]:
+    """Compute per-code kinematic signatures from reference data.
+
+    For each KPMS code, extracts all bouts across all clips and computes:
+      - z_rise: mean change in root Z from bout start to end
+      - xy_disp: mean total XY path length during bout
+      - xyz_disp: mean endpoint displacement in XYZ
+
+    Args:
+        ref_qpos: ``[n_clips, clip_len, nq]`` reference joint positions.
+        all_codes: ``[n_clips, clip_len]`` KPMS code assignments.
+        min_bout_frames: Ignore bouts shorter than this.
+
+    Returns:
+        ``{code_id: {n_bouts, z_rise_mean, xy_disp_mean, xyz_disp_mean}}``
+    """
+    n_clips, clip_len = all_codes.shape
+    unique_codes = np.unique(all_codes)
+    stats = {}
+
+    for code_id in unique_codes:
+        z_rises, xy_disps, xyz_disps = [], [], []
+
+        for ci in range(n_clips):
+            seq = all_codes[ci]
+            qp = ref_qpos[ci]
+
+            # Find contiguous bouts of this code
+            mask = seq == code_id
+            if not mask.any():
+                continue
+
+            # Extract bout boundaries
+            diff = np.diff(mask.astype(int))
+            starts = list(np.where(diff == 1)[0] + 1)
+            if mask[0]:
+                starts.insert(0, 0)
+            ends = list(np.where(diff == -1)[0] + 1)
+            if mask[-1]:
+                ends.append(clip_len)
+
+            for s, e in zip(starts, ends):
+                if e - s < min_bout_frames:
+                    continue
+                bout = qp[s:e]
+                z_rises.append(float(bout[-1, 2] - bout[0, 2]))
+                xy = bout[:, :2]
+                xy_disps.append(
+                    float(np.sum(np.linalg.norm(np.diff(xy, axis=0), axis=1)))
+                )
+                xyz_disps.append(
+                    float(np.linalg.norm(bout[-1, :3] - bout[0, :3]))
+                )
+
+        if z_rises:
+            stats[int(code_id)] = {
+                "n_bouts": len(z_rises),
+                "z_rise_mean": float(np.mean(z_rises)),
+                "xy_disp_mean": float(np.mean(xy_disps)),
+                "xyz_disp_mean": float(np.mean(xyz_disps)),
+            }
+
+    return stats
+
+
+def select_behavior_codes(
+    code_stats: dict[int, dict],
+    min_bouts: int = 3,
+) -> dict[str, int]:
+    """Select the best code for each behavior type.
+
+    Args:
+        code_stats: Output of :func:`analyze_code_kinematics`.
+        min_bouts: Minimum number of bouts to consider a code.
+
+    Returns:
+        ``{"walk": code_id, "rear": code_id, "immobility": code_id}``
+    """
+    eligible = {
+        c: s for c, s in code_stats.items() if s["n_bouts"] >= min_bouts
+    }
+
+    walk_code = max(eligible, key=lambda c: eligible[c]["xy_disp_mean"])
+    rear_code = max(eligible, key=lambda c: eligible[c]["z_rise_mean"])
+    imm_code = min(eligible, key=lambda c: eligible[c]["xyz_disp_mean"])
+
+    return {"walk": walk_code, "rear": rear_code, "immobility": imm_code}
+
+
+# ---------------------------------------------------------------------------
+# Custom rollout that captures hidden states + qpos
 # ---------------------------------------------------------------------------
 
 
@@ -67,29 +168,7 @@ def run_rollout_with_hidden(
     jit_reset=None,
     jit_step=None,
 ) -> dict[str, np.ndarray]:
-    """Run a single rollout collecting GRU hidden states at every step.
-
-    The rollout never breaks on ``state.done`` so that all trajectories
-    have uniform length ``max_steps`` (required for stacking into a
-    regular array downstream).
-
-    Args:
-        env: ``MoSeqImitation`` environment.
-        inference_fn: JIT-compiled RNN inference function.
-        params: ``(normalizer_state, policy_params)`` tuple.
-        ppo_networks: Network object (for ``init_hidden``).
-        key: PRNG key.
-        max_steps: Rollout length.
-        code_override: ``[max_steps]`` int array to override codes.
-        reset_clip_idx: Clip index to reset to.
-        jit_reset: Pre-compiled ``jax.jit(env.reset)``.
-        jit_step: Pre-compiled ``jax.jit(env.step)``.
-
-    Returns:
-        Dict with ``hidden_states`` ``[T, hidden_dim]``,
-        ``code_indices`` ``[T]``, ``rewards`` ``[T]``,
-        ``survival`` int.
-    """
+    """Run a single rollout collecting GRU hidden states and qpos."""
     if jit_reset is None:
         jit_reset = jax.jit(env.reset)
     if jit_step is None:
@@ -107,11 +186,11 @@ def run_rollout_with_hidden(
 
     hidden_list: list[np.ndarray] = []
     code_list: list[int] = []
+    qpos_list: list[np.ndarray] = []
     reward_list: list[float] = []
-    survival = max_steps  # updated on first done
+    survival = max_steps
 
     for t in range(max_steps):
-        # Override code observation
         if code_override is not None:
             stacked = []
             for si in range(_code_stack_size):
@@ -132,16 +211,15 @@ def run_rollout_with_hidden(
             extras,
         )
 
-        # Record hidden state (last GRU layer, unbatched)
         hidden_list.append(np.array(hidden[-1][0]))
 
-        # Record code index
         if "code_idx" in extras:
             code_list.append(int(extras["code_idx"]))
         elif "indices" in extras:
             code_list.append(int(extras["indices"]))
 
-        # Step environment
+        qpos_list.append(np.array(state.data.qpos))
+
         state = jit_step(state, action)
         reward_list.append(float(state.reward))
 
@@ -149,9 +227,10 @@ def run_rollout_with_hidden(
             survival = t + 1
 
     return {
-        "hidden_states": np.array(hidden_list),   # [T, hidden_dim]
-        "code_indices": np.array(code_list),       # [T]
-        "rewards": np.array(reward_list),          # [T]
+        "hidden_states": np.array(hidden_list),
+        "code_indices": np.array(code_list),
+        "qpos": np.array(qpos_list),
+        "rewards": np.array(reward_list),
         "survival": survival,
     }
 
@@ -186,19 +265,64 @@ def main(cfg: DictConfig) -> None:
     params = (norm_state, policy_params)
 
     # ------------------------------------------------------------------
-    # Load codes and splits
+    # Load codes and reference data
     # ------------------------------------------------------------------
     codes_data = np.load(cfg.data.codes_path)
+    all_codes = codes_data["all_codes"]  # [n_clips, clip_len]
     test_codes = codes_data["test_codes"]
+    train_idx = codes_data["train_indices"]
+    test_idx = codes_data["test_indices"]
+    all_idx = np.concatenate([train_idx, test_idx])
+
     splits = load_balanced_splits(cfg.data.balanced_split_path)
     test_indices = splits["balanced"]["test_indices"]
 
+    # Load reference qpos for kinematic analysis
+    clip_len = int(ckpt_cfg.env_config.clip_length)
+    with h5py.File(cfg.data.reference_data_path, "r") as h5:
+        qpos_flat = h5["qpos"][:]
+    n_total_clips = qpos_flat.shape[0] // clip_len
+    qpos_all = qpos_flat[: n_total_clips * clip_len].reshape(
+        n_total_clips, clip_len, -1,
+    )
+    ref_qpos = qpos_all[all_idx]  # [484, 250, 74]
+
     # ------------------------------------------------------------------
-    # Build environment (same pattern as other experiments)
+    # Analyze per-code kinematics → select 3 codes
+    # ------------------------------------------------------------------
+    log.info("Analyzing per-code kinematics in reference data...")
+    code_stats = analyze_code_kinematics(ref_qpos, all_codes)
+
+    log.info(
+        f"{'Code':>4} {'Bouts':>6} {'Z Rise':>10} {'XY Disp':>10} "
+        f"{'XYZ Disp':>10}"
+    )
+    for c in sorted(code_stats.keys()):
+        s = code_stats[c]
+        log.info(
+            f"{c:>4} {s['n_bouts']:>6} {s['z_rise_mean']:>10.4f} "
+            f"{s['xy_disp_mean']:>10.4f} {s['xyz_disp_mean']:>10.4f}"
+        )
+
+    min_bouts = int(cfg.get("min_bouts", 3))
+    selected_codes = select_behavior_codes(code_stats, min_bouts=min_bouts)
+
+    for beh, code_id in selected_codes.items():
+        s = code_stats[code_id]
+        log.info(
+            f"  {beh}: code {code_id} "
+            f"(z_rise={s['z_rise_mean']:.4f}, "
+            f"xy_disp={s['xy_disp_mean']:.4f}, "
+            f"xyz_disp={s['xyz_disp_mean']:.4f}, "
+            f"n_bouts={s['n_bouts']})"
+        )
+
+    # ------------------------------------------------------------------
+    # Build environment
     # ------------------------------------------------------------------
     test_clips = ReferenceClips(
         data_path=cfg.data.reference_data_path,
-        n_frames_per_clip=int(ckpt_cfg.env_config.clip_length),
+        n_frames_per_clip=clip_len,
         keep_clips_idx=np.array(test_indices),
     )
     _, _, env_cfg = utils.prepare_config(ckpt_cfg)
@@ -214,66 +338,90 @@ def main(cfg: DictConfig) -> None:
 
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
-
     inf_fn = make_inference_fn(ppo_networks, use_rnn=True, deterministic=True)
 
+    n_test_clips = test_clips.qpos.shape[0]
+    log.info(f"Test clips: {n_test_clips}")
+
     # ------------------------------------------------------------------
-    # Select clips and run rollouts
+    # Run rollouts: 3 codes × K bodies
     # ------------------------------------------------------------------
     K = int(cfg.K)
     seed = int(cfg.seed)
     max_steps = int(cfg.max_steps)
-    behaviors = ["walk", "groom", "rear"]
-
-    selected = select_clips_by_behavior(
-        splits, "test", k_per_behavior=K, seed=seed,
-    )
 
     save_dict: dict[str, np.ndarray] = {}
+    save_dict["selected_codes"] = np.array(
+        [(beh, code_id) for beh, code_id in selected_codes.items()],
+        dtype=object,
+    )
 
-    for beh in behaviors:
-        beh_indices = selected.get(beh, [])[:K]
-        if not beh_indices:
-            log.warning(f"No clips for {beh}, skipping")
-            continue
-
-        code_seqs = make_correct_sequences(test_codes, beh_indices, max_steps)
+    for beh, code_id in selected_codes.items():
+        code_seq = np.full(max_steps, code_id, dtype=np.int32)
 
         beh_hidden: list[np.ndarray] = []
+        beh_qpos: list[np.ndarray] = []
         beh_codes: list[np.ndarray] = []
-        beh_survivals: list[int] = []
+        beh_rewards: list[np.ndarray] = []
 
         log.info(
-            f"Running {len(beh_indices)} {beh} clips "
-            f"(max_steps={max_steps})..."
+            f"\nRunning {K} rollouts for {beh} (code {code_id}, "
+            f"{max_steps} frames)..."
         )
 
-        for ki, ci in enumerate(beh_indices):
+        # Random starting clips for each body
+        rng = np.random.RandomState(seed)
+        start_clips = rng.choice(n_test_clips, size=K, replace=False)
+
+        for ki in range(K):
             key = jax.random.PRNGKey(seed + ki * 1000)
             result = run_rollout_with_hidden(
-                env,
-                inf_fn,
-                params,
-                ppo_networks,
-                key,
+                env, inf_fn, params, ppo_networks, key,
                 max_steps=max_steps,
-                code_override=code_seqs[ki],
-                reset_clip_idx=ci,
-                jit_reset=jit_reset,
-                jit_step=jit_step,
+                code_override=code_seq,
+                reset_clip_idx=int(start_clips[ki]),
+                jit_reset=jit_reset, jit_step=jit_step,
             )
             beh_hidden.append(result["hidden_states"])
+            beh_qpos.append(result["qpos"])
             beh_codes.append(result["code_indices"])
-            beh_survivals.append(result["survival"])
+            beh_rewards.append(result["rewards"])
             log.info(
-                f"  {beh} clip {ki}: "
-                f"survival={result['survival']}/{max_steps}"
+                f"  body {ki}: survival={result['survival']}/{max_steps}, "
+                f"mean_reward={result['rewards'].mean():.1f}"
             )
 
-        # Stack into regular arrays [K, T, dim]
         save_dict[f"hidden_{beh}"] = np.stack(beh_hidden)
+        save_dict[f"qpos_{beh}"] = np.stack(beh_qpos)
         save_dict[f"codes_{beh}"] = np.stack(beh_codes)
-        save_dict[f"survivals_{beh}"] = np.array(beh_survivals)
+        save_dict[f"rewards_{beh}"] = np.stack(beh_rewards)
+
+        # ----------------------------------------------------------
+        # Render ghost video
+        # ----------------------------------------------------------
+        traj_colors = get_trajectory_colors(K)
+
+        log.info(f"  Rendering ghost video ({K} bodies)...")
+        ghost_model, base_nq = build_ghost_model(
+            env,
+            num_ghosts=K - 1,
+            ghost_colors=traj_colors[1:],
+            camera_distance=0.8,
+            camera_elevation=-30.0,
+            camera_azimuth=135.0,
+        )
+
+        video_path = data_dir / f"verify_{beh}_code{code_id}.mp4"
+        render_ghost_video(
+            ghost_model=ghost_model,
+            base_nq=base_nq,
+            trajectories_qpos=[q for q in beh_qpos],
+            code_sequences=[c for c in beh_codes],
+            trajectory_colors=traj_colors,
+            output_path=video_path,
+            title=f"{beh} (code {code_id}, n={K})",
+        )
+        log.info(f"  Saved: {video_path}")
 
     # ------------------------------------------------------------------
     # Save
@@ -282,7 +430,6 @@ def main(cfg: DictConfig) -> None:
     np.savez_compressed(out_path, **save_dict)
     log.info(f"Saved: {out_path}")
 
-    # Copy to figures/data for the plotting script
     fig_data_dir = MOSEQ_DIR / "figures" / "data"
     fig_data_dir.mkdir(parents=True, exist_ok=True)
     dst = fig_data_dir / "hidden_dynamics.npz"
@@ -290,14 +437,16 @@ def main(cfg: DictConfig) -> None:
     log.info(f"Copied to: {dst}")
 
     # Summary
-    for beh in behaviors:
-        key = f"survivals_{beh}"
-        if key in save_dict:
-            s = save_dict[key]
-            log.info(
-                f"  {beh}: {len(s)} clips, "
-                f"mean survival={np.mean(s):.0f}/{max_steps}"
-            )
+    log.info("\n=== Summary ===")
+    for beh, code_id in selected_codes.items():
+        s = code_stats[code_id]
+        rewards = save_dict[f"rewards_{beh}"]
+        log.info(
+            f"  {beh} (code {code_id}): "
+            f"mean_reward={rewards.mean():.1f}, "
+            f"ref z_rise={s['z_rise_mean']:.4f}, "
+            f"ref xy_disp={s['xy_disp_mean']:.4f}"
+        )
 
 
 if __name__ == "__main__":

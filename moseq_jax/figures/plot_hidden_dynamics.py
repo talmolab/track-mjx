@@ -30,15 +30,15 @@ DATA_DIR = SCRIPT_DIR / "data"
 OUTPUT_DIR = SCRIPT_DIR / "outputs" / "hidden_dynamics"
 
 # ── Behavior config ─────────────────────────────────────────────────────────
-BEHAVIORS = ["walk", "groom", "rear"]
+BEHAVIORS = ["walk", "immobility", "rear"]
 BEHAVIOR_LABELS = {
     "walk": "Walking Code",
-    "groom": "Immobility Code",
+    "immobility": "Immobility Code",
     "rear": "Rearing Code",
 }
 BEHAVIOR_COLORS = {
     "walk": "#D55E00",  # orange (Wong)
-    "groom": "#0072B2",  # blue (Wong)
+    "immobility": "#0072B2",  # blue (Wong)
     "rear": "#009E73",  # green (Wong)
 }
 
@@ -383,6 +383,130 @@ def plot_trajectories_3d(
     return fig, rect
 
 
+# ── Combined single-panel plots ──────────────────────────────────────────────
+
+
+def _plot_scatter_combined(
+    emb_3d: np.ndarray,
+    beh_slices: dict[str, tuple[int, int]],
+    var_explained: np.ndarray,
+) -> tuple[plt.Figure, mpatches.FancyBboxPatch]:
+    """All behaviors overlaid in a single 3D scatter panel."""
+    fig = plt.figure(figsize=(4.5, 4.0))
+    ax = fig.add_subplot(111, projection="3d")
+    xlim, ylim, zlim = _compute_shared_limits(emb_3d)
+
+    for beh in BEHAVIORS:
+        if beh not in beh_slices:
+            continue
+        s, e = beh_slices[beh]
+        pts = emb_3d[s:e]
+        ax.scatter(
+            pts[:, 0], pts[:, 1], pts[:, 2],
+            c=BEHAVIOR_COLORS[beh],
+            s=6, alpha=0.20,
+            edgecolors="none", rasterized=True, depthshade=True,
+        )
+
+    _style_3d_ax(ax, var_explained, xlim, ylim, zlim)
+
+    legend_handles = [
+        Line2D(
+            [0], [0], marker="o", color="w",
+            markerfacecolor=BEHAVIOR_COLORS[beh],
+            markersize=5, markeredgewidth=0,
+            label=BEHAVIOR_LABELS[beh], linestyle="None",
+        )
+        for beh in BEHAVIORS if beh in beh_slices
+    ]
+    leg = ax.legend(
+        handles=legend_handles, loc="upper left",
+        frameon=True, framealpha=0.92, edgecolor="none",
+        borderpad=0.5, handletextpad=0.3, fancybox=True, fontsize=7,
+    )
+    leg.get_frame().set_linewidth(0)
+    leg.get_frame().set_boxstyle("round,pad=0.3,rounding_size=0.2")
+
+    ax.set_title(
+        "PCA of RNN Hidden State",
+        fontsize=8, fontweight="bold", pad=-2,
+    )
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=0.95)
+    rect = _add_rounded_border(fig)
+    return fig, rect
+
+
+def _plot_trajectories_combined(
+    emb_3d: np.ndarray,
+    beh_slices: dict[str, tuple[int, int]],
+    beh_shapes: dict[str, tuple[int, int]],
+    var_explained: np.ndarray,
+) -> tuple[plt.Figure, mpatches.FancyBboxPatch]:
+    """All behaviors' trajectories overlaid in a single 3D panel."""
+    fig = plt.figure(figsize=(4.5, 4.0))
+    ax = fig.add_subplot(111, projection="3d")
+    xlim, ylim, zlim = _compute_shared_limits(emb_3d)
+
+    for beh in BEHAVIORS:
+        if beh not in beh_slices:
+            continue
+        K_beh, T_beh = beh_shapes[beh]
+        s, _ = beh_slices[beh]
+        cmap = BEHAVIOR_CMAPS[beh]
+        t_norm = np.linspace(0, 1, T_beh)
+
+        for ki in range(K_beh):
+            start = s + ki * T_beh
+            pts = emb_3d[start : start + T_beh]
+            if len(pts) < 2:
+                continue
+            segments = np.array(
+                [[pts[i], pts[i + 1]] for i in range(len(pts) - 1)],
+            )
+            colors = cmap(t_norm[:-1])
+            lc = Line3DCollection(
+                segments, colors=colors, linewidths=0.6, alpha=0.55,
+            )
+            ax.add_collection3d(lc)
+            ax.scatter(
+                [pts[0, 0]], [pts[0, 1]], [pts[0, 2]],
+                c="white", s=15,
+                edgecolors=BEHAVIOR_COLORS[beh],
+                linewidths=0.5, zorder=5, depthshade=False,
+            )
+            ax.scatter(
+                [pts[-1, 0]], [pts[-1, 1]], [pts[-1, 2]],
+                c=BEHAVIOR_COLORS[beh], s=15,
+                edgecolors=BEHAVIOR_COLORS[beh],
+                linewidths=0.5, zorder=5, depthshade=False,
+            )
+
+    _style_3d_ax(ax, var_explained, xlim, ylim, zlim)
+
+    legend_handles = [
+        Line2D(
+            [0], [0], color=BEHAVIOR_COLORS[beh],
+            linewidth=1.8, label=BEHAVIOR_LABELS[beh],
+        )
+        for beh in BEHAVIORS if beh in beh_slices
+    ]
+    leg = ax.legend(
+        handles=legend_handles, loc="upper left",
+        frameon=True, framealpha=0.92, edgecolor="none",
+        borderpad=0.5, handletextpad=0.3, fancybox=True, fontsize=7,
+    )
+    leg.get_frame().set_linewidth(0)
+    leg.get_frame().set_boxstyle("round,pad=0.3,rounding_size=0.2")
+
+    ax.set_title(
+        "PCA of RNN Hidden State",
+        fontsize=8, fontweight="bold", pad=-2,
+    )
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=0.95)
+    rect = _add_rounded_border(fig)
+    return fig, rect
+
+
 # ── Save helper ──────────────────────────────────────────────────────────────
 
 
@@ -408,13 +532,6 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     hiddens, codes = load_hidden_data()
-
-    # Find single-code clips for trajectory filtering
-    single_code_clips = find_single_code_clips(codes)
-    for beh, indices in single_code_clips.items():
-        if indices:
-            code_ids = [int(codes[beh][i, 0]) for i in indices]
-            print(f"  {beh}: {len(indices)} single-code clips (codes: {code_ids})")
 
     # Build flat array with behavior boundaries (all 3 behaviors for PCA)
     all_points: list[np.ndarray] = []
@@ -447,19 +564,21 @@ def main() -> None:
     print("\nFitting 3D PCA...")
     emb, var = fit_pca_3d(all_points_arr)
 
-    # Scatter: walk + groom only (all clips)
-    fig, rect = plot_scatter_3d(
-        emb, beh_slices, var, show_behaviors=["walk", "groom"],
-    )
+    # Scatter: separate panels
+    fig, rect = plot_scatter_3d(emb, beh_slices, var)
     _save_figure(fig, rect, "hidden_scatter_pca3d")
 
-    # Trajectories: walk + rear, single-code clips only
-    fig, rect = plot_trajectories_3d(
-        emb, beh_slices, beh_shapes, var,
-        show_behaviors=["walk", "rear"],
-        clip_filter=single_code_clips,
-    )
+    # Scatter: combined single panel
+    fig, rect = _plot_scatter_combined(emb, beh_slices, var)
+    _save_figure(fig, rect, "hidden_scatter_pca3d_combined")
+
+    # Trajectories: separate panels
+    fig, rect = plot_trajectories_3d(emb, beh_slices, beh_shapes, var)
     _save_figure(fig, rect, "hidden_trajectories_pca3d")
+
+    # Trajectories: combined single panel
+    fig, rect = _plot_trajectories_combined(emb, beh_slices, beh_shapes, var)
+    _save_figure(fig, rect, "hidden_trajectories_pca3d_combined")
 
     print("\nDone.")
 

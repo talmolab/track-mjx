@@ -40,15 +40,15 @@ DATA_DIR = SCRIPT_DIR / "data"
 OUTPUT_DIR = SCRIPT_DIR / "outputs" / "hidden_dynamics"
 
 # ── Behavior config ─────────────────────────────────────────────────────────
-BEHAVIORS = ["walk", "groom", "rear"]
+BEHAVIORS = ["walk", "immobility", "rear"]
 BEHAVIOR_LABELS = {
     "walk": "Walking",
-    "groom": "Grooming",
+    "immobility": "Immobility",
     "rear": "Rearing",
 }
 BEHAVIOR_COLORS = {
     "walk": "#D55E00",
-    "groom": "#0072B2",
+    "immobility": "#0072B2",
     "rear": "#009E73",
 }
 

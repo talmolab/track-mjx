@@ -1,9 +1,9 @@
 # =============================================================================
 # RNN Hidden State Dynamics Experiment
 # =============================================================================
-# Records GRU hidden states at each timestep for walk/groom/rear code
-# sequences to visualize behavior-specific dynamical regimes in the
-# recurrent latent space.
+# Selects walk and immobility clips with a sustained single-code bout
+# (>= min_bout frames), runs rollouts collecting GRU hidden states and
+# qpos, extracts the sustained segment, and renders ghost videos.
 # =============================================================================
 
 checkpoint:
@@ -17,6 +17,7 @@ data:
 
 K: 10
 max_steps: 250
+min_bouts: 3
 seed: 42
 
 output:

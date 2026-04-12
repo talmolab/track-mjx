@@ -265,7 +265,7 @@ def main():
     zlim = (emb_3d[:, 2].min() * (1 + pad), emb_3d[:, 2].max() * (1 + pad))
 
     # ── Build ghost models per behavior ──────────────────────────────────
-    panel_w, panel_h = 400, 400
+    panel_w, panel_h = 640, 336
     pca_w, pca_h = 480, 400
     n_frames = min(beh_shapes[b][1] for b in BEHAVIORS)
     K = beh_shapes[BEHAVIORS[0]][0]
@@ -292,73 +292,84 @@ def main():
         centered_qpos[beh] = _center_qpos(beh_qpos[beh])
 
     # ── Matplotlib figure for PCA (reused each frame) ────────────────────
-    fig = plt.figure(figsize=(pca_w / 100, pca_h / 100), dpi=100)
+    fig = plt.figure(figsize=(panel_w / 100, panel_h / 100), dpi=100)
     ax = fig.add_subplot(111, projection="3d")
     fig.subplots_adjust(left=0, right=1, bottom=0, top=0.92)
 
-    # ── Render combined video ────────────────────────────────────────────
-    label_h = 32
-    total_w = pca_w + panel_w * 3
-    total_h = panel_h + label_h
+    # ── 2x2 layout ──────────────────────────────────────────────────────
+    #   [PCA Hidden State] | [Walk        ]
+    #   [Immobility      ] | [Rear        ]
+    label_h = 28
+    cell_h = panel_h + label_h
+    total_w = panel_w * 2
+    total_h = cell_h * 2
     total_w = ((total_w + 15) // 16) * 16
     total_h = ((total_h + 15) // 16) * 16
 
+    grid = [["pca", "walk"], ["immobility", "rear"]]
+    grid_labels = {
+        "pca": "PCA of RNN Hidden State",
+        "walk": "Walk",
+        "immobility": "Immobility",
+        "rear": "Rear",
+    }
+
     output_path = OUTPUT_DIR / "hidden_dynamics_triptych.mp4"
+    tmp_path = OUTPUT_DIR / "_tmp_triptych.mp4"
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_path), fourcc, 50, (total_w, total_h))
+    writer = cv2.VideoWriter(str(tmp_path), fourcc, 50, (total_w, total_h))
 
     azim_start, azim_end = 140, 260
 
-    log.info(f"Rendering {n_frames} frames ({total_w}x{total_h})...")
+    log.info(f"Rendering {n_frames} frames ({total_w}x{total_h}, 2x2)...")
 
     for t in range(n_frames):
-        combined = np.ones((total_h, total_w, 3), dtype=np.uint8) * 40
+        combined = np.ones((total_h, total_w, 3), dtype=np.uint8) * 255
 
-        # PCA panel (rotating)
-        azim = azim_start + (azim_end - azim_start) * t / max(n_frames - 1, 1)
-        pca_img = pca_frame_to_image(
-            fig, ax, emb_3d, beh_slices, beh_shapes, var,
-            t, azim, xlim, ylim, zlim, pca_w, panel_h,
-        )
-        combined[label_h : label_h + panel_h, :pca_w] = pca_img
+        for row in range(2):
+            for col in range(2):
+                cell = grid[row][col]
+                x_off = col * panel_w
+                y_off = row * cell_h + label_h
 
-        # MuJoCo panels
-        for bi, beh in enumerate(BEHAVIORS):
-            gm, base_nq, md, renderer = ghost_models[beh]
-            centered = centered_qpos[beh]
-            min_len = min(len(q) for q in centered)
-            t_clip = min(t, min_len - 1)
+                if cell == "pca":
+                    azim = azim_start + (azim_end - azim_start) * t / max(n_frames - 1, 1)
+                    pca_img = pca_frame_to_image(
+                        fig, ax, emb_3d, beh_slices, beh_shapes, var,
+                        t, azim, xlim, ylim, zlim, panel_w, panel_h,
+                    )
+                    combined[y_off : y_off + panel_h, x_off : x_off + panel_w] = pca_img
+                else:
+                    beh = cell
+                    gm, base_nq, md, renderer = ghost_models[beh]
+                    centered = centered_qpos[beh]
+                    min_len = min(len(q) for q in centered)
+                    t_clip = min(t, min_len - 1)
 
-            md.qpos[:base_nq] = centered[0][t_clip]
-            for gi in range(1, K):
-                qs = base_nq + (gi - 1) * base_nq
-                qe = qs + base_nq
-                md.qpos[qs:qe] = centered[gi][t_clip]
+                    md.qpos[:base_nq] = centered[0][t_clip]
+                    for gi in range(1, K):
+                        qs = base_nq + (gi - 1) * base_nq
+                        qe = qs + base_nq
+                        md.qpos[qs:qe] = centered[gi][t_clip]
 
-            mujoco.mj_forward(gm, md)
-            renderer.update_scene(md, camera="divergent_cam")
-            frame = renderer.render().copy()
+                    mujoco.mj_forward(gm, md)
+                    renderer.update_scene(md, camera="divergent_cam")
+                    frame = renderer.render().copy()
+                    combined[y_off : y_off + panel_h, x_off : x_off + panel_w] = frame
 
-            x_off = pca_w + bi * panel_w
-            combined[label_h : label_h + panel_h, x_off : x_off + panel_w] = frame
-
-        # Labels
-        combined = add_multi_line_overlay(
-            combined, ["Hidden State"],
-            start_position=(pca_w // 2 - 40, 6), font_size=14,
-        )
-        for bi, beh in enumerate(BEHAVIORS):
-            x_center = pca_w + bi * panel_w + panel_w // 2 - len(BEHAVIOR_LABELS[beh]) * 4
-            combined = add_multi_line_overlay(
-                combined, [BEHAVIOR_LABELS[beh]],
-                start_position=(max(x_center, pca_w + bi * panel_w + 5), 6),
-                font_size=14,
-            )
+                # Label
+                label = grid_labels[cell]
+                lx = x_off + panel_w // 2 - len(label) * 4
+                combined = add_multi_line_overlay(
+                    combined, [label],
+                    start_position=(max(lx, x_off + 5), row * cell_h + 4),
+                    font_size=13,
+                )
 
         # Timestep
         combined = add_multi_line_overlay(
             combined, [f"t={t}"],
-            start_position=(total_w - 55, total_h - 18), font_size=11,
+            start_position=(total_w - 50, total_h - 16), font_size=11,
         )
 
         writer.write(cv2.cvtColor(combined, cv2.COLOR_RGB2BGR))
@@ -372,6 +383,17 @@ def main():
     # Close renderers
     for beh in BEHAVIORS:
         ghost_models[beh][3].close()
+
+    # Re-encode to H.264 for browser compatibility
+    import imageio_ffmpeg
+    import subprocess
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    subprocess.run([
+        ffmpeg, "-y", "-i", str(tmp_path),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23",
+        "-movflags", "+faststart", str(output_path),
+    ], check=True, capture_output=True)
+    tmp_path.unlink()
 
     log.info(f"Saved: {output_path}")
 

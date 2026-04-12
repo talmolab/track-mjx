@@ -2,7 +2,7 @@
 
 ## Overview
 
-Eleven experiment scripts evaluate the KPMS Code2Act decoder:
+Twelve experiment scripts evaluate the KPMS Code2Act decoder:
 
 | # | Script | Config | Purpose |
 |---|--------|--------|---------|
@@ -16,7 +16,8 @@ Eleven experiment scripts evaluate the KPMS Code2Act decoder:
 | 8 | `run_syllable_viz.py` | `syllable_viz_exp.yaml` | KPMS syllable 3D visualization — interactive Plotly trajectories, frequency/duration stats, dendrogram |
 | 9 | `run_inception_distance.py` | `inception_distance_exp.yaml` | FID/KID inception distance — generative model distribution quality vs real mocap |
 | 10 | `run_gait_dynamics.py` | `gait_dynamics_exp.yaml` | Gait dynamics PSD — Code2Act vs Mimic-MJX walking frequency comparison |
-| 11 | `run_hidden_dynamics.py` | `hidden_dynamics_exp.yaml` | RNN hidden state dynamics — PCA/t-SNE/UMAP of GRU hidden states per behavior |
+| 11 | `run_hidden_dynamics.py` | `hidden_dynamics_exp.yaml` | RNN hidden state dynamics — PCA of GRU hidden states per sustained code |
+| 12 | `run_hidden_trajectory.py` | `hidden_trajectory_exp.yaml` | Natural hidden trajectories — long continuous segments, hidden states colored by code |
 
 All experiments save outputs (plots, videos, npz data) to disk under `outputs/`.
 
@@ -323,6 +324,49 @@ Produces 2 figures:
 - `dsa_within_between.{pdf,png,svg}` — within-behavior vs between-behavior distance bar chart
 
 Cached distance matrix saved to `figures/data/dsa_distances.npz` for fast replotting.
+
+### Experiment 12: Natural Hidden State Trajectories
+
+```bash
+python -m experiments.run_hidden_trajectory
+
+# Fewer/shorter segments
+python -m experiments.run_hidden_trajectory K=3 frames_per_segment=1000
+```
+
+Samples long continuous segments (default 2000 frames) from unseen data,
+runs KPMS to extract syllable codes, then feeds the natural code sequences
+through the C2A decoder to collect hidden states at every timestep.
+
+Uses the same data source and KPMS pipeline as the generalization experiment,
+but focuses on collecting hidden state trajectories rather than evaluating
+reward.
+
+**Requires**: RNN decoder checkpoint, KPMS model, unseen continuous H5 data.
+
+**Outputs** (`outputs/moseq_hidden_trajectory/`):
+- `data/hidden_trajectory.npz` — hidden states `[K, T, 256]`, codes `[K, T]`,
+  qpos `[K, T, 74]`, rewards, survivals
+- `data/trajectory_codes.npz` — KPMS codes for the sampled segments
+- `data/segments.h5` — segmented H5 for environment setup
+- Also copied to `figures/data/hidden_trajectory.npz`
+
+**Figure script** (`figures/plot_hidden_trajectory.py`):
+
+```bash
+cd moseq_jax/figures
+python plot_hidden_trajectory.py                    # static PCA plots
+python plot_hidden_trajectory.py --video            # also render video
+python plot_hidden_trajectory.py --top-codes 8      # highlight top 8 codes
+python plot_hidden_trajectory.py --traj-idx 2       # video for trajectory 2
+```
+
+Produces:
+- `hidden_trajectory_pca3d.{pdf,png,svg}` — 3D PCA of all trajectories,
+  colored by code identity (top N codes in distinct colors, rest grey)
+- `hidden_trajectory_pca3d_traj{i}.{pdf,png,svg}` — single trajectory view
+- `hidden_trajectory_video.mp4` — synchronized rotating PCA + MuJoCo rollout
+  (with `--video` flag)
 
 ## Architecture Support
 

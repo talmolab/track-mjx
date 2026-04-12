@@ -1,0 +1,28 @@
+# =============================================================================
+# Natural Hidden State Trajectory Experiment
+# =============================================================================
+# Samples long continuous segments, runs KPMS, feeds natural code sequences
+# through C2A to collect hidden state trajectories colored by code identity.
+# =============================================================================
+
+new_data:
+  path: /home/jovyan/vast/kaiwen/track-mjx/data/transform_art_2020_12_22_1.h5
+
+kpms:
+  model_dir: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/s50_k1e+04_l10_arhmm/seed1
+  model_name: keypoint_arhmm_states50_seed1
+  num_iters: 200
+
+stac_xml: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
+reference_h5: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+
+checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260407_031233_484020/
+  step: null
+
+K: 10
+frames_per_segment: 2000
+seed: 42
+
+output:
+  base_dir: ./outputs/moseq_hidden_trajectory

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Twelve experiment scripts evaluate the KPMS Code2Act decoder:
+Thirteen experiment scripts evaluate the KPMS Code2Act decoder:
 
 | # | Script | Config | Purpose |
 |---|--------|--------|---------|
@@ -18,6 +18,7 @@ Twelve experiment scripts evaluate the KPMS Code2Act decoder:
 | 10 | `run_gait_dynamics.py` | `gait_dynamics_exp.yaml` | Gait dynamics PSD — Code2Act vs Mimic-MJX walking frequency comparison |
 | 11 | `run_hidden_dynamics.py` | `hidden_dynamics_exp.yaml` | RNN hidden state dynamics — PCA of GRU hidden states per sustained code |
 | 12 | `run_hidden_trajectory.py` | `hidden_trajectory_exp.yaml` | Natural hidden trajectories — long continuous segments, hidden states colored by code |
+| 13 | `run_generalization_kid.py` | `generalization_kid_exp.yaml` | Generalization KID — MIMIC vs C2A distribution quality on unseen data |
 
 All experiments save outputs (plots, videos, npz data) to disk under `outputs/`.
 
@@ -367,6 +368,49 @@ Produces:
 - `hidden_trajectory_pca3d_traj{i}.{pdf,png,svg}` — single trajectory view
 - `hidden_trajectory_video.mp4` — synchronized rotating PCA + MuJoCo rollout
   (with `--video` flag)
+
+### Experiment 13: Generalization KID Comparison
+
+```bash
+# Full run (20 bodies x 2000 frames, batched rollouts)
+python -m experiments.run_generalization_kid K=20 n_render=10
+
+# Fewer bodies for quick test
+python -m experiments.run_generalization_kid K=4 n_render=4
+```
+
+Compares MIMIC-MJX and Code2Act on unseen continuous data using KID
+(Kernel Inception Distance). Samples long segments from a new recording,
+extracts KPMS syllable codes, then runs both models on the same segments.
+
+Each 2000-step rollout is chunked into 4 x 450-step segments (225 mocap
+frames each) matching the pre-trained VAE's input size. KID is computed
+against the original training distribution using 3 cached VAE seeds from
+Experiment 9.
+
+Rollouts are batched (10 clips per batch) to avoid slow JIT compilation
+with large reference clip arrays. Cached rollouts are reused on re-run.
+
+**Requires**: Cached KPMS codes, pre-trained VAE from Experiment 9,
+both MoSeq decoder and Mimic-MJX checkpoints.
+
+**Outputs** (`outputs/moseq_generalization_kid/`):
+- `results.json` — per-seed + aggregated KID/FID for both methods
+- `data/rollouts.npz` — raw qpos `[K, 2000, 74]` for both methods
+- `data/kpms_codes.npz` — KPMS codes for sampled segments
+- `reward_comparison.png` — mean reward curves
+- `kid_comparison.png` — KID barplot
+
+**Figure script** (`figures/render_generalization_comparison.py`):
+
+```bash
+cd moseq_jax
+python -m figures.render_generalization_comparison --n_render 10
+```
+
+Produces:
+- `figures/outputs/generalization_comparison/generalization_triptych.mp4` — three-panel ghost video (Real | MIMIC | C2A), N bodies per panel, all 2000 frames
+- `figures/outputs/generalization_comparison/kid_comparison.{png,pdf,svg}` — publication-quality KID barplot
 
 ## Architecture Support
 

@@ -1,0 +1,79 @@
+# =============================================================================
+# Generalization KID Comparison: MIMIC vs C2A on Unseen Data
+# =============================================================================
+# Samples long segments from unseen continuous data, runs KPMS to extract
+# syllable codes, then evaluates both MIMIC (oracle) and Code2Act on those
+# segments. Computes KID using the pre-trained VAE to compare distributional
+# quality of the two methods on generalization data.
+#
+# Usage:
+#   cd moseq_jax
+#   python -m experiments.run_generalization_kid
+# =============================================================================
+
+# Unseen continuous recording
+new_data:
+  path: /home/jovyan/vast/kaiwen/track-mjx/data/transform_art_2020_12_22_1.h5
+
+# KPMS model for code extraction
+kpms:
+  model_dir: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/s50_k1e+04_l10_arhmm/seed1
+  model_name: keypoint_arhmm_states50_seed1
+  num_iters: 200
+
+# STAC model for FK
+stac_xml: /home/jovyan/vast/kaiwen/TopoVNL/stac-mjx/models/rodent.xml
+reference_h5: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+
+# Code2Act checkpoint
+checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/model_checkpoints/260407_031233_484020/
+  step: null
+
+# Mimic-MJX oracle checkpoint
+mimic_checkpoint:
+  path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260405_235031_234849/
+  step: null
+
+# Experiment parameters
+K: 50                     # Total number of segments (bodies)
+frames_per_segment: 2000  # Env steps per segment
+seed: 42
+n_render: 10              # Number of bodies to render (customizable)
+
+# KID evaluation (reuse pre-trained VAE)
+kid_eval:
+  # Pre-trained VAE cache from inception distance experiment
+  vae_cache_dir: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_inception_distance/vae_cache
+  vae_cache_key: ed98255615fee584
+  original_mimic_rollouts: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_inception_distance/rollouts_mimic_mjx.npz
+
+  # Must match the VAE training config exactly
+  vae:
+    latent_dim: 64
+    hidden_layers: [512, 256]
+    dropout_rate: 0.1
+    use_layer_norm: true
+    seeds: [0, 1, 2]
+
+  # Chunking: 2000 env steps -> 4 chunks of 450 steps (225 mocap frames)
+  # to match the VAE's input size (225 * 74 = 16650)
+  chunk_control_steps: 450
+  survival_threshold: 450
+  steps_per_frame: 2
+
+  # Preprocessing (must match original experiment)
+  preprocessing:
+    exclude_xy: true
+    handle_rotation: true
+    normalize_joints: true
+
+  # KID kernel parameters
+  kid:
+    degree: 3
+    num_subsets: 100
+    subset_size: null
+    split_seed: 42
+
+output:
+  base_dir: ./outputs/moseq_generalization_kid

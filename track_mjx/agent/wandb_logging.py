@@ -147,9 +147,7 @@ def _log_rollout_video(
 
     # Log per-step reward breakdowns
     reward_names = [f"rewards/{k}" for k in env._config.reward_terms.keys()]
-    metric_names = cfg.logging_config.get(
-        "rollout_metrics", reward_names
-    )
+    metric_names = cfg.logging_config.get("rollout_metrics", reward_names)
     for metric in metric_names:
         if metric in rollout[0].metrics:
             log_lineplot_to_wandb(
@@ -217,7 +215,10 @@ def log_lineplot_to_wandb(
         commit=False,
     )
 
-def log_histogram_to_wandb(name: str, metric_name: str, data: list[float], title: str) -> None:
+
+def log_histogram_to_wandb(
+    name: str, metric_name: str, data: list[float], title: str
+) -> None:
     """Log a histogram to Weights & Biases.
 
     Args:

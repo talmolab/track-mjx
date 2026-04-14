@@ -27,6 +27,8 @@ from track_mjx.agent.recurrent_ppo import (
     networks as recurrent_networks,
 )
 from track_mjx.agent.domain_randomization import domain_randomization_maker
+from track_mjx.agent.distribution import NormalSigmoidDistribution
+from brax.training.distribution import NormalTanhDistribution
 
 
 def _setup_environment() -> None:
@@ -92,6 +94,8 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
+    logging.info(f"Training on {len(train_clips)} clips: {train_clips}")
+    logging.info(f"Testing on {len(test_clips)} clips: {test_clips}")
     # Create environments using registry
     env = rodent_wrappers.TrackMjxObsWrapper(
         registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
@@ -101,6 +105,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     logging.info(f"Environment config: {cfg.env_config}")
+    logging.info(f"Train environment: {env.unwrapped}")
 
     # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
     steps_per_frame = (1 / cfg.env_config.mocap_hz) / (cfg.env_config.ctrl_dt)
@@ -124,7 +129,12 @@ def main(cfg: DictConfig) -> None:
             f"Unknown architecture '{arch_name}'. "
             f"Valid options are: {sorted(valid_arch_names)}"
         )
-
+    if cfg.network_config.action_distribution == "sigmoid":
+        logging.info("Using sigmoid action distribution")
+        action_distribution = NormalSigmoidDistribution
+    else:
+        logging.info("Using tanh action distribution")
+        action_distribution = NormalTanhDistribution
     if arch_name == "recurrent_intention":
         # Validate required config keys for recurrent architecture
         required_keys = ["rnn_type", "rnn_hidden_sizes"]
@@ -138,6 +148,7 @@ def main(cfg: DictConfig) -> None:
         # Recurrent intention network (MLP encoder + RNN decoder)
         network_factory = functools.partial(
             recurrent_networks.make_recurrent_intention_ppo_networks,
+            action_distribution=action_distribution,
             intention_latent_size=cfg.network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             rnn_type=cfg.network_config.rnn_type,
@@ -152,6 +163,7 @@ def main(cfg: DictConfig) -> None:
         # Feedforward intention network (default)
         network_factory = functools.partial(
             ff_networks.make_intention_ppo_networks,
+            action_distribution=action_distribution,
             intention_latent_size=cfg.network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),

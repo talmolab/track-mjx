@@ -68,6 +68,7 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
     encoder_layer_sizes: Sequence[int] = (256, 128)
     continuous_latent_dim: int = 16
     z_e_dropout_rate: float = 0.0
+    encoder_uses_proprio: bool = False
 
     def setup(self):
         self.code_embedding = nn.Embed(
@@ -119,7 +120,13 @@ class MoSeqEncoderDecoderNetwork(nn.Module):
                 layer_sizes=self.encoder_layer_sizes,
                 latents=self.continuous_latent_dim,
             )
-            mean, logvar = encoder(imitation_target)
+            if self.encoder_uses_proprio:
+                encoder_input = jnp.concatenate(
+                    [imitation_target, proprio], axis=-1
+                )
+            else:
+                encoder_input = imitation_target
+            mean, logvar = encoder(encoder_input)
 
             # Reparameterization
             if deterministic:
@@ -217,6 +224,7 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
     distill_logvar_max: float | None = None
     use_pretrained_decoder: bool = False
     decoder_layer_sizes_vae: Sequence[int] = (512, 256, 256, 256)
+    encoder_uses_proprio: bool = False
 
     def setup(self):
         self.code_embedding = nn.Embed(
@@ -388,7 +396,13 @@ class MoSeqRecurrentDecoderNetwork(nn.Module):
 
             # Encoder forward pass (uses IntentionEncoder — same param names
             # as the main branch VAE checkpoint)
-            mean, logvar = self.encoder_module(imitation_target)
+            if self.encoder_uses_proprio:
+                encoder_input = jnp.concatenate(
+                    [imitation_target, proprio], axis=-1
+                )
+            else:
+                encoder_input = imitation_target
+            mean, logvar = self.encoder_module(encoder_input)
 
             # Freeze encoder when used as a distillation target
             if self.use_distillation_head:

@@ -504,6 +504,9 @@ def main(cfg: DictConfig) -> None:
     z_e_at_action_head = bool(cfg.network_config.get("z_e_at_action_head", False))
     reinit_hidden_on_code = bool(cfg.network_config.get("reinit_hidden_on_code", False))
     learned_hidden_init = bool(cfg.network_config.get("learned_hidden_init", False))
+    encoder_uses_proprio = bool(
+        cfg.network_config.get("encoder_uses_proprio", False)
+    )
 
     # RNN decoder config
     use_rnn_decoder = bool(cfg.network_config.get("use_rnn_decoder", False))
@@ -635,12 +638,14 @@ def main(cfg: DictConfig) -> None:
             distill_logvar_max=distill_logvar_max,
             use_pretrained_decoder=use_pretrained_decoder,
             decoder_layer_sizes_vae=decoder_layer_sizes_vae,
+            encoder_uses_proprio=encoder_uses_proprio,
         )
         logging.info(
             f"Using RNN decoder: cell={rnn_cell_type}, hidden={rnn_hidden_sizes}, "
             f"z_e_at_action_head={z_e_at_action_head}, reinit_hidden={reinit_hidden_on_code}, "
             f"learned_init={learned_hidden_init}, "
-            f"distillation_head={use_distillation_head}"
+            f"distillation_head={use_distillation_head}, "
+            f"encoder_uses_proprio={encoder_uses_proprio}"
         )
     else:
         network_factory = functools.partial(
@@ -653,6 +658,7 @@ def main(cfg: DictConfig) -> None:
             encoder_layer_sizes=encoder_layer_sizes,
             continuous_latent_dim=continuous_latent_dim,
             z_e_dropout_rate=z_e_dropout_rate,
+            encoder_uses_proprio=encoder_uses_proprio,
         )
 
     # Encoder loading: inject pre-trained encoder params from a VAE
@@ -784,6 +790,7 @@ def main(cfg: DictConfig) -> None:
             "reinit_hidden_on_code": reinit_hidden_on_code,
             "learned_hidden_init": learned_hidden_init,
             "use_distillation_head": use_distillation_head,
+            "encoder_uses_proprio": encoder_uses_proprio,
             "distill_kl_weight": distill_kl_weight if use_distillation_head else None,
             "distillation_encoder_checkpoint": (
                 str(distillation_encoder_checkpoint) if distillation_encoder_checkpoint else None

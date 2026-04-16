@@ -118,6 +118,7 @@ network_config:
   use_continuous_encoder: true
   encoder_layer_sizes: [512, 512, 256]
   continuous_latent_dim: 16
+  encoder_uses_proprio: true        # concat [task_obs, proprio] as encoder input (matches mimic encoder)
   kl_weight: 0.05               # base KL weight (used if kl_schedule is "none")
   z_e_dropout_rate: 0.01         # prob of zeroing z_e per timestep (0 = off)
 
@@ -143,7 +144,7 @@ network_config:
   distill_kl_weight: 1.0                    # weight for KL(encoder_sg || distill_head)
   # Pre-trained encoder checkpoint — same-pipeline MoSeq checkpoint with
   # trained continuous encoder [512, 256, 256], latent_dim=4.
-  distillation_encoder_checkpoint: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260405_235031_234849/
+  distillation_encoder_checkpoint: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/trained_mimic_ckpts/260413_040706_764936/
   distill_logvar_min: null
   distill_logvar_max: null
 

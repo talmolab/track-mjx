@@ -301,6 +301,7 @@ def make_moseq_decoder_ppo_networks(
     encoder_layer_sizes: tuple[int, ...] = (256, 128),
     continuous_latent_dim: int = 16,
     z_e_dropout_rate: float = 0.0,
+    encoder_uses_proprio: bool = False,
 ) -> MoSeqPPONetworks:
     """Create MoSeq decoder PPO networks for imitation learning.
 
@@ -330,6 +331,7 @@ def make_moseq_decoder_ppo_networks(
         encoder_layer_sizes=encoder_layer_sizes,
         continuous_latent_dim=continuous_latent_dim,
         z_e_dropout_rate=z_e_dropout_rate,
+        encoder_uses_proprio=encoder_uses_proprio,
     )
 
     # Build the obs_sizes dict for init (include kpms_code)
@@ -709,6 +711,7 @@ def make_moseq_recurrent_decoder_ppo_networks(
     distill_logvar_max: float | None = None,
     use_pretrained_decoder: bool = False,
     decoder_layer_sizes_vae: tuple[int, ...] = (512, 256, 256, 256),
+    encoder_uses_proprio: bool = False,
 ) -> MoSeqRecurrentPPONetworks:
     """Create recurrent MoSeq decoder PPO networks.
 
@@ -756,6 +759,7 @@ def make_moseq_recurrent_decoder_ppo_networks(
         distill_logvar_max=distill_logvar_max,
         use_pretrained_decoder=use_pretrained_decoder,
         decoder_layer_sizes_vae=decoder_layer_sizes_vae,
+        encoder_uses_proprio=encoder_uses_proprio,
     )
 
     init_obs_sizes = {**obs_sizes}

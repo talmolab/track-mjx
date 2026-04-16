@@ -3,8 +3,8 @@
 # =============================================================================
 # Samples long segments from unseen continuous data, runs KPMS to extract
 # syllable codes, then evaluates both MIMIC (oracle) and Code2Act on those
-# segments. Computes KID using the pre-trained VAE to compare distributional
-# quality of the two methods on generalization data.
+# segments. Trains a VAE on mimic-MJX oracle rollouts from training data,
+# then computes KID to compare distributional quality on generalization data.
 #
 # Usage:
 #   cd moseq_jax
@@ -41,28 +41,40 @@ frames_per_segment: 2000  # Env steps per segment
 seed: 42
 n_render: 10              # Number of bodies to render (customizable)
 
-# KID evaluation (reuse pre-trained VAE)
+# KID evaluation — inline VAE training on training data
 kid_eval:
-  # Pre-trained VAE cache from inception distance experiment
-  vae_cache_dir: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_inception_distance/vae_cache
-  vae_cache_key: ed98255615fee584
-  original_mimic_rollouts: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_inception_distance/rollouts_mimic_mjx.npz
+  # VAE cache directory (shared across experiments)
+  vae_cache_dir: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/moseq_generalization_kid_vae_cache
 
-  # Must match the VAE training config exactly
+  # Training data for VAE (mimic-MJX oracle rollouts on reference clips)
+  reference_data_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_reference_clips.h5
+  balanced_split_path: /home/jovyan/vast/kaiwen/track-mjx/data/rodent/rodent_balanced_splits.json
+  codes_path: /home/jovyan/vast/kaiwen/track-mjx/moseq_jax/outputs/kpms_sweep/best_codes.npz
+  vae_training_clips: 400   # Number of mimic rollouts for VAE training
+  vae_training_seed: 42
+
+  # VAE architecture + training
   vae:
     latent_dim: 64
     hidden_layers: [512, 256]
     dropout_rate: 0.1
     use_layer_norm: true
     seeds: [0, 1, 2]
+    num_epochs: 5000
+    batch_size: 32
+    beta: 1.0
+    beta_warmup_epochs: null   # defaults to num_epochs // 2
+    learning_rate: 0.001
+    weight_decay: 0.00001
+    grad_clip_norm: 1.0
 
-  # Chunking: 2000 env steps -> 4 chunks of 450 steps (225 mocap frames)
-  # to match the VAE's input size (225 * 74 = 16650)
-  chunk_control_steps: 450
-  survival_threshold: 450
+  # Chunking: each rollout → N chunks of 250 steps (125 mocap frames)
+  # 500 → 2 chunks, 1000 → 4 chunks, 2000 → 8 chunks
+  chunk_control_steps: 250
+  survival_threshold: 250
   steps_per_frame: 2
 
-  # Preprocessing (must match original experiment)
+  # Preprocessing (applied to both VAE training data and generalization data)
   preprocessing:
     exclude_xy: true
     handle_rotation: true

@@ -104,6 +104,7 @@ network_config:
   decoder_layer_sizes: [512, 256, 256, 256]
   critic_layer_sizes: [1024, 1024, 1024, 512]
   intention_size: 16
+  encoder_uses_proprio: false       # concat [task_obs, proprio] as encoder input
   kl_schedule: true
   latent_kl_weight: 0.1
   latent_ar1_weight: 0.0

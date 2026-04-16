@@ -129,12 +129,16 @@ def main(cfg: DictConfig) -> None:
     logging.info(f"episode_length {episode_length}")
 
     # Network factory — standard IntentionNetwork (feedforward encoder-decoder)
+    encoder_uses_proprio = bool(
+        cfg.network_config.get("encoder_uses_proprio", False)
+    )
     network_factory = functools.partial(
         ff_networks.make_intention_ppo_networks,
         intention_latent_size=cfg.network_config.intention_size,
         encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
         value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+        encoder_uses_proprio=encoder_uses_proprio,
     )
 
     # WandB

@@ -193,6 +193,7 @@ class IntentionNetwork(nn.Module):
     encoder_layers: Sequence[int]
     decoder_layers: Sequence[int]
     latents: int = 60
+    encoder_uses_proprio: bool = False
 
     def setup(self):
         """Initialize encoder and decoder submodules."""
@@ -226,9 +227,15 @@ class IntentionNetwork(nn.Module):
             # Per-sample keys [batch_size, 2] - vmap split over batch
             _, encoder_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
 
+        encoder_input = (
+            jnp.concatenate([traj, egocentric_obs], axis=-1)
+            if self.encoder_uses_proprio
+            else traj
+        )
+
         if get_activation:
             (latent_mean, latent_logvar), encoder_activations = self.encoder(
-                traj, get_activation=True
+                encoder_input, get_activation=True
             )
             # Uses mean in the case of deterministic evaluation
             if deterministic:
@@ -252,7 +259,9 @@ class IntentionNetwork(nn.Module):
                 },
             )
         else:
-            latent_mean, latent_logvar = self.encoder(traj, get_activation=False)
+            latent_mean, latent_logvar = self.encoder(
+                encoder_input, get_activation=False
+            )
             # Uses mean in the case of deterministic evaluation
             if deterministic:
                 z = latent_mean
@@ -268,6 +277,7 @@ def make_intention_policy(
     obs_sizes: Mapping[str, int],
     encoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
     decoder_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    encoder_uses_proprio: bool = False,
 ) -> networks.FeedForwardNetwork:
     """Create an intention-based policy network.
 
@@ -294,6 +304,7 @@ def make_intention_policy(
         decoder_layers=list(decoder_hidden_layer_sizes)
         + [action_param_size],  # add action size to the last layer
         latents=latent_size,
+        encoder_uses_proprio=encoder_uses_proprio,
     )
 
     def apply(

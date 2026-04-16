@@ -41,10 +41,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-DEFAULT_ROLLOUT_PATH = MOSEQ_DIR / "outputs" / "moseq_generalization_kid" / "data" / "rollouts.npz"
-DEFAULT_SEGMENT_PATH = MOSEQ_DIR / "outputs" / "moseq_generalization_kid" / "data" / "segments.h5"
-DEFAULT_RESULTS_PATH = MOSEQ_DIR / "outputs" / "moseq_generalization_kid" / "results.json"
-DEFAULT_OUTPUT_DIR = MOSEQ_DIR / "figures" / "outputs" / "generalization_comparison"
+DEFAULT_SUFFIX = "2000"
+DEFAULT_ROLLOUT_PATH = MOSEQ_DIR / "outputs" / f"moseq_generalization_kid_{DEFAULT_SUFFIX}" / "data" / "rollouts.npz"
+DEFAULT_SEGMENT_PATH = MOSEQ_DIR / "outputs" / f"moseq_generalization_kid_{DEFAULT_SUFFIX}" / "data" / "segments.h5"
+DEFAULT_RESULTS_PATH = MOSEQ_DIR / "outputs" / f"moseq_generalization_kid_{DEFAULT_SUFFIX}" / "results.json"
+DEFAULT_OUTPUT_DIR = MOSEQ_DIR / "figures" / "outputs" / f"generalization_comparison_{DEFAULT_SUFFIX}"
 
 # Semi-transparent ghost colors (RGBA) — 10 distinct hues
 GHOST_COLORS_10 = [
@@ -232,15 +233,28 @@ def main():
     parser = argparse.ArgumentParser(
         description="Render triptych: Real | MIMIC | C2A with ghost bodies"
     )
-    parser.add_argument("--rollouts", type=str, default=str(DEFAULT_ROLLOUT_PATH))
-    parser.add_argument("--segments", type=str, default=str(DEFAULT_SEGMENT_PATH))
-    parser.add_argument("--results", type=str, default=str(DEFAULT_RESULTS_PATH))
-    parser.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument("--suffix", type=str, default=DEFAULT_SUFFIX,
+                        help="Experiment suffix (e.g., 2000, 1000, 500)")
+    parser.add_argument("--rollouts", type=str, default=None)
+    parser.add_argument("--segments", type=str, default=None)
+    parser.add_argument("--results", type=str, default=None)
+    parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--n_render", type=int, default=10)
     parser.add_argument("--panel_width", type=int, default=480)
     parser.add_argument("--panel_height", type=int, default=480)
     parser.add_argument("--fps", type=int, default=50)
     args = parser.parse_args()
+
+    # Resolve paths from suffix if not explicitly provided
+    sfx = args.suffix
+    if args.rollouts is None:
+        args.rollouts = str(MOSEQ_DIR / f"outputs/moseq_generalization_kid_{sfx}/data/rollouts.npz")
+    if args.segments is None:
+        args.segments = str(MOSEQ_DIR / f"outputs/moseq_generalization_kid_{sfx}/data/segments.h5")
+    if args.results is None:
+        args.results = str(MOSEQ_DIR / f"outputs/moseq_generalization_kid_{sfx}/results.json")
+    if args.output_dir is None:
+        args.output_dir = str(MOSEQ_DIR / f"figures/outputs/generalization_comparison_{sfx}")
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

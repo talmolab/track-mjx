@@ -23,8 +23,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import flax
-import flax.serialization
 import hydra
 import jax
 import jax.numpy as jnp
@@ -52,7 +50,6 @@ from experiments.shared.checkpoint_utils import (
     make_mimic_inference_fn,
     run_rollout,
 )
-from experiments.shared.vae_network import make_vae_network
 from experiments.shared.plotting import set_nature_style
 
 from experiments.run_generalization import (
@@ -70,6 +67,13 @@ from experiments.run_inception_distance import (
     compute_kid,
     compute_fid,
     filter_and_truncate,
+    train_vae,
+    collect_mimic_rollouts,
+    _compute_vae_cache_key,
+    _load_cached_vae,
+    _save_vae_cache,
+    _plot_vae_loss,
+    compute_steps_per_frame,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -120,85 +124,269 @@ def chunk_trajectories(
 # ---------------------------------------------------------------------------
 
 
-def load_reference_and_vaes(
-    original_rollout_path: str,
-    survival_threshold: int,
-    steps_per_frame: int,
-    exclude_xy: bool,
-    handle_rotation: bool,
-    normalize_joints_flag: bool,
-    vae_cache_dir: str,
-    vae_cache_key: str,
-    vae_latent_dim: int,
-    vae_hidden_layers: tuple[int, ...],
-    vae_dropout_rate: float,
-    vae_use_layer_norm: bool,
-    vae_seeds: list[int],
-) -> tuple[
-    list[tuple[dict, tuple, np.ndarray]],
-    tuple[int, np.ndarray, np.ndarray] | None,
-]:
-    """Load original mimic rollouts, preprocess, load cached VAEs, extract features.
+def _train_or_load_vae(
+    raw_list: list[np.ndarray],
+    label: str,
+    kid_cfg: DictConfig,
+    output_dir: Path,
+) -> tuple[list[tuple[dict, tuple, np.ndarray]], tuple | None]:
+    """Filter/preprocess rollouts, train or load cached VAE, extract features.
+
+    Generic helper used for both original-data and generalization-data VAEs.
+
+    Args:
+        raw_list: List of raw qpos arrays at control rate.
+        label: Identifier for logging and loss plot filenames (e.g. "original", "generalization").
+        kid_cfg: The kid_eval config section.
+        output_dir: Experiment output directory.
 
     Returns:
-        ``(seed_entries, joint_norm_params)`` where:
-        - seed_entries: List of ``(params, network_fns, mu_ref)`` per seed.
-          ``mu_ref`` is the reference feature vector array for that seed's VAE.
-        - joint_norm_params: ``(joint_start, mean, std)`` or None.
+        ``(seed_entries, joint_norm_params)``
     """
-    log.info("Loading original mimic rollouts for reference distribution...")
-    cached = np.load(original_rollout_path, allow_pickle=True)
-    n_clips = int(cached["n_clips"])
-    raw_list = [cached[f"raw_{i}"] for i in range(n_clips)]
+    import time
 
-    # Filter and truncate (same as original experiment)
+    vae_cfg = kid_cfg.vae
+    pp = kid_cfg.preprocessing
+
+    survival_threshold = int(kid_cfg.survival_threshold)
+    steps_per_frame = int(kid_cfg.steps_per_frame)
+    exclude_xy = bool(pp.exclude_xy)
+    do_rotation = bool(pp.handle_rotation)
+    do_normalize = bool(pp.normalize_joints)
+
     qpos_arr, n_kept, n_total = filter_and_truncate(
         raw_list, survival_threshold, steps_per_frame,
     )
-    log.info(f"  Reference clips: {n_kept}/{n_total} survived, shape {qpos_arr.shape}")
+    log.info(f"  [{label}] Reference clips: {n_kept}/{n_total} survived, shape {qpos_arr.shape}")
 
-    # Preprocess
-    real_data = preprocess_data(qpos_arr, exclude_xy, handle_rotation)
+    real_data = preprocess_data(qpos_arr, exclude_xy, do_rotation)
 
-    # Normalize joints
     joint_norm_params = None
-    if normalize_joints_flag:
-        joint_start = get_joint_start_index(exclude_xy, handle_rotation)
+    if do_normalize:
+        joint_start = get_joint_start_index(exclude_xy, do_rotation)
         joint_mean, joint_std = compute_joint_normalization(real_data, joint_start)
         joint_norm_params = (joint_start, joint_mean, joint_std)
         real_data = normalize_joints(real_data, joint_start, joint_mean, joint_std)
 
     input_size = int(np.prod(real_data.shape[1:]))
-    log.info(f"  Reference data shape: {real_data.shape}, input_size={input_size}")
+    log.info(f"  [{label}] Preprocessed: {real_data.shape}, input_size={input_size}")
 
-    # Load cached VAEs and extract reference features
-    cache_dir = Path(vae_cache_dir)
+    cache_dir = Path(str(kid_cfg.vae_cache_dir))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Include label in cache key so original vs generalization get distinct VAEs
+    import hashlib as _hashlib
+    base_key = _compute_vae_cache_key(
+        real_data.shape,
+        int(vae_cfg.latent_dim),
+        list(vae_cfg.hidden_layers),
+        int(vae_cfg.num_epochs),
+        float(vae_cfg.beta),
+        exclude_xy, do_rotation, do_normalize,
+        float(vae_cfg.learning_rate),
+        float(vae_cfg.weight_decay),
+        float(vae_cfg.dropout_rate),
+        bool(vae_cfg.use_layer_norm),
+    )
+    cache_key = _hashlib.sha256(f"{base_key}_{label}".encode()).hexdigest()[:16]
+    log.info(f"  [{label}] VAE cache key: {cache_key}")
+
     seed_entries = []
+    for seed in vae_cfg.seeds:
+        seed = int(seed)
 
-    for seed in vae_seeds:
-        cache_path = cache_dir / f"{vae_cache_key}_seed{seed}.msgpack"
-        if not cache_path.exists():
-            raise FileNotFoundError(
-                f"VAE cache not found: {cache_path}. "
-                "Run inception_distance experiment first."
-            )
-
-        vae, init_fn, apply_fn, encode_fn = make_vae_network(
+        cached_vae = _load_cached_vae(
+            cache_dir, cache_key, seed,
             input_size=input_size,
-            latent_dim=vae_latent_dim,
-            encoder_hidden_layer_sizes=vae_hidden_layers,
-            dropout_rate=vae_dropout_rate,
-            use_layer_norm=vae_use_layer_norm,
+            latent_dim=int(vae_cfg.latent_dim),
+            hidden_layers=tuple(vae_cfg.hidden_layers),
+            dropout_rate=float(vae_cfg.dropout_rate),
+            use_layer_norm=bool(vae_cfg.use_layer_norm),
         )
-        dummy_params = init_fn(jax.random.PRNGKey(0))
-        with open(cache_path, "rb") as f:
-            params = flax.serialization.from_bytes(dummy_params, f.read())
 
-        mu_ref = extract_features(params, encode_fn, real_data)
-        seed_entries.append((params, (vae, init_fn, apply_fn, encode_fn), mu_ref))
-        log.info(f"  Seed {seed}: mu_ref shape {mu_ref.shape}")
+        if cached_vae is not None:
+            trained_params, network_fns = cached_vae
+            log.info(f"  [{label}] Seed {seed}: loaded VAE from cache")
+        else:
+            warmup = vae_cfg.get("beta_warmup_epochs", None)
+            if warmup is None:
+                warmup = int(vae_cfg.num_epochs) // 2
+
+            log.info(f"  [{label}] Seed {seed}: training VAE ({vae_cfg.num_epochs} epochs)...")
+            t0 = time.time()
+            trained_params, network_fns, train_metrics, epoch_losses = train_vae(
+                data=real_data,
+                input_size=input_size,
+                latent_dim=int(vae_cfg.latent_dim),
+                encoder_hidden_layer_sizes=tuple(vae_cfg.hidden_layers),
+                decoder_hidden_layer_sizes=None,
+                num_epochs=int(vae_cfg.num_epochs),
+                batch_size=int(vae_cfg.batch_size),
+                learning_rate=float(vae_cfg.learning_rate),
+                weight_decay=float(vae_cfg.weight_decay),
+                grad_clip_norm=float(vae_cfg.grad_clip_norm),
+                dropout_rate=float(vae_cfg.dropout_rate),
+                use_layer_norm=bool(vae_cfg.use_layer_norm),
+                target_beta=float(vae_cfg.beta),
+                beta_warmup_epochs=int(warmup),
+                seed=seed,
+            )
+            _save_vae_cache(cache_dir, cache_key, seed, trained_params)
+            _plot_vae_loss(
+                epoch_losses,
+                str(output_dir / f"vae_loss_{label}_seed{seed}.png"),
+            )
+            log.info(f"  [{label}] Seed {seed}: trained in {time.time() - t0:.1f}s")
+
+        _, _, _, encode_fn = network_fns
+        mu_ref = extract_features(trained_params, encode_fn, real_data)
+        seed_entries.append((trained_params, network_fns, mu_ref))
+        log.info(f"  [{label}] Seed {seed}: mu_ref shape {mu_ref.shape}")
 
     return seed_entries, joint_norm_params
+
+
+def _collect_or_load_mimic_rollouts(
+    rollout_cache: Path,
+    label: str,
+    clips: ReferenceClips,
+    codes: np.ndarray,
+    ckpt_cfg: DictConfig,
+    mimic_params: tuple,
+    mimic_ppo,
+    n_rollouts: int,
+    steps_per_frame: int,
+    seed: int,
+) -> list[np.ndarray]:
+    """Collect mimic oracle rollouts or load from cache."""
+    if rollout_cache.exists():
+        log.info(f"Loading cached {label} mimic rollouts...")
+        cached = np.load(rollout_cache, allow_pickle=True)
+        n_clips = int(cached["n_clips"])
+        raw_list = [cached[f"raw_{i}"] for i in range(n_clips)]
+        log.info(f"  Loaded {n_clips} cached rollouts")
+        return raw_list
+
+    log.info(f"Collecting mimic oracle rollouts on {label} data ({n_rollouts} clips)...")
+    _, _, env_cfg = utils.prepare_config(ckpt_cfg)
+    env_cfg.start_frame_range = [0, 0]
+    env_cfg.domain_randomization.use_domain_randomization = False
+    env_cfg.nconmax = 256
+    env_cfg.njmax = 128
+    code_stack_size = int(ckpt_cfg.network_config.get("code_stack_size", 1))
+
+    env = MoSeqImitation(
+        config=env_cfg,
+        clips=clips,
+        kpms_codes=codes,
+        code_stack_size=code_stack_size,
+    )
+    jit_reset = jax.jit(env.reset)
+    jit_step = jax.jit(env.step)
+
+    mimic_inf_fn = make_mimic_inference_fn(mimic_ppo, deterministic=True)
+    clip_length = int(ckpt_cfg.env_config.clip_length)
+
+    raw_list = collect_mimic_rollouts(
+        env, mimic_inf_fn, mimic_params, mimic_ppo,
+        n_clips=n_rollouts,
+        clip_length=clip_length,
+        steps_per_frame=steps_per_frame,
+        seed=seed,
+        jit_reset=jit_reset,
+        jit_step=jit_step,
+    )
+
+    save_dict = {"n_clips": len(raw_list)}
+    for i, q in enumerate(raw_list):
+        save_dict[f"raw_{i}"] = q
+    np.savez_compressed(rollout_cache, **save_dict)
+    log.info(f"  Saved {len(raw_list)} rollouts to {rollout_cache}")
+    return raw_list
+
+
+def load_reference_and_vaes(
+    cfg: DictConfig,
+    ckpt_cfg: DictConfig,
+    mimic_params: tuple,
+    mimic_ppo,
+    output_dir: Path,
+    gen_seg_h5_path: Path | None = None,
+    gen_codes: np.ndarray | None = None,
+) -> tuple[dict, dict]:
+    """Train/load two VAEs: one on original training data, one on generalization data.
+
+    Args:
+        gen_seg_h5_path: Path to the generalization segments H5 (for gen VAE).
+        gen_codes: KPMS codes for generalization segments (for gen VAE env).
+
+    Returns:
+        ``(vae_results, joint_norm_params_dict)`` where:
+        - vae_results: ``{"original": seed_entries, "generalization": seed_entries}``
+        - joint_norm_params_dict: ``{"original": ..., "generalization": ...}``
+    """
+    kid_cfg = cfg.kid_eval
+    steps_per_frame = int(kid_cfg.steps_per_frame)
+    n_rollouts = int(kid_cfg.vae_training_clips)
+    vae_seed = int(kid_cfg.vae_training_seed)
+
+    data_dir = output_dir / "data"
+
+    # --- Original data VAE ---
+    log.info("\n--- Original data VAE ---")
+    balanced_clips = ReferenceClips(
+        data_path=str(kid_cfg.reference_data_path),
+        n_frames_per_clip=int(ckpt_cfg.env_config.clip_length),
+    )
+    codes_data = np.load(str(kid_cfg.codes_path))
+    orig_codes = codes_data["all_codes"]
+
+    orig_raw = _collect_or_load_mimic_rollouts(
+        rollout_cache=data_dir / "vae_training_rollouts_original.npz",
+        label="original",
+        clips=balanced_clips,
+        codes=orig_codes,
+        ckpt_cfg=ckpt_cfg,
+        mimic_params=mimic_params,
+        mimic_ppo=mimic_ppo,
+        n_rollouts=n_rollouts,
+        steps_per_frame=steps_per_frame,
+        seed=vae_seed,
+    )
+    orig_entries, orig_norm = _train_or_load_vae(
+        orig_raw, "original", kid_cfg, output_dir,
+    )
+
+    # --- Generalization data VAE ---
+    log.info("\n--- Generalization data VAE ---")
+    if gen_seg_h5_path is None or gen_codes is None:
+        raise ValueError("gen_seg_h5_path and gen_codes required for generalization VAE")
+
+    # Build clips from generalization segments (250-frame chunks)
+    gen_clips = ReferenceClips(
+        data_path=str(gen_seg_h5_path),
+        n_frames_per_clip=int(ckpt_cfg.env_config.clip_length),
+    )
+
+    gen_raw = _collect_or_load_mimic_rollouts(
+        rollout_cache=data_dir / "vae_training_rollouts_generalization.npz",
+        label="generalization",
+        clips=gen_clips,
+        codes=gen_codes,
+        ckpt_cfg=ckpt_cfg,
+        mimic_params=mimic_params,
+        mimic_ppo=mimic_ppo,
+        n_rollouts=n_rollouts,
+        steps_per_frame=steps_per_frame,
+        seed=vae_seed + 1000,
+    )
+    gen_entries, gen_norm = _train_or_load_vae(
+        gen_raw, "generalization", kid_cfg, output_dir,
+    )
+
+    vae_results = {"original": orig_entries, "generalization": gen_entries}
+    norm_params = {"original": orig_norm, "generalization": gen_norm}
+    return vae_results, norm_params
 
 
 # ---------------------------------------------------------------------------
@@ -517,120 +705,231 @@ def main(cfg: DictConfig) -> None:
         )
 
     # ==================================================================
-    # Stage 5: Chunk 2000-step rollouts into 4 × 450 for KID
+    # Stage 4b: Training data rollouts (for in-distribution KID)
+    # ==================================================================
+    train_rollouts_path = data_dir / "train_rollouts.npz"
+
+    if train_rollouts_path.exists():
+        log.info("\n--- Stage 4b: Loading cached training data rollouts ---")
+        cached_train = np.load(train_rollouts_path)
+        train_c2a_qpos_list = list(cached_train["c2a_qpos"])
+        train_mimic_qpos_list = list(cached_train["mimic_qpos"])
+        log.info(f"  Loaded {len(train_c2a_qpos_list)} train rollouts per method")
+    else:
+        log.info(f"\n--- Stage 4b: Training data rollouts ({K} clips) ---")
+
+        # Load training clips + codes
+        balanced_clips = ReferenceClips(
+            data_path=str(cfg.kid_eval.reference_data_path),
+            n_frames_per_clip=int(ckpt_cfg.env_config.clip_length),
+        )
+        codes_data = np.load(str(cfg.kid_eval.codes_path))
+        train_codes = codes_data["all_codes"]
+
+        _, _, train_env_cfg = utils.prepare_config(ckpt_cfg)
+        train_env_cfg.start_frame_range = [0, 0]
+        train_env_cfg.domain_randomization.use_domain_randomization = False
+        train_env_cfg.nconmax = 256
+        train_env_cfg.njmax = 128
+        code_stack_size = int(ckpt_cfg.network_config.get("code_stack_size", 1))
+
+        c2a_inf_fn_tr = make_inference_fn(ppo_networks, use_rnn=use_rnn, deterministic=True)
+        mimic_inf_fn_tr = make_mimic_inference_fn(mimic_ppo, deterministic=True)
+
+        # Use first K clips from training data
+        n_train_clips = min(K, len(train_codes))
+        train_c2a_qpos_list = []
+        train_mimic_qpos_list = []
+
+        # Batched rollouts on training data
+        batch_size_tr = 10
+        for b_start in range(0, n_train_clips, batch_size_tr):
+            b_end = min(b_start + batch_size_tr, n_train_clips)
+            b_size = b_end - b_start
+            log.info(f"  Train batch {b_start}-{b_end-1}...")
+
+            batch_clips_tr = ReferenceClips(
+                data_path=str(cfg.kid_eval.reference_data_path),
+                n_frames_per_clip=int(ckpt_cfg.env_config.clip_length),
+                keep_clips_idx=np.arange(b_start, b_end),
+            )
+            batch_codes_tr = train_codes[b_start:b_end]
+
+            train_env = MoSeqImitation(
+                config=train_env_cfg,
+                clips=batch_clips_tr,
+                kpms_codes=batch_codes_tr,
+                code_stack_size=code_stack_size,
+            )
+            jit_reset_tr = jax.jit(train_env.reset)
+            jit_step_tr = jax.jit(train_env.step)
+
+            # clip_length in mocap frames -> control steps
+            max_ctrl_steps = int(ckpt_cfg.env_config.clip_length) * int(cfg.kid_eval.steps_per_frame)
+
+            for i in range(b_size):
+                ki = b_start + i
+                key = jax.random.PRNGKey(seed + ki * 1000 + 2000)
+                result = run_rollout(
+                    train_env, c2a_inf_fn_tr, c2a_params, ppo_networks,
+                    use_rnn=use_rnn, key=key,
+                    max_steps=max_ctrl_steps,
+                    code_override=batch_codes_tr[i],
+                    reset_clip_idx=i,
+                    jit_reset=jit_reset_tr, jit_step=jit_step_tr,
+                    model_type="code2act",
+                    ignore_done=True,
+                )
+                train_c2a_qpos_list.append(result["qpos"][:max_ctrl_steps])
+
+                key = jax.random.PRNGKey(seed + ki * 1000 + 2500)
+                result = run_rollout(
+                    train_env, mimic_inf_fn_tr, mimic_params, mimic_ppo,
+                    use_rnn=False, key=key,
+                    max_steps=max_ctrl_steps,
+                    reset_clip_idx=i,
+                    jit_reset=jit_reset_tr, jit_step=jit_step_tr,
+                    model_type="mimic_mjx",
+                    ignore_done=True,
+                )
+                train_mimic_qpos_list.append(result["qpos"][:max_ctrl_steps])
+                log.info(f"    Train clip {ki+1}/{n_train_clips} done")
+
+        np.savez_compressed(
+            train_rollouts_path,
+            c2a_qpos=np.stack(train_c2a_qpos_list),
+            mimic_qpos=np.stack(train_mimic_qpos_list),
+        )
+        log.info(f"  Saved training rollouts: {train_rollouts_path}")
+
+    # ==================================================================
+    # Stage 5: Chunk all rollouts into 250-step segments for KID
     # ==================================================================
     log.info("\n--- Stage 5: Chunking and preprocessing ---")
 
     kid_cfg = cfg.kid_eval
-    chunk_steps = int(kid_cfg.chunk_control_steps)  # 450
+    chunk_steps = int(kid_cfg.chunk_control_steps)  # 250
     steps_per_frame = int(kid_cfg.steps_per_frame)  # 2
 
-    # Each 2000-step rollout → 4 chunks of 450 steps → 225 mocap frames each
+    # Generalization rollouts
     c2a_chunks = chunk_trajectories(c2a_qpos_list, chunk_steps, steps_per_frame)
     mimic_chunks = chunk_trajectories(mimic_qpos_list, chunk_steps, steps_per_frame)
 
     n_chunks_per_body = frames_per_segment // chunk_steps
     log.info(
-        f"  C2A: {c2a_chunks.shape} "
+        f"  Gen C2A: {c2a_chunks.shape} "
         f"({K} bodies × {n_chunks_per_body} chunks)"
     )
-    log.info(f"  MIMIC: {mimic_chunks.shape}")
+    log.info(f"  Gen MIMIC: {mimic_chunks.shape}")
+
+    # Training rollouts
+    train_c2a_chunks = chunk_trajectories(train_c2a_qpos_list, chunk_steps, steps_per_frame)
+    train_mimic_chunks = chunk_trajectories(train_mimic_qpos_list, chunk_steps, steps_per_frame)
+    log.info(f"  Train C2A: {train_c2a_chunks.shape}")
+    log.info(f"  Train MIMIC: {train_mimic_chunks.shape}")
 
     # ==================================================================
-    # Stage 6: Load reference + VAE, compute KID
+    # Stage 6: Train/load both VAEs, compute KID
     # ==================================================================
-    log.info("\n--- Stage 6: KID computation ---")
+    log.info("\n--- Stage 6: VAE + KID computation ---")
+
+    vae_results, norm_params = load_reference_and_vaes(
+        cfg=cfg,
+        ckpt_cfg=ckpt_cfg,
+        mimic_params=mimic_params,
+        mimic_ppo=mimic_ppo,
+        output_dir=output_dir,
+        gen_seg_h5_path=seg_h5_path,
+        gen_codes=codes,
+    )
 
     pp = kid_cfg.preprocessing
     exclude_xy = bool(pp.exclude_xy)
     do_rotation = bool(pp.handle_rotation)
     do_normalize = bool(pp.normalize_joints)
-
     vae_cfg = kid_cfg.vae
-    seed_entries, joint_norm_params = load_reference_and_vaes(
-        original_rollout_path=str(kid_cfg.original_mimic_rollouts),
-        survival_threshold=int(kid_cfg.survival_threshold),
-        steps_per_frame=steps_per_frame,
-        exclude_xy=exclude_xy,
-        handle_rotation=do_rotation,
-        normalize_joints_flag=do_normalize,
-        vae_cache_dir=str(kid_cfg.vae_cache_dir),
-        vae_cache_key=str(kid_cfg.vae_cache_key),
-        vae_latent_dim=int(vae_cfg.latent_dim),
-        vae_hidden_layers=tuple(vae_cfg.hidden_layers),
-        vae_dropout_rate=float(vae_cfg.dropout_rate),
-        vae_use_layer_norm=bool(vae_cfg.use_layer_norm),
-        vae_seeds=list(vae_cfg.seeds),
-    )
-
-    # Preprocess generalization data with SAME normalization as reference
-    c2a_data = preprocess_data(c2a_chunks, exclude_xy, do_rotation)
-    mimic_data = preprocess_data(mimic_chunks, exclude_xy, do_rotation)
-    if joint_norm_params is not None:
-        js, jm, jstd = joint_norm_params
-        c2a_data = normalize_joints(c2a_data, js, jm, jstd)
-        mimic_data = normalize_joints(mimic_data, js, jm, jstd)
-
-    log.info(f"  C2A preprocessed: {c2a_data.shape}")
-    log.info(f"  MIMIC preprocessed: {mimic_data.shape}")
-
-    # Compute KID per seed, then aggregate
     kid_params = kid_cfg.kid
-    all_seed_results = []
 
-    for seed_idx, (vae_params, network_fns, mu_ref) in enumerate(seed_entries):
-        vae_seed = list(vae_cfg.seeds)[seed_idx]
-        _, _, _, encode_fn = network_fns
+    # Compute KID for each (rollout_source, vae_type) combination
+    # 1. gen rollouts + original VAE  ("tst_orig")
+    # 2. gen rollouts + gen VAE       ("tst_gen")
+    # 3. train rollouts + original VAE ("trn_orig")
+    all_aggregated = {}
 
-        mu_c2a = extract_features(vae_params, encode_fn, c2a_data)
-        mu_mimic = extract_features(vae_params, encode_fn, mimic_data)
+    kid_configs = [
+        ("tst_orig",  c2a_chunks,       mimic_chunks,       "original"),
+        ("tst_gen",   c2a_chunks,       mimic_chunks,       "generalization"),
+        ("trn_orig",  train_c2a_chunks, train_mimic_chunks, "original"),
+    ]
 
-        # Use half of ref for KID (same protocol as original experiment)
-        split_seed = int(kid_params.split_seed)
-        split_rng = np.random.default_rng(split_seed)
-        mid = len(mu_ref) // 2
-        idx = split_rng.permutation(len(mu_ref))
-        mu_ref_half = mu_ref[idx[:mid]]
+    for kid_label, c2a_ch, mimic_ch, vae_label in kid_configs:
+        seed_entries = vae_results[vae_label]
+        joint_norm_params = norm_params[vae_label]
 
-        c2a_kid_mean, c2a_kid_std = compute_kid(
-            mu_ref_half, mu_c2a,
-            degree=int(kid_params.degree),
-            num_subsets=int(kid_params.num_subsets),
-            subset_size=kid_params.get("subset_size", None),
-            seed=split_seed,
-        )
-        mimic_kid_mean, mimic_kid_std = compute_kid(
-            mu_ref_half, mu_mimic,
-            degree=int(kid_params.degree),
-            num_subsets=int(kid_params.num_subsets),
-            subset_size=kid_params.get("subset_size", None),
-            seed=split_seed,
-        )
+        c2a_data = preprocess_data(c2a_ch, exclude_xy, do_rotation)
+        mimic_data = preprocess_data(mimic_ch, exclude_xy, do_rotation)
+        if joint_norm_params is not None:
+            js, jm, jstd = joint_norm_params
+            c2a_data = normalize_joints(c2a_data, js, jm, jstd)
+            mimic_data = normalize_joints(mimic_data, js, jm, jstd)
 
-        c2a_fid = compute_fid(mu_ref_half, mu_c2a)
-        mimic_fid = compute_fid(mu_ref_half, mu_mimic)
+        log.info(f"\n  [{kid_label}] C2A: {c2a_data.shape}, MIMIC: {mimic_data.shape}")
 
-        seed_result = {
-            "seed": int(vae_seed),
-            "code2act": {"kid_mean": c2a_kid_mean, "kid_std": c2a_kid_std, "fid": c2a_fid},
-            "mimic_mjx": {"kid_mean": mimic_kid_mean, "kid_std": mimic_kid_std, "fid": mimic_fid},
-        }
-        all_seed_results.append(seed_result)
-        log.info(
-            f"  Seed {vae_seed}: C2A KID={c2a_kid_mean:.4f}, "
-            f"MIMIC KID={mimic_kid_mean:.4f}"
-        )
+        all_seed_results = []
+        for seed_idx, (vae_params, network_fns, mu_ref) in enumerate(seed_entries):
+            vae_seed = list(vae_cfg.seeds)[seed_idx]
+            _, _, _, encode_fn = network_fns
 
-    # Aggregate across seeds
-    aggregated = {}
-    for method in ["mimic_mjx", "code2act"]:
-        kid_means = [r[method]["kid_mean"] for r in all_seed_results]
-        fids = [r[method]["fid"] for r in all_seed_results]
-        aggregated[method] = {
-            "kid_mean": float(np.mean(kid_means)),
-            "kid_std": float(np.std(kid_means)),
-            "fid_mean": float(np.mean(fids)),
-            "fid_std": float(np.std(fids)),
+            mu_c2a = extract_features(vae_params, encode_fn, c2a_data)
+            mu_mimic = extract_features(vae_params, encode_fn, mimic_data)
+
+            split_seed = int(kid_params.split_seed)
+            split_rng = np.random.default_rng(split_seed)
+            mid = len(mu_ref) // 2
+            idx = split_rng.permutation(len(mu_ref))
+            mu_ref_half = mu_ref[idx[:mid]]
+
+            c2a_kid_mean, c2a_kid_std = compute_kid(
+                mu_ref_half, mu_c2a,
+                degree=int(kid_params.degree),
+                num_subsets=int(kid_params.num_subsets),
+                subset_size=kid_params.get("subset_size", None),
+                seed=split_seed,
+            )
+            mimic_kid_mean, mimic_kid_std = compute_kid(
+                mu_ref_half, mu_mimic,
+                degree=int(kid_params.degree),
+                num_subsets=int(kid_params.num_subsets),
+                subset_size=kid_params.get("subset_size", None),
+                seed=split_seed,
+            )
+
+            c2a_fid = compute_fid(mu_ref_half, mu_c2a)
+            mimic_fid = compute_fid(mu_ref_half, mu_mimic)
+
+            all_seed_results.append({
+                "seed": int(vae_seed),
+                "code2act": {"kid_mean": c2a_kid_mean, "kid_std": c2a_kid_std, "fid": c2a_fid},
+                "mimic_mjx": {"kid_mean": mimic_kid_mean, "kid_std": mimic_kid_std, "fid": mimic_fid},
+            })
+            log.info(
+                f"  [{kid_label}] Seed {vae_seed}: C2A KID={c2a_kid_mean:.4f}, "
+                f"MIMIC KID={mimic_kid_mean:.4f}"
+            )
+
+        aggregated = {}
+        for method in ["mimic_mjx", "code2act"]:
+            kid_means = [r[method]["kid_mean"] for r in all_seed_results]
+            fids = [r[method]["fid"] for r in all_seed_results]
+            aggregated[method] = {
+                "kid_mean": float(np.mean(kid_means)),
+                "kid_std": float(np.std(kid_means)),
+                "fid_mean": float(np.mean(fids)),
+                "fid_std": float(np.std(fids)),
+            }
+        all_aggregated[kid_label] = {
+            "per_seed_results": all_seed_results,
+            "aggregated": aggregated,
         }
 
     # ==================================================================
@@ -650,8 +949,15 @@ def main(cfg: DictConfig) -> None:
             "mimic_mean_reward": float(mimic_mean_rew),
             "timestamp": datetime.now().isoformat(),
         },
-        "per_seed_results": all_seed_results,
-        "aggregated": aggregated,
+        # All 3 KID conditions
+        "tst_orig": all_aggregated["tst_orig"],
+        "tst_gen": all_aggregated["tst_gen"],
+        "trn_orig": all_aggregated["trn_orig"],
+        # Backward compat
+        "original_vae": all_aggregated["tst_orig"],
+        "generalization_vae": all_aggregated["tst_gen"],
+        "per_seed_results": all_aggregated["tst_orig"]["per_seed_results"],
+        "aggregated": all_aggregated["tst_orig"]["aggregated"],
     }
 
     json_path = output_dir / "results.json"
@@ -659,8 +965,12 @@ def main(cfg: DictConfig) -> None:
         json.dump(output_data, f, indent=2)
     log.info(f"Results saved to: {json_path}")
 
-    # KID barplot
-    plot_kid_comparison(aggregated, str(output_dir / "kid_comparison.png"))
+    # KID barplots
+    for kid_label in all_aggregated:
+        plot_kid_comparison(
+            all_aggregated[kid_label]["aggregated"],
+            str(output_dir / f"kid_comparison_{kid_label}.png"),
+        )
 
     # Copy data to figures/data
     fig_data_dir = MOSEQ_DIR / "figures" / "data"
@@ -674,10 +984,11 @@ def main(cfg: DictConfig) -> None:
     log.info("SUMMARY")
     log.info(f"{'='*60}")
     log.info(f"Bodies: {K}, Chunks/body: {c2a_chunks.shape[0] // K}")
-    log.info(f"C2A  : KID={aggregated['code2act']['kid_mean']:.4f} ± {aggregated['code2act']['kid_std']:.4f}, "
-             f"FID={aggregated['code2act']['fid_mean']:.2f}, reward={c2a_mean_rew:.2f}")
-    log.info(f"MIMIC: KID={aggregated['mimic_mjx']['kid_mean']:.4f} ± {aggregated['mimic_mjx']['kid_std']:.4f}, "
-             f"FID={aggregated['mimic_mjx']['fid_mean']:.2f}, reward={mimic_mean_rew:.2f}")
+    for kl in ["tst_orig", "tst_gen", "trn_orig"]:
+        agg = all_aggregated[kl]["aggregated"]
+        log.info(f"\n  [{kl}]")
+        log.info(f"  C2A  : KID={agg['code2act']['kid_mean']:.4f} ± {agg['code2act']['kid_std']:.4f}")
+        log.info(f"  MIMIC: KID={agg['mimic_mjx']['kid_mean']:.4f} ± {agg['mimic_mjx']['kid_std']:.4f}")
 
 
 if __name__ == "__main__":

@@ -97,9 +97,36 @@ def run(cfg: DictConfig) -> PretrainState:
         init_value=0.0, end_value=cfg.beta_kl,
         transition_steps=cfg.beta_kl_anneal_steps,
     )
+
+    # Build LR schedule: linear warmup -> hold at peak -> cosine decay to lr_end_value.
+    # When lr_schedule="constant", just use the flat learning_rate.
+    lr_schedule_kind = cfg.get("lr_schedule", "constant")
+    if lr_schedule_kind == "constant":
+        lr_fn: Any = cfg.learning_rate
+    else:
+        warmup_steps = max(1, int(cfg.num_steps * float(cfg.get("lr_warmup_frac", 0.0))))
+        hold_steps = max(0, int(cfg.num_steps * float(cfg.get("lr_hold_frac", 0.0))))
+        decay_steps = max(1, cfg.num_steps - warmup_steps - hold_steps)
+        end_value = float(cfg.get("lr_end_value", 0.0))
+        peak = float(cfg.learning_rate)
+        # alpha is the floor as a fraction of peak (optax convention).
+        alpha = end_value / peak if peak > 0 else 0.0
+        lr_fn = optax.join_schedules(
+            schedules=[
+                optax.linear_schedule(
+                    init_value=0.0, end_value=peak, transition_steps=warmup_steps
+                ),
+                optax.constant_schedule(peak),
+                optax.cosine_decay_schedule(
+                    init_value=peak, decay_steps=decay_steps, alpha=alpha
+                ),
+            ],
+            boundaries=[warmup_steps, warmup_steps + hold_steps],
+        )
+
     optimizer = optax.chain(
         optax.clip_by_global_norm(cfg.grad_clip),
-        optax.adamw(cfg.learning_rate, weight_decay=cfg.weight_decay),
+        optax.adamw(lr_fn, weight_decay=cfg.weight_decay),
     )
     opt_state = optimizer.init(params)
 
@@ -161,12 +188,14 @@ def run(cfg: DictConfig) -> PretrainState:
             state.losses.append(float(loss))
 
             if (i + 1) % cfg.log_every == 0 or i == 0:
+                current_lr = float(lr_fn(i)) if callable(lr_fn) else float(lr_fn)
                 logger.log_scalars(i, {
                     "train/total": loss,
                     "train/recon": aux["recon"],
                     "train/kl": aux["kl"],
                     "train/pred": aux["pred"],
                     "train/beta_kl": float(beta),
+                    "train/lr": current_lr,
                 })
 
             if (i + 1) % cfg.eval_every == 0 and n_val > 0:

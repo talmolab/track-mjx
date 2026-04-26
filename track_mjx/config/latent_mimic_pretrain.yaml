@@ -17,29 +17,34 @@ seed: 0
 window_len: 10                  # encoder input window w
 horizon: 5                      # predictor output horizon n
 
-# Network sizes (paper: [256, 128] ELU)
-encoder_layer_sizes: [256, 128]
-decoder_layer_sizes: [128, 256]
-predictor_layer_sizes: [256, 128]
+# Network sizes — predictor enlarged after v1 underfit; encoder mirrors it.
+encoder_layer_sizes: [512, 256, 128]
+decoder_layer_sizes: [256, 512]
+predictor_layer_sizes: [512, 256, 128]
 latent_dim: 16
 
 # Loss weights
 beta_kl: 0.1
 w_pred: 1.0
-beta_kl_anneal_steps: 5000      # linear warm-up of KL term
+beta_kl_anneal_steps: 15_000    # linear warm-up of KL term, paced for 300k total steps
 
-# Optimization
-batch_size: 1024
-num_steps: 100_000
-learning_rate: 1.0e-4
+# Optimization — bigger batch + more steps to use 5090 better; LR schedule has warmup -> hold -> cosine.
+batch_size: 8192
+num_steps: 300_000
+learning_rate: 3.0e-4           # peak LR
 weight_decay: 1.0e-5
 grad_clip: 1.0
 
+lr_schedule: cosine             # constant | cosine
+lr_warmup_frac: 0.05            # 5% warmup from 0 to peak
+lr_hold_frac: 0.30              # hold at peak for 30% of total
+lr_end_value: 3.0e-5            # 10x decay over the cosine portion
+
 # Logging / checkpointing
-log_every: 200
-eval_every: 1000
+log_every: 500
+eval_every: 2000
 ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior
-ckpt_every: 5000
+ckpt_every: 10_000
 
 # wandb
 wandb_enabled: true
@@ -48,4 +53,4 @@ wandb_run_name: null            # null = auto from hydra
 wandb_tags: ["phase1", "rodent"]
 wandb_group: null
 viz_n_dims: 6                   # number of feature dims to overlay in recon/pred figures
-viz_every: 5000                 # every N steps, log recon + prediction figures
+viz_every: 10_000               # every N steps, log recon + prediction figures

@@ -1,0 +1,51 @@
+# track_mjx/config/latent_mimic_pretrain.yaml
+# Phase 1: pre-train MotionEncoder + MotionDecoder + MotionPredictor on rat mocap.
+
+defaults:
+  - _self_
+
+# Walker / data
+walker_name: rodent
+n_joints: 32
+reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/rodent/reference_data/reference_clips.h5
+clip_length: 250
+keep_clips_idx: null            # null = all walking clips already filtered by env config
+train_ratio: 0.8
+seed: 0
+
+# Window dims
+window_len: 10                  # encoder input window w
+horizon: 5                      # predictor output horizon n
+
+# Network sizes (paper: [256, 128] ELU)
+encoder_layer_sizes: [256, 128]
+decoder_layer_sizes: [128, 256]
+predictor_layer_sizes: [256, 128]
+latent_dim: 16
+
+# Loss weights
+beta_kl: 0.1
+w_pred: 1.0
+beta_kl_anneal_steps: 5000      # linear warm-up of KL term
+
+# Optimization
+batch_size: 1024
+num_steps: 100_000
+learning_rate: 1.0e-4
+weight_decay: 1.0e-5
+grad_clip: 1.0
+
+# Logging / checkpointing
+log_every: 200
+eval_every: 1000
+ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior
+ckpt_every: 5000
+
+# wandb
+wandb_enabled: true
+wandb_project: latent-mimic
+wandb_run_name: null            # null = auto from hydra
+wandb_tags: ["phase1", "rodent"]
+wandb_group: null
+viz_n_dims: 6                   # number of feature dims to overlay in recon/pred figures
+viz_every: 5000                 # every N steps, log recon + prediction figures

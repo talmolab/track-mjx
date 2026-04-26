@@ -311,6 +311,7 @@ def train(
     lr_schedule: str = "constant",
     lr_end_value: float = 0.0,
     lr_warmup_frac: float = 0.0,
+    lr_hold_frac: float = 0.0,
     entropy_cost: float = 1e-4,
     latent_kl_weight: float = 1e-3,
     latent_ar1_weight: float = 1e-3,
@@ -509,17 +510,19 @@ def train(
     lr_schedule_fn = None
     if lr_schedule != "constant":
         lr_warmup_evals = int(num_evals_after_init * lr_warmup_frac)
+        lr_hold_evals = int(num_evals_after_init * lr_hold_frac)
         lr_schedule_fn = create_lr_schedule(
             init_value=learning_rate,
             end_value=lr_end_value,
             total_steps=num_evals_after_init,
             warmup_steps=lr_warmup_evals,
+            hold_steps=lr_hold_evals,
             schedule=lr_schedule,
         )
         logging.info(
             f"Using LR schedule: {lr_schedule}, init={learning_rate:.1e}, "
             f"end={lr_end_value:.1e}, over {num_evals_after_init} eval iters, "
-            f"warmup_evals={lr_warmup_evals}"
+            f"warmup_evals={lr_warmup_evals}, hold_evals={lr_hold_evals}"
         )
 
     base_optimizer = optax.chain(
@@ -630,11 +633,16 @@ def train(
         # gradient_update_fn already applied updates at base_lr; adjust to
         # the scheduled LR by rescaling the delta.
         if lr_schedule_fn is not None:
-            lr_scale = lr_schedule_fn(it) / learning_rate
+            current_lr = lr_schedule_fn(it)
+            lr_scale = current_lr / learning_rate
             new_params = jax.tree_util.tree_map(
                 lambda old, new: old + (new - old) * lr_scale,
                 params, new_params,
             )
+        else:
+            current_lr = jnp.asarray(learning_rate, dtype=jnp.float32)
+
+        metrics = {**metrics, "learning_rate": current_lr}
 
         return (optimizer_state, new_params, key, it), metrics
 

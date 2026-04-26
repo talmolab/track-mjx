@@ -178,6 +178,7 @@ def train(
     lr_schedule: str = "constant",
     lr_end_value: float = 0.0,
     lr_warmup_frac: float = 0.0,
+    lr_hold_frac: float = 0.0,
     entropy_cost: float = 1e-4,
     latent_kl_weight: float = 1e-3,
     latent_ar1_weight: float = 1e-3,
@@ -346,11 +347,6 @@ def train(
         # Track gradient norm (preserve custom diagnostic)
         grad_norm = optax.global_norm(grads)
         is_clipped = (grad_norm > grad_clip_threshold).astype(jnp.float32)
-        metrics = {
-            **metrics,
-            "grad_norm": grad_norm,
-            "grad_clipped": is_clipped,
-        }
 
         # Apply gradients — use 3-arg form for adamw compatibility
         params_update, optimizer_state = optimizer.update(
@@ -361,10 +357,20 @@ def train(
         # The optimizer uses constant base_lr; this multiplier adjusts the
         # effective LR per eval iteration without changing optimizer state shape.
         if lr_schedule_fn is not None:
-            lr_scale = lr_schedule_fn(it) / learning_rate
+            current_lr = lr_schedule_fn(it)
+            lr_scale = current_lr / learning_rate
             params_update = jax.tree_util.tree_map(
                 lambda u: u * lr_scale, params_update
             )
+        else:
+            current_lr = jnp.asarray(learning_rate, dtype=jnp.float32)
+
+        metrics = {
+            **metrics,
+            "grad_norm": grad_norm,
+            "grad_clipped": is_clipped,
+            "learning_rate": current_lr,
+        }
 
         params = optax.apply_updates(params, params_update)
 
@@ -605,17 +611,19 @@ def train(
     lr_schedule_fn = None
     if lr_schedule != "constant":
         lr_warmup_evals = int(num_evals_after_init * lr_warmup_frac)
+        lr_hold_evals = int(num_evals_after_init * lr_hold_frac)
         lr_schedule_fn = losses.create_lr_schedule(
             init_value=learning_rate,
             end_value=lr_end_value,
             total_steps=num_evals_after_init,
             warmup_steps=lr_warmup_evals,
+            hold_steps=lr_hold_evals,
             schedule=lr_schedule,
         )
         logging.info(
             f"Using LR schedule: {lr_schedule}, init={learning_rate:.1e}, "
             f"end={lr_end_value:.1e}, over {num_evals_after_init} eval iters, "
-            f"warmup_evals={lr_warmup_evals}"
+            f"warmup_evals={lr_warmup_evals}, hold_evals={lr_hold_evals}"
         )
 
     base_optimizer = optax.chain(

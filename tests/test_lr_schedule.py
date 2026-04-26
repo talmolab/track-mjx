@@ -112,6 +112,77 @@ class TestCreateLrScheduleWarmup:
         assert float(schedule(1000)) == pytest.approx(0.0, abs=1e-6)
 
 
+class TestCreateLrScheduleHold:
+    """Hold: stay at init_value for hold_steps, then decay to end_value."""
+
+    def test_hold_starts_at_init_value(self):
+        schedule = create_lr_schedule(
+            init_value=1e-4, end_value=1e-5, total_steps=1000,
+            hold_steps=500, schedule="linear",
+        )
+        assert float(schedule(0)) == pytest.approx(1e-4)
+
+    def test_hold_stays_at_init_during_hold(self):
+        schedule = create_lr_schedule(
+            init_value=1e-4, end_value=1e-5, total_steps=1000,
+            hold_steps=500, schedule="linear",
+        )
+        assert float(schedule(250)) == pytest.approx(1e-4)
+        assert float(schedule(499)) == pytest.approx(1e-4)
+
+    def test_hold_starts_decay_at_hold_end(self):
+        schedule = create_lr_schedule(
+            init_value=1e-4, end_value=1e-5, total_steps=1000,
+            hold_steps=500, schedule="linear",
+        )
+        assert float(schedule(500)) == pytest.approx(1e-4, rel=1e-4)
+
+    def test_hold_reaches_end_value(self):
+        schedule = create_lr_schedule(
+            init_value=1e-4, end_value=1e-5, total_steps=1000,
+            hold_steps=500, schedule="linear",
+        )
+        assert float(schedule(1000)) == pytest.approx(1e-5, abs=1e-8)
+
+    def test_hold_linear_midpoint_of_decay(self):
+        schedule = create_lr_schedule(
+            init_value=1e-4, end_value=1e-5, total_steps=1000,
+            hold_steps=500, schedule="linear",
+        )
+        # Halfway through the 500-step decay (at step 750): (1e-4 + 1e-5) / 2
+        assert float(schedule(750)) == pytest.approx(5.5e-5, rel=1e-3)
+
+    def test_hold_clamps_after_total_steps(self):
+        schedule = create_lr_schedule(
+            init_value=1e-4, end_value=1e-5, total_steps=1000,
+            hold_steps=500, schedule="linear",
+        )
+        assert float(schedule(2000)) == pytest.approx(1e-5, abs=1e-8)
+
+    def test_hold_cosine(self):
+        schedule = create_lr_schedule(
+            init_value=1e-4, end_value=1e-5, total_steps=1000,
+            hold_steps=500, schedule="cosine",
+        )
+        assert float(schedule(0)) == pytest.approx(1e-4)
+        assert float(schedule(250)) == pytest.approx(1e-4)
+        assert float(schedule(500)) == pytest.approx(1e-4, rel=1e-4)
+        assert float(schedule(1000)) == pytest.approx(1e-5, abs=1e-6)
+
+    def test_hold_zero_is_backwards_compatible(self):
+        without_hold = create_lr_schedule(
+            init_value=1e-4, end_value=0.0, total_steps=1000, schedule="linear",
+        )
+        with_hold_zero = create_lr_schedule(
+            init_value=1e-4, end_value=0.0, total_steps=1000,
+            hold_steps=0, schedule="linear",
+        )
+        for step in (0, 100, 500, 1000):
+            assert float(without_hold(step)) == pytest.approx(
+                float(with_hold_zero(step)), abs=1e-10
+            )
+
+
 class TestCreateLrScheduleInvalid:
     """Invalid schedule type should raise ValueError."""
 

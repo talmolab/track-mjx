@@ -422,6 +422,7 @@ def create_lr_schedule(
     end_value: float = 0.0,
     total_steps: int = 1000,
     warmup_steps: int = 0,
+    hold_steps: int = 0,
     schedule: str = "constant",
 ) -> Callable[[int], float]:
     """Create a learning rate schedule compatible with optax optimizers.
@@ -431,9 +432,12 @@ def create_lr_schedule(
     - "linear": Linear decay from init_value to end_value over total_steps.
     - "cosine": Cosine decay from init_value to end_value over total_steps.
 
-    When warmup_steps > 0, the schedule linearly ramps from end_value to
-    init_value over the warmup period, then applies the decay schedule
-    for the remaining (total_steps - warmup_steps) steps.
+    Phase sequence within total_steps:
+      1. Warmup (optional): linearly ramps from end_value to init_value
+         over warmup_steps.
+      2. Hold (optional): stays at init_value for hold_steps.
+      3. Decay: applies the selected schedule from init_value to end_value
+         over the remaining (total_steps - warmup_steps - hold_steps) steps.
 
     Compatible with optax's ScalarOrSchedule — pass directly to
     ``optax.adamw(learning_rate=schedule)``.
@@ -442,9 +446,12 @@ def create_lr_schedule(
         init_value: Peak learning rate (reached after warmup, or at step 0
             if no warmup). Defaults to 1e-4.
         end_value: Final learning rate at end of schedule. Defaults to 0.0.
-        total_steps: Total number of optimizer steps (including warmup).
+        total_steps: Total number of optimizer steps (including warmup and hold).
         warmup_steps: Steps for linear warmup from end_value to init_value.
             Defaults to 0 (no warmup).
+        hold_steps: Steps to hold at init_value after warmup before decay
+            begins. Defaults to 0 (no hold — decay starts immediately
+            after warmup).
         schedule: Schedule type — "constant", "linear", or "cosine".
 
     Returns:
@@ -458,23 +465,24 @@ def create_lr_schedule(
             f"schedule must be 'constant', 'linear', or 'cosine', not {schedule!r}"
         )
 
+    hold_end = warmup_steps + hold_steps
+    decay_total = max(total_steps - hold_end, 1)
+
     def schedule_fn(count: int) -> float:
         count = jnp.asarray(count, dtype=jnp.float32)
 
         if schedule == "constant":
             return jnp.asarray(init_value, dtype=jnp.float32)
 
-        # Warmup: linear ramp from end_value to init_value
+        # Phase 1 — warmup: linear ramp from end_value to init_value
         if warmup_steps > 0:
             warmup_progress = jnp.clip(count / warmup_steps, 0.0, 1.0)
             warmup_lr = end_value + warmup_progress * (init_value - end_value)
-            decay_count = jnp.clip(count - warmup_steps, 0.0, None)
-            decay_total = max(total_steps - warmup_steps, 1)
         else:
-            warmup_lr = init_value
-            decay_count = count
-            decay_total = max(total_steps, 1)
+            warmup_lr = jnp.asarray(init_value, dtype=jnp.float32)
 
+        # Phase 3 — decay: from init_value to end_value after hold ends
+        decay_count = jnp.clip(count - hold_end, 0.0, None)
         decay_progress = jnp.clip(decay_count / decay_total, 0.0, 1.0)
 
         if schedule == "linear":
@@ -484,9 +492,16 @@ def create_lr_schedule(
                 1 + jnp.cos(jnp.pi * decay_progress)
             )
 
-        if warmup_steps > 0:
-            return jnp.where(count < warmup_steps, warmup_lr, decay_lr)
-        return decay_lr
+        # Select active phase: warmup -> hold -> decay
+        in_warmup = count < warmup_steps
+        in_hold = (count >= warmup_steps) & (count < hold_end)
+        return jnp.where(
+            in_warmup,
+            warmup_lr,
+            jnp.where(
+                in_hold, jnp.asarray(init_value, dtype=jnp.float32), decay_lr
+            ),
+        )
 
     return schedule_fn
 

@@ -51,3 +51,19 @@ def test_loss_decreases_over_100_steps():
         losses.append(float(loss))
 
     assert losses[-1] < 0.5 * losses[0], f"loss did not decrease: {losses[0]} -> {losses[-1]}"
+
+
+def test_pretrain_main_completes_and_saves_ckpt(pretrain_cfg, synthetic_clips, monkeypatch):
+    from track_mjx.agent.latent_ppo import pretrain
+
+    # Bypass the HDF5 loader by directly injecting synthetic clips.
+    monkeypatch.setattr(pretrain, "_load_clips", lambda cfg: synthetic_clips)
+    state = pretrain.run(pretrain_cfg)
+
+    # Final loss < initial loss
+    assert state.losses[-1] < state.losses[0]
+    # Checkpoint files exist
+    import os
+    assert os.path.exists(os.path.join(pretrain_cfg.ckpt_dir, "encoder.msgpack"))
+    assert os.path.exists(os.path.join(pretrain_cfg.ckpt_dir, "predictor.msgpack"))
+    assert os.path.exists(os.path.join(pretrain_cfg.ckpt_dir, "normalizer.npz"))

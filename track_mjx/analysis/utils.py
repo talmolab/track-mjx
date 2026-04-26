@@ -58,7 +58,7 @@ def _recursive_save(file: h5py.File, data: Any, group_path: str = "/") -> None:
         for i, item in enumerate(data):
             _recursive_save(file, item, f"{group_path}/{i}")
 
-    elif isinstance(data, (int, float, str, bool, np.ndarray)):
+    elif isinstance(data, (int, float, str, bool, np.integer, np.floating, np.bool_, np.ndarray)):
         file.create_dataset(group_path, data=data)
 
     elif isinstance(data, (np.bytes_, bytes)):

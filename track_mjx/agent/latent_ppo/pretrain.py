@@ -30,6 +30,8 @@ class PretrainState:
     opt_state: Any
     rng: jax.Array
     losses: list = field(default_factory=list)
+    best_val_total: float = float("inf")
+    best_val_step: int = -1
 
 
 def _load_clips(cfg: DictConfig):
@@ -213,11 +215,33 @@ def run(cfg: DictConfig) -> PretrainState:
                     "val/recon": v_aux["recon"],
                     "val/kl": v_aux["kl"],
                     "val/pred": v_aux["pred"],
+                    "val/best_total": state.best_val_total,
+                    "val/best_step": state.best_val_step,
                 })
                 # latent diagnostics
                 v_mean, v_logvar = encode_for_viz(state.params, val_fig_in)
                 logger.log_histogram(i, "val/z_mean", v_mean)
                 logger.log_histogram(i, "val/z_std", jnp.exp(0.5 * v_logvar))
+
+                # Save best-val checkpoint if val_total improved.
+                v_total_f = float(v_loss)
+                if v_total_f < state.best_val_total:
+                    state.best_val_total = v_total_f
+                    state.best_val_step = i + 1
+                    best_dir = Path(cfg.ckpt_dir) / "best"
+                    _save_msgpack(best_dir / "encoder.msgpack", state.params["enc"])
+                    _save_msgpack(best_dir / "decoder.msgpack", state.params["dec"])
+                    _save_msgpack(best_dir / "predictor.msgpack", state.params["pred"])
+                    np.savez(best_dir / "normalizer.npz",
+                             mean=np.asarray(normalizer.mean),
+                             std=np.asarray(normalizer.std))
+                    OmegaConf.save(cfg, best_dir / "config.yaml")
+                    np.savez(best_dir / "meta.npz",
+                             best_val_total=v_total_f,
+                             best_val_step=i + 1,
+                             best_val_recon=float(v_aux["recon"]),
+                             best_val_pred=float(v_aux["pred"]),
+                             best_val_kl=float(v_aux["kl"]))
 
             if (i + 1) % cfg.viz_every == 0 and n_val > 0:
                 v_recon = reconstruct_for_viz(state.params, val_fig_in)

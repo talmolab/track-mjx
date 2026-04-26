@@ -35,7 +35,7 @@ class PretrainState:
 def _load_clips(cfg: DictConfig):
     """Default loader: ReferenceClips from HDF5. Tests monkey-patch this."""
     from vnl_playground.tasks.reference_clips import ReferenceClips
-    return ReferenceClips.from_hdf5(
+    return ReferenceClips(
         cfg.reference_data_path,
         n_frames_per_clip=cfg.clip_length,
         keep_clips_idx=cfg.keep_clips_idx,

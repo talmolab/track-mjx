@@ -6,8 +6,8 @@ defaults:
 
 # Walker / data
 walker_name: rodent
-n_joints: 32
-reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/rodent/reference_data/reference_clips.h5
+n_joints: 67
+reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/data/rodent/rodent_reference_clips.h5
 clip_length: 250
 keep_clips_idx: null            # null = all walking clips already filtered by env config
 train_ratio: 0.8

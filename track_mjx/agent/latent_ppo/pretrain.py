@@ -19,7 +19,7 @@ from track_mjx.agent.latent_ppo.data.normalizer import fit_normalizer
 from track_mjx.agent.latent_ppo.data.window_dataset import make_windows
 from track_mjx.agent.latent_ppo.losses.pretrain_losses import pretrain_loss
 from track_mjx.agent.latent_ppo.networks.decoder import MotionDecoder
-from track_mjx.agent.latent_ppo.networks.encoder import MotionEncoder
+from track_mjx.agent.latent_ppo.networks.encoder import MotionEncoder, MotionEncoderConv1D
 from track_mjx.agent.latent_ppo.networks.predictor import MotionPredictor
 from track_mjx.agent.latent_ppo.wandb_log import WandbLogger
 
@@ -63,8 +63,9 @@ def run(cfg: DictConfig) -> PretrainState:
     rng = jax.random.PRNGKey(cfg.seed)
 
     # ---- data ----
+    use_qvel = bool(cfg.get("use_qvel", True))
     clips = _load_clips(cfg)
-    motion = extract_motion_frames(clips, n_joints=cfg.n_joints)
+    motion = extract_motion_frames(clips, n_joints=cfg.n_joints, use_qvel=use_qvel)
     train_motion, val_motion = _split_clips(motion, cfg.train_ratio, cfg.seed)
     normalizer = fit_normalizer(train_motion.reshape(-1, motion.shape[-1]))
 
@@ -75,11 +76,35 @@ def run(cfg: DictConfig) -> PretrainState:
     val_in = jnp.asarray(normalizer.apply(jnp.asarray(val_in)))
     val_tgt = jnp.asarray(normalizer.apply(jnp.asarray(val_tgt)))
 
-    feat_dim = MOTION_FRAME_DIM(cfg.n_joints)
+    feat_dim = MOTION_FRAME_DIM(cfg.n_joints, use_qvel=use_qvel)
+
+    # ---- active-feature mask (skip dead-zero dims in loss) ----
+    mask_dead_dims = bool(cfg.get("mask_dead_dims", False))
+    raw_std = np.asarray(normalizer.std, dtype=np.float32)
+    if mask_dead_dims:
+        feat_mask_np = (raw_std > float(cfg.get("dead_dim_std_thresh", 1e-3))).astype(np.float32)
+    else:
+        feat_mask_np = np.ones_like(raw_std, dtype=np.float32)
+    feat_mask = jnp.asarray(feat_mask_np)
+    n_active = int(feat_mask_np.sum())
+    print(f"[loss] active feature dims: {n_active}/{feat_dim}  (mask_dead_dims={mask_dead_dims})")
 
     # ---- nets ----
-    enc = MotionEncoder(layer_sizes=tuple(cfg.encoder_layer_sizes),
-                        latent_dim=cfg.latent_dim)
+    encoder_type = str(cfg.get("encoder_type", "mlp")).lower()
+    if encoder_type == "conv1d":
+        enc = MotionEncoderConv1D(
+            conv_channels=tuple(cfg.get("conv_channels", (64, 128, 256))),
+            kernel_size=int(cfg.get("conv_kernel_size", 3)),
+            head_layer_sizes=tuple(cfg.get("conv_head_layers", (256,))),
+            latent_dim=cfg.latent_dim,
+        )
+    elif encoder_type == "mlp":
+        enc = MotionEncoder(
+            layer_sizes=tuple(cfg.encoder_layer_sizes),
+            latent_dim=cfg.latent_dim,
+        )
+    else:
+        raise ValueError(f"unknown encoder_type {encoder_type!r}")
     dec = MotionDecoder(layer_sizes=tuple(cfg.decoder_layer_sizes),
                         window_len=cfg.window_len, feat_dim=feat_dim)
     pred = MotionPredictor(layer_sizes=tuple(cfg.predictor_layer_sizes),
@@ -133,17 +158,23 @@ def run(cfg: DictConfig) -> PretrainState:
     opt_state = optimizer.init(params)
 
     # ---- step ----
-    def loss_fn(params, rng, inputs, targets, beta):
+    sigma_max = float(cfg.get("sigma_max", 0.0))
+    w_sigma = float(cfg.get("w_sigma", 0.0))
+    eval_deterministic = bool(cfg.get("eval_deterministic", False))
+
+    def loss_fn(params, rng, inputs, targets, beta, deterministic):
         return pretrain_loss(
             enc, dec, pred, params["enc"], params["dec"], params["pred"],
             inputs, targets, rng=rng, beta_kl=beta, w_pred=cfg.w_pred,
+            feat_mask=feat_mask, deterministic=deterministic,
+            sigma_max=sigma_max, w_sigma=w_sigma,
         )
 
     @jax.jit
     def step(params, opt_state, rng, inputs, targets, beta):
-        (loss, aux), grads = jax.value_and_grad(loss_fn, has_aux=True)(
-            params, rng, inputs, targets, beta
-        )
+        def grad_fn(p):
+            return loss_fn(p, rng, inputs, targets, beta, False)
+        (loss, aux), grads = jax.value_and_grad(grad_fn, has_aux=True)(params)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss, aux
@@ -163,7 +194,7 @@ def run(cfg: DictConfig) -> PretrainState:
 
     @jax.jit
     def eval_loss(params, rng, inputs, targets, beta):
-        return loss_fn(params, rng, inputs, targets, beta)
+        return loss_fn(params, rng, inputs, targets, beta, eval_deterministic)
 
     @jax.jit
     def encode_for_viz(params, inputs):
@@ -199,6 +230,7 @@ def run(cfg: DictConfig) -> PretrainState:
                     "train/recon": aux["recon"],
                     "train/kl": aux["kl"],
                     "train/pred": aux["pred"],
+                    "train/sigma_pen": aux["sigma_pen"],
                     "train/beta_kl": float(beta),
                     "train/lr": current_lr,
                 })
@@ -213,12 +245,20 @@ def run(cfg: DictConfig) -> PretrainState:
                     state.params, k_v,
                     val_in[val_idx], val_tgt[val_idx], beta,
                 )
+                # Selection metric: recon + pred (NOT total). Excluding β·KL avoids
+                # the artifact where val_total grows monotonically with β annealing
+                # and any post-anneal step is structurally unable to beat early ones.
+                v_recon_f = float(v_aux["recon"])
+                v_pred_f = float(v_aux["pred"])
+                v_select = v_recon_f + v_pred_f
                 logger.log_scalars(i, {
                     "val/total": v_loss,
                     "val/recon": v_aux["recon"],
                     "val/kl": v_aux["kl"],
                     "val/pred": v_aux["pred"],
-                    "val/best_total": state.best_val_total,
+                    "val/sigma_pen": v_aux["sigma_pen"],
+                    "val/select": v_select,
+                    "val/best_select": state.best_val_total,
                     "val/best_step": state.best_val_step,
                 })
                 # latent diagnostics
@@ -226,10 +266,9 @@ def run(cfg: DictConfig) -> PretrainState:
                 logger.log_histogram(i, "val/z_mean", v_mean)
                 logger.log_histogram(i, "val/z_std", jnp.exp(0.5 * v_logvar))
 
-                # Save best-val checkpoint if val_total improved.
-                v_total_f = float(v_loss)
-                if v_total_f < state.best_val_total:
-                    state.best_val_total = v_total_f
+                # Save best-val checkpoint if (recon + pred) improved.
+                if v_select < state.best_val_total:
+                    state.best_val_total = v_select
                     state.best_val_step = i + 1
                     best_dir = Path(cfg.ckpt_dir) / "best"
                     _save_msgpack(best_dir / "encoder.msgpack", state.params["enc"])
@@ -240,10 +279,10 @@ def run(cfg: DictConfig) -> PretrainState:
                              std=np.asarray(normalizer.std))
                     OmegaConf.save(cfg, best_dir / "config.yaml")
                     np.savez(best_dir / "meta.npz",
-                             best_val_total=v_total_f,
+                             best_val_select=v_select,
                              best_val_step=i + 1,
-                             best_val_recon=float(v_aux["recon"]),
-                             best_val_pred=float(v_aux["pred"]),
+                             best_val_recon=v_recon_f,
+                             best_val_pred=v_pred_f,
                              best_val_kl=float(v_aux["kl"]))
 
             if (i + 1) % cfg.viz_every == 0:

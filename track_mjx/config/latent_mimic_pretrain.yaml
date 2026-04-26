@@ -9,35 +9,55 @@ walker_name: rodent
 n_joints: 67
 reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/data/rodent/rodent_reference_clips.h5
 clip_length: 250
-keep_clips_idx: null            # null = all walking clips already filtered by env config
+keep_clips_idx: null            # null = all clips. file actually contains 6 behaviors:
+                                # FastWalk, Walk, Rear, FaceGroom, RGroom, LGroom (842 total)
 train_ratio: 0.8
 seed: 0
+use_qvel: false                 # v7: drop v + qdot from motion descriptor.
+                                # qvel in this dataset is overscaled (10x m/s) and dominates
+                                # residual; reconstruct only kinematic state (p, theta, q).
 
 # Window dims
 window_len: 10                  # encoder input window w
 horizon: 5                      # predictor output horizon n
 
-# Network sizes — v3: significantly larger nets to handle 67-joint rat over 10-frame windows.
-# v2 diagnostic showed posterior collapse (only 3/16 latents used) AND output collapse
-# (decoder produced near-flat lines per dim). Wider/deeper nets give the decoder room to
-# express temporal variation, encoder has more capacity to compress 1470-dim windows.
-encoder_layer_sizes: [1024, 512, 256]
-decoder_layer_sizes: [256, 512, 1024]   # build up to wide for the 1470-dim upsampling
+# Network architecture — v8 swaps the flat-MLP encoder for a temporal 1D conv stack
+# (translation invariance along the window's time axis; more parameter-efficient and
+# can extract velocity from positional deltas across adjacent frames).
+encoder_type: conv1d            # mlp | conv1d
+conv_channels: [64, 128, 256]
+conv_kernel_size: 3
+conv_head_layers: [256]
+encoder_layer_sizes: [1024, 512, 256]   # only used when encoder_type=mlp
+decoder_layer_sizes: [256, 512, 1024]
 predictor_layer_sizes: [512, 512, 256]
-latent_dim: 60                   # v6: try wider latent. Hypothesis: 16-dim bottleneck
-                                 # was a generalization-limiter; with overparametrized
-                                 # latent + low beta, SGD may regularize implicitly.
+latent_dim: 60
 
-# Loss weights — v5: back to v3's beta=0.001 (v3 best val 0.577 was in low-beta regime).
-# v4 (beta=0.02 + wd=1e-3) over-regularized and plateaued train loss at 0.73.
-# Strategy: keep beta low, capture optimum via best-val ckpt, stop training early.
+# Loss weights / regularization
 beta_kl: 0.001
 w_pred: 1.0
-beta_kl_anneal_steps: 5_000     # paced for 30k total steps
+beta_kl_anneal_steps: 5_000
+
+# v8 additions:
+#   sigma_max + w_sigma cap the posterior std so the encoder converges to a near-
+#   deterministic mapping (z ≈ mean) instead of injecting σ ≈ 0.11 of noise that
+#   blurs every reconstruction. KL is still tracked for Phase 2 r_mimic, just
+#   sharper.
+#   mask_dead_dims excludes zero-variance feature channels (tail vertebrae,
+#   fingers, mandible — 58/147 dims with use_qvel) from recon/pred MSE so the
+#   reported number reflects active-dim error, not a dilution by trivial dims.
+#   eval_deterministic uses z = mean at val time so val/recon reports the true
+#   reconstruction quality rather than a noise-contaminated estimate.
+sigma_max: 0.05
+w_sigma: 1.0
+mask_dead_dims: true
+dead_dim_std_thresh: 1.0e-3
+eval_deterministic: true
 
 # Optimization — v5: back to short training. v3 best val was at step 8k; 30k gives 4x margin.
 # weight_decay 1e-4 (slightly more than v3's 1e-5, much less than v4's 1e-3).
-batch_size: 32768
+batch_size: 8192                # v8 conv1d backward materializes large kernel-grad
+                                # tensors; halving batch keeps memory <10 GiB on 5090
 num_steps: 30_000
 learning_rate: 3.0e-4           # peak LR
 weight_decay: 1.0e-4
@@ -51,14 +71,14 @@ lr_end_value: 3.0e-5            # 10x decay over the cosine portion
 # Logging / checkpointing
 log_every: 500
 eval_every: 2000
-ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior
+ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v8
 ckpt_every: 10_000
 
 # wandb
 wandb_enabled: true
 wandb_project: latent-mimic
-wandb_run_name: null            # null = auto from hydra
-wandb_tags: ["phase1", "rodent"]
+wandb_run_name: phase1-rodent-v8-conv-sigma-mask
+wandb_tags: ["phase1", "rodent", "no-qvel", "conv1d", "sigma-cap", "mask-dead", "det-eval"]
 wandb_group: null
 viz_n_dims: 6                   # number of feature dims to overlay in recon/pred figures
 viz_every: 10_000               # every N steps, log recon + prediction figures

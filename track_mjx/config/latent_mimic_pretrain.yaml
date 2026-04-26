@@ -24,7 +24,9 @@ horizon: 5                      # predictor output horizon n
 encoder_layer_sizes: [1024, 512, 256]
 decoder_layer_sizes: [256, 512, 1024]   # build up to wide for the 1470-dim upsampling
 predictor_layer_sizes: [512, 512, 256]
-latent_dim: 16                   # match track-mjx intention_size convention
+latent_dim: 60                   # v6: try wider latent. Hypothesis: 16-dim bottleneck
+                                 # was a generalization-limiter; with overparametrized
+                                 # latent + low beta, SGD may regularize implicitly.
 
 # Loss weights — v5: back to v3's beta=0.001 (v3 best val 0.577 was in low-beta regime).
 # v4 (beta=0.02 + wd=1e-3) over-regularized and plateaued train loss at 0.73.

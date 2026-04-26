@@ -152,9 +152,12 @@ def run(cfg: DictConfig) -> PretrainState:
     n_train = train_in.shape[0]
     n_val = val_in.shape[0]
 
-    # Pinned validation slice for figures (first batch, deterministic).
+    # Pinned slices for figures (first batch, deterministic) — we show the SAME
+    # windows across training so curves are directly comparable across steps.
     val_fig_in = val_in[: min(8, n_val)]
     val_fig_tgt = val_tgt[: min(8, n_val)]
+    train_fig_in = train_in[: min(8, n_train)]
+    train_fig_tgt = train_tgt[: min(8, n_train)]
 
     logger = WandbLogger(cfg)
 
@@ -243,17 +246,32 @@ def run(cfg: DictConfig) -> PretrainState:
                              best_val_pred=float(v_aux["pred"]),
                              best_val_kl=float(v_aux["kl"]))
 
-            if (i + 1) % cfg.viz_every == 0 and n_val > 0:
-                v_recon = reconstruct_for_viz(state.params, val_fig_in)
-                v_pred = predict_for_viz(state.params, val_fig_in)
+            if (i + 1) % cfg.viz_every == 0:
+                if n_val > 0:
+                    v_recon = reconstruct_for_viz(state.params, val_fig_in)
+                    v_pred = predict_for_viz(state.params, val_fig_in)
+                    logger.log_reconstruction_figure(
+                        i, val_fig_in[0], v_recon[0],
+                        name="val/reconstruction",
+                        n_dims_to_show=cfg.viz_n_dims,
+                    )
+                    logger.log_reconstruction_figure(
+                        i, val_fig_tgt[0], v_pred[0],
+                        name="val/prediction",
+                        n_dims_to_show=cfg.viz_n_dims,
+                    )
+                # Training-side figures using the same pinned-slice convention,
+                # so train vs val alignment is directly comparable.
+                t_recon = reconstruct_for_viz(state.params, train_fig_in)
+                t_pred = predict_for_viz(state.params, train_fig_in)
                 logger.log_reconstruction_figure(
-                    i, val_fig_in[0], v_recon[0],
-                    name="val/reconstruction",
+                    i, train_fig_in[0], t_recon[0],
+                    name="train/reconstruction",
                     n_dims_to_show=cfg.viz_n_dims,
                 )
                 logger.log_reconstruction_figure(
-                    i, val_fig_tgt[0], v_pred[0],
-                    name="val/prediction",
+                    i, train_fig_tgt[0], t_pred[0],
+                    name="train/prediction",
                     n_dims_to_show=cfg.viz_n_dims,
                 )
 

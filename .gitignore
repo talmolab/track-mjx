@@ -1,5 +1,7 @@
 # track-mjx specific gitignore:
 data/
+!track_mjx/agent/latent_ppo/data/
+!track_mjx/agent/latent_ppo/data/**
 model_checkpoints/
 wandb/
 outputs/

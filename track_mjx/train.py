@@ -19,7 +19,7 @@ from omegaconf import DictConfig
 from vnl_playground import registry
 
 from track_mjx.config import utils
-from track_mjx.agent import checkpointing, wandb_logging
+from track_mjx.agent import checkpointing, network_registry, wandb_logging
 from track_mjx.agent.ff_ppo import ppo as ff_ppo, ppo_networks as ff_networks
 from track_mjx.agent.ff_ppo.intention_network import get_activation_fn
 from track_mjx.agent.recurrent_ppo import (
@@ -117,17 +117,14 @@ def main(cfg: DictConfig) -> None:
 
     logging.info("Using PPO Pipeline")
 
-    # Select network factory and train function based on architecture
+    # Select network factory and train function based on architecture.
+    # The registry validates `arch_name` and supplies the (factory_fn, ppo_module)
+    # pair. Arch-specific kwargs are still bound by the if/elif below.
     arch_name = cfg.network_config.get("arch_name", "intention")
     logging.info(f"Using architecture: {arch_name}")
 
-    # Validate architecture name
-    valid_arch_names = {"intention", "recurrent_intention"}
-    if arch_name not in valid_arch_names:
-        raise ValueError(
-            f"Unknown architecture '{arch_name}'. "
-            f"Valid options are: {sorted(valid_arch_names)}"
-        )
+    network_factory_fn = network_registry.get_network_factory(arch_name)
+    ppo_module = network_registry.get_ppo_module(arch_name)
 
     # Resolve activation function (defaults to silu for backward compatibility)
     activation_fn = get_activation_fn(
@@ -147,7 +144,7 @@ def main(cfg: DictConfig) -> None:
 
         # Recurrent intention network (MLP encoder + RNN decoder)
         network_factory = functools.partial(
-            recurrent_networks.make_recurrent_intention_ppo_networks,
+            network_factory_fn,
             intention_latent_size=cfg.network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             rnn_type=cfg.network_config.rnn_type,
@@ -155,11 +152,10 @@ def main(cfg: DictConfig) -> None:
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
             activation=activation_fn,
         )
-        ppo_module = recurrent_ppo
-    else:
+    elif arch_name == "intention":
         # Feedforward intention network (default)
         network_factory = functools.partial(
-            ff_networks.make_intention_ppo_networks,
+            network_factory_fn,
             intention_latent_size=cfg.network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
@@ -175,7 +171,11 @@ def main(cfg: DictConfig) -> None:
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
             activation=activation_fn,
         )
-        ppo_module = ff_ppo
+    else:
+        # Other arches registered in network_registry (e.g. latent_mimic):
+        # use the bare factory; arch-specific kwargs are handled inside the
+        # factory or via Hydra-bound defaults at a later bundle.
+        network_factory = network_factory_fn
 
     # Determine wandb run ID for resuming
     wandb_logging.initialize_wandb_logging(

@@ -86,6 +86,7 @@ class LatentMimicEnvWrapper:
         n_joints: int,
         w_r: float,
         history_len: int,
+        prepare_observation_size: bool = True,
     ):
         self.env = env
         self.prior = FrozenLatentPrior.from_dir(prior_dir)
@@ -98,8 +99,24 @@ class LatentMimicEnvWrapper:
                 f"prior n_joints {self.prior.n_joints} != env n_joints {n_joints}"
             )
 
-        # History feature: (q, qdot, prev_action) per frame.
-        self.history_dim = 2 * n_joints + n_joints  # = 3 * n_joints
+        # History feature per frame: (q [nj], qdot [nj], prev_action [action_size]).
+        # action_size != n_joints in general (rat: 67 qpos joints, 32 actuators).
+        self.action_dim = int(env.action_size)
+        self.history_dim = 2 * n_joints + self.action_dim
+
+        # Pre-compute proprioception flat dim by running a dry reset; the Brax
+        # PPO trainer queries observation_size BEFORE the first env.reset(), so
+        # caching it lazily on first reset is too late for network init.
+        if prepare_observation_size:
+            try:
+                _probe = self.env.reset(jax.random.PRNGKey(0))
+                _prop = _probe.obs["state"]["proprioception"]
+                _flat, _ = jax.flatten_util.ravel_pytree(_prop)
+                self._prop_dim_cached = int(_flat.shape[-1])
+            except Exception as e:  # noqa: BLE001 — keep wrapper usable even if probe fails
+                self._prop_dim_cached = None
+                import logging as _logging
+                _logging.warning(f"LatentMimicEnvWrapper proprioception probe failed: {e}")
 
     @property
     def action_size(self):
@@ -184,7 +201,7 @@ class LatentMimicEnvWrapper:
         state = self.env.reset(rng)
         qpos = state.data.qpos
         qvel = state.data.qvel
-        prev_action = jnp.zeros((self.n_joints,))
+        prev_action = jnp.zeros((self.action_dim,))
 
         buf = self._empty_buffers()
         # Fill the rolling window with the initial pose so the encoder sees a

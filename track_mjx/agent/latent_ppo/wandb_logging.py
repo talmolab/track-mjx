@@ -71,7 +71,9 @@ def latent_mimic_rollout_logging_fn(
         rollout.append(state)
         r_mimic_curve.append(float(state.info.get("r_mimic", 0.0)))
         kl_curve.append(float(state.info.get("mimic_kl", 0.0)))
-        z_target_means.append(state.obs["z_target"])
+        # z_target is exposed as state.obs["state"]["task_obs"] under the
+        # ff_ppo two-key schema the wrapper now emits.
+        z_target_means.append(state.obs["state"]["task_obs"])
 
     # Per-step curves
     log_lineplot_to_wandb(

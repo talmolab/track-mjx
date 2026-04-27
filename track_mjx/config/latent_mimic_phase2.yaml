@@ -10,6 +10,8 @@ defaults:
 # --- override env: drop imitation reward terms; reward comes from r_mimic wrapper ---
 env_config:
   reward_terms: {}                  # paper Stage 1: only r_mimic from wrapper
+  njmax: 800                        # parent's 400 hits 'nefc overflow' under contact-heavy
+                                    # rollouts when 1024+ envs run in parallel; bump headroom
   termination_criteria:
     nan_termination: {}
     root_too_far:

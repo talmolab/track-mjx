@@ -32,6 +32,11 @@ latent_mimic:
   w_r: 0.01                         # paper §III-D.1 scaling weight
   history_len: 5                    # H frames of (q, qdot, prev_action) in o_history
   n_joints: 67                      # full rodent skeleton; matches v8 prior
+  kl_mode: mean                     # 'mean' = 0.5||mu_t-mu_s||^2 (unit-var KL).
+                                    # 'full' Gaussian KL saturates r_mimic to ~0
+                                    # because v8 has sigma_max=0.05 (var=0.0025);
+                                    # 1/var = 400x amplifies tiny mean gaps over
+                                    # 60 latent dims to KL ~ 12k → exp(-120)=0.
 
 # --- networks ---
 network_config:

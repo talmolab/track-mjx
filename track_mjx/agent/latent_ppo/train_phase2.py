@@ -52,6 +52,7 @@ def build_env(cfg: DictConfig, env_cfg_ml, clips):
         n_joints=cfg.latent_mimic.n_joints,
         w_r=cfg.latent_mimic.w_r,
         history_len=cfg.latent_mimic.history_len,
+        kl_mode=cfg.latent_mimic.get("kl_mode", "mean"),
     )
 
 

@@ -45,15 +45,22 @@ def _frame_from_qpos_qvel(qpos: jnp.ndarray, qvel: jnp.ndarray,
 
 
 def _kl_diag_gauss(mu_a, lv_a, mu_b, lv_b):
-    """Sum-over-dims KL(N(mu_a, exp(lv_a)) || N(mu_b, exp(lv_b))).
-
-    Per-batch scalar. lv_a and lv_b must be broadcast-compatible with mu_*.
-    """
+    """Sum-over-dims KL(N(mu_a, exp(lv_a)) || N(mu_b, exp(lv_b)))."""
     var_a = jnp.exp(lv_a)
     var_b = jnp.exp(lv_b)
     return jnp.sum(0.5 * (
         lv_b - lv_a + (var_a + (mu_a - mu_b) ** 2) / var_b - 1.0
     ), axis=-1)
+
+
+def _mean_kl(mu_a, mu_b):
+    """KL between two unit-variance Gaussians = 0.5 * ||mu_a - mu_b||^2.
+
+    This is what we use for r_mimic when the encoder has artificially-tight
+    posteriors (v8: sigma_max=0.05 → var=0.0025 → full KL blows up by 400×
+    even for tiny mean differences, saturating r_mimic to ~0).
+    """
+    return 0.5 * jnp.sum((mu_a - mu_b) ** 2, axis=-1)
 
 
 def _flatten_proprioception(prop) -> jnp.ndarray:
@@ -87,12 +94,18 @@ class LatentMimicEnvWrapper:
         w_r: float,
         history_len: int,
         prepare_observation_size: bool = True,
+        kl_mode: str = "mean",   # 'mean' = unit-var KL = 0.5 ||mu_t - mu_s||^2
+                                 # 'full' = full Gaussian KL (paper-faithful but
+                                 # explodes when prior has tight posteriors)
     ):
         self.env = env
         self.prior = FrozenLatentPrior.from_dir(prior_dir)
         self.n_joints = n_joints
         self.w_r = float(w_r)
         self.H = int(history_len)
+        self.kl_mode = str(kl_mode)
+        if self.kl_mode not in ("mean", "full"):
+            raise ValueError(f"unknown kl_mode {kl_mode!r}; expected 'mean' or 'full'")
 
         if self.prior.n_joints != n_joints:
             raise ValueError(
@@ -248,10 +261,15 @@ class LatentMimicEnvWrapper:
         info["r_mimic"] = jnp.float32(1.0)
         info["mimic_kl"] = jnp.float32(0.0)
 
+        metrics = dict(state.metrics) if state.metrics else {}
+        metrics["r_mimic"] = jnp.float32(1.0)
+        metrics["mimic_kl"] = jnp.float32(0.0)
+
         return state.replace(
             obs=new_obs,
             reward=jnp.float32(1.0),
             info=info,
+            metrics=metrics,
         )
 
     def step(self, state, action):
@@ -263,7 +281,10 @@ class LatentMimicEnvWrapper:
 
         z_sim_mean, z_sim_logvar = self._compute_z_sim(buf.motion_window)
         z_t_mean, z_t_logvar = self._compute_z_target(buf.prev_z_mean)
-        kl = _kl_diag_gauss(z_t_mean, z_t_logvar, z_sim_mean, z_sim_logvar)
+        if self.kl_mode == "full":
+            kl = _kl_diag_gauss(z_t_mean, z_t_logvar, z_sim_mean, z_sim_logvar)
+        else:
+            kl = _mean_kl(z_t_mean, z_sim_mean)
         r_mimic = jnp.exp(-self.w_r * kl)
 
         buf = buf.replace(prev_z_mean=z_sim_mean, prev_z_logvar=z_sim_logvar)
@@ -286,10 +307,18 @@ class LatentMimicEnvWrapper:
         info["r_mimic"] = r_mimic
         info["mimic_kl"] = kl
 
+        # Promote r_mimic / mimic_kl into metrics so brax PPO's eval evaluator
+        # picks them up as eval/episode_rewards/r_mimic etc., visible in wandb
+        # at every eval (not just at the policy_params_fn callback every 10M).
+        metrics = dict(new_state.metrics) if new_state.metrics else {}
+        metrics["r_mimic"] = r_mimic
+        metrics["mimic_kl"] = kl
+
         return new_state.replace(
             obs=new_obs,
             reward=r_mimic,
             info=info,
+            metrics=metrics,
         )
 
     # Pass-through for the rest (render etc.)

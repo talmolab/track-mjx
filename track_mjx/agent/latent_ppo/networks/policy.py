@@ -1,6 +1,8 @@
 """Flat-MLP policy/value for LatentMimic (paper §IV).
 
-Inputs: dict with keys 'proprioception', 'o_history', 'z_target'.
+Inputs: dict in the ff_ppo two-key schema with:
+  obs['proprioception']   — base proprioception concat with o_history
+  obs['imitation_target'] — z_target (the encoded latent target)
 Policy outputs concat([mean, log_std]) of shape (..., 2*action_dim).
 Value outputs scalar baseline.
 """
@@ -13,8 +15,9 @@ from track_mjx.agent.latent_ppo.networks.mlp import Mlp
 
 
 def _flatten_obs(obs: dict) -> jnp.ndarray:
-    parts = [obs["proprioception"], obs["o_history"], obs["z_target"]]
-    return jnp.concatenate([p.reshape(p.shape[0], -1) for p in parts], axis=-1)
+    # Concat along the LAST axis only — leaves any leading batch dims
+    # (envs, unroll, minibatch) intact so this works inside vmap/scan.
+    return jnp.concatenate([obs["proprioception"], obs["imitation_target"]], axis=-1)
 
 
 class LatentMimicPolicy(nn.Module):

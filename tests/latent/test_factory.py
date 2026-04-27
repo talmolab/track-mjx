@@ -1,12 +1,13 @@
 def test_make_factory_returns_ppo_networks():
-    from brax.training.acme import running_statistics
     from track_mjx.agent.latent_ppo.networks.factory import (
         make_latent_mimic_ppo_networks,
     )
+    # Post-flatten obs schema: {imitation_target, proprioception} like the
+    # existing intention factory's contract. The LatentMimic env wrapper packs
+    # o_history into proprioception so this matches.
     nets = make_latent_mimic_ppo_networks(
-        observation_size={"proprioception": 30, "o_history": 60, "z_target": 16},
+        observation_size={"imitation_target": 16, "proprioception": 90},
         action_size=12,
-        preprocess_observations_fn=running_statistics.normalize,
         policy_layer_sizes=(64, 32),
         value_layer_sizes=(64, 32),
     )

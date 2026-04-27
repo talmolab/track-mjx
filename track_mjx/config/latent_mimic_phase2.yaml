@@ -1,22 +1,26 @@
 # track_mjx/config/latent_mimic_phase2.yaml
-# Phase 2: latent-mimic style policy on flat ground. Uses mujoco_warp backend
-# (inherited from v1_rodent_imitation_warp via Hydra defaults).
+# Phase 2: latent-mimic style policy. Uses mujoco_warp backend (mujoco_impl=warp,
+# newton solver) inherited from rodent-full-clips — the canonical warp-style
+# config that has env_name + naconmax set correctly.
 
 defaults:
-  - v1_rodent_imitation_warp        # picks up mujoco_impl: warp + newton solver
+  - rodent-full-clips               # picks up mujoco_impl=warp, naconmax=24576, etc.
   - _self_
 
-# --- env_name (not set in v1_warp) ---
+# --- override env: drop imitation reward terms; reward comes from r_mimic wrapper ---
 env_config:
-  env_name: "RodentImitation"
-  # paper Stage 1: only r_mimic from wrapper
-  reward_terms: {}
+  reward_terms: {}                  # paper Stage 1: only r_mimic from wrapper
   termination_criteria:
     nan_termination: {}
     root_too_far:
-      max_distance: 0.3             # slightly looser than v1_warp
+      max_distance: 0.3             # slightly looser than parent's 0.1
     pose_error:
       max_l2_error: 6.0
+  domain_randomization:
+    # Domain randomization is OFF for v1: BraxDomainRandomizationVmapWrapper
+    # bypasses our wrapper via .unwrapped. Re-enable once our wrapper provides
+    # a transparent _mjx_model passthrough to the inner env.
+    use_domain_randomization: false
 
 # --- LatentMimic-specific settings ---
 latent_mimic:

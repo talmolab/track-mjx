@@ -90,13 +90,19 @@ def wrapped():
     )
 
 
-def test_reset_exposes_three_obs_keys(wrapped):
+def test_reset_obs_uses_two_key_schema(wrapped):
     state = wrapped.reset(jax.random.PRNGKey(0))
-    assert set(state.obs.keys()) == {"proprioception", "o_history", "z_target"}
-    assert state.obs["z_target"].shape == (60,)
-    assert state.obs["o_history"].shape == (5 * 3 * 67,)
-    assert state.obs["proprioception"].shape == (3 * 67,)
-    # initial reward should be 1.0 (perfect mimic by construction)
+    # Conform to ff_ppo's schema: {state: {task_obs, proprioception}}
+    assert set(state.obs.keys()) == {"state"}
+    inner = state.obs["state"]
+    assert set(inner.keys()) == {"task_obs", "proprioception"}
+    # task_obs is z_target (latent_dim=60 from v8)
+    assert inner["task_obs"].shape == (60,)
+    # proprioception is concat(base_proprio_flat, o_history)
+    # base_proprio = 3*67 = 201 (joint_angles + joint_ang_vels + prev_action)
+    # o_history = H * (2*n_joints + action_dim) = 5 * (2*67 + 67) = 1005
+    expected_proprio_dim = 3 * 67 + 5 * (2 * 67 + 67)
+    assert inner["proprioception"].shape == (expected_proprio_dim,)
     assert float(state.reward) == 1.0
 
 
@@ -108,7 +114,7 @@ def test_step_replaces_reward_with_r_mimic_in_unit_interval(wrapped):
     assert 0.0 < r <= 1.0, f"r_mimic out of range: {r}"
     assert "r_mimic" in state.info
     assert "mimic_kl" in state.info
-    assert state.obs["z_target"].shape == (60,)
+    assert state.obs["state"]["task_obs"].shape == (60,)
 
 
 def test_buffers_propagate_across_steps(wrapped):

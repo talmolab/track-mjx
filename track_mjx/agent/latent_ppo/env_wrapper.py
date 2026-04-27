@@ -123,22 +123,32 @@ class LatentMimicEnvWrapper:
         return self.env.action_size
 
     @property
-    def observation_size(self):
-        # Brax dict-obs convention: dict mapping key -> int (flat dim).
-        # We keep proprioception flat (we'll ravel-pytree it on the fly).
-        # Caller can override via build_env if needed.
-        return {
-            "proprioception": self._proprioception_dim,
-            "o_history": self.H * self.history_dim,
-            "z_target": self.prior.latent_dim,
-        }
+    def unwrapped(self):
+        # Critical: do NOT delegate to self.env.unwrapped. Brax's
+        # BraxDomainRandomizationVmapWrapper inspects `self.env.unwrapped` and
+        # calls reset on it, bypassing every wrapper above. We need our reset
+        # in the chain, so we declare ourselves as the unwrapped env. This is
+        # safe because the only thing the domain-randomization wrapper does
+        # with `unwrapped` is set/restore `_mjx_model`, which we forward via
+        # __getattr__ to the inner env.
+        return self
 
     @property
-    def _proprioception_dim(self):
-        # Computed lazily on first reset; cached.
-        if not hasattr(self, "_prop_dim_cached"):
-            return None  # caller should run reset() once before reading
-        return self._prop_dim_cached
+    def observation_size(self):
+        # Conform to track-mjx's existing two-key schema (task_obs, proprioception)
+        # so ff_ppo.observation_utils.flatten_obs_dict / get_obs_sizes work
+        # unchanged. We pack o_history INTO proprioception as a sub-key so the
+        # full state is one flat vector after flatten_obs_dict.
+        return {
+            "state": {
+                "task_obs": self.prior.latent_dim,           # z_target
+                "proprioception": (
+                    self._prop_dim_cached + self.H * self.history_dim
+                    if self._prop_dim_cached is not None
+                    else None
+                ),
+            }
+        }
 
     # ------------------------- buffer helpers -------------------------
 
@@ -215,24 +225,29 @@ class LatentMimicEnvWrapper:
         buf = buf.replace(prev_z_mean=z_sim_mean, prev_z_logvar=z_sim_logvar)
         z_t_mean, z_t_logvar = self._compute_z_target(buf.prev_z_mean)
 
-        # Build the new flat obs dict
+        # Build new obs in the {state: {task_obs, proprioception}} schema that
+        # ff_ppo's observation_utils expects.  task_obs = z_target.
+        # proprioception = concat(base_proprioception_flat, o_history_flat).
         prop_flat = _flatten_proprioception(state.obs["state"]["proprioception"])
-        # Cache proprioception dim for observation_size
-        self._prop_dim_cached = int(prop_flat.shape[-1])
+        if not hasattr(self, "_prop_dim_cached") or self._prop_dim_cached is None:
+            self._prop_dim_cached = int(prop_flat.shape[-1])
+        full_proprio = jnp.concatenate(
+            [prop_flat, buf.history.reshape(-1)], axis=-1
+        )
 
-        new_obs = {
-            "proprioception": prop_flat,
-            "o_history": buf.history.reshape(-1),
-            "z_target": z_t_mean,
-        }
+        from collections import OrderedDict
+        new_obs = OrderedDict(
+            state=OrderedDict(
+                task_obs=z_t_mean,
+                proprioception=full_proprio,
+            )
+        )
 
         info = dict(state.info) if state.info else {}
         info["latent_buf"] = buf
         info["r_mimic"] = jnp.float32(1.0)
         info["mimic_kl"] = jnp.float32(0.0)
 
-        # Initial reward = 1.0 (KL from a window to its predicted future is ~0
-        # at reset; paper Eq.9 gives r ~= 1)
         return state.replace(
             obs=new_obs,
             reward=jnp.float32(1.0),
@@ -254,11 +269,17 @@ class LatentMimicEnvWrapper:
         buf = buf.replace(prev_z_mean=z_sim_mean, prev_z_logvar=z_sim_logvar)
 
         prop_flat = _flatten_proprioception(new_state.obs["state"]["proprioception"])
-        new_obs = {
-            "proprioception": prop_flat,
-            "o_history": buf.history.reshape(-1),
-            "z_target": z_t_mean,
-        }
+        full_proprio = jnp.concatenate(
+            [prop_flat, buf.history.reshape(-1)], axis=-1
+        )
+
+        from collections import OrderedDict
+        new_obs = OrderedDict(
+            state=OrderedDict(
+                task_obs=z_t_mean,
+                proprioception=full_proprio,
+            )
+        )
 
         info = dict(new_state.info) if new_state.info else {}
         info["latent_buf"] = buf

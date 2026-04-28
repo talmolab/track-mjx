@@ -62,8 +62,12 @@ class SMPRewardWrapper(wrapper.Wrapper):
         expected = self._metadata.get("joint_names")
         if expected is not None and hasattr(self.env, "get_joint_names"):
             actual = list(self.env.get_joint_names())
-            if list(expected) != actual:
-                raise ValueError("SMP prior joint names do not match task environment.")
+            if not self._joint_names_match(list(expected), actual):
+                raise ValueError(
+                    "SMP prior joint names do not match task environment.\n"
+                    f"  prior (first 3): {list(expected)[:3]}\n"
+                    f"  env   (first 3): {actual[:3]}"
+                )
         scale = self._metadata.get("scale_factor")
         env_scale = getattr(getattr(self.env, "_config", None), "rescale_factor", None)
         if (
@@ -81,6 +85,17 @@ class SMPRewardWrapper(wrapper.Wrapper):
                 raise ValueError(
                     "Loaded SMP prior feature spec does not match wrapper spec."
                 )
+
+    @staticmethod
+    def _joint_names_match(prior_names: list[str], env_names: list[str]) -> bool:
+        if prior_names == env_names:
+            return True
+        if len(prior_names) != len(env_names):
+            return False
+        # vnl-playground appends a '-<walker>' suffix to env joint names
+        # (e.g. 'knee_L' in clips becomes 'knee_L-rodent' in the env).
+        stripped = [n.rsplit("-", 1)[0] for n in env_names]
+        return stripped == prior_names
 
     def reset(self, rng: jax.Array, **kwargs: Any) -> wrapper.mjx_env.State:
         rng, reward_rng = jax.random.split(rng)

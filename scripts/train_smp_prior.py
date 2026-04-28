@@ -7,6 +7,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import optax
+import wandb
 from vnl_playground.tasks.reference_clips import ReferenceClips
 
 from track_mjx.agent.smp.checkpointing import save_prior
@@ -55,6 +56,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_attention_heads", type=int, default=4)
     parser.add_argument("--attention_head_dim", type=int, default=64)
+    parser.add_argument("--wandb_project", type=str, default="track-mjx-smp")
+    parser.add_argument("--no_wandb", action="store_true")
+    parser.add_argument("--log_interval", type=int, default=100)
     return parser.parse_args()
 
 
@@ -63,6 +67,16 @@ def main() -> None:
     data_path = str(Path(args.data_path).resolve())
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.no_wandb:
+        wandb.init(mode="disabled")
+    else:
+        wandb.init(
+            project=args.wandb_project,
+            config=vars(args),
+            name=output_dir.name,
+            notes=f"SMP prior on {data_path}",
+        )
 
     key = jax.random.PRNGKey(args.seed)
     spec = SMPFeatureSpec(
@@ -157,17 +171,22 @@ def main() -> None:
         params, opt_state, ema, loss, metrics = train_step(
             params, opt_state, ema, batch, step_key
         )
-        if step == 1 or step % 100 == 0:
+        if step == 1 or step % args.log_interval == 0:
             elapsed = time.time() - start
+            metrics_log = {k: float(v) for k, v in metrics.items()}
+            metrics_log["loss"] = float(loss)
+            metrics_log["elapsed_s"] = elapsed
+            wandb.log(metrics_log, step=step)
             print(
-                f"step={step} loss={float(loss):.5f} "
-                f"grad_norm={float(metrics['grad_norm']):.3f} elapsed={elapsed:.1f}s",
+                f"step={step} loss={metrics_log['loss']:.5f} "
+                f"grad_norm={metrics_log['grad_norm']:.3f} elapsed={elapsed:.1f}s",
                 flush=True,
             )
         if step % args.output_interval == 0:
             save_checkpoint(step, ema.params)
 
     save_checkpoint(args.num_iterations, ema.params)
+    wandb.finish()
 
 
 if __name__ == "__main__":

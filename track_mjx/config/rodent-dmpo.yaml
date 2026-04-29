@@ -1,0 +1,91 @@
+# =============================================================================
+# DMPO config for RodentRunGap (downstream task)
+# =============================================================================
+# Defaults from vnl-ray's train_dmpo_ray.py via track_mjx.agent.dmpo.config.DMPOConfig.
+# A separate config (rodent-dmpo-imitation.yaml) will be added for the imitation task.
+# =============================================================================
+
+agent: dmpo
+env_name: RodentRunGap
+walker: rodent_no_tail_collisions
+mocap_hz: 50
+ctrl_dt: 0.02
+mujoco_impl: warp
+seed: 0
+checkpoint_dir: ./checkpoints/dmpo
+
+# =============================================================================
+# DMPO Training Hyperparameters
+# =============================================================================
+# Mirrors every field in DMPOConfig. Do NOT drift from these defaults — they are
+# pinned to vnl-ray's verified hyperparameters and the parity-validated loss
+# expects exactly these numbers.
+train_config:
+  # ---------------------------------------------------------------------------
+  # Training loop
+  # ---------------------------------------------------------------------------
+  num_envs: 2048
+  num_timesteps: 1_000_000_000
+  unroll_length: 50
+
+  # ---------------------------------------------------------------------------
+  # Replay
+  # ---------------------------------------------------------------------------
+  batch_size: 256
+  min_replay_size: 50_000
+  max_replay_size: 4_000_000
+  sequence_length: 50
+  samples_per_insert: 32.0
+
+  # ---------------------------------------------------------------------------
+  # MPO loss
+  # ---------------------------------------------------------------------------
+  epsilon: 0.1
+  epsilon_mean: 0.0025
+  epsilon_stddev: 1.0e-7
+  epsilon_penalty: 0.1
+  init_log_temperature: 10.0
+  init_log_alpha_mean: 10.0
+  init_log_alpha_stddev: 1000.0
+  per_dim_constraining: true
+  action_penalization: true
+  num_samples: 20
+
+  # ---------------------------------------------------------------------------
+  # Distributional critic (C51)
+  # ---------------------------------------------------------------------------
+  vmin: -150.0
+  vmax: 150.0
+  num_atoms: 51
+
+  # ---------------------------------------------------------------------------
+  # Networks
+  # ---------------------------------------------------------------------------
+  policy_layer_sizes: [256, 256, 256]
+  critic_layer_sizes: [512, 512, 256]
+
+  # ---------------------------------------------------------------------------
+  # Optim
+  # ---------------------------------------------------------------------------
+  policy_lr: 1.0e-4
+  critic_lr: 1.0e-4
+  dual_lr: 1.0e-3
+  grad_clip: 40.0
+
+  # ---------------------------------------------------------------------------
+  # Targets
+  # ---------------------------------------------------------------------------
+  target_policy_update_period: 101
+  target_critic_update_period: 107
+
+  # ---------------------------------------------------------------------------
+  # RL
+  # ---------------------------------------------------------------------------
+  discount: 0.97
+  n_step: 50
+
+  # ---------------------------------------------------------------------------
+  # Eval / logging
+  # ---------------------------------------------------------------------------
+  eval_every_steps: 1_000_000
+  log_every_steps: 10_000

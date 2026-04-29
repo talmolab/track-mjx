@@ -26,14 +26,18 @@ def _masked_mse(pred: jnp.ndarray, target: jnp.ndarray, feat_mask: Optional[jnp.
     return (per_dim * feat_mask).sum() / jnp.maximum(feat_mask.sum(), 1.0)
 
 
-def _sigma_cap_penalty(logvar: jnp.ndarray, sigma_max: float) -> jnp.ndarray:
+def _sigma_cap_penalty(logvar: jnp.ndarray, sigma_max) -> jnp.ndarray:
     """Hinge penalty pushing posterior std below ``sigma_max``.
 
     Per-dim: relu(logvar - log(sigma_max^2)). Sum over latent dims, mean over batch.
     Encourages encoder to use sharp posteriors (z ≈ mean) so reconstructions are
     not blurred by reparameterization noise during training.
+
+    ``sigma_max`` may be either a Python float (legacy fixed cap) or a JAX
+    scalar (curriculum schedule). Floor at 1e-8 to keep log finite.
     """
-    cap = 2.0 * jnp.log(jnp.asarray(sigma_max, dtype=logvar.dtype))
+    sm = jnp.maximum(jnp.asarray(sigma_max, dtype=logvar.dtype), 1e-8)
+    cap = 2.0 * jnp.log(sm)
     excess = jnp.maximum(logvar - cap, 0.0)   # (B, latent)
     return jnp.mean(jnp.sum(excess, axis=-1))
 
@@ -59,7 +63,10 @@ def pretrain_loss(
     recon_loss = _masked_mse(recon, inputs, feat_mask)
     kl_loss = kl_to_unit_gaussian(mean, logvar)
     pred_loss = _masked_mse(pred, targets, feat_mask)
-    sigma_pen = _sigma_cap_penalty(logvar, sigma_max) if sigma_max > 0.0 else jnp.array(0.0)
+    # Always compute the sigma_pen — w_sigma=0 disables it without needing a
+    # Python-level branch (which would break under JIT when sigma_max is a
+    # JAX-traced scalar from a curriculum schedule).
+    sigma_pen = _sigma_cap_penalty(logvar, sigma_max)
 
     total = recon_loss + beta_kl * kl_loss + w_pred * pred_loss + w_sigma * sigma_pen
     return total, {

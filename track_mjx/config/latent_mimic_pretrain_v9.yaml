@@ -1,0 +1,79 @@
+# track_mjx/config/latent_mimic_pretrain_v9.yaml
+# Phase 1 v9: same as v8 (conv1d encoder, no qvel, sigma_max=0.05) BUT auto-
+# detects and drops the 29 dead joints in the rat skeleton (fingers / tail
+# vertebrae with std<1e-3). feat_dim shrinks 74 → 45 (3 root + 4 quat + 38
+# active joints), dramatically simplifying both the encoder's task and the
+# predictor's forecasting problem.
+#
+# Why this matters: the v8 predictor's h=1 MSE was 65× worse than the trivial
+# copy-last baseline — it was learning noise. With ~29 dead dims removed the
+# signal-to-noise ratio in the latent space should be much higher.
+
+defaults:
+  - _self_
+
+# Walker / data
+walker_name: rodent
+n_joints: 67
+reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/data/rodent/rodent_reference_clips.h5
+clip_length: 250
+keep_clips_idx: null
+train_ratio: 0.8
+seed: 0
+use_qvel: false
+
+# v9 NEW: drop dead joints
+auto_detect_active_joints: true
+active_joint_std_thresh: 1.0e-3      # joints with std < this in qpos units are
+                                     # excluded. Diagnostic showed 29 of 67 hit
+                                     # this threshold for the rat dataset.
+
+# Window dims
+window_len: 10
+horizon: 5
+
+# Network architecture (unchanged from v8)
+encoder_type: conv1d
+conv_channels: [64, 128, 256]
+conv_kernel_size: 3
+conv_head_layers: [256]
+encoder_layer_sizes: [1024, 512, 256]
+decoder_layer_sizes: [256, 512, 1024]
+predictor_layer_sizes: [512, 512, 256]
+latent_dim: 60
+
+# Loss weights / regularization (unchanged from v8)
+beta_kl: 0.001
+w_pred: 1.0
+beta_kl_anneal_steps: 5_000
+sigma_max: 0.05
+w_sigma: 1.0
+mask_dead_dims: true
+dead_dim_std_thresh: 1.0e-3
+eval_deterministic: true
+
+# Optimization (unchanged from v8)
+batch_size: 8192
+num_steps: 30_000
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+grad_clip: 1.0
+lr_schedule: cosine
+lr_warmup_frac: 0.04
+lr_hold_frac: 0.20
+lr_end_value: 3.0e-5
+
+# Logging / checkpointing
+log_every: 500
+eval_every: 2000
+ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v9
+ckpt_every: 10_000
+
+# wandb
+wandb_enabled: true
+wandb_project: latent-mimic
+wandb_run_name: phase1-rodent-v9-active-joints
+wandb_tags: ["phase1", "rodent", "no-qvel", "conv1d", "active-joints"]
+wandb_group: null
+viz_n_dims: 6
+viz_every: 10_000

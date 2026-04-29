@@ -46,6 +46,9 @@ def build_env(cfg: DictConfig, env_cfg_ml, clips):
     base_env = registry.load(
         env_name, config=env_cfg_ml, clips=clips, flatten_obs=False
     )
+    branch_kl_weights = cfg.latent_mimic.get("branch_kl_weights", None)
+    if branch_kl_weights is not None:
+        branch_kl_weights = tuple(float(x) for x in branch_kl_weights)
     return LatentMimicEnvWrapper(
         env=base_env,
         prior_dir=cfg.latent_mimic.prior_dir,
@@ -53,6 +56,11 @@ def build_env(cfg: DictConfig, env_cfg_ml, clips):
         w_r=cfg.latent_mimic.w_r,
         history_len=cfg.latent_mimic.history_len,
         kl_mode=cfg.latent_mimic.get("kl_mode", "mean"),
+        drop_dead_orientations=cfg.latent_mimic.get("drop_dead_orientations", False),
+        proprio_var_threshold=cfg.latent_mimic.get("proprio_var_threshold", 1e-8),
+        use_predictor=cfg.latent_mimic.get("use_predictor", True),
+        sigma_clamp=float(cfg.latent_mimic.get("sigma_clamp", 0.0)),
+        branch_kl_weights=branch_kl_weights,
     )
 
 

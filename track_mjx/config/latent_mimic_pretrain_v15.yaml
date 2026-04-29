@@ -1,0 +1,101 @@
+# track_mjx/config/latent_mimic_pretrain_v15.yaml
+# Phase 1 v15 — same recipe as v14 (3-way root[4]/axial[8]/limb[12] split)
+# but with a SHARED conv1d backbone instead of independent per-branch
+# encoders. Tests the disjoint-latent hypothesis from PHASE2_STYLE_GAMEPLAN.md.
+#
+# Why: v9c2 (v14 prior) tracks gait well but root drifts 6.7× worse per-step
+# than the kinematic baseline. Suspected cause: v13/v14's encoder branches are
+# fully independent, so root encoder never sees leg phase, and z cannot
+# represent gait-phase-coupled patterns (e.g. "stride-mid forward-moving"
+# can't be a single direction in z because it spans branches).
+#
+# Fix attempted here: ONE conv1d backbone consumes ALL 45 features so the
+# hidden representation captures cross-branch correlations. Then the final
+# layer branches into per-branch (μ, logvar) heads keeping the per-branch
+# latent slices that v9c2's [6,1,1] r_mimic still consumes. Same downstream
+# branch_indices.npz / latent layout.
+#
+# Side benefit: shared backbone has ~1/3 the params of v14's independent
+# encoders (407k vs 1.18M for the encoder body), reducing overfit pressure.
+
+defaults:
+  - _self_
+
+# Walker / data (same as v14)
+walker_name: rodent
+n_joints: 67
+reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/data/rodent/rodent_reference_clips.h5
+clip_length: 250
+keep_clips_idx: null
+train_ratio: 0.8
+seed: 0
+use_qvel: false
+
+# Active-joint detection (same as v14)
+auto_detect_active_joints: true
+active_joint_std_thresh: 1.0e-3
+
+# 3-way split (same as v14) — encoder is shared but we still need the
+# branch_input_indices for downstream loaders (env_wrapper slices z by branch
+# for per-branch KL).
+split_body_groups: true
+split_root_separately: true
+split_body_groups_xml: ${oc.env:HOME}/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/rodent/xmls/rodent_full_collisions.xml
+split_branch_latent_dims: [4, 8, 12]      # same as v14: root, axial, limb
+
+# Window dims (same as v14)
+window_len: 10
+horizon: 5
+
+# Network architecture
+encoder_type: conv1d_shared_split          # NEW — was conv1d in v14
+conv_channels: [64, 128, 256]
+conv_kernel_size: 3
+conv_head_layers: [256]
+encoder_layer_sizes: [1024, 512, 256]
+decoder_layer_sizes: [256, 256, 256]
+predictor_layer_sizes: [384, 256]
+latent_dim: 24
+
+# Loss weights / regularization (same as v14)
+beta_kl: 0.005
+w_pred: 0.3
+beta_kl_anneal_steps: 5_000
+
+# sigma_max curriculum (same as v14)
+sigma_max_start: 0.3
+sigma_max_end: 0.10
+sigma_max_anneal_frac: 0.5
+sigma_max: 0.10
+w_sigma: 1.0
+
+mask_dead_dims: false
+dead_dim_std_thresh: 1.0e-3
+eval_deterministic: true
+
+# Optimization (same as v14)
+batch_size: 8192
+num_steps: 30_000
+learning_rate: 3.0e-4
+weight_decay: 1.0e-3
+grad_clip: 1.0
+lr_schedule: cosine
+lr_warmup_frac: 0.04
+lr_hold_frac: 0.20
+lr_end_value: 3.0e-5
+
+# Logging / checkpointing
+log_every: 250
+eval_every: 500
+ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v15
+ckpt_every: 5_000
+
+# wandb
+wandb_enabled: true
+wandb_project: latent-mimic
+wandb_run_name: phase1-rodent-v15-shared-backbone-3way
+wandb_tags: ["phase1", "rodent", "no-qvel", "conv1d", "3way-split",
+             "shared-backbone", "v15"]
+wandb_group: null
+viz_n_dims: 12
+viz_every: 5_000

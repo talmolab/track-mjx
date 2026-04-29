@@ -1,0 +1,125 @@
+# track_mjx/config/latent_mimic_phase2_v9.yaml
+#
+# Phase 2 v9 — v13 (3-way split) prior + per-branch r_mimic with root boost.
+#
+# Story so far:
+#   * v7 (full-z KL, v9 prior): converged but locomotion lagged head/torso.
+#   * v8/v8b (full-z KL, v10 prior): σ-inflation gaming → σ-clamp added.
+#   * v9 (THIS): v13 3-way split prior. Linear probe on v13:
+#       corr(||Δz_root||, ||Δroot_pos||) = 0.534   (5× stronger than v11's 0.111
+#       on full z) — the root branch isolates root info beautifully. But the
+#       full-z KL only weighs root at 6/24 = 25% of dims, so without per-
+#       branch weighting v13 ≈ v11 on Phase 2 reward signal.
+#
+# Per-branch r_mimic:
+#   r_mimic = exp(-w_r · (w_root·KL_root + w_axial·KL_axial + w_limb·KL_limb))
+# When all three w_i = 1, mathematically identical to full-z KL. With root
+# boosted, root-tracking gradient gets the differential signal it needs.
+#
+# Calibration (cross-clip cold-pair probe with σ-clamp 0.10):
+#   per-branch median full-KL: root=195, axial=376, limb=757 nats
+#   (limb dominates due to 2× dim count)
+#   weighted total median:
+#     [1,1,1] → 1388  (=full-z KL, baseline reference)
+#     [3,1,1] → 1812  (root contributes ~32% of weighted KL)
+#     [4,1,1] → 2020  (root ~39%)
+#   Init-time KL (sim≈ref drifted by σ_pose=0.20 noise): ~280 nats
+#
+# Pick: weights [3, 1, 1], w_r = 2.0e-3.
+#   Init-band r/step ≈ exp(-2e-3 · ~800) ≈ 0.20  (rat near ref)
+#   Mid-band  r/step ≈ exp(-2e-3 · 1500) ≈ 0.05  (rat drifting)
+#   Cold-pair r/step ≈ exp(-2e-3 · 1800) ≈ 0.027 (rat far off)
+#
+# 2026-04-27 16:50: BUMPED w_r 1e-3 → 2e-3 mid-run. Rationale: v9 with
+# w_r=1e-3 plateaued at ep_len ~216, r/step ~0.707, with all per-branch KLs
+# flatlining for 25 min straight at ~235M steps. Effective K_typ from r=0.71
+# is ~347; w_r=ln(2)/347 ≈ 2.0e-3 puts the typical operating point at the
+# steepest part of the exp curve (r=0.5) for max gradient sensitivity.
+# Hard-step rewards push from 0.13 to 0.025 (more spread → more PPO signal).
+# Restart called "v9b" via run_name suffix; ckpt dir kept at latent_phase2_v9.
+
+defaults:
+  - rodent-full-clips
+  - _self_
+
+env_config:
+  reward_terms: {}
+  njmax: 800
+  termination_criteria:
+    nan_termination: {}
+    root_too_far:
+      max_distance: 0.3
+    pose_error:
+      max_l2_error: 6.0
+  domain_randomization:
+    use_domain_randomization: false
+
+latent_mimic:
+  prior_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v13/best
+  w_r: 2.0e-3                      # was 1.0e-3 — bumped 16:50 after v9 plateaued at r/step 0.71
+  history_len: 0
+  n_joints: 67
+  kl_mode: full
+
+  drop_dead_orientations: true
+  proprio_var_threshold: 1.0e-8
+
+  use_predictor: true
+
+  # σ-clamp at v13 Phase 1 σ_max ceiling. Prevents σ-inflation gaming on the
+  # per-branch KLs (encoder would otherwise inflate σ on OOD policy traj for
+  # whichever branch the policy struggles most with).
+  sigma_clamp: 0.10
+
+  # NEW in v9: per-branch KL weighting. Order matches v13's branch_names =
+  # ("root", "axial", "limb") saved in branch_indices.npz.
+  # [3, 1, 1] = boost root tracking gradient. Equal weights would reduce to
+  # v8b-style full-z KL (mod the prior being v13).
+  branch_kl_weights: [3.0, 1.0, 1.0]
+
+network_config:
+  arch_name: latent_mimic
+  policy_layer_sizes: [512, 256, 128]
+  value_layer_sizes: [512, 256, 128]
+
+train_setup:
+  agent_name: rodent
+  run_name: phase2_v9b_v13prior_3way_root3x_wr2e3
+  checkpoint_to_restore: null
+  restore_from_run_state: null
+  train_test_split_info: null
+  train_subset_ratio: 0.8
+  eval_every: 25_000_000
+  episode_length: 200
+  reset_every: 50_000_000
+  freeze_decoder: false
+  train_config:
+    num_envs: 2048                  # was 1024 — bumped for GPU utilization (5090 was at 60%)
+    num_timesteps: 750_000_000
+    batch_size: 1024                # was 512 — kept proportional to num_envs so PPO ratios match v8b
+    num_minibatches: 8
+    num_updates_per_batch: 4
+    learning_rate: 1.0e-4
+    lr_schedule: constant
+    lr_end_value: 0.0
+    lr_warmup_frac: 0.0
+    clipping_epsilon: 0.2
+    discounting: 0.95
+    action_repeat: 1
+    entropy_cost: 1.0e-2
+    vf_loss_coefficient: 0.25
+    reward_scaling: 1
+    normalize_observations: true
+    unroll_length: 10
+    seed: 0
+    get_activation: false
+    deterministic_eval: true
+
+logging_config:
+  project_name: latent-mimic
+  group_name: phase2
+  exp_name: phase2_v9b_v13prior_3way_root3x_wr2e3_750M
+  clip_id: -1
+  model_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_phase2_v9
+
+checkpoint_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_phase2_v9

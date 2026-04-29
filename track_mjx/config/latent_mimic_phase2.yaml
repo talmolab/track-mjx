@@ -28,8 +28,12 @@ env_config:
 latent_mimic:
   # Path to a Phase-1 best ckpt directory (encoder.msgpack + predictor.msgpack
   # + normalizer.npz + config.yaml). Use the v8 conv1d/no-qvel ckpt by default.
-  prior_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v8/best
-  w_r: 0.01                         # paper §III-D.1 scaling weight
+  prior_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v9/best
+  w_r: 0.05                         # bumped from paper's 0.01: with kl_mode=mean
+                                    # the σ=1 normalization makes 0.01 too gentle —
+                                    # KL=20 → r=0.82, almost no dynamic range. 0.05
+                                    # gives KL=20 → r=0.37, KL=5 → r=0.78, much
+                                    # steeper gradient for PPO to climb.
   history_len: 5                    # H frames of (q, qdot, prev_action) in o_history
   n_joints: 67                      # full rodent skeleton; matches v8 prior
   kl_mode: mean                     # 'mean' = 0.5||mu_t-mu_s||^2 (unit-var KL).
@@ -37,6 +41,17 @@ latent_mimic:
                                     # because v8 has sigma_max=0.05 (var=0.0025);
                                     # 1/var = 400x amplifies tiny mean gaps over
                                     # 60 latent dims to KL ~ 12k → exp(-120)=0.
+
+  # Prune the ~129 dead orientation dims from the 277-dim base proprioception
+  # (those with var<1e-8 across reference data). velocity / joint_angles /
+  # prev_action / height / upright are always kept. Phase 1 prior is unaffected
+  # — only the Phase 2 policy's input is shrunk.
+  drop_dead_orientations: true
+  proprio_var_threshold: 1.0e-8
+
+  # v9 predictor is 6.7× better in latent space than v8 (rel err 0.25 vs 1.68).
+  # Now usable — flip back on for paper-faithful z_target = E(P(z_ref)).
+  use_predictor: true
 
 # --- networks ---
 network_config:

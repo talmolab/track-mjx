@@ -56,6 +56,12 @@ def latent_mimic_rollout_logging_fn(
     r_mimic_curve = []
     kl_curve = []
     z_target_means = []
+    # Per-branch KL curves. Branch names are discovered from the wrapper's
+    # prior at the first step (None for non-split priors).
+    branch_names = getattr(getattr(env, "prior", None), "branch_names", None)
+    per_branch_kl_curves = (
+        {b: [] for b in branch_names} if branch_names is not None else None
+    )
 
     physics_steps_per_ctrl = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
     steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
@@ -71,6 +77,11 @@ def latent_mimic_rollout_logging_fn(
         rollout.append(state)
         r_mimic_curve.append(float(state.info.get("r_mimic", 0.0)))
         kl_curve.append(float(state.info.get("mimic_kl", 0.0)))
+        if per_branch_kl_curves is not None:
+            for b in branch_names:
+                per_branch_kl_curves[b].append(
+                    float(state.info.get(f"mimic_kl_{b}", 0.0))
+                )
         # z_target is exposed as state.obs["state"]["task_obs"] under the
         # ff_ppo two-key schema the wrapper now emits.
         z_target_means.append(state.obs["state"]["task_obs"])
@@ -88,6 +99,24 @@ def latent_mimic_rollout_logging_fn(
         data=list(enumerate(kl_curve)),
         title="KL(z_target||z_sim) per rollout step",
     )
+
+    # Per-branch KL curves (only for body-part-split priors).
+    if per_branch_kl_curves is not None:
+        for b, curve in per_branch_kl_curves.items():
+            log_lineplot_to_wandb(
+                name=f"eval/rollout_kl_{b}",
+                metric_name=f"mimic_kl_{b}",
+                data=list(enumerate(curve)),
+                title=f"KL on z_{b} per rollout step",
+            )
+        # Aggregate per-branch means as scalars too (handy for w-tuning).
+        wandb.log(
+            {
+                f"eval/rollout_kl_{b}_mean": float(jnp.mean(jnp.array(curve)))
+                for b, curve in per_branch_kl_curves.items()
+            },
+            commit=False,
+        )
 
     # z_target stats
     if len(z_target_means) > 0:

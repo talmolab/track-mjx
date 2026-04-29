@@ -3,8 +3,14 @@
 Port of acme/jax/networks/distributional.py:
 - MultivariateNormalDiagHead -> GaussianPolicyHead
 - DiscreteValuedTfpHead     -> CategoricalCriticHead (Task 3)
+
+Plus a `make_dmpo_networks` factory (Task 4) that wires policy + critic torsos
+to the heads. The torsos use SiLU + LayerNorm to match the existing track-mjx
+convention (`ff_ppo/intention_network.py`); this is an intentional deviation
+from Acme's `LayerNormMLP` (which only LayerNorms+tanhs the first layer and
+then ELUs the rest). The loss-relevant *heads* are byte-for-byte Acme.
 """
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional, Sequence
 
 import flax.linen as nn
 import jax
@@ -147,3 +153,101 @@ class CategoricalCriticHead(nn.Module):
             dense_kwargs["bias_init"] = self.b_init
         logits = nn.Dense(self.num_atoms, name="logits", **dense_kwargs)(inputs)
         return DiscreteValuedTfpDistribution(values=self.values, logits=logits)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: DMPO network factory.
+#
+# Acme's `make_control_networks` (acme/agents/jax/mpo/networks.py) wraps the
+# policy and critic in a `MPONetworks` dataclass with an unrollable `torso`
+# (for recurrent backbones) and separate `policy_head` / `critic_head`
+# `hk.Transformed`s sharing a torso embedding. We deliberately flatten this:
+# DMPO's first cut is feed-forward only, so we wire each head directly behind
+# its own torso. The recurrent torso plumbing can be reintroduced later as a
+# separate module if needed; the current shape mirrors vnl-ray's
+# `train_dmpo_ray.py` (separate policy and critic torsos).
+# ---------------------------------------------------------------------------
+
+
+class DMPONetworks(NamedTuple):
+    """Bundle of (policy, critic) flax modules used by DMPO."""
+
+    policy: nn.Module
+    critic: nn.Module
+
+
+class _PolicyNet(nn.Module):
+    """MLP torso (SiLU + LayerNorm per track-mjx convention) -> GaussianPolicyHead."""
+
+    layer_sizes: Sequence[int]
+    action_size: int
+    activation: Callable = nn.silu
+
+    @nn.compact
+    def __call__(self, obs: jnp.ndarray) -> tfd.Distribution:
+        h = obs
+        for size in self.layer_sizes:
+            h = nn.Dense(size)(h)
+            h = self.activation(h)
+            h = nn.LayerNorm()(h)
+        return GaussianPolicyHead(action_size=self.action_size)(h)
+
+
+class _CriticNet(nn.Module):
+    """MLP torso over concat([obs, action]) -> CategoricalCriticHead.
+
+    Matches Acme's `critic_fn` in `make_control_networks`: action is appended
+    on the last axis and the joint vector is fed through the torso. We omit
+    Acme's `ClipToSpec` step because actions in track-mjx are already
+    normalized to [-1, 1] at the env boundary (see `action_utils.bind`); if
+    that invariant ever changes, add the clip here.
+    """
+
+    layer_sizes: Sequence[int]
+    num_atoms: int
+    vmin: float
+    vmax: float
+    activation: Callable = nn.silu
+
+    @nn.compact
+    def __call__(self, obs: jnp.ndarray, action: jnp.ndarray) -> tfd.Distribution:
+        h = jnp.concatenate([obs, action], axis=-1)
+        for size in self.layer_sizes:
+            h = nn.Dense(size)(h)
+            h = self.activation(h)
+            h = nn.LayerNorm()(h)
+        return CategoricalCriticHead(
+            num_atoms=self.num_atoms, vmin=self.vmin, vmax=self.vmax
+        )(h)
+
+
+def make_dmpo_networks(
+    obs_size: int, action_size: int, cfg
+) -> DMPONetworks:
+    """Build (policy, critic) flax modules for DMPO.
+
+    Args:
+        obs_size: Observation dimensionality. Currently unused in the body
+            (only `action_size` and `cfg` shape the modules), but accepted in
+            the signature for symmetry with how env specs are passed around
+            elsewhere in track-mjx.
+        action_size: Action dimensionality.
+        cfg: A `DMPOConfig` (or anything exposing `policy_layer_sizes`,
+            `critic_layer_sizes`, `num_atoms`, `vmin`, `vmax`).
+
+    Returns:
+        `DMPONetworks(policy, critic)` ready to be `init`'d with dummy obs/act.
+    """
+    del obs_size  # unused; see docstring.
+    return DMPONetworks(
+        policy=_PolicyNet(
+            layer_sizes=tuple(cfg.policy_layer_sizes),
+            action_size=action_size,
+        ),
+        critic=_CriticNet(
+            layer_sizes=tuple(cfg.critic_layer_sizes),
+            num_atoms=cfg.num_atoms,
+            vmin=cfg.vmin,
+            vmax=cfg.vmax,
+        ),
+    )

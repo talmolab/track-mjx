@@ -1,6 +1,12 @@
 import jax
 import jax.numpy as jnp
-from track_mjx.agent.dmpo.networks import CategoricalCriticHead, GaussianPolicyHead
+from track_mjx.agent.dmpo.config import DMPOConfig
+from track_mjx.agent.dmpo.networks import (
+    CategoricalCriticHead,
+    DMPONetworks,
+    GaussianPolicyHead,
+    make_dmpo_networks,
+)
 
 
 def test_gaussian_policy_head_init_and_call(rng, env_spec):
@@ -57,3 +63,33 @@ def test_categorical_critic_head_batched(rng, env_spec):
     dist = head.apply(params, embedding)
     logits = dist.logits_parameter()
     assert logits.shape == (4, 51)
+
+
+def test_make_dmpo_networks(rng, env_spec):
+    cfg = DMPOConfig()
+    nets = make_dmpo_networks(env_spec["obs_size"], env_spec["action_size"], cfg)
+    assert isinstance(nets, DMPONetworks)
+
+    obs = jnp.zeros((env_spec["obs_size"],))
+    act = jnp.zeros((env_spec["action_size"],))
+
+    pol_params = nets.policy.init(rng, obs)
+    crit_params = nets.critic.init(rng, obs, act)
+
+    dist = nets.policy.apply(pol_params, obs)
+    q_dist = nets.critic.apply(crit_params, obs, act)
+    assert dist.loc.shape == (env_spec["action_size"],)
+    assert q_dist.logits_parameter().shape == (cfg.num_atoms,)
+
+
+def test_make_dmpo_networks_batched(rng, env_spec):
+    cfg = DMPOConfig()
+    nets = make_dmpo_networks(env_spec["obs_size"], env_spec["action_size"], cfg)
+    obs = jnp.zeros((4, env_spec["obs_size"]))
+    act = jnp.zeros((4, env_spec["action_size"]))
+    pol_params = nets.policy.init(rng, obs[0])
+    crit_params = nets.critic.init(rng, obs[0], act[0])
+    dist = nets.policy.apply(pol_params, obs)
+    q_dist = nets.critic.apply(crit_params, obs, act)
+    assert dist.loc.shape == (4, env_spec["action_size"])
+    assert q_dist.logits_parameter().shape == (4, cfg.num_atoms)

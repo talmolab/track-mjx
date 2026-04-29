@@ -26,6 +26,11 @@ import jax
 import jax.numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
+from track_mjx.agent.dmpo.checkpoint import (
+    make_checkpointer,
+    restore as restore_ckpt,
+    save as save_ckpt,
+)
 from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.learner import (
     init_training_state,
@@ -107,6 +112,49 @@ def _filter_dmpo_kwargs(d: dict) -> dict:
     return {k: v for k, v in d.items() if k in valid}
 
 
+def _eval_episodic_return(
+    env,
+    policy_apply,
+    policy_params,
+    rng,
+    num_eval_envs: int = 64,
+    num_steps: int = 1000,
+) -> float:
+    """Deterministic eval rollout for a fixed number of steps.
+
+    Distinct from the training rollout in two ways:
+      1. Uses ``dist.mode()`` (no sampling) so we measure greedy policy
+         performance, not exploration-flavored returns.
+      2. Bounds the action via ``tanh`` directly here -- we never need the
+         raw pre-tanh value for eval (no MPO loss to feed).
+
+    Returns the mean over ``num_eval_envs`` of the per-env summed reward across
+    ``num_steps`` steps. Episodes that ``done`` mid-rollout still accumulate
+    reward; this matches a "fixed-budget return" rather than a strict episodic
+    return, which is fine for relative tracking across training and avoids
+    needing to mask post-done rewards.
+    """
+    rng, k_reset = jax.random.split(rng)
+    reset_keys = jax.random.split(k_reset, num_eval_envs)
+    state = jax.vmap(env.reset)(reset_keys)
+
+    def step_fn(carry, _):
+        st, total = carry
+        # Deterministic action: mode of the action distribution.
+        raw_action = jax.vmap(lambda o: policy_apply(policy_params, o).mode())(st.obs)
+        bound_action = jnp.tanh(raw_action)
+        new_st, reward = jax.vmap(env.step)(st, bound_action)
+        return (new_st, total + reward), None
+
+    (_, total_return), _ = jax.lax.scan(
+        step_fn,
+        (state, jnp.zeros(num_eval_envs)),
+        None,
+        length=num_steps,
+    )
+    return float(jnp.mean(total_return))
+
+
 @hydra.main(config_path="../../config", config_name="rodent-dmpo", version_base=None)
 def main(hydra_cfg: DictConfig):
     """DMPO training driver."""
@@ -146,6 +194,20 @@ def main(hydra_cfg: DictConfig):
     rng, k_state = jax.random.split(rng)
     state = init_training_state(k_state, nets, env_spec, cfg)
     optimizers = make_optimizers(cfg)
+
+    # 2a. Checkpoint manager + restore-on-resume.
+    # ``state`` is used as the template for orbax's StandardRestore, so the
+    # template must already be a fully realized TrainingState.
+    ckpt_dir = str(hydra_cfg.get("checkpoint_dir", "./checkpoints/dmpo"))
+    ckpt_mgr = make_checkpointer(ckpt_dir)
+    restored = restore_ckpt(ckpt_mgr, state_template=state)
+    if restored is not None:
+        log.info(
+            "Restored DMPO checkpoint from %s at training step %d",
+            ckpt_dir,
+            int(restored.steps),
+        )
+        state = restored
 
     # 3. Replay (flashbax, per-env time axis).
     transition_template = {
@@ -201,6 +263,7 @@ def main(hydra_cfg: DictConfig):
     # 6. Main loop.
     total_env_steps = 0
     last_log_step = 0
+    last_eval_step = 0
     metrics: dict = {}
     first_sgd = True
     t0 = time.time()
@@ -289,6 +352,34 @@ def main(hydra_cfg: DictConfig):
             _log_metrics(metrics_to_log, total_env_steps)
             last_log_step = total_env_steps
 
+        # 6d. Eval + checkpoint. We run on the training env (cheap reset) with
+        # a smaller batch and deterministic actions. The checkpoint save uses
+        # the SGD step counter, NOT env steps, since ``state.steps`` is what
+        # restore restores.
+        if total_env_steps - last_eval_step >= cfg.eval_every_steps:
+            rng, k_eval = jax.random.split(rng)
+            ep_return = _eval_episodic_return(
+                env,
+                nets.policy.apply,
+                state.policy_params,
+                k_eval,
+                num_eval_envs=64,
+                num_steps=1000,
+            )
+            log.info("eval/episode_return=%.3f", ep_return)
+            if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+                wandb.log(
+                    {
+                        "eval/episode_return": ep_return,
+                        "env_steps": int(total_env_steps),
+                    },
+                    step=int(total_env_steps),
+                )
+            save_ckpt(ckpt_mgr, int(state.steps), state)
+            last_eval_step = total_env_steps
+
+    # Wait for any in-flight async checkpoint save to settle before exiting.
+    ckpt_mgr.wait_until_finished()
     log.info("Training complete: %d env steps", total_env_steps)
     if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
         wandb.finish()

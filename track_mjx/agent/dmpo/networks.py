@@ -92,6 +92,29 @@ class DiscreteValuedTfpDistribution(tfd.Categorical):
         super().__init__(logits=logits, probs=probs, name=name)
         self._parameters = parameters
 
+    @classmethod
+    def _parameter_properties(cls, dtype, num_classes=None):
+        """Declare parameter properties to silence the tfp inheritance warning.
+
+        tfp warns whenever a Distribution subclass overrides ``__init__`` but
+        inherits ``_parameter_properties`` from its parent — the parent's
+        properties may not match the subclass's signature. We document
+        ``logits`` (the only tensor-valued, batchable parameter) and ``values``
+        (the static real-valued support, which is not a tensor and so gets
+        ``is_tensor=False``). ``probs`` is omitted intentionally: callers
+        always pass logits in our pipeline, and listing it here as a tensor
+        parameter would trip tfp's "exactly one of logits/probs" guards.
+        """
+        return dict(
+            logits=tfp.util.ParameterProperties(event_ndims=1),
+            values=tfp.util.ParameterProperties(
+                event_ndims=1,
+                shape_fn=lambda sample_shape: sample_shape[-1:],
+                is_tensor=False,
+                specifies_shape=True,
+            ),
+        )
+
     @property
     def values(self) -> jnp.ndarray:
         return self._values

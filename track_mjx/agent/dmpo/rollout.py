@@ -11,15 +11,20 @@ import jax.numpy as jnp
 from track_mjx.agent.dmpo.action_utils import bind
 
 
-def collect_rollout(env, policy_fn, rng, num_envs: int, num_steps: int):
+def collect_rollout(env, policy_apply, policy_params, rng, num_envs: int, num_steps: int):
     """Roll out num_envs parallel envs for num_steps timesteps.
 
     Args:
       env: object with .reset(rng) and .step(state, action). Both must be
         jittable / vmappable. The state must be a registered pytree (jax
         treats it as such automatically for dataclasses with jax types).
-      policy_fn: callable (obs, key) -> raw_action (unbounded Gaussian sample).
-        Caller provides this; typically wraps a network.apply over policy params.
+      policy_apply: stateless callable ``(params, obs) -> distribution`` (e.g.
+        ``flax.linen.Module.apply``). Passing the apply function as a value
+        instead of a closure means the scan body traces once and is reused
+        across iterations even as ``policy_params`` changes -- crucial for
+        avoiding per-iteration retracing on Warp/MJX envs.
+      policy_params: pytree of policy parameters; threaded through the scan
+        as data. Updating these between calls does NOT trigger retracing.
       rng: PRNGKey for action sampling and env reset.
       num_envs: number of parallel envs.
       num_steps: trajectory length.
@@ -38,7 +43,10 @@ def collect_rollout(env, policy_fn, rng, num_envs: int, num_steps: int):
         state, rng = carry
         rng, k_act = jax.random.split(rng)
         keys = jax.random.split(k_act, num_envs)
-        raw_action = jax.vmap(policy_fn)(state.obs, keys)
+        # vmap over obs (axis 0) and keys (axis 0); policy_params is shared.
+        raw_action = jax.vmap(
+            lambda o, k: policy_apply(policy_params, o).sample(seed=k)
+        )(state.obs, keys)
         bound_action = bind(raw_action)
         new_state, reward = jax.vmap(env.step)(state, bound_action)
         transition = {

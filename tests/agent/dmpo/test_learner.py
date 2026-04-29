@@ -7,6 +7,7 @@ from track_mjx.agent.dmpo.learner import (
 )
 from track_mjx.agent.dmpo.networks import make_dmpo_networks
 from track_mjx.agent.dmpo.losses import MPOParams
+from track_mjx.agent.dmpo.learner import compute_categorical_target
 
 
 def test_make_optimizers_returns_three(dummy=None):
@@ -58,3 +59,46 @@ def test_training_state_is_pytree(rng, env_spec):
     assert len(leaves) > 0
     # All leaves should be jnp arrays (no python objects in the tree).
     assert all(isinstance(l, jnp.ndarray) for l in leaves)
+
+
+def test_compute_categorical_target_shapes(rng, env_spec):
+    cfg = DMPOConfig()
+    nets = make_dmpo_networks(env_spec["obs_size"], env_spec["action_size"], cfg)
+    state = init_training_state(rng, nets, env_spec, cfg)
+
+    B, T = 4, 5
+    next_obs = jnp.zeros((B, T, env_spec["obs_size"]))
+    next_action = jnp.zeros((B, T, env_spec["action_size"]))
+    rewards = jnp.zeros((B, T))
+    discounts = 0.97 * jnp.ones((B, T))
+
+    target_probs = compute_categorical_target(
+        nets, state.target_critic_params,
+        next_obs, next_action, rewards, discounts, cfg,
+    )
+    assert target_probs.shape == (B, T, cfg.num_atoms)
+    # Each row must sum to 1 (probability distribution).
+    assert jnp.allclose(target_probs.sum(axis=-1), 1.0, atol=1e-5)
+
+
+def test_compute_categorical_target_zero_reward_zero_discount(rng, env_spec):
+    """When r=0 and γ=0, target = δ(0) projected onto atoms (vmin..vmax with 0 in support).
+    Verifies the projection numerically: probability mass concentrates near 0."""
+    cfg = DMPOConfig()
+    nets = make_dmpo_networks(env_spec["obs_size"], env_spec["action_size"], cfg)
+    state = init_training_state(rng, nets, env_spec, cfg)
+
+    B, T = 2, 1
+    next_obs = jnp.zeros((B, T, env_spec["obs_size"]))
+    next_action = jnp.zeros((B, T, env_spec["action_size"]))
+    rewards = jnp.zeros((B, T))
+    discounts = jnp.zeros((B, T))  # γ=0 zeroes out the bootstrapped distribution.
+
+    target_probs = compute_categorical_target(
+        nets, state.target_critic_params,
+        next_obs, next_action, rewards, discounts, cfg,
+    )
+    atoms = jnp.linspace(cfg.vmin, cfg.vmax, cfg.num_atoms)
+    expected_value = (target_probs * atoms[None, None, :]).sum(-1)
+    # Mean of projected distribution should be ~0 (project δ(0) onto symmetric atom grid).
+    assert jnp.allclose(expected_value, 0.0, atol=1e-3)

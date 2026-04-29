@@ -1,13 +1,16 @@
 """DMPO learner state and constructors.
 
 Task 9: state container + initial-state factory + optimizer factory.
+Task 10: distributional Bellman target (`compute_categorical_target`).
 Task 11 will add the actual SGD step that consumes this state.
 """
+import functools
 from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
 import optax
+import rlax
 
 from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.losses import MPO, MPOParams
@@ -90,3 +93,57 @@ def init_training_state(
         steps=jnp.zeros((), jnp.int32),
         rng=rng,
     )
+
+
+def compute_categorical_target(
+    nets: DMPONetworks,
+    target_critic_params: Any,
+    next_obs: jnp.ndarray,
+    next_action: jnp.ndarray,
+    rewards: jnp.ndarray,
+    discounts: jnp.ndarray,
+    cfg: DMPOConfig,
+) -> jnp.ndarray:
+    """C51 Bellman target: project (r + γ·support) onto fixed atoms.
+
+    Mirrors Acme's `acme/agents/jax/mpo/learning.py:482-517` (CATEGORICAL
+    branch). Deviations:
+      * No `tx_pair` (input/output reward transform). vnl-ray doesn't use
+        it; adding it post-hoc is mechanical.
+      * Single sample (no `N`-action averaging — Acme's `z_target` is a
+        mean over an `N`-axis of policy-sampled actions). Caller is
+        expected to pass a single `next_action` per (B, T).
+
+    Args:
+      nets: DMPO networks (we use the critic for the target distribution).
+      target_critic_params: parameters of the target critic.
+      next_obs: shape [B, T, obs_dim].
+      next_action: shape [B, T, action_dim].
+      rewards: shape [B, T].
+      discounts: shape [B, T] (γ * not_done).
+      cfg: DMPOConfig (vmin/vmax/num_atoms).
+
+    Returns:
+      target_probs: shape [B, T, num_atoms]. Each row sums to 1 (after
+        L2 projection onto the fixed atom grid).
+    """
+    # Apply target critic over [B, T, ...] (vmap over both axes). Acme uses
+    # a single vmap because their critic_head_apply is already over a flat
+    # time axis (T-1), but here we keep the shape as [B, T, ...] coming in
+    # so we vmap twice.
+    apply = jax.vmap(jax.vmap(nets.critic.apply, in_axes=(None, 0, 0)),
+                     in_axes=(None, 0, 0))
+    target_dist = apply(target_critic_params, next_obs, next_action)
+    target_logits = target_dist.logits_parameter()
+    target_probs = jax.nn.softmax(target_logits, axis=-1)
+
+    atoms = jnp.linspace(cfg.vmin, cfg.vmax, cfg.num_atoms)
+    # Bellman: y = r + γ * z. Shape: [B, T, num_atoms].
+    bellman_atoms = rewards[..., None] + discounts[..., None] * atoms[None, None, :]
+
+    # rlax.categorical_l2_project(z_p, probs, z_q): project `probs` from
+    # support `z_p` onto support `z_q`. We wire z_q via partial and vmap
+    # the remaining (z_p, probs) over batch and time axes.
+    project = functools.partial(rlax.categorical_l2_project, z_q=atoms)
+    projected = jax.vmap(jax.vmap(project))(bellman_atoms, target_probs)
+    return projected

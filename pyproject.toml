@@ -47,6 +47,11 @@ dependencies = [
     "playground",
     "ipykernel",
     "vnl-playground",
+    # DMPO port (Acme JAX MPO)
+    "flashbax>=0.1.2",
+    "rlax>=0.1.6",
+    "tensorflow-probability>=0.24.0",
+    "chex>=0.1.85",
 ]
 
 dynamic = ["version", "readme"]

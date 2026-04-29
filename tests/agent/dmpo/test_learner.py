@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import optax
 from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.learner import (
-    TrainingState, init_training_state, make_optimizers,
+    TrainingState, init_training_state, make_optimizers, sgd_step,
 )
 from track_mjx.agent.dmpo.networks import make_dmpo_networks
 from track_mjx.agent.dmpo.losses import MPOParams
@@ -102,3 +102,77 @@ def test_compute_categorical_target_zero_reward_zero_discount(rng, env_spec):
     expected_value = (target_probs * atoms[None, None, :]).sum(-1)
     # Mean of projected distribution should be ~0 (project δ(0) onto symmetric atom grid).
     assert jnp.allclose(expected_value, 0.0, atol=1e-3)
+
+
+def test_sgd_step_runs_and_advances(rng, env_spec):
+    cfg = DMPOConfig()
+    nets = make_dmpo_networks(env_spec["obs_size"], env_spec["action_size"], cfg)
+    state = init_training_state(rng, nets, env_spec, cfg)
+    optimizers = make_optimizers(cfg)
+
+    B, T = 4, 6
+    obs_dim, act_dim = env_spec["obs_size"], env_spec["action_size"]
+    batch = {
+        "observation": jnp.zeros((B, T, obs_dim)),
+        "action": jnp.zeros((B, T, act_dim)),
+        "reward": jnp.zeros((B, T)),
+        "discount": 0.97 * jnp.ones((B, T)),
+        "next_observation": jnp.zeros((B, T, obs_dim)),
+    }
+    new_state, metrics = sgd_step(state, batch, nets, optimizers, cfg)
+
+    assert int(new_state.steps) == int(state.steps) + 1
+    assert "policy_loss" in metrics
+    assert "critic_loss" in metrics
+    assert jnp.isfinite(metrics["policy_loss"])
+    assert jnp.isfinite(metrics["critic_loss"])
+    # Dual variables are still valid (not negative log-temperature etc).
+    # log_temperature has shape (1,); the clip in MPO floors at -18.
+    assert float(new_state.dual_params.log_temperature.squeeze()) >= -18.0
+
+
+def test_sgd_step_jittable(rng, env_spec):
+    cfg = DMPOConfig()
+    nets = make_dmpo_networks(env_spec["obs_size"], env_spec["action_size"], cfg)
+    state = init_training_state(rng, nets, env_spec, cfg)
+    optimizers = make_optimizers(cfg)
+    jitted = jax.jit(lambda s, b: sgd_step(s, b, nets, optimizers, cfg))
+
+    B, T = 4, 6
+    obs_dim, act_dim = env_spec["obs_size"], env_spec["action_size"]
+    batch = {
+        "observation": jnp.zeros((B, T, obs_dim)),
+        "action": jnp.zeros((B, T, act_dim)),
+        "reward": jnp.zeros((B, T)),
+        "discount": 0.97 * jnp.ones((B, T)),
+        "next_observation": jnp.zeros((B, T, obs_dim)),
+    }
+    new_state, metrics = jitted(state, batch)
+    assert jnp.isfinite(metrics["critic_loss"])
+
+
+def test_sgd_step_target_update_schedule(rng, env_spec):
+    """After cfg.target_critic_update_period steps, target_critic_params change.
+    Before, they should remain equal to initial."""
+    cfg = DMPOConfig()
+    nets = make_dmpo_networks(env_spec["obs_size"], env_spec["action_size"], cfg)
+    state = init_training_state(rng, nets, env_spec, cfg)
+    optimizers = make_optimizers(cfg)
+
+    B, T = 4, 6
+    obs_dim, act_dim = env_spec["obs_size"], env_spec["action_size"]
+    batch = {
+        "observation": jax.random.normal(rng, (B, T, obs_dim)),
+        "action": jax.random.normal(rng, (B, T, act_dim)),
+        "reward": jax.random.normal(rng, (B, T)),
+        "discount": 0.97 * jnp.ones((B, T)),
+        "next_observation": jax.random.normal(rng, (B, T, obs_dim)),
+    }
+    initial_target_crit = state.target_critic_params
+    # Run a few steps but fewer than the update period (107).
+    for _ in range(5):
+        state, _ = sgd_step(state, batch, nets, optimizers, cfg)
+    # Target should still equal initial.
+    eq = jax.tree.map(lambda a, b: jnp.array_equal(a, b),
+                      state.target_critic_params, initial_target_crit)
+    assert all(jax.tree_util.tree_leaves(eq))

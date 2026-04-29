@@ -137,9 +137,15 @@ class CategoricalCriticHead(nn.Module):
     b_init: Optional[Callable] = None
 
     @property
-    def values(self) -> jnp.ndarray:
-        """Atom support, length `num_atoms`, spanning [vmin, vmax]."""
-        return jnp.linspace(self.vmin, self.vmax, num=self.num_atoms)
+    def values(self) -> np.ndarray:
+        """Atom support, length `num_atoms`, spanning [vmin, vmax].
+
+        Returned as a static numpy array (mirroring Acme); this keeps the
+        atom support out of jax trace contexts so that downstream code
+        like `DiscreteValuedTfpDistribution.__init__` (which calls
+        `np.asarray(values)`) doesn't fail under `jax.jit`.
+        """
+        return np.linspace(self.vmin, self.vmax, num=self.num_atoms)
 
     @nn.compact
     def __call__(self, inputs: jnp.ndarray) -> tfd.Distribution:

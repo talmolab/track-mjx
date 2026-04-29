@@ -1,0 +1,25 @@
+# =============================================================================
+# DMPO config for RodentImitation (Phase-1 imitation task)
+# =============================================================================
+# Inherits all DMPO knobs from rodent-dmpo.yaml; overrides only the env-related
+# fields and a few imitation-specific scaling factors.
+#
+# Acceptance criterion (Task 16 of 2026-04-28-3-dmpo-jax-linen-port plan):
+# stable training for 24h on a single 5090, episode_return rises above the
+# random-policy baseline.
+# =============================================================================
+defaults:
+  - rodent-dmpo
+  - _self_
+
+env_name: RodentImitation
+
+train_config:
+  # Imitation has tighter dynamics: smaller batch helps optim, shorter total
+  # budget since we expect convergence well before 1B steps.
+  num_envs: 1024
+  num_timesteps: 500_000_000
+
+  # Eval more often during imitation — useful for catching divergence early.
+  eval_every_steps: 500_000
+  log_every_steps: 5_000

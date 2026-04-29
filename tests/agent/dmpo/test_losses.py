@@ -15,13 +15,17 @@ example, after intentionally changing the loss math), run::
 
 NOTE on action penalization:
     vnl-ray's MPO defaults to ``cost_out_of_bound = -tf.norm(actions, axis=-1)``
-    (penalises ALL action magnitudes), while Acme JAX uses
-    ``-norm(actions - clip(actions, -1, 1))`` (only out-of-bound actions). The
-    reference dump passes a custom ``penalization_cost`` to vnl-ray that
-    replicates Acme's formulation, so this parity test confirms the JAX port
-    matches Acme's *original* behaviour. If we ever decide to track vnl-ray's
-    modified penalisation in the JAX port, the change goes in losses.py and
-    the reference JSON is regenerated *without* the custom callable.
+    (penalises ALL action magnitudes), while Acme JAX originally used
+    ``-norm(actions - clip(actions, -1, 1))`` (only out-of-bound actions). As of
+    Task 7.5 our vendored ``losses.py`` was deliberately switched to vnl-ray's
+    formula so the JAX port matches the algorithm vnl-ray actually trained with
+    on downstream tasks. The reference JSON dumped by ``vnl_ray_reference.py``
+    therefore uses vnl-ray's *default* penalty (no ``penalization_cost``
+    callable override). This parity test confirms our JAX port matches
+    vnl-ray's actual training behaviour, NOT Acme's original formula. If you
+    ever revert ``losses.py`` to Acme's original formula, regenerate the JSON
+    by passing a custom callable to ``VnlMPO`` that replicates the clipped
+    formula — see ``losses_mpo.py:265-266`` for the original ``# OLD`` lines.
 """
 
 import json

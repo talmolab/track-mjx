@@ -15,8 +15,13 @@
 """Continuous MPO loss with dual variables.
 
 Vendored from acme.jax.losses.mpo (Apache 2.0). See LICENSE-ACME for the
-original copyright notice. Modifications: none aside from this docstring
-addition (no acme-internal imports to drop).
+original copyright notice.
+
+Modifications:
+  1. Action penalization formula switched from Acme's
+     `-norm(actions - clip(actions, -1, 1))` to vnl-ray's `-norm(actions)`,
+     to match the algorithm vnl-ray trained with on downstream tasks.
+     See `cost_out_of_bound` comment in __call__.
 
 The MPO loss uses MPOParams, which can be initialized using init_params,
 to track the temperature and the dual variables.
@@ -241,9 +246,16 @@ class MPO:
           params.log_penalty_temperature) + _MPO_FLOAT_EPSILON
 
       # Compute action penalization cost.
-      # Note: the cost is zero in [-1, 1] and quadratic beyond.
-      diff_out_of_bound = actions - jnp.clip(actions, -1.0, 1.0)
-      cost_out_of_bound = -jnp.linalg.norm(diff_out_of_bound, axis=-1)
+      # NOTE: Deliberate divergence from Acme's vendored implementation. We
+      # follow vnl-ray's formulation, which penalizes ALL action magnitudes
+      # rather than only the out-of-bound portion. This matches the algorithm
+      # that vnl-ray actually trained with on downstream tasks.
+      # See archive/vnl-ray/vnl_ray/agents/losses_mpo.py:265-266 where the
+      # original Acme formulation is preserved as `# OLD` comments. Original
+      # Acme formula (preserved for reference / easy reversal):
+      #   diff_out_of_bound = actions - jnp.clip(actions, -1.0, 1.0)
+      #   cost_out_of_bound = -jnp.linalg.norm(diff_out_of_bound, axis=-1)
+      cost_out_of_bound = -jnp.linalg.norm(actions, axis=-1)
 
       penalty_normalized_weights, loss_penalty_temperature = (
           compute_weights_and_temperature_loss(

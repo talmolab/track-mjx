@@ -10,14 +10,14 @@ To regenerate:
     deactivate
 
 NOTE on action penalization parity:
-    vnl-ray's MPO defaults to ``cost_out_of_bound = -tf.norm(actions, axis=-1)``
-    which penalizes ALL action magnitudes (see
-    archive/vnl-ray/vnl_ray/agents/losses_mpo.py:265-270). Acme JAX uses the
-    original ``-norm(actions - clip(actions, -1, 1))`` formulation that only
-    penalizes out-of-bound actions. To get a numerical apples-to-apples
-    comparison against Acme's vendored loss, we pass a custom
-    ``penalization_cost`` callable to vnl-ray's MPO that replicates Acme's
-    formulation. The behavioural divergence is documented in the test file.
+    This reference uses vnl-ray's untouched default action-penalization
+    formula: ``cost_out_of_bound = -tf.norm(actions, axis=-1)``, which
+    penalizes ALL action magnitudes (see
+    archive/vnl-ray/vnl_ray/agents/losses_mpo.py:265-270 for the active
+    line and the `# OLD` Acme reference). Our vendored JAX loss has been
+    aligned to this same formula (see
+    track_mjx/agent/dmpo/losses.py module docstring), so no callable
+    override is needed here.
 """
 
 import json
@@ -34,12 +34,6 @@ from vnl_ray.agents.losses_mpo import MPO as VnlMPO  # type: ignore  # noqa: E40
 tfd = tfp_tf.distributions
 
 OUTPUT = pathlib.Path(__file__).parent / "vnl_ray_reference.json"
-
-
-def acme_style_penalization_cost(actions: tf.Tensor) -> tf.Tensor:
-    """Replicates Acme JAX MPO's out-of-bound-only penalization for parity."""
-    diff_out_of_bound = actions - tf.clip_by_value(actions, -1.0, 1.0)
-    return -tf.norm(diff_out_of_bound, axis=-1)
 
 
 def main():
@@ -68,9 +62,8 @@ def main():
         init_log_alpha_stddev=1000.0,
         per_dim_constraining=True,
         action_penalization=True,
-        # Match Acme's original out-of-bound-only formulation (Acme JAX MPO
-        # uses -norm(actions - clip(actions, -1, 1))).
-        penalization_cost=acme_style_penalization_cost,
+        # Use vnl-ray's default action-penalization formula
+        # (-norm(actions, axis=-1)) — no callable override.
     )
     loss, stats = mpo(
         online_action_distribution=online,

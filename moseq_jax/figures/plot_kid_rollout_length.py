@@ -82,6 +82,7 @@ def _plot_single(
     c2a_means: list[float],
     c2a_stds: list[float],
     title: str,
+    xlabel: str = "Testing Rollout Step Length (control steps)",
     noise_floor_idx: int | None = None,
 ):
     n = len(available_lengths)
@@ -113,7 +114,7 @@ def _plot_single(
 
     ax.set_xticks(x)
     ax.set_xticklabels([str(l) for l in available_lengths])
-    ax.set_xlabel("Testing Rollout Length (frames)")
+    ax.set_xlabel(xlabel)
     ax.set_ylabel("KID")
     ax.set_title(title)
     ax.set_ylim(bottom=0)
@@ -179,12 +180,27 @@ def main():
     has_gen = len(gen["mimic_means"]) == len(available_lengths)
     has_trn = len(trn["mimic_means"]) == len(available_lengths)
 
-    # --- Plot 1: Original VAE only (same as before) ---
+    # Training rollout is fixed by the checkpoint's clip_length (250 mocap frames
+    # × steps_per_frame=2 = 500 control steps). The trn_orig values from the 4
+    # sweep runs at frames_per_segment ∈ {250,500,1000,2000} all evaluate the
+    # *same* training rollouts (only the testing rollouts depend on
+    # frames_per_segment). We therefore restrict the left panel to the
+    # rollout-step lengths that bracket the actual training rollout (250 = one
+    # chunk, 500 = full rollout) instead of plotting four duplicates.
+    TRN_LENGTHS_TO_SHOW = {250, 500}
+    trn_idx = [i for i, l in enumerate(available_lengths) if l in TRN_LENGTHS_TO_SHOW]
+    trn_lengths = [available_lengths[i] for i in trn_idx]
+    trn_mimic_means = [trn["mimic_means"][i] for i in trn_idx]
+    trn_mimic_stds = [trn["mimic_stds"][i] for i in trn_idx]
+    trn_c2a_means = [trn["c2a_means"][i] for i in trn_idx]
+    trn_c2a_stds = [trn["c2a_stds"][i] for i in trn_idx]
+
+    # --- Plot 1: Testing rollout vs. Training-data VAE (single panel) ---
     fig1, ax1 = plt.subplots(figsize=(4.5, 3.3))
     _plot_single(ax1, available_lengths,
                  orig["mimic_means"], orig["mimic_stds"],
                  orig["c2a_means"], orig["c2a_stds"],
-                 "Tst. Rollout w/ Training Data Trained VAE")
+                 "Testing Rollout vs. Training-data VAE")
     fig1.tight_layout(rect=[0.02, 0.02, 0.98, 0.93])
     rect1 = _add_border(fig1)
     for ext in ("png", "pdf"):
@@ -196,25 +212,31 @@ def main():
 
     # --- Plot 2: Triple panel ---
     if has_gen and has_trn:
-        fig2, (ax_trn, ax_orig, ax_gen) = plt.subplots(1, 3, figsize=(13.5, 3.8))
-        _plot_single(ax_trn, available_lengths,
-                     trn["mimic_means"], trn["mimic_stds"],
-                     trn["c2a_means"], trn["c2a_stds"],
-                     "Trn. Rollout w/ Training Data Trained VAE",
-                     noise_floor_idx=0)
+        # Width-ratio: left panel has 2 ticks vs 4 in middle/right, so make it narrower.
+        fig2, (ax_trn, ax_orig, ax_gen) = plt.subplots(
+            1, 3, figsize=(13.5, 3.8),
+            gridspec_kw={"width_ratios": [max(len(trn_lengths), 1), 4, 4]},
+        )
+        _plot_single(ax_trn, trn_lengths,
+                     trn_mimic_means, trn_mimic_stds,
+                     trn_c2a_means, trn_c2a_stds,
+                     "Training Rollout vs. Training-data VAE",
+                     xlabel="Training Rollout Step Length (control steps)")
         _plot_single(ax_orig, available_lengths,
                      orig["mimic_means"], orig["mimic_stds"],
                      orig["c2a_means"], orig["c2a_stds"],
-                     "Tst. Rollout w/ Training Data Trained VAE")
+                     "Testing Rollout vs. Training-data VAE",
+                     xlabel="Testing Rollout Step Length (control steps)")
         _plot_single(ax_gen, available_lengths,
                      gen["mimic_means"], gen["mimic_stds"],
                      gen["c2a_means"], gen["c2a_stds"],
-                     "Tst. Rollout w/ Testing Data Trained VAE",
+                     "Testing Rollout vs. Testing-data VAE",
+                     xlabel="Testing Rollout Step Length (control steps)",
                      noise_floor_idx=0)
         # Same y-axis: 1.6 for middle and right, match for left
         for ax in (ax_trn, ax_orig, ax_gen):
             ax.set_ylim(0, 1.6)
-        fig2.subplots_adjust(left=0.05, right=0.98, top=0.88, bottom=0.15, wspace=0.15)
+        fig2.subplots_adjust(left=0.05, right=0.98, top=0.88, bottom=0.15, wspace=0.18)
         rect2 = _add_border(fig2)
         for ext in ("png", "pdf"):
             fig2.savefig(str(OUTPUT_DIR / f"kid_rollout_length_triple.{ext}"))
@@ -227,11 +249,13 @@ def main():
         _plot_single(ax_orig, available_lengths,
                      orig["mimic_means"], orig["mimic_stds"],
                      orig["c2a_means"], orig["c2a_stds"],
-                     "Tst. Rollout w/ Training Data Trained VAE")
+                     "Testing Rollout vs. Training-data VAE",
+                     xlabel="Testing Rollout Step Length (control steps)")
         _plot_single(ax_gen, available_lengths,
                      gen["mimic_means"], gen["mimic_stds"],
                      gen["c2a_means"], gen["c2a_stds"],
-                     "Tst. Rollout w/ Testing Data Trained VAE",
+                     "Testing Rollout vs. Testing-data VAE",
+                     xlabel="Testing Rollout Step Length (control steps)",
                      noise_floor_idx=0)
         fig2.tight_layout(rect=[0.01, 0.02, 0.99, 0.93])
         rect2 = _add_border(fig2)

@@ -21,6 +21,7 @@ from typing import Any, Callable
 
 import jax
 import orbax.checkpoint as ocp
+from brax.training.acme import running_statistics, specs
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
@@ -28,83 +29,10 @@ from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 from track_mjx.agent.recurrent_ppo import losses as recurrent_ppo_losses
 from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
-import flax
-from brax.training.acme import running_statistics, specs
-
-from track_mjx.agent.observation_utils import get_obs_shape
-
-
-@flax.struct.dataclass
-class _LegacyDictNormalizerState:
-    """Legacy per-key normalizer for checkpoint deserialization only.
-
-    Old checkpoints stored a custom flax dataclass with separate
-    RunningStatisticsState for 'imitation_target' and 'proprioception'.
-    This type exists solely to reconstruct the pytree for Orbax restore.
-    """
-
-    imitation_target: running_statistics.RunningStatisticsState
-    proprioception: running_statistics.RunningStatisticsState
-
-
-def _probe_normalizer_obs_keys(ckpt_mgr: ocp.CheckpointManager, step: int) -> set[str]:
-    """Probe a checkpoint to determine which observation keys its normalizer has.
-
-    Does a raw (untyped) restore to inspect the normalizer's mean dict keys,
-    which reveals whether 'privileged_state' was present during training.
-
-    Args:
-        ckpt_mgr: Open checkpoint manager.
-        step: Checkpoint step to probe.
-
-    Returns:
-        Set of top-level observation keys (e.g., {'state'} or
-        {'state', 'privileged_state'}).
-    """
-    raw = ckpt_mgr.restore(
-        step,
-        args=ocp.args.Composite(policy=ocp.args.StandardRestore(item=None)),
-    )["policy"]
-    raw_normalizer = raw[0]
-    return set(raw_normalizer["mean"].keys())
-
-
-def _is_legacy_dict_format(network_config) -> bool:
-    """Check if network config uses the legacy dict obs format (imitation_target)."""
-    has_obs_sizes = (
-        hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
-    )
-    if not has_obs_sizes:
-        return False
-    obs_sizes = network_config["obs_sizes"]
-    return "imitation_target" in obs_sizes and "task_obs" not in obs_sizes
-
-
-def require_obs_sizes(network_config) -> dict:
-    """Validate that network_config has obs_sizes and return it as a dict.
-
-    Handles legacy configs with 'imitation_target' by remapping to 'task_obs'.
-    Raises ValueError if the legacy flat observation format is detected.
-    """
-    has_obs_sizes = (
-        hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
-    )
-    if not has_obs_sizes:
-        raise ValueError(
-            "Legacy flat observation format is no longer supported. "
-            "Config must have network_config.obs_sizes with 'task_obs' "
-            "and 'proprioception' keys."
-        )
-    obs_sizes = dict(network_config["obs_sizes"])
-    if "imitation_target" in obs_sizes and "task_obs" not in obs_sizes:
-        logging.info(
-            "Migrating legacy obs_sizes: renaming 'imitation_target' -> 'task_obs'"
-        )
-        obs_sizes = {
-            "task_obs": obs_sizes["imitation_target"],
-            "proprioception": obs_sizes["proprioception"],
-        }
-    return obs_sizes
+from track_mjx.agent.observation_utils import (
+    convert_flat_to_dict_normalizer,
+    init_dict_normalizer,
+)
 
 
 def load_config_from_checkpoint(
@@ -163,12 +91,16 @@ def load_training_state(
 
         logging.info(f"Loading training state from {checkpoint_path} at step {step}")
 
-        return ckpt_mgr.restore(
+        restored = ckpt_mgr.restore(
             step,
             args=ocp.args.Composite(
-                train_state=ocp.args.StandardRestore(abstract_training_state),
+                train_state=ocp.args.StandardRestore(
+                    _replace_zero_sized_arrays(abstract_training_state)
+                ),
             ),
         )["train_state"]
+
+        return _restore_zero_sized_arrays(restored, abstract_training_state)
 
 
 def load_policy(
@@ -181,8 +113,7 @@ def load_policy(
     """Load policy parameters from a checkpoint.
 
     Creates an abstract policy from the config to define the pytree structure,
-    then restores the actual parameters. Automatically detects and migrates
-    legacy dict-format checkpoints (imitation_target -> task_obs).
+    then restores the actual parameters.
 
     Args:
         checkpoint_path: Path to the checkpoint directory.
@@ -192,12 +123,12 @@ def load_policy(
         step: Specific step to load. If None, loads the latest.
 
     Returns:
-        Tuple of (normalizer_state, policy_params) in the current format.
+        Tuple of (normalizer_state, policy_params).
     """
     if cfg is None:
         cfg = load_config_from_checkpoint(checkpoint_path, step_prefix, step)
 
-    legacy = _is_legacy_dict_format(cfg["network_config"])
+    abstract_policy = make_abstract_policy(cfg)
 
     if ckpt_mgr is None:
         mgr_options = ocp.CheckpointManagerOptions(
@@ -208,26 +139,10 @@ def load_policy(
     if step is None:
         step = ckpt_mgr.latest_step()
 
-    if legacy:
-        logging.info("Detected legacy dict checkpoint, will migrate after loading")
-        abstract_policy = _make_legacy_dict_abstract_policy(cfg)
-    else:
-        obs_keys = _probe_normalizer_obs_keys(ckpt_mgr, step)
-        logging.info(f"Probed checkpoint normalizer obs keys: {obs_keys}")
-        abstract_policy = make_abstract_policy(cfg, obs_keys=obs_keys)
-
-    loaded = ckpt_mgr.restore(
+    return ckpt_mgr.restore(
         step,
         args=ocp.args.Composite(policy=ocp.args.StandardRestore(abstract_policy)),
     )["policy"]
-
-    if legacy:
-        legacy_normalizer, policy_params = loaded
-        new_normalizer = _migrate_normalizer(legacy_normalizer)
-        logging.info("Successfully migrated legacy normalizer to nested format")
-        return (new_normalizer, policy_params)
-
-    return loaded
 
 
 def load_checkpoint_for_eval(
@@ -269,7 +184,6 @@ def load_checkpoint_for_eval(
 def make_abstract_policy(
     cfg: DictConfig,
     seed: int = 1,
-    obs_keys: set[str] | None = None,
 ) -> tuple[Any, Any]:
     """Create an abstract policy structure for checkpoint restoration.
 
@@ -279,9 +193,6 @@ def make_abstract_policy(
     Args:
         cfg: Configuration with network_config section.
         seed: Random seed for parameter initialization.
-        obs_keys: Top-level observation keys to include in the normalizer
-            (e.g., {'state'} or {'state', 'privileged_state'}). If None,
-            defaults to {'state', 'privileged_state'}.
 
     Returns:
         Tuple of (normalizer_state, policy_params) with correct structure.
@@ -307,101 +218,26 @@ def make_abstract_policy(
             value=ppo_network.value_network.init(key_value),
         )
 
-    obs_sizes = require_obs_sizes(cfg["network_config"])
-    if obs_keys is None:
-        obs_keys = {"state", "privileged_state"}
-    inner = {
-        "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
-        "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
-    }
-    dummy_obs = {key: inner for key in sorted(obs_keys)}
-    normalizer_state = running_statistics.init_state(get_obs_shape(dummy_obs))
+    # Handle both new (dict-based) and legacy (flat) config formats
+    network_config = cfg["network_config"]
+    if "obs_sizes" in network_config:
+        # New dict-based format
+        obs_sizes = network_config["obs_sizes"]
+        dummy_obs = {
+            "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
+        }
+        if "imitation_target" in obs_sizes:
+            dummy_obs["imitation_target"] = jnp.zeros(
+                (1, obs_sizes["imitation_target"])
+            )
+        normalizer_state = init_dict_normalizer(dummy_obs)
+    else:
+        # Legacy flat format
+        normalizer_state = running_statistics.init_state(
+            specs.Array(network_config["observation_size"], jnp.dtype("float32"))
+        )
 
     return (normalizer_state, init_params.policy)
-
-
-def _make_legacy_dict_abstract_policy(
-    cfg: DictConfig,
-    seed: int = 1,
-) -> tuple[Any, Any]:
-    """Create abstract policy matching legacy DictRunningStatisticsState format.
-
-    Used to restore old checkpoints that stored a custom flax dataclass
-    normalizer with 'imitation_target' and 'proprioception' fields.
-    The network params have the same pytree structure regardless of obs key
-    naming, so we use the current network factory with remapped obs_sizes.
-
-    Args:
-        cfg: Legacy configuration (obs_sizes has 'imitation_target').
-        seed: Random seed for parameter initialization.
-
-    Returns:
-        Tuple of (_LegacyDictNormalizerState, policy_params).
-    """
-    # Network weights don't depend on obs key names, so remap for network creation
-    ppo_network = make_ppo_network_from_cfg(cfg)
-    key_policy, key_value = jax.random.split(jax.random.key(seed))
-
-    arch_name = cfg.network_config.get("arch_name")
-    if arch_name is None:
-        arch_name = "intention"
-    if arch_name == "recurrent_intention":
-        init_params = recurrent_ppo_losses.RecurrentPPONetworkParams(
-            policy=ppo_network.policy_network.init(key_policy),
-            value=ppo_network.value_network.init(key_value),
-        )
-    else:
-        init_params = ff_ppo_losses.PPONetworkParams(
-            policy=ppo_network.policy_network.init(key_policy),
-            value=ppo_network.value_network.init(key_value),
-        )
-
-    # Build normalizer matching the OLD checkpoint pytree structure
-    obs_sizes = cfg["network_config"]["obs_sizes"]
-    legacy_normalizer = _LegacyDictNormalizerState(
-        imitation_target=running_statistics.init_state(
-            specs.Array((obs_sizes["imitation_target"],), jnp.dtype("float32"))
-        ),
-        proprioception=running_statistics.init_state(
-            specs.Array((obs_sizes["proprioception"],), jnp.dtype("float32"))
-        ),
-    )
-
-    return (legacy_normalizer, init_params.policy)
-
-
-def _migrate_normalizer(
-    legacy: _LegacyDictNormalizerState,
-) -> running_statistics.RunningStatisticsState:
-    """Convert legacy DictRunningStatisticsState to nested RunningStatisticsState.
-
-    The old format stored separate RunningStatisticsState for imitation_target
-    and proprioception. The new format stores a single RunningStatisticsState
-    with nested dict arrays: {state: {task_obs, proprioception}}.
-
-    Legacy checkpoints predate asymmetric critic, so only 'state' is produced.
-    """
-    inner_mean = {
-        "task_obs": legacy.imitation_target.mean,
-        "proprioception": legacy.proprioception.mean,
-    }
-    inner_std = {
-        "task_obs": legacy.imitation_target.std,
-        "proprioception": legacy.proprioception.std,
-    }
-    inner_summed_variance = {
-        "task_obs": legacy.imitation_target.summed_variance,
-        "proprioception": legacy.proprioception.summed_variance,
-    }
-
-    return running_statistics.RunningStatisticsState(
-        count=legacy.imitation_target.count,
-        mean={"state": inner_mean},
-        summed_variance={"state": inner_summed_variance},
-        std={"state": inner_std},
-        std_eps=legacy.imitation_target.std_eps,
-        mode=legacy.imitation_target.mode,
-    )
 
 
 def load_inference_fn(
@@ -437,12 +273,25 @@ def load_inference_fn(
     else:
         make_policy = ff_ppo_networks.make_inference_fn(ppo_network)
 
-    require_obs_sizes(cfg.network_config)
+    # Convert legacy flat normalizer to dict normalizer if needed
+    normalizer_state, network_params = policy_params
+    network_config = cfg.network_config
+
+    # Check if this is a legacy flat normalizer by looking at config format
+    is_legacy = not (
+        hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config
+    )
+
+    if is_legacy:
+        # Convert flat normalizer to dict normalizer
+        reference_obs_size = network_config.reference_obs_size
+        normalizer_state = convert_flat_to_dict_normalizer(
+            normalizer_state, reference_obs_size
+        )
+        policy_params = (normalizer_state, network_params)
 
     if arch_name == "recurrent_intention":
-        return make_policy(
-            policy_params, deterministic=deterministic, get_activation=get_activation
-        )
+        return make_policy(policy_params, deterministic=deterministic)
     else:
         return make_policy(
             policy_params, deterministic=deterministic, get_activation=get_activation
@@ -483,7 +332,18 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
         )
         arch_name = "intention"
     network_config = cfg.network_config
-    obs_sizes = require_obs_sizes(network_config)
+
+    # Handle both new (dict-based) and legacy (flat) config formats
+    if hasattr(network_config, "obs_sizes") or "obs_sizes" in network_config:
+        # New dict-based format
+        obs_sizes = dict(network_config.obs_sizes)
+    else:
+        # Legacy flat format - convert to obs_sizes dict
+        obs_sizes = {
+            "imitation_target": network_config.reference_obs_size,
+            "proprioception": network_config.observation_size
+            - network_config.reference_obs_size,
+        }
 
     if arch_name == "intention":
         return ff_ppo_networks.make_intention_ppo_networks(
@@ -492,6 +352,9 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             intention_latent_size=network_config.intention_size,
             encoder_hidden_layer_sizes=tuple(network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(network_config.decoder_layer_sizes),
+            encoder_noise_std=network_config.get(
+                "encoder_noise_std", 0.0
+            ),
             proprioception_noise_std=network_config.get(
                 "proprioception_noise_std", 0.0
             ),
@@ -510,8 +373,125 @@ def make_ppo_network_from_cfg(cfg: DictConfig) -> Any:
             ),
             value_hidden_layer_sizes=tuple(network_config.critic_layer_sizes),
         )
+    elif arch_name == "vision":
+        vision_size = obs_sizes.get("vision", 1024)
+        # Infer vision shape from config or default square grayscale
+        vision_width = network_config.get("vision_width", 32)
+        vision_height = network_config.get("vision_height", 32)
+        grayscale = network_config.get("grayscale", True)
+        channels = 1 if grayscale else 3
+        # If vision_width/height not in network_config, infer from vision_size
+        if "vision_width" not in network_config:
+            import math
+            pixels = vision_size // channels
+            side = int(math.sqrt(pixels))
+            vision_width = vision_height = side
+        return ff_ppo_networks.make_vision_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            vision_shape=(vision_height, vision_width, channels),
+            vision_latent_size=network_config.get("vision_latent_size", 32),
+            decoder_hidden_layer_sizes=tuple(
+                network_config.get("decoder_layer_sizes", [512, 512])
+            ),
+            value_hidden_layer_sizes=tuple(
+                network_config.get("critic_layer_sizes", [512, 512])
+            ),
+            vision_channels=tuple(
+                network_config.get("vision_channels", [32, 64, 64])
+            ),
+        )
+    elif arch_name == "vision_task_obs":
+        vision_width = network_config.get("vision_width", 32)
+        vision_height = network_config.get("vision_height", 32)
+        grayscale = network_config.get("grayscale", True)
+        channels = 1 if grayscale else 3
+        return ff_ppo_networks.make_vision_task_obs_highlvl_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            vision_shape=(vision_height, vision_width, channels),
+            vision_latent_size=network_config.get("vision_latent_size", 16),
+            vision_feature_size=network_config.get("vision_feature_size", 8),
+            decoder_hidden_layer_sizes=tuple(
+                network_config.get("decoder_layer_sizes", [512, 512])
+            ),
+            value_hidden_layer_sizes=tuple(
+                network_config.get("critic_layer_sizes", [512, 512])
+            ),
+            vision_channels=tuple(
+                network_config.get("vision_channels", [2, 4, 8, 16])
+            ),
+            fusion_hidden_layer_sizes=tuple(
+                network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
+        )
+    elif arch_name == "shared_vision_task_obs":
+        vision_width = network_config.get("vision_width", 32)
+        vision_height = network_config.get("vision_height", 32)
+        grayscale = network_config.get("grayscale", True)
+        channels = 1 if grayscale else 3
+        ppo_network, _shared_module = ff_ppo_networks.make_shared_vision_task_obs_highlvl_ppo_networks(
+            obs_sizes=obs_sizes,
+            action_size=network_config.action_size,
+            vision_shape=(vision_height, vision_width, channels),
+            vision_latent_size=network_config.get("vision_latent_size", 16),
+            vision_feature_size=network_config.get("vision_feature_size", 32),
+            decoder_hidden_layer_sizes=tuple(
+                network_config.get("decoder_layer_sizes", [512, 512])
+            ),
+            value_hidden_layer_sizes=tuple(
+                network_config.get("critic_layer_sizes", [512, 512])
+            ),
+            vision_channels=tuple(
+                network_config.get("vision_channels", [4, 8, 16, 32])
+            ),
+            fusion_hidden_layer_sizes=tuple(
+                network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
+        )
+        return ppo_network
     else:
         raise ValueError(f"Unknown network architecture: {arch_name}")
+
+
+def _replace_zero_sized_arrays(pytree):
+    """Replace zero-sized JAX arrays with empty markers for checkpoint compat.
+
+    Orbax cannot save arrays with zero-sized dimensions. This replaces them
+    with scalar NaN sentinels so checkpoints can be saved. The inverse
+    transform is applied on restore via ``_restore_zero_sized_arrays``.
+    """
+    import jax.numpy as jnp
+
+    def _maybe_replace(x):
+        if hasattr(x, "shape") and any(d == 0 for d in x.shape):
+            return jnp.array(float("nan"))
+        return x
+
+    return jax.tree_util.tree_map(_maybe_replace, pytree)
+
+
+def _restore_zero_sized_arrays(restored, reference):
+    """Restore zero-sized arrays that were replaced with NaN sentinels on save.
+
+    Compares the restored pytree against a reference pytree (the abstract
+    training state). Where the reference has a zero-sized array and the
+    restored has a scalar NaN, replaces the scalar with a properly-shaped
+    zero-sized array.
+    """
+    import jax.numpy as jnp
+
+    def _maybe_restore(restored_leaf, ref_leaf):
+        if (
+            hasattr(ref_leaf, "shape")
+            and any(d == 0 for d in ref_leaf.shape)
+            and hasattr(restored_leaf, "shape")
+            and restored_leaf.shape == ()
+        ):
+            return jnp.zeros(ref_leaf.shape, dtype=ref_leaf.dtype)
+        return restored_leaf
+
+    return jax.tree_util.tree_map(_maybe_restore, restored, reference)
 
 
 def save(
@@ -535,6 +515,11 @@ def save(
         config: Configuration dictionary.
         checkpoint_callback: Optional callback called with step after save.
     """
+    # Orbax cannot save zero-sized arrays (e.g. from unused imitation_target
+    # normalizer). Replace them with scalar sentinels before saving.
+    policy = _replace_zero_sized_arrays(policy)
+    training_state = _replace_zero_sized_arrays(training_state)
+
     ckpt_mgr.save(
         step=step,
         args=ocp.args.Composite(

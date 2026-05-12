@@ -1,0 +1,100 @@
+# =============================================================================
+# DMPO + Intention Encoder-Decoder, Rodent Imitation
+# =============================================================================
+# Inherits env_config (rewards, termination, domain randomization),
+# walker_config (rodent, torque actuators, rescale 0.9), render_config,
+# and network_config (encoder/decoder/intention sizes) from rodent-full-clips.
+# Overrides train_setup.train_config with DMPO hyperparameters and adds
+# `network_config.stochastic_latent: false` to make Approach A explicit.
+#
+# Plan: ClaudeCode_PromptHistory/2026-05-05-2-dmpo-imitation-intention
+# Spec: see same dir, spec.md
+# =============================================================================
+defaults:
+  - rodent-full-clips
+  - _self_
+
+agent: dmpo
+checkpoint_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/dmpo_imitation_intention
+
+# Approach A: deterministic z=mean.  encoder_noise_std / latent_kl_weight /
+# latent_ar1_weight from rodent-full-clips are accepted but logged as ignored.
+network_config:
+  arch_name: intention                 # informational
+  stochastic_latent: false             # Approach A — required false in v1
+
+# DMPO replaces PPO's train_config wholesale.
+train_setup:
+  agent_name: rodent
+  run_name: dmpo_imitation_intention_v1
+  checkpoint_to_restore: null
+  restore_from_run_state: null
+  train_test_split_info: null
+  train_subset_ratio: 0.9
+  eval_every: 1_000_000        # env steps; mirrors PPO config field
+  reset_every: 100_000_000     # JIT recompilation cadence (memory mgmt)
+
+  train_config:
+    # ----- Loop -----
+    num_envs: 1024
+    num_timesteps: 500_000_000
+    unroll_length: 50
+    iters_per_chunk: 8
+
+    # ----- Replay -----
+    batch_size: 256
+    min_replay_size: 50_000
+    max_replay_size: 4_000_000
+    sequence_length: 50
+    samples_per_insert: 2.0
+
+    # ----- MPO loss -----
+    epsilon: 0.1
+    epsilon_mean: 0.0025
+    epsilon_stddev: 1.0e-7
+    epsilon_penalty: 0.1
+    init_log_temperature: 10.0
+    init_log_alpha_mean: 10.0
+    init_log_alpha_stddev: 1000.0
+    per_dim_constraining: true
+    action_penalization: true
+    num_samples: 20
+
+    # ----- C51 critic -----
+    vmin: -150.0
+    vmax: 150.0
+    num_atoms: 51
+
+    # ----- Network layer sizes (critic only; policy reads network_config) -----
+    policy_layer_sizes: [256, 256, 256]   # required by DMPOConfig but unused
+                                          # by IntentionDMPOPolicy
+    critic_layer_sizes: [512, 512, 256]
+
+    # ----- Optim -----
+    policy_lr: 1.0e-4
+    critic_lr: 1.0e-4
+    dual_lr: 1.0e-3
+    grad_clip: 40.0
+
+    # ----- Targets -----
+    target_policy_update_period: 101
+    target_critic_update_period: 107
+
+    # ----- RL -----
+    discount: 0.97
+    n_step: 50
+
+    # ----- Eval / log cadence (DMPOConfig fields) -----
+    eval_every_steps: 1_000_000
+    log_every_steps: 5_000
+
+    # ----- Seed -----
+    seed: 0
+
+logging_config:
+  project_name: dmpo-rodent-imitation
+  group_name: intention_v1
+  exp_name: dmpo_imitation_intention_v1
+  clip_id: -1
+  model_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/dmpo_imitation_intention
+  notes: "DMPO imitation with intention encoder-decoder (Approach A: deterministic latent)"

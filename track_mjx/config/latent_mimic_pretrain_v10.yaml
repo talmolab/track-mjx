@@ -1,0 +1,98 @@
+# track_mjx/config/latent_mimic_pretrain_v10.yaml
+# Phase 1 v10 — body-part-split latents + sigma_max curriculum + smaller bottleneck.
+#
+# Differences from v9:
+#   * latent_dim 60 → 24 (12 axial + 12 limb). v9 was over-provisioned: PCA on
+#     active joints showed ~25 effective dims, so 60 left slack for the
+#     encoder to spend on noise / posterior collapse on unused dims (we saw
+#     σ_sim flat at σ_max in Phase 2 v7).
+#   * Body-part-split heads: separate conv1d branches for "axial" (root pose
+#     + 14 vertebrae/cervical/atlas joints) and "limb" (24 hindlimb +
+#     forelimb joints). Guarantees leg dims exist in z — addresses the
+#     Phase 2 v7 finding that head/torso tracks well but locomotion lags.
+#   * sigma_max curriculum 0.3 → 0.05 (linear over first 50% of training).
+#     Loose at start so reconstruction can dominate; tightens as training
+#     progresses to give Phase 2 a clean latent identity.
+#
+# Same as v9: conv1d encoder, no qvel, auto-detect active joints (drops 29
+# dead joints — fingers, tail vertebrae). feat_dim=45.
+
+defaults:
+  - _self_
+
+# Walker / data
+walker_name: rodent
+n_joints: 67
+reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/data/rodent/rodent_reference_clips.h5
+clip_length: 250
+keep_clips_idx: null
+train_ratio: 0.8
+seed: 0
+use_qvel: false
+
+# Active-joint detection (same as v9)
+auto_detect_active_joints: true
+active_joint_std_thresh: 1.0e-3
+
+# v10 NEW: body-part split heads
+split_body_groups: true
+split_body_groups_xml: ${oc.env:HOME}/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/rodent/xmls/rodent_full_collisions.xml
+# Per-branch latent dims, in order [axial, limb]. Sum must equal latent_dim.
+split_branch_latent_dims: [12, 12]
+
+# Window dims (same as v9)
+window_len: 10
+horizon: 5
+
+# Network architecture (same conv1d / per-branch layer sizes as v9)
+encoder_type: conv1d
+conv_channels: [64, 128, 256]
+conv_kernel_size: 3
+conv_head_layers: [256]
+encoder_layer_sizes: [1024, 512, 256]   # only used if encoder_type=mlp
+decoder_layer_sizes: [256, 512, 1024]
+predictor_layer_sizes: [512, 512, 256]
+latent_dim: 24                            # 12 axial + 12 limb
+
+# Loss weights / regularization
+beta_kl: 0.001
+w_pred: 1.0
+beta_kl_anneal_steps: 5_000
+
+# v10 NEW: sigma_max curriculum (linear anneal over first 50% of training)
+sigma_max_start: 0.3
+sigma_max_end: 0.05
+sigma_max_anneal_frac: 0.5
+sigma_max: 0.05    # legacy fallback if curriculum is disabled
+w_sigma: 1.0
+
+mask_dead_dims: false   # v10 already drops dead joints upstream via active_joints
+dead_dim_std_thresh: 1.0e-3
+eval_deterministic: true
+
+# Optimization (same as v9)
+batch_size: 8192
+num_steps: 30_000
+learning_rate: 3.0e-4
+weight_decay: 1.0e-4
+grad_clip: 1.0
+lr_schedule: cosine
+lr_warmup_frac: 0.04
+lr_hold_frac: 0.20
+lr_end_value: 3.0e-5
+
+# Logging / checkpointing
+log_every: 500
+eval_every: 2000
+ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v10
+ckpt_every: 10_000
+
+# wandb
+wandb_enabled: true
+wandb_project: latent-mimic
+wandb_run_name: phase1-rodent-v10-split-axial-limb
+wandb_tags: ["phase1", "rodent", "no-qvel", "conv1d", "split-body-groups",
+             "sigma-curriculum"]
+wandb_group: null
+viz_n_dims: 6
+viz_every: 10_000

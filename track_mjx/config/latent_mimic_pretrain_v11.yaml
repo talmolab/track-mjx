@@ -1,0 +1,106 @@
+# track_mjx/config/latent_mimic_pretrain_v11.yaml
+# Phase 1 v11 — anti-overfit revision of v10.
+#
+# v10 finding (wandb run 1vs4drvd): val/recon hit best at step 4,000 of
+# 30,000 (~13% of training), then climbed monotonically. Train/recon kept
+# falling. End-of-training train was 3.6× better than val. Decoder alone was
+# 1.79M params (52% of the 3.4M total) which, combined with ~10.8k unique
+# non-overlapping training windows seen ~23k times each, drove memorization.
+#
+# Changes vs v10:
+#   * decoder_layer_sizes [256, 512, 1024] -> [256, 256, 256]    (~5x fewer params)
+#   * predictor_layer_sizes [512, 512, 256] -> [384, 256]        (~3x fewer params)
+#   * w_pred 1.0 -> 0.3                  (predictor was forcing memorization)
+#   * beta_kl 0.001 -> 0.005             (pull latent closer to N(0,I))
+#   * weight_decay 1e-4 -> 1e-3          (real L2)
+#   * sigma_max_end 0.05 -> 0.10         (keep permanent stochastic regularization)
+#   * eval_every 2000 -> 500             (find best-val peak precisely)
+#   * ckpt_every 10000 -> 5000           (more best-val saves)
+#   * encoder kept identical to v10 (it's what Phase 2 uses)
+#   * num_steps unchanged at 30k so we can SEE the overfit cliff
+#
+# The decoder/predictor here are still ~2x larger than the paper's MLPs
+# ([256,128] in Wang 2026), to account for the rat's ~3x more DoF (38 active
+# joints vs ~12 quadruped joints).
+
+defaults:
+  - _self_
+
+# Walker / data (same as v10)
+walker_name: rodent
+n_joints: 67
+reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/data/rodent/rodent_reference_clips.h5
+clip_length: 250
+keep_clips_idx: null
+train_ratio: 0.8
+seed: 0
+use_qvel: false
+
+# Active-joint detection (same as v10)
+auto_detect_active_joints: true
+active_joint_std_thresh: 1.0e-3
+
+# Body-part split heads (same as v10)
+split_body_groups: true
+split_body_groups_xml: ${oc.env:HOME}/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/rodent/xmls/rodent_full_collisions.xml
+split_branch_latent_dims: [12, 12]
+
+# Window dims (same as v10)
+window_len: 10
+horizon: 5
+
+# Network architecture
+# Encoder: UNCHANGED from v10 (it's what Phase 2 uses; keep capacity here).
+encoder_type: conv1d
+conv_channels: [64, 128, 256]
+conv_kernel_size: 3
+conv_head_layers: [256]
+encoder_layer_sizes: [1024, 512, 256]   # only used if encoder_type=mlp
+# v11: smaller decoder/predictor to combat overfit. Still > paper baseline.
+decoder_layer_sizes: [256, 256, 256]
+predictor_layer_sizes: [384, 256]
+latent_dim: 24                            # 12 axial + 12 limb
+
+# Loss weights / regularization
+beta_kl: 0.005                            # v10 was 0.001 (latent collapsed away from N(0,I))
+w_pred: 0.3                               # v10 was 1.0 (predictor dominated, drove memorization)
+beta_kl_anneal_steps: 5_000
+
+# sigma_max curriculum: still anneal but DON'T go all the way to 0.05.
+# The σ floor acts as permanent stochastic regularization on the encoder.
+sigma_max_start: 0.3
+sigma_max_end: 0.10                       # v10 was 0.05
+sigma_max_anneal_frac: 0.5
+sigma_max: 0.10                           # legacy fallback
+w_sigma: 1.0
+
+mask_dead_dims: false
+dead_dim_std_thresh: 1.0e-3
+eval_deterministic: true
+
+# Optimization
+batch_size: 8192
+num_steps: 30_000                         # keep long so we see overfit cliff
+learning_rate: 3.0e-4
+weight_decay: 1.0e-3                      # v10 was 1e-4 (cosmetic); now real L2
+grad_clip: 1.0
+lr_schedule: cosine
+lr_warmup_frac: 0.04
+lr_hold_frac: 0.20
+lr_end_value: 3.0e-5
+
+# Logging / checkpointing
+log_every: 250                            # v10 was 500
+eval_every: 500                           # v10 was 2000 (so coarse we couldn't pin best step)
+ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v11
+ckpt_every: 5_000                         # v10 was 10_000
+
+# wandb
+wandb_enabled: true
+wandb_project: latent-mimic
+wandb_run_name: phase1-rodent-v11-anti-overfit
+wandb_tags: ["phase1", "rodent", "no-qvel", "conv1d", "split-body-groups",
+             "sigma-curriculum", "v11", "anti-overfit"]
+wandb_group: null
+viz_n_dims: 6
+viz_every: 5_000

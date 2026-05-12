@@ -1,0 +1,112 @@
+# track_mjx/config/latent_mimic_pretrain_v14.yaml
+# Phase 1 v14 — same as v13 (3-way root/axial/limb split, no qvel) but with
+# the root branch latent dim shrunk 6→4 to act as an information bottleneck.
+#
+# Motivation:
+#   v13 + Phase 2 v9b worked well on tracking quality (KL_total/step 141, beats
+#   v8b's ~150) but the rendered rollouts showed high-frequency action jitter.
+#   FFT analysis confirmed mocap is clean (>99% energy below 5 Hz), so the
+#   jitter is generated INSIDE the v13/v9b loop. Hypothesis: v13's 6-dim root
+#   branch is rank-matched (root effective DoF 5.31, latent 6 → ~lossless) so
+#   any contact-impact-driven micromotion in the simulator is faithfully
+#   encoded, then the [3,1,1]-weighted r_mimic pushes the policy to chase it
+#   frame-by-frame → action chatter.
+#
+# v10 (the no-jitter baseline) had root absorbed into a 12-dim axial branch
+# alongside 14 axial joints — root info was lossy-compressed (7 of 12 dims at
+# best) which acted as a low-pass filter.
+#
+# Fix: information bottleneck. Root branch 4 latent dims for 7 input feats:
+#   - PCA on root (per-frame): top-4 PCs cover 79% of variance, top-5 cover
+#     91%, top-6 cover 97%. The ~21% we drop is the small-magnitude axes —
+#     EXACTLY the high-freq components causing jitter.
+#   - Latent ratio 4/7 = 57% (matches axial branch ratio after rebalancing).
+#   - Effective rank is 5.31, so 4 dims is moderately lossy but keeps all
+#     dominant motion modes (translation, yaw, dominant tilt).
+#
+# Re-allocation:
+#   root  6 → 4   (free 2 dims)
+#   axial 6 → 8   (use the freed dims; axial KL/step in v9b was the highest,
+#                  meaning axial was capacity-limited)
+#   limb  12       (unchanged — limb tracking already strong)
+# Total latent_dim: 24 (unchanged).
+
+defaults:
+  - _self_
+
+# Walker / data (same as v13)
+walker_name: rodent
+n_joints: 67
+reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/data/rodent/rodent_reference_clips.h5
+clip_length: 250
+keep_clips_idx: null
+train_ratio: 0.8
+seed: 0
+use_qvel: false
+
+# Active-joint detection (same as v13)
+auto_detect_active_joints: true
+active_joint_std_thresh: 1.0e-3
+
+# 3-way split (same as v13)
+split_body_groups: true
+split_root_separately: true
+split_body_groups_xml: ${oc.env:HOME}/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/rodent/xmls/rodent_full_collisions.xml
+split_branch_latent_dims: [4, 8, 12]      # CHANGED: root 6→4, axial 6→8, limb unchanged
+
+# Window dims (same as v13)
+window_len: 10
+horizon: 5
+
+# Network architecture (same as v13)
+encoder_type: conv1d
+conv_channels: [64, 128, 256]
+conv_kernel_size: 3
+conv_head_layers: [256]
+encoder_layer_sizes: [1024, 512, 256]
+decoder_layer_sizes: [256, 256, 256]
+predictor_layer_sizes: [384, 256]
+latent_dim: 24
+
+# Loss weights / regularization (same as v13)
+beta_kl: 0.005
+w_pred: 0.3
+beta_kl_anneal_steps: 5_000
+
+# sigma_max curriculum (same as v13)
+sigma_max_start: 0.3
+sigma_max_end: 0.10
+sigma_max_anneal_frac: 0.5
+sigma_max: 0.10
+w_sigma: 1.0
+
+mask_dead_dims: false
+dead_dim_std_thresh: 1.0e-3
+eval_deterministic: true
+
+# Optimization (same as v13)
+batch_size: 8192
+num_steps: 30_000
+learning_rate: 3.0e-4
+weight_decay: 1.0e-3
+grad_clip: 1.0
+lr_schedule: cosine
+lr_warmup_frac: 0.04
+lr_hold_frac: 0.20
+lr_end_value: 3.0e-5
+
+# Logging / checkpointing
+log_every: 250
+eval_every: 500
+ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v14
+ckpt_every: 5_000
+
+# wandb
+wandb_enabled: true
+wandb_project: latent-mimic
+wandb_run_name: phase1-rodent-v14-3way-root4
+wandb_tags: ["phase1", "rodent", "no-qvel", "conv1d", "3way-split", "root4",
+             "v14", "anti-jitter"]
+wandb_group: null
+viz_n_dims: 12
+viz_every: 5_000

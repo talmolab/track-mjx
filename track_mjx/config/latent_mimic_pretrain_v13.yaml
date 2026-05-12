@@ -1,0 +1,105 @@
+# track_mjx/config/latent_mimic_pretrain_v13.yaml
+# Phase 1 v13 — 3-way split (root / axial-joints / limb-joints), no qvel.
+#
+# Motivation:
+#   v11 linear probe showed root info is in z (R² 0.89) but z geometry is
+#   dominated by joints (corr(||Δz||, ||Δjoints||)=0.70 vs 0.11 for root_pos).
+#   v12 added qvel features but cost gait sensitivity (joints corr 0.70 → 0.47)
+#   for only marginal root improvement (0.11 → 0.18).
+#
+#   v13 uses the architectural fix: split root onto its own branch with
+#   dedicated latent dims so ||Δz_root|| reflects root differences directly.
+#   Drops qvel because (a) joint vels were a lossy interpolation in mocap
+#   anyway, (b) sliding window + conv1d encoder already captures temporal
+#   dynamics implicitly.
+#
+# 3-way split layout (use_qvel=False, 38 active joints):
+#   root  branch: feat[0:7]                    →  6 latent dims (boost root)
+#   axial branch: feat[7:21]   (14 joints)     →  6 latent dims
+#   limb  branch: feat[21:45]  (24 joints)     → 12 latent dims (same as v11)
+#   total latent_dim = 24  (unchanged)
+#
+# Root gets 25% of latent capacity for 16% of input dims — 1.6× relative
+# boost. With 6 latent dims for 6 effective DoF (3 pos + 3 quat-DoF), the
+# root branch has matched-rank capacity. Phase 2 KL on the root sub-latent
+# now scales with root differences directly.
+
+defaults:
+  - _self_
+
+# Walker / data (same as v11)
+walker_name: rodent
+n_joints: 67
+reference_data_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/data/rodent/rodent_reference_clips.h5
+clip_length: 250
+keep_clips_idx: null
+train_ratio: 0.8
+seed: 0
+use_qvel: false                           # v12 was true — reverted (interpolated noise)
+
+# Active-joint detection (same as v11)
+auto_detect_active_joints: true
+active_joint_std_thresh: 1.0e-3
+
+# Body-part split — NEW: 3-way split via split_root_separately
+split_body_groups: true
+split_root_separately: true               # NEW: root gets its own branch
+split_body_groups_xml: ${oc.env:HOME}/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/rodent/xmls/rodent_full_collisions.xml
+split_branch_latent_dims: [6, 6, 12]      # root, axial, limb (in that order)
+
+# Window dims (same as v11)
+window_len: 10
+horizon: 5
+
+# Network architecture (same as v11)
+encoder_type: conv1d
+conv_channels: [64, 128, 256]
+conv_kernel_size: 3
+conv_head_layers: [256]
+encoder_layer_sizes: [1024, 512, 256]
+decoder_layer_sizes: [256, 256, 256]
+predictor_layer_sizes: [384, 256]
+latent_dim: 24
+
+# Loss weights / regularization (same as v11)
+beta_kl: 0.005
+w_pred: 0.3
+beta_kl_anneal_steps: 5_000
+
+# sigma_max curriculum (same as v11)
+sigma_max_start: 0.3
+sigma_max_end: 0.10
+sigma_max_anneal_frac: 0.5
+sigma_max: 0.10
+w_sigma: 1.0
+
+mask_dead_dims: false
+dead_dim_std_thresh: 1.0e-3
+eval_deterministic: true
+
+# Optimization (same as v11)
+batch_size: 8192
+num_steps: 30_000
+learning_rate: 3.0e-4
+weight_decay: 1.0e-3
+grad_clip: 1.0
+lr_schedule: cosine
+lr_warmup_frac: 0.04
+lr_hold_frac: 0.20
+lr_end_value: 3.0e-5
+
+# Logging / checkpointing (same as v11)
+log_every: 250
+eval_every: 500
+ckpt_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v13
+ckpt_every: 5_000
+
+# wandb
+wandb_enabled: true
+wandb_project: latent-mimic
+wandb_run_name: phase1-rodent-v13-3way-split
+wandb_tags: ["phase1", "rodent", "no-qvel", "conv1d", "split-body-groups",
+             "3way-split", "v13", "anti-overfit"]
+wandb_group: null
+viz_n_dims: 12                            # show some joints, not just root
+viz_every: 5_000

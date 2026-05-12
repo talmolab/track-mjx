@@ -1,0 +1,93 @@
+# track_mjx/config/latent_mimic_phase2_v9d.yaml
+#
+# Phase 2 v9d — v15 prior (shared-backbone 3-way split) — Track A of
+# PHASE2_STYLE_GAMEPLAN.md. Tests whether sharing the encoder backbone (so
+# root branch can implicitly leverage leg-phase context through the conv
+# stack) closes the global-trajectory tracking gap that v9c2 had.
+#
+# Same hyperparameters as v9c2, only the prior changes:
+#   - prior_dir: latent_prior_v15 (v14 → v15)
+#   - everything else identical
+# So any improvement is attributable to the encoder coupling, not other knobs.
+#
+# Decision criteria (from gameplan):
+#   - Success: ep_len ≥ 380 + terminations ≤ 0.05 + root_pos_distance/step ≤ 15mm
+#   - Partial: ep_len ≥ 350 + terminations ≤ 0.15 → proceed to Track B (locomotion subset)
+#   - No improvement: shared backbone wasn't the issue → Track C/D
+
+defaults:
+  - rodent-full-clips
+  - _self_
+
+env_config:
+  reward_terms: {}
+  njmax: 800
+  termination_criteria:
+    nan_termination: {}
+    root_too_far:
+      max_distance: 0.3
+    pose_error:
+      max_l2_error: 6.0
+  domain_randomization:
+    use_domain_randomization: false
+
+latent_mimic:
+  prior_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_prior_v15/best
+  w_r: 2.0e-3
+  history_len: 0
+  n_joints: 67
+  kl_mode: full
+
+  drop_dead_orientations: true
+  proprio_var_threshold: 1.0e-8
+
+  use_predictor: true
+  sigma_clamp: 0.10
+  branch_kl_weights: [6.0, 1.0, 1.0]
+
+network_config:
+  arch_name: latent_mimic
+  policy_layer_sizes: [512, 256, 128]
+  value_layer_sizes: [512, 256, 128]
+
+train_setup:
+  agent_name: rodent
+  run_name: phase2_v9d_v15shared_3way_root6x_wr2e3_1500M_actrep2
+  checkpoint_to_restore: null
+  restore_from_run_state: null
+  train_test_split_info: null
+  train_subset_ratio: 0.8
+  eval_every: 25_000_000
+  episode_length: 200
+  reset_every: 50_000_000
+  freeze_decoder: false
+  train_config:
+    num_envs: 2048
+    num_timesteps: 1_500_000_000
+    batch_size: 1024
+    num_minibatches: 8
+    num_updates_per_batch: 4
+    learning_rate: 1.0e-4
+    lr_schedule: constant
+    lr_end_value: 0.0
+    lr_warmup_frac: 0.0
+    clipping_epsilon: 0.2
+    discounting: 0.95
+    action_repeat: 2
+    entropy_cost: 1.0e-2
+    vf_loss_coefficient: 0.25
+    reward_scaling: 1
+    normalize_observations: true
+    unroll_length: 10
+    seed: 0
+    get_activation: false
+    deterministic_eval: true
+
+logging_config:
+  project_name: latent-mimic
+  group_name: phase2
+  exp_name: phase2_v9d_v15shared_3way_root6x_wr2e3_1500M_actrep2
+  clip_id: -1
+  model_path: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_phase2_v9d
+
+checkpoint_dir: ${oc.env:HOME}/Desktop/SalkResearch/track-mjx/checkpoints/latent_phase2_v9d

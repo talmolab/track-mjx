@@ -16,7 +16,7 @@
 
 This module implements PPO training with support for:
 - Intention-based policy networks (VAE-style latent encoding)
-- Observation normalization
+- Observation normalization with optional frozen proprioceptive components
 - Checkpoint saving/restoration with preemption recovery
 - Train/test split evaluation
 - KL divergence scheduling for VAE training stability
@@ -25,6 +25,7 @@ Based on Brax's PPO implementation with modifications for VNL tracking tasks.
 """
 
 import functools
+import gc
 import time
 from typing import Any, Callable, Tuple
 
@@ -41,15 +42,19 @@ from brax.training import acting, pmap, types
 from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
-from track_mjx.agent import checkpointing, gradients
+from optax.transforms import freeze
+
+from track_mjx.agent import checkpointing, gradients, network_masks
 from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
+    DictRunningStatisticsState,
     get_obs_sizes,
-    get_obs_shape,
+    init_dict_normalizer,
+    update_dict_normalizer,
 )
 
 # Type aliases
-InferenceParams = tuple[running_statistics.RunningStatisticsState, Params]
+InferenceParams = tuple[DictRunningStatisticsState, Params]
 Metrics = types.Metrics
 
 # Constants
@@ -64,46 +69,33 @@ class TrainingState:
     Attributes:
         optimizer_state: Optax optimizer state.
         params: PPO network parameters (policy and value).
-        normalizer_params: Running statistics for observation normalization.
-            Has pytree structure matching observation dict.
+        normalizer_params: Running statistics for observation normalization
+            (per observation key).
         env_steps: Total environment steps taken (in thousands).
     """
 
     optimizer_state: optax.OptState
     params: losses.PPONetworkParams
-    normalizer_params: running_statistics.RunningStatisticsState
+    normalizer_params: DictRunningStatisticsState
     env_steps: jnp.ndarray
 
 
 def _unpmap(v: Any) -> Any:
-    """Extract first device's values from a pmap'd pytree.
-
-    Args:
-        v: Pytree with leading device axis from pmap.
-
-    Returns:
-        Pytree with device axis removed (values from first device).
-    """
-    return jax.tree_util.tree_map(lambda x: x[0], v)
+    """Extract first device's values from a pmap'd pytree."""
+    return jax.tree_util.tree_map(
+        lambda x: x.addressable_shards[0].data.squeeze(0), v
+    )
 
 
 def _strip_weak_type(tree: Any) -> Any:
     """Remove weak types from a pytree to prevent JIT recompilation.
 
-    Brax user code is sometimes ambiguous about weak_type, which can cause
-    unnecessary JIT recompilations.
-
-    Args:
-        tree: Input pytree potentially containing weak-typed arrays.
-
-    Returns:
-        Pytree with all arrays converted to their canonical dtype.
+    Always creates a new array to ensure fresh buffers for donate_argnums
+    buffer reuse in pmap.
     """
-
     def f(leaf):
         leaf = jnp.asarray(leaf)
-        return leaf.astype(leaf.dtype)
-
+        return jnp.astype(leaf, leaf.dtype)
     return jax.tree_util.tree_map(f, tree)
 
 
@@ -183,6 +175,10 @@ def train(
     max_devices_per_host: int | None = None,
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
+    lr_schedule: str = "constant",
+    lr_end_value: float = 0.0,
+    lr_warmup_frac: float = 0.0,
+    lr_hold_frac: float = 0.0,
     entropy_cost: float = 1e-4,
     latent_kl_weight: float = 1e-3,
     latent_ar1_weight: float = 1e-3,
@@ -215,11 +211,14 @@ def train(
     get_activation: bool = True,
     use_kl_schedule: bool = True,
     kl_ramp_up_frac: float = 0.25,
+    freeze_decoder: bool = False,
     checkpoint_callback: Callable[[int], None] | None = None,
     grad_clip_threshold: float = 20.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
         mp_wrapper.wrap_for_brax_training, full_reset=False
     ),
+    custom_loss_fn: Callable | None = None,
+    vision_lr_multiplier: float = 1.0,
 ) -> tuple[Callable, InferenceParams, Metrics]:
     """Train a PPO agent on the given environment.
 
@@ -311,6 +310,9 @@ def train(
     )
     device_count = local_devices_to_use * process_count
 
+    # Treat num_envs as per-device; scale to total for internal use
+    num_envs = num_envs * device_count
+
     # The number of environment steps executed for every training step.
     env_step_per_training_step = (
         batch_size * unroll_length * num_minibatches * action_repeat
@@ -338,15 +340,39 @@ def train(
     ):
         optimizer_state, params, key, it = carry
         key, key_loss = jax.random.split(key)
-        (_, metrics), params, optimizer_state = gradient_update_fn(
-            params,
-            normalizer_params,
-            data,
-            key_loss,
-            it,
-            optimizer_state=optimizer_state,
-            params=params,
+        (_, metrics), grads = loss_and_pgrad_fn(
+            params, normalizer_params, data, key_loss, it
         )
+
+        # Track gradient norm (preserve custom diagnostic)
+        grad_norm = optax.global_norm(grads)
+        is_clipped = (grad_norm > grad_clip_threshold).astype(jnp.float32)
+
+        # Apply gradients — use 3-arg form for adamw compatibility
+        params_update, optimizer_state = optimizer.update(
+            grads, optimizer_state, params
+        )
+
+        # Eval-iteration LR schedule: scale updates by schedule(it) / base_lr.
+        # The optimizer uses constant base_lr; this multiplier adjusts the
+        # effective LR per eval iteration without changing optimizer state shape.
+        if lr_schedule_fn is not None:
+            current_lr = lr_schedule_fn(it)
+            lr_scale = current_lr / learning_rate
+            params_update = jax.tree_util.tree_map(
+                lambda u: u * lr_scale, params_update
+            )
+        else:
+            current_lr = jnp.asarray(learning_rate, dtype=jnp.float32)
+
+        metrics = {
+            **metrics,
+            "grad_norm": grad_norm,
+            "grad_clipped": is_clipped,
+            "learning_rate": current_lr,
+        }
+
+        params = optax.apply_updates(params, params_update)
 
         return (optimizer_state, params, key, it), metrics
 
@@ -360,6 +386,9 @@ def train(
         key, key_perm, key_grad = jax.random.split(key, 3)
 
         def convert_data(x: jnp.ndarray):
+            if 0 in x.shape:
+                # Still reshape so leading dim matches num_minibatches for scan
+                return jnp.reshape(x, (num_minibatches, x.shape[0] // num_minibatches) + x.shape[1:])
             x = jax.random.permutation(key_perm, x)
             x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
             return x
@@ -392,7 +421,7 @@ def train(
                 policy,
                 current_key,
                 unroll_length,
-                extra_fields=("truncation",),
+                extra_fields=("truncation", "episode_metrics", "episode_done"),
             )
             return (next_state, next_key), data
 
@@ -405,20 +434,27 @@ def train(
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
         data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
         data = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
+            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],) + x.shape[2:]),
+            data,
         )
         assert data.discount.shape[1:] == (unroll_length,)
 
         # Update normalization params (only if normalization is enabled).
         # When disabled, normalizer stays at identity (mean=0, std=1).
         if normalize_observations:
-            normalizer_params = running_statistics.update(
+            normalizer_params = update_dict_normalizer(
                 training_state.normalizer_params,
                 data.observation,
                 pmap_axis_name=_PMAP_AXIS_NAME,
             )
         else:
             normalizer_params = training_state.normalizer_params
+
+        # If decoder is frozen, preserve the proprioceptive normalizer params
+        if frozen_proprioceptive_normalizer_params is not None:
+            normalizer_params = normalizer_params.replace(
+                proprioception=frozen_proprioceptive_normalizer_params
+            )
 
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(sgd_step, data=data, normalizer_params=normalizer_params),
@@ -464,8 +500,12 @@ def train(
         t = time.time()
         training_state, env_state = _strip_weak_type((training_state, env_state))
         step = jnp.ones_like(training_state.env_steps) * it
-        result = training_epoch(training_state, env_state, key, step)
-        training_state, env_state, metrics = _strip_weak_type(result)
+        training_state, env_state, metrics = training_epoch(
+            training_state, env_state, key, step
+        )
+        training_state, env_state, metrics = _strip_weak_type(
+            (training_state, env_state, metrics)
+        )
 
         metrics = jax.tree_util.tree_map(jnp.mean, metrics)
         jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
@@ -507,6 +547,12 @@ def train(
         randomization_rng = jax.random.split(key_env, randomization_batch_size)
         v_randomization_fn = functools.partial(randomization_fn, rng=randomization_rng)
 
+    # Extract observation sizes from environment - observations are now dicts
+    # We'll extract the sizes after the first reset
+    # Legacy size extraction for compatibility (used in frozen decoder logic)
+    proprioceptive_obs_size = int(environment.proprioceptive_obs_size)
+    logging.info(f"Proprioceptive observation size: {proprioceptive_obs_size}")
+
     env = wrap_for_training(
         environment,
         episode_length=episode_length,
@@ -521,7 +567,9 @@ def train(
     key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
     if local_devices_to_use > 1 or use_pmap_on_reset:
         reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
+        logging.info("Initial env reset (data generation) starting...")
         env_state = reset_fn_(key_envs)
+        logging.info("Initial env reset (data generation) done.")
         reset_fn = jax.pmap(
             reset_fn_donated_env_state,
             axis_name=_PMAP_AXIS_NAME,
@@ -529,10 +577,12 @@ def train(
         )
     else:
         reset_fn_ = jax.jit(jax.vmap(env.reset))
+        logging.info("Initial env reset (data generation) starting...")
         env_state = reset_fn_(key_envs)
+        logging.info("Initial env reset (data generation) done.")
         reset_fn = jax.jit(
             reset_fn_donated_env_state, donate_argnums=(0,), keep_unused=True
-        )(key_envs)
+        )
 
     # Extract observation sizes from the dict observation
     obs_sizes = get_obs_sizes(env_state.obs)
@@ -555,11 +605,32 @@ def train(
     make_logging_policy = ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    grad_clip_threshold = 20.0
-    optimizer = optax.chain(
+    # Eval-iteration-based LR schedule (same pattern as KL weight annealing).
+    # Applied as a scaling factor on parameter updates, so the optimizer state
+    # structure stays constant — safe for checkpoint resume.
+    lr_schedule_fn = None
+    if lr_schedule != "constant":
+        lr_warmup_evals = int(num_evals_after_init * lr_warmup_frac)
+        lr_hold_evals = int(num_evals_after_init * lr_hold_frac)
+        lr_schedule_fn = losses.create_lr_schedule(
+            init_value=learning_rate,
+            end_value=lr_end_value,
+            total_steps=num_evals_after_init,
+            warmup_steps=lr_warmup_evals,
+            hold_steps=lr_hold_evals,
+            schedule=lr_schedule,
+        )
+        logging.info(
+            f"Using LR schedule: {lr_schedule}, init={learning_rate:.1e}, "
+            f"end={lr_end_value:.1e}, over {num_evals_after_init} eval iters, "
+            f"warmup_evals={lr_warmup_evals}, hold_evals={lr_hold_evals}"
+        )
+
+    base_optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
         optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
     )
+    optimizer = base_optimizer
 
     latent_kl_schedule = None
     latent_ar1_schedule = None
@@ -575,50 +646,136 @@ def train(
             schedule="linear",
         )
 
-    loss_fn = functools.partial(
-        losses.compute_ppo_loss,
-        ppo_network=ppo_network,
-        entropy_cost=entropy_cost,
-        latent_kl_weight=latent_kl_weight,
-        latent_ar1_weight=latent_ar1_weight,
-        discounting=discounting,
-        reward_scaling=reward_scaling,
-        gae_lambda=gae_lambda,
-        clipping_epsilon=clipping_epsilon,
-        normalize_advantage=normalize_advantage,
-        vf_coefficient=vf_loss_coefficient,
-        latent_kl_schedule=latent_kl_schedule,
-        latent_ar1_schedule=latent_ar1_schedule,
-    )
+    if custom_loss_fn is not None:
+        loss_fn = custom_loss_fn
+    else:
+        loss_fn = functools.partial(
+            losses.compute_ppo_loss,
+            ppo_network=ppo_network,
+            entropy_cost=entropy_cost,
+            latent_kl_weight=latent_kl_weight,
+            latent_ar1_weight=latent_ar1_weight,
+            discounting=discounting,
+            reward_scaling=reward_scaling,
+            gae_lambda=gae_lambda,
+            clipping_epsilon=clipping_epsilon,
+            normalize_advantage=normalize_advantage,
+            vf_coefficient=vf_loss_coefficient,
+            latent_kl_schedule=latent_kl_schedule,
+            latent_ar1_schedule=latent_ar1_schedule,
+        )
 
     init_params = losses.PPONetworkParams(
         policy=ppo_network.policy_network.init(key_policy),
         value=ppo_network.value_network.init(key_value),
     )
 
-    # Initialize normalizer with pytree structure matching observations
-    obs_shape = get_obs_shape(env_state.obs)
+    # Apply multi-rate optimizer for vision CNN if requested
+    if vision_lr_multiplier != 1.0:
+        vision_optimizer = optax.chain(
+            optax.clip_by_global_norm(grad_clip_threshold),
+            optax.adamw(
+                learning_rate=learning_rate * vision_lr_multiplier,
+                weight_decay=0.0,
+                eps=1e-5,
+            ),
+        )
+
+        def _label_fn(path, _leaf):
+            path_str = "/".join(str(p) for p in path)
+            if "vision_encoder" in path_str:
+                return "vision"
+            return "base"
+
+        partition = jax.tree_util.tree_map_with_path(_label_fn, init_params)
+        optimizer = optax.multi_transform(
+            {"vision": vision_optimizer, "base": base_optimizer},
+            partition,
+        )
+        logging.info(
+            f"Using multi-rate optimizer: vision CNN lr={learning_rate * vision_lr_multiplier:.1e}, "
+            f"base lr={learning_rate:.1e} (multiplier={vision_lr_multiplier}x)"
+        )
+
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=running_statistics.init_state(obs_shape),
+        normalizer_params=init_dict_normalizer(env_state.obs),
         env_steps=0,
     )
 
+    frozen_proprioceptive_normalizer_params = None
+
+    if freeze_decoder and custom_loss_fn is not None:
+        raise ValueError(
+            "freeze_decoder is not supported with custom_loss_fn "
+            "(e.g. shared-CNN architecture)"
+        )
+
     # Load the checkpoint if it exists
     if checkpoint_to_restore is not None:
-        training_state = checkpointing.load_training_state(
-            checkpoint_to_restore, training_state
-        )
-        logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
+        if not freeze_decoder:
+            # we are recovering the full training state
+            training_state = checkpointing.load_training_state(
+                checkpoint_to_restore, training_state
+            )
+            logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
+        if freeze_decoder:
+            # first is normalizer
+            loaded_checkpoint = checkpointing.load_policy(checkpoint_to_restore)
+            loaded_normalizer_params = loaded_checkpoint[0]
+            loaded_policy = loaded_checkpoint[1]
+            decoder_params = loaded_policy["params"]["decoder"]
+            training_state.params.policy["params"]["decoder"] = decoder_params
+            logging.info(
+                f"Restored decoder parameters from checkpoint at {checkpoint_to_restore}"
+            )
+            mask = network_masks.create_decoder_mask(init_params)
+            optimizer = optax.chain(optimizer, freeze(mask))
+            # overwrite the optimizer state with the new optimizer
+            training_state = training_state.replace(
+                optimizer_state=optimizer.init(init_params)
+            )
+            logging.info("Freezing decoder parameters")
 
-    # gradient update function with the new optimizer and loss function
-    gradient_update_fn = gradients.gradient_update_fn(
-        loss_fn,
-        optimizer,
-        pmap_axis_name=_PMAP_AXIS_NAME,
-        has_aux=True,
-        clip_threshold=grad_clip_threshold,
+            # Extract proprioceptive normalizer params from loaded checkpoint
+            # Handle both dict-based (new) and flat-array (legacy) normalizer formats
+            if isinstance(loaded_normalizer_params, DictRunningStatisticsState):
+                # New dict-based format
+                frozen_proprioceptive_normalizer_params = (
+                    loaded_normalizer_params.proprioception
+                )
+            else:
+                # Legacy flat-array format - extract proprioceptive portion
+                if proprioceptive_obs_size == 0:
+                    raise ValueError(
+                        "Proprioceptive observation size is 0, "
+                        "but decoder parameters are being frozen."
+                    )
+                mean = loaded_normalizer_params.mean[-proprioceptive_obs_size:]
+                std = loaded_normalizer_params.std[-proprioceptive_obs_size:]
+                summed_variance = loaded_normalizer_params.summed_variance[
+                    -proprioceptive_obs_size:
+                ]
+                frozen_proprioceptive_normalizer_params = (
+                    running_statistics.RunningStatisticsState(
+                        count=jnp.zeros(()),
+                        mean=mean,
+                        summed_variance=summed_variance,
+                        std=std,
+                    )
+                )
+
+            # Set the proprioceptive normalizer in training state
+            training_state = training_state.replace(
+                normalizer_params=training_state.normalizer_params.replace(
+                    proprioception=frozen_proprioceptive_normalizer_params
+                )
+            )
+
+    # loss + pmean gradient function (gradient application done in minibatch_step)
+    loss_and_pgrad_fn = gradients.loss_and_pgrad(
+        loss_fn, pmap_axis_name=_PMAP_AXIS_NAME, has_aux=True
     )
 
     training_state = jax.device_put_replicated(
@@ -700,21 +857,14 @@ def train(
         # Save checkpoints
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:
-            # new orbax API
-            ckpt_mgr.save(
-                step=0,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardSave(policy_param),
-                    train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                    config=ocp.args.JsonSave(config_dict),
-                ),
+            checkpointing.save(
+                ckpt_mgr,
+                0,
+                policy_param,
+                _unpmap(training_state),
+                config_dict,
+                checkpoint_callback,
             )
-            # Call checkpoint callback for initial save
-            if checkpoint_callback is not None:
-                try:
-                    checkpoint_callback(0)
-                except Exception as e:
-                    logging.warning(f"Initial checkpoint callback failed: {e}")
         else:
             logging.info("Skipping checkpoint save as ckpt_mgr is None")
 
@@ -732,13 +882,17 @@ def train(
                 training_state, env_state, epoch_keys, it
             )
             current_step = int(_unpmap(training_state.env_steps))
+            # Free deferred JAX arrays between training epochs
+            gc.collect()
 
             key_envs = jax.vmap(
                 lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)
             )(key_envs, key_envs.shape[1])
             # TODO: move extra reset logic to the AutoResetWrapper.
             if num_resets_per_eval > 0:
-                env_state = reset_fn((training_state, env_state), key_envs)
+                logging.info("Periodic env reset (data generation) starting at step %s...", current_step)
+                env_state = reset_fn(env_state, key_envs)
+                logging.info("Periodic env reset (data generation) done.")
 
         if process_id == 0:
             # Run evaluation rollout, logging and checkpointing.
@@ -796,6 +950,9 @@ def train(
                     config_dict,
                     checkpoint_callback,
                 )
+
+            # Force garbage collection to free deferred JAX arrays
+            gc.collect()
 
     total_steps = current_step
     # TODO: this assert will fail

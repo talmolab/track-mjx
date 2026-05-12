@@ -175,11 +175,13 @@ def compute_recurrent_ppo_loss(
 
     # Forward pass through policy network over sequence
     # This scans through time, resetting hidden on done
-    # Pass the full nested observation dict - apply_sequence handles normalization
     policy_logits, latent_mean, latent_logvar, _ = policy_network.apply_sequence(
         normalizer_params,
         params.policy,
-        data.observation,
+        {
+            "imitation_target": data.observation["imitation_target"],
+            "proprioception": data.observation["proprioception"],
+        },
         initial_hidden,
         done,
         policy_key,

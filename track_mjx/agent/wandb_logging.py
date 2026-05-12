@@ -123,8 +123,51 @@ def rollout_logging_fn(
             commit=False,
         )
 
+    # Cumulative episode-reward scalars. Brax-PPO already emits these via its
+    # internal Evaluator + progress_fn, so for PPO this is redundant-but-harmless
+    # (a separate scalar key under eval/ rather than overwriting the Brax one).
+    # For DMPO it's the only source, since DMPO has no Brax Evaluator.
+    # Skip rollout[0] (reset state, reward=0).
+    _log_cumulative_reward_scalars(env, current_step, rollout)
+
     if render_video:
         _log_rollout_video(env, cfg, model_path, current_step, rollout)
+
+
+def _log_cumulative_reward_scalars(
+    env: Any,
+    current_step: int,
+    rollout: list[Any],
+) -> None:
+    """Log eval/rollout_episode_reward and per-term cumulatives as wandb scalars.
+
+    Sums state.reward and state.metrics["rewards/<term>"] across the rollout
+    (skipping the reset state at index 0). Logged with commit=False so they
+    batch with the next train-metrics commit.
+    """
+    if len(rollout) <= 1:
+        return
+    try:
+        ep_reward = float(sum(jnp.asarray(s.reward) for s in rollout[1:]))
+        wandb.log(
+            {"eval/rollout_episode_reward": ep_reward},
+            commit=False,
+        )
+    except Exception as e:
+        logging.warning("Failed to log episode_reward scalar: %s", e)
+    cfg_terms = getattr(getattr(env, "_config", None), "reward_terms", None) or {}
+    for term in cfg_terms.keys():
+        metric_key = f"rewards/{term}"
+        try:
+            term_total = float(
+                sum(jnp.asarray(s.metrics[metric_key]) for s in rollout[1:])
+            )
+        except (KeyError, AttributeError, TypeError):
+            continue
+        wandb.log(
+            {f"eval/rollout_episode_reward_{term}": term_total},
+            commit=False,
+        )
 
 
 def _log_rollout_video(

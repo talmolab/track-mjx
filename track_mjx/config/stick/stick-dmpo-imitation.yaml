@@ -1,0 +1,152 @@
+# =============================================================================
+# DMPO config for StickImitation (mesh model, 41 DoF)
+# =============================================================================
+# Mirrors rodent-dmpo-imitation.yaml, retuned for the stick-bug mesh model:
+# - mujoco_impl: jax (mesh + warp not supported here; user requirement)
+# - 1 clip x 100 frames (100-frame STAC fit; full multi-clip H5 lands later)
+# - naconmax/njmax kept small because the model has only 6 floor<->claw pairs
+# - rescale_factor: 1.0 (STAC fit was done with SCALE_FACTOR=1)
+# =============================================================================
+agent: dmpo
+env_name: StickImitation
+walker: stickbug
+mocap_hz: 50
+ctrl_dt: 0.01
+mujoco_impl: jax
+seed: 0
+checkpoint_dir: ./checkpoints/stick_dmpo_imitation
+
+env_config:
+  env_name: "StickImitation"
+  mujoco_impl: "jax"
+
+  # Physics
+  solver: "newton"
+  iterations: 5
+  ls_iterations: 5
+  naconmax: 256
+  njmax: 600
+  noslip_iterations: 0
+
+  # Timing
+  sim_dt: 0.002
+  ctrl_dt: 0.01
+  mocap_hz: 50
+
+  # Reference clips (single 100-frame STAC fit until a multi-clip H5 lands)
+  clip_length: 100
+  clip_set: "all"
+  reference_length: 5
+  reference_stride: 1
+  start_frame_range: [0, 44]
+  qvel_init: "zeros"
+  keep_clips_idx: null
+
+  # Domain randomization disabled by default for the initial smoke run.
+  domain_randomization:
+    use_domain_randomization: false
+    floor_friction: [0.4, 1.0]
+    static_friction_scale: [0.9, 1.1]
+    armature_scale: [1.0, 1.05]
+    com_jitter: [-0.05, 0.05]
+    link_mass_scale: [0.9, 1.1]
+    torso_mass_jitter: [-0.02, 0.02]
+    qpos0_jitter: [-0.05, 0.05]
+
+  reward_terms:
+    root_pos:
+      exp_scale: 0.035
+      weight: 1.0
+    root_quat:
+      exp_scale: 20.0
+      weight: 1.0
+    joints:
+      exp_scale: 1.4
+      weight: 1.0
+    joints_vel:
+      exp_scale: 1.0
+      weight: 1.0
+    bodies_pos:
+      exp_scale: 0.25
+      weight: 1.0
+    end_eff:
+      exp_scale: 0.032
+      weight: 1.0
+    torso_z_range:
+      healthy_z_range: [0.0, 0.1]
+      weight: 1.0
+    control_cost:
+      weight: 0.02
+    control_diff_cost:
+      weight: 0.02
+    energy_cost:
+      max_value: 50.0
+      weight: 0.01
+
+  termination_criteria:
+    root_too_far:
+      max_distance: 0.05
+    root_too_rotated:
+      max_degrees: 60.0
+    pose_error:
+      max_l2_error: 4.5
+    nan_termination: {}
+
+walker_config:
+  walker_name: "stickbug"
+  torque_actuators: false             # stick model does not support torque-mode conversion
+  rescale_factor: 1.0                 # STAC fit at SCALE_FACTOR=1
+
+logging_config:
+  project_name: dmpo-stick-imitation
+  exp_name: stick-mesh-dmpo
+  group_name: StickImitation
+  notes: "DMPO imitation for the 41-DoF Sungaya mesh model; 1-clip smoke target"
+
+# =============================================================================
+# DMPO Training Hyperparameters (cloned from rodent-dmpo-imitation.yaml)
+# =============================================================================
+train_config:
+  unroll_length: 50
+
+  batch_size: 256
+  min_replay_size: 50_000
+  max_replay_size: 4_000_000
+  sequence_length: 50
+  samples_per_insert: 2.0
+
+  epsilon: 0.1
+  epsilon_mean: 0.0025
+  epsilon_stddev: 1.0e-7
+  epsilon_penalty: 0.1
+  init_log_temperature: 10.0
+  init_log_alpha_mean: 10.0
+  init_log_alpha_stddev: 1000.0
+  per_dim_constraining: true
+  action_penalization: true
+  num_samples: 20
+
+  vmin: -150.0
+  vmax: 150.0
+  num_atoms: 51
+
+  policy_layer_sizes: [256, 256, 256]
+  critic_layer_sizes: [512, 512, 256]
+
+  policy_lr: 1.0e-4
+  critic_lr: 1.0e-4
+  dual_lr: 1.0e-3
+  grad_clip: 40.0
+
+  target_policy_update_period: 101
+  target_critic_update_period: 107
+
+  discount: 0.97
+  n_step: 50
+
+  # Smaller scale for the smoke run with 1 clip.
+  num_envs: 1024
+  num_timesteps: 100_000_000
+  eval_every_steps: 500_000
+  log_every_steps: 5_000
+  iters_per_chunk: 8

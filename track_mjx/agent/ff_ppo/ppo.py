@@ -46,6 +46,8 @@ from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
     get_obs_sizes,
     get_obs_shape,
+    init_dict_normalizer,
+    update_dict_normalizer,
 )
 
 # Type aliases
@@ -421,7 +423,7 @@ def train(
         # Update normalization params (only if normalization is enabled).
         # When disabled, normalizer stays at identity (mean=0, std=1).
         if normalize_observations:
-            normalizer_params = running_statistics.update(
+            normalizer_params = update_dict_normalizer(
                 training_state.normalizer_params,
                 data.observation,
                 pmap_axis_name=_PMAP_AXIS_NAME,
@@ -605,12 +607,15 @@ def train(
         value=ppo_network.value_network.init(key_value),
     )
 
-    # Initialize normalizer with pytree structure matching observations
-    obs_shape = get_obs_shape(env_state.obs)
+    # Initialize normalizer as DictRunningStatisticsState (custom dataclass
+    # the intention policy's normalize_dict_obs expects to read attributes
+    # from). The previous brax `running_statistics.init_state(obs_shape)`
+    # returned a flat RunningStatisticsState that lacked
+    # `imitation_target`/`proprioception` fields and crashed at eval time.
     training_state = TrainingState(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
-        normalizer_params=running_statistics.init_state(obs_shape),
+        normalizer_params=init_dict_normalizer(env_state.obs),
         env_steps=0,
     )
 

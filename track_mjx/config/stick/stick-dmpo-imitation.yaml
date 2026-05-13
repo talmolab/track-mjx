@@ -1,6 +1,12 @@
+# @package _global_
 # =============================================================================
 # DMPO config for StickImitation (mesh model, 41 DoF)
 # =============================================================================
+# `# @package _global_` makes hydra merge this YAML at the root namespace
+# rather than nesting it under a `stick:` group (the slash in
+# `--config-name=stick/stick-dmpo-imitation` would otherwise be treated as
+# config-group composition).
+#
 # Mirrors rodent-dmpo-imitation.yaml, retuned for the stick-bug mesh model:
 # - mujoco_impl: jax (mesh + warp not supported here; user requirement)
 # - 1 clip x 100 frames (100-frame STAC fit; full multi-clip H5 lands later)

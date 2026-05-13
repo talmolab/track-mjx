@@ -100,6 +100,11 @@ def main(cfg: DictConfig) -> None:
     env = rodent_wrappers.TrackMjxObsWrapper(
         registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
     )
+    try:
+        xml = env.save_spec("./env_spec.xml", return_str=True)
+    except Exception as e:
+        logging.warning(f"Failed to save environment spec: {e}")
+        xml = None
     test_env = rodent_wrappers.TrackMjxObsWrapper(
         registry.load(env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False)
     )
@@ -181,6 +186,8 @@ def main(cfg: DictConfig) -> None:
         run_id=run_id,
         existing_run_state=existing_run_state,
     )
+    if xml is not None:
+        wandb.log({"spec_file": wandb.Html(xml)}, commit=False)
 
     # Save initial run state after wandb initialization
     if existing_run_state is None:

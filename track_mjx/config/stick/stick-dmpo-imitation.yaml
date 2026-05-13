@@ -26,12 +26,13 @@ env_config:
   env_name: "StickImitation"
   mujoco_impl: "jax"
 
-  # Physics
+  # Physics — naconmax/njmax kept small (only 6 floor↔claw pairs, so much
+  # smaller buffers than rodent's defaults).
   solver: "newton"
   iterations: 5
   ls_iterations: 5
-  naconmax: 256
-  njmax: 600
+  naconmax: 32
+  njmax: 60
   noslip_iterations: 0
 
   # Timing
@@ -105,8 +106,8 @@ train_config:
   unroll_length: 50
 
   batch_size: 256
-  min_replay_size: 50_000
-  max_replay_size: 4_000_000
+  min_replay_size: 5_000
+  max_replay_size: 500_000
   sequence_length: 50
   samples_per_insert: 2.0
 
@@ -139,8 +140,10 @@ train_config:
   discount: 0.97
   n_step: 50
 
-  # Smaller scale for the smoke run with 1 clip.
-  num_envs: 1024
+  # Smaller scale for the smoke run with 1 clip; smaller num_envs because
+  # JAX-backend MJX with meshes is memory-heavy (1024 envs OOMed at JIT-time
+  # trying to allocate a single 16 GiB tensor on the 5090).
+  num_envs: 256
   num_timesteps: 100_000_000
   eval_every_steps: 500_000
   log_every_steps: 5_000

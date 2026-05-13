@@ -6,6 +6,8 @@ import jax.numpy as jnp
 from brax.training import networks
 from brax.training.acme import running_statistics
 
+from track_mjx.agent.observation_utils import normalize_dict_obs
+
 
 def make_dict_value_network(
     obs_sizes: Mapping[str, int],
@@ -42,9 +44,15 @@ def make_dict_value_network(
     total_obs_size = obs_sizes[imit_key] + obs_sizes["proprioception"]
 
     def preprocess(observation, preprocessor_params):
-        normalized = running_statistics.normalize(observation, preprocessor_params)
+        # Use the dict-aware normalizer because preprocessor_params is a
+        # DictRunningStatisticsState dataclass (with .imitation_target /
+        # .proprioception attributes), not a flat brax RunningStatisticsState.
+        normalized = normalize_dict_obs(observation, preprocessor_params)
+        # normalize_dict_obs always emits 'imitation_target' key regardless
+        # of the input naming, so look there even if obs_sizes used the
+        # legacy 'task_obs' name.
         return jnp.concatenate(
-            [normalized[imit_key], normalized["proprioception"]], axis=-1
+            [normalized["imitation_target"], normalized["proprioception"]], axis=-1
         )
 
     return networks.make_value_network(

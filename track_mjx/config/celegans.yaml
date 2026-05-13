@@ -1,11 +1,5 @@
 # defaults:
 #   - override hydra/launcher: submitit_slurm
-
-reference_config:
-  data_path: /home/aaprasad/mnt/projects/con3trol/run/results/stac/celegans_ik_only_04182019am_centerline_0-500_2d_scale-0.1.h5
-  clip_length: 250
-  test_ratio: 0.2
-
 render_config:
   render_camera_name: track
   render_fps: 20
@@ -13,13 +7,15 @@ render_config:
 
 env_config:
   env_name: WormImitation
+  clip_length: 250
   torque_actuators: False  # Changed from False for better performance
   rescale_factor: 1.001
   dim: 2
   trans_joint: "slide"
+  contact_geom: "capsule"
   friction: 
-    tan_floor: 0.7
-    tan_body: 0.6
+    tan_floor: 0.2
+    tan_body: 0.9
     tor: 0.005
     roll_floor: 0.0001
     roll_body: 0.0001
@@ -29,15 +25,16 @@ env_config:
     width: 0.001
     midpoint: 0.5
     power: 2
-  impratio: 0.4
+  impratio: 0.1
   muscle_config:
+    gear: 1.01
     dynprm:
-      tausmooth: 0.0
+      tausmooth: 0.4
     gainprm:
-      force: 0.2
+      force: -1
   joint_config:
     hinge:
-      damping: 0
+      damping: 0.00001
       armature: 1e-6
   proprioceptive_filter: []
   root_body: torso13_body
@@ -85,7 +82,7 @@ env_config:
     control:
       weight: 0.02
     control_diff:
-      weight: 0.02
+      weight: 1.0
     energy:
       max_value: 50.0
       weight: 0.0

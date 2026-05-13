@@ -42,17 +42,6 @@ env_config:
   qvel_init: "zeros"
   keep_clips_idx: null
 
-  # Domain randomization disabled by default for the initial smoke run.
-  domain_randomization:
-    use_domain_randomization: false
-    floor_friction: [0.4, 1.0]
-    static_friction_scale: [0.9, 1.1]
-    armature_scale: [1.0, 1.05]
-    com_jitter: [-0.05, 0.05]
-    link_mass_scale: [0.9, 1.1]
-    torso_mass_jitter: [-0.02, 0.02]
-    qpos0_jitter: [-0.05, 0.05]
-
   reward_terms:
     root_pos:
       exp_scale: 0.035

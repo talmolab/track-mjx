@@ -14,6 +14,7 @@ from typing import Any
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
+from vnl_playground.tasks.stick import consts as stick_consts
 
 # Project root directory (track-mjx/)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -56,10 +57,11 @@ WALKER_DEFAULTS: dict[str, dict[str, Any]] = {
         "status": "not_implemented",
     },
     "stickbug": {
-        "walker_xml_path": None,
-        "arena_xml_path": None,
-        "reference_data_path": None,
-        "status": "not_implemented",
+        "walker_xml_path": str(stick_consts.STICK_XML_PATH),
+        "arena_xml_path": str(stick_consts.ARENA_XML_PATH),
+        "reference_data_path": _resolve_data_path(
+            "data/stick/stick_reference_clips.h5"
+        ),
     },
 }
 

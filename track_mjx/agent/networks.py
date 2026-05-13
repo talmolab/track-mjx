@@ -55,9 +55,15 @@ def make_dict_value_network(
             [normalized["imitation_target"], normalized["proprioception"]], axis=-1
         )
 
+    # Do NOT pass obs_key to brax's make_value_network: when obs_key is set,
+    # brax internally calls running_statistics.normalizer_select() which
+    # accesses processor_params.count — an attribute the
+    # DictRunningStatisticsState dataclass does not have (only
+    # .imitation_target / .proprioception sub-states). Our preprocess()
+    # already unwraps the 'state' hierarchy via normalize_dict_obs, so we
+    # don't need brax's obs_key splitting.
     return networks.make_value_network(
         obs_size=total_obs_size,
         preprocess_observations_fn=preprocess,
         hidden_layer_sizes=hidden_layer_sizes,
-        obs_key=value_obs_key,
     )

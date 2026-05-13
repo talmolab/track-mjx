@@ -265,6 +265,10 @@ def make_intention_ppo_networks(
     """
     parametric_action_distribution = action_distribution(event_size=action_size)
 
+    # `policy_obs_key` is accepted by this factory for API stability but
+    # the underlying intention policy currently consumes flat
+    # {imitation_target, proprioception} obs (the wrapper handles unnesting),
+    # so we do not forward the key.
     policy_network = intention_network.make_intention_policy(
         parametric_action_distribution.param_size,
         latent_size=intention_latent_size,
@@ -272,7 +276,6 @@ def make_intention_ppo_networks(
         encoder_hidden_layer_sizes=encoder_hidden_layer_sizes,
         decoder_hidden_layer_sizes=decoder_hidden_layer_sizes,
         proprioception_noise_std=proprioception_noise_std,
-        policy_obs_key=policy_obs_key,
     )
 
     value_network = make_dict_value_network(

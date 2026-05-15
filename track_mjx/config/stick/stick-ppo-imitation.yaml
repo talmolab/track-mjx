@@ -52,71 +52,52 @@ env_config:
     qpos0_jitter: [-0.05, 0.05]
 
   reward_terms:
-    # CGS rebalance v3 (2026-05-15, algebra-derived from fly recipe):
-    # v2 plateaued at episode_reward~5 with end_eff/leg_joints stuck at 0.
-    # Root cause (algebra): at "untrained" per-body error ≈ body length L,
-    # total_dist = sqrt(N)·L. For gradient to bite, exp_scale s must give
-    # d/s ≈ 1.22 (fly's ratio). Solving: s = sqrt(N)·L/1.22.
-    #   end_eff (N=6, L=2.2cm):    s = sqrt(6)·2.2/1.22  = 4.4 cm
-    #   leg_joints (N=24, L=2.2):  s = sqrt(24)·2.2/1.22 = 8.8 cm
-    # Also bump end_eff/leg_joints weights so the now-firing reward
-    # dominates the energy/control penalties (~0.6/step combined).
-    # v8: v7 showed the policy stuck in "fly + match joint angles" local
-    # optimum even with reference grounded. Joints reward (max 2/step)
-    # dominated the gradient and the policy ignored end_eff/leg_joints
-    # which were on the unreachable side of the exp() cliff. Demote joints
-    # weight so end_eff actually has to fire for the policy to score.
+    # SI baseline — matches wandb stick-mesh-ppo_260514_195032_181930
+    # (commit e87103f, episode_reward=675). The CGS detour and v1-v9 reward
+    # rebalances are abandoned. Collision rigidity is now fixed at the XML
+    # level via solref/solimp on the claw ellipsoids, so no unit conversion
+    # is required.
     root_pos:
-      exp_scale: 0.31
+      exp_scale: 0.005      # m
       weight: 1.0
     root_quat:
-      exp_scale: 5.0
+      exp_scale: 5.0        # deg
       weight: 1.0
     joints:
-      exp_scale: 1.4
-      weight: 0.5        # ↓ was 2.0 — demoted so end_eff dominates
+      exp_scale: 1.4        # rad
+      weight: 2.0
     joints_vel:
       exp_scale: 1.0
       weight: 0.0
     bodies_pos:
-      exp_scale: 2.2
+      exp_scale: 0.05       # m
       weight: 0.0
     end_eff:
-      exp_scale: 20.0    # ↑ was 4.4 — match the actual scale of policy errors
-      weight: 10.0
+      exp_scale: 0.0025     # m
+      weight: 2.0
     leg_joints:
-      exp_scale: 30.0    # ↑ was 8.8
-      weight: 5.0
+      exp_scale: 0.005      # m
+      weight: 2.0
     torso_z_range:
-      healthy_z_range: [0.0, 10.0]   # cm
+      healthy_z_range: [0.0, 0.1]   # m
       weight: 0.3
-    # Smoothness penalties bumped 2026-05-14: prior weights (both 0.02)
-    # were 5% of tracking-reward magnitude once the policy converged, so
-    # the policy gladly traded jerk for tracking. New weights put the
-    # combined penalty at ~22% of tracking-reward, forcing smoother gaits.
     control_cost:
-      weight: 0.05
+      weight: 0.02
     control_diff_cost:
-      weight: 0.1
+      weight: 0.02
     energy_cost:
       max_value: 50.0
-      weight: 0.005       # ↓ was 0.01 (match fly recipe to reduce motion-suppression in CGS)
+      weight: 0.01
 
   termination_criteria:
-    # v6: even with v5's xy-only termination at 5 cm, episodes still
-    # ended in ~3 control steps (eval shows episode_root_pos_distance
-    # reaching ~19 cm even though my CPU diagnostic showed <1 cm drift
-    # in 8 steps under tanh-saturated random actions — PPO's training
-    # policy is far wilder than I anticipated). Push the threshold to
-    # 50 cm (whole floor span) so root_too_far becomes effectively a
-    # "bug escapes the world" safety net rather than the limiting
-    # factor. Tightening can come back once the policy can stand.
+    # SI thresholds matching the wandb 195032 baseline. root_too_far now
+    # uses xy-only distance (logic improvement kept from later commits).
     root_too_far:
-      max_distance: 50.0     # cm, xy-only — only fires on catastrophic escape
+      max_distance: 0.05     # m, xy-only
     root_too_rotated:
-      max_degrees: 180.0     # effectively off; rotation can be arbitrary
+      max_degrees: 60.0
     pose_error:
-      max_l2_error: 15.0     # rad, unchanged
+      max_l2_error: 4.5      # rad
     nan_termination: {}
 
 walker_config:
@@ -206,6 +187,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-cgs-v9-loose-endeff-scale
+  exp_name: stick-si-baseline-v10-solref-solimp
   clip_id: -1
   model_path: model_checkpoints/

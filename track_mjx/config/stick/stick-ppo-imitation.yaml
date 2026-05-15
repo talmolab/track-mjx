@@ -147,9 +147,9 @@ train_setup:
   train_subset_ratio: 1.0
 
   # Evaluation and resets
-  eval_every: 50_000_000   # 20 evals across the 1B-step run
+  eval_every: 25_000_000   # 40 evals across the 1B-step run (faster feedback)
   episode_length: 100
-  reset_every: 50_000_000
+  reset_every: 25_000_000
 
   # ---------------------------------------------------------------------------
   # PPO Training Hyperparameters
@@ -187,6 +187,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-si-baseline-v10-solref-solimp
+  exp_name: stick-si-baseline-v0-solref-solimp
   clip_id: -1
   model_path: model_checkpoints/

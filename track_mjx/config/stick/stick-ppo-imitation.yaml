@@ -98,15 +98,19 @@ env_config:
       weight: 0.005       # ↓ was 0.01 (match fly recipe to reduce motion-suppression in CGS)
 
   termination_criteria:
-    # v3: pose_error.max_l2_error tightened to 15 (76% of max-possible L2 for
-    # 41 joints = sqrt(41)·π ≈ 20.1) — matches fly's relative tightness
-    # (fly: 20/sqrt(70)·π = 76%). Previous 20 = 99% so essentially never fired.
+    # v4: terminations were KILLING training. v1/v2/v3 all showed
+    # episode_length ~ 1.8 ctrl_steps because root_too_far fired in
+    # 100% of episodes within 20ms of reset — the initial policy can't
+    # support body weight, so root drifts past threshold instantly,
+    # leaving PPO with effectively no rollout data to learn from.
+    # Loosen heavily so the policy can experience falling/recovering
+    # without immediate death. Tighten back once the policy can stand.
     root_too_far:
-      max_distance: 1.0      # cm (~0.45 × body length)
+      max_distance: 10.0     # cm — 4.5× body length, very permissive
     root_too_rotated:
-      max_degrees: 15.0      # fly value
+      max_degrees: 90.0      # allow tumbling for now (was 15°, fly-tight)
     pose_error:
-      max_l2_error: 15.0     # rad, 76% of max (matches fly's relative tightness)
+      max_l2_error: 15.0     # rad, unchanged
     nan_termination: {}
 
 walker_config:
@@ -196,6 +200,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-cgs-v3-algebra-rewardscale
+  exp_name: stick-cgs-v4-loose-termination
   clip_id: -1
   model_path: model_checkpoints/

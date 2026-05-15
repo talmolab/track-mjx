@@ -98,14 +98,18 @@ env_config:
       weight: 0.005       # ↓ was 0.01 (match fly recipe to reduce motion-suppression in CGS)
 
   termination_criteria:
-    # v5: root_too_far now uses XY-only distance (see imitation.py).
-    # With v4's 3D distance, free-fall under gravity dominated and
-    # killed episodes in <3 control steps. XY-only lets the bug fall
-    # without termination, while still terminating if it wanders.
+    # v6: even with v5's xy-only termination at 5 cm, episodes still
+    # ended in ~3 control steps (eval shows episode_root_pos_distance
+    # reaching ~19 cm even though my CPU diagnostic showed <1 cm drift
+    # in 8 steps under tanh-saturated random actions — PPO's training
+    # policy is far wilder than I anticipated). Push the threshold to
+    # 50 cm (whole floor span) so root_too_far becomes effectively a
+    # "bug escapes the world" safety net rather than the limiting
+    # factor. Tightening can come back once the policy can stand.
     root_too_far:
-      max_distance: 5.0      # cm, xy-only (≈ 2.3× body length horizontally)
+      max_distance: 50.0     # cm, xy-only — only fires on catastrophic escape
     root_too_rotated:
-      max_degrees: 90.0      # allow tumbling during early training
+      max_degrees: 180.0     # effectively off; rotation can be arbitrary
     pose_error:
       max_l2_error: 15.0     # rad, unchanged
     nan_termination: {}
@@ -197,6 +201,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-cgs-v5-xy-termination
+  exp_name: stick-cgs-v6-termination-off
   clip_id: -1
   model_path: model_checkpoints/

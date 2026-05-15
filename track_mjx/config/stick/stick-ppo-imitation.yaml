@@ -61,27 +61,32 @@ env_config:
     #   leg_joints (N=24, L=2.2):  s = sqrt(24)·2.2/1.22 = 8.8 cm
     # Also bump end_eff/leg_joints weights so the now-firing reward
     # dominates the energy/control penalties (~0.6/step combined).
+    # v8: v7 showed the policy stuck in "fly + match joint angles" local
+    # optimum even with reference grounded. Joints reward (max 2/step)
+    # dominated the gradient and the policy ignored end_eff/leg_joints
+    # which were on the unreachable side of the exp() cliff. Demote joints
+    # weight so end_eff actually has to fire for the policy to score.
     root_pos:
-      exp_scale: 0.31     # 14% × 2.2cm body (fly recipe: 0.035 / 0.25cm fly = 14%)
+      exp_scale: 0.31
       weight: 1.0
     root_quat:
-      exp_scale: 5.0      # degrees, unchanged
+      exp_scale: 5.0
       weight: 1.0
     joints:
-      exp_scale: 1.4      # radians, unchanged (unit-invariant)
-      weight: 2.0
+      exp_scale: 1.4
+      weight: 0.5        # ↓ was 2.0 — demoted so end_eff dominates
     joints_vel:
       exp_scale: 1.0
       weight: 0.0
     bodies_pos:
-      exp_scale: 2.2      # 100% × body length (fly recipe)
+      exp_scale: 2.2
       weight: 0.0
     end_eff:
-      exp_scale: 4.4      # ↑ was 3.0; algebra: sqrt(6)·2.2/1.22 (fly-equivalent gradient)
-      weight: 3.0         # ↑ was 2.0; dominate energy_cost
+      exp_scale: 4.4
+      weight: 10.0       # ↑ was 3.0 — make this the dominant reward signal
     leg_joints:
-      exp_scale: 8.8      # ↑ was 5.0; algebra: sqrt(24)·2.2/1.22
-      weight: 3.0         # ↑ was 2.0
+      exp_scale: 8.8
+      weight: 5.0        # ↑ was 3.0
     torso_z_range:
       healthy_z_range: [0.0, 10.0]   # cm
       weight: 0.3
@@ -201,6 +206,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-cgs-v7-ref-grounded
+  exp_name: stick-cgs-v8-endeff-dominant
   clip_id: -1
   model_path: model_checkpoints/

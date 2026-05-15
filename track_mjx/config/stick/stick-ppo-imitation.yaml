@@ -52,34 +52,36 @@ env_config:
     qpos0_jitter: [-0.05, 0.05]
 
   reward_terms:
-    # CGS rebalance 2026-05-14: model now lives in CGS units (cm/g/s) to
-    # fix soft-floor penetration at SI scale. All position-domain exp_scales
-    # multiplied ×100 (m → cm); rotation/joint-angle exp_scales unchanged.
-    #   end_eff (N=6, target 1 mm = 0.1 cm)  → s = sqrt(6)·0.1  ≈ 0.25 cm
-    #   leg_joints (N=24, target 1 mm = 0.1 cm) → s = sqrt(24)·0.1 ≈ 0.5 cm
+    # CGS rebalance v2 (2026-05-15): previous run had end_eff/leg_joints
+    # rewards stuck at 0 (exp_scales too tight) AND energy_cost bound at
+    # the 50 clamp every step (qfrc_actuator is in dyne·cm = 1e7× SI),
+    # which suppressed all motion. Following the fly/CGS recipe:
+    #   - end_eff & leg_joints exp_scales loose (% of body length, fly-style)
+    #   - root_pos exp_scale tightened a bit (14% body length, fly value)
+    #   - energy_cost weight halved to fly value (0.005)
     root_pos:
-      exp_scale: 0.5      # was 0.005 m → 0.5 cm
+      exp_scale: 0.31     # 14% × 2.2cm body (fly recipe: 0.035 / 0.25cm fly = 14%)
       weight: 1.0
     root_quat:
-      exp_scale: 5.0
+      exp_scale: 5.0      # degrees, unchanged
       weight: 1.0
     joints:
-      exp_scale: 1.4
+      exp_scale: 1.4      # radians, unchanged (unit-invariant)
       weight: 2.0
     joints_vel:
       exp_scale: 1.0
       weight: 0.0
     bodies_pos:
-      exp_scale: 5.0      # was 0.05 m → 5 cm
+      exp_scale: 2.2      # 100% × body length (fly recipe)
       weight: 0.0
     end_eff:
-      exp_scale: 0.25     # was 0.0025 m → 0.25 cm
+      exp_scale: 3.0      # ↑ was 0.25 (fly uses ~200% body length; this is ~136%)
       weight: 2.0
     leg_joints:
-      exp_scale: 0.5      # was 0.005 m → 0.5 cm
+      exp_scale: 5.0      # ↑ was 0.5 (24 bodies need lenient threshold)
       weight: 2.0
     torso_z_range:
-      healthy_z_range: [0.0, 10.0]   # was [0, 0.1] m → [0, 10] cm
+      healthy_z_range: [0.0, 10.0]   # cm
       weight: 0.3
     # Smoothness penalties bumped 2026-05-14: prior weights (both 0.02)
     # were 5% of tracking-reward magnitude once the policy converged, so
@@ -91,16 +93,18 @@ env_config:
       weight: 0.1
     energy_cost:
       max_value: 50.0
-      weight: 0.01
+      weight: 0.005       # ↓ was 0.01 (match fly recipe to reduce motion-suppression in CGS)
 
   termination_criteria:
-    # CGS rebalance: max_distance & pose_error in cm now (×100 from SI).
+    # v2: pose_error.max_l2_error is in RADIANS (joint angles, unit-invariant)
+    # so should NOT have been ×100. Fly uses 20. Tighten root_too_far (fly: 0.1)
+    # and root_too_rotated (fly: 15°) to match fly recipe.
     root_too_far:
-      max_distance: 5.0      # was 0.05 m → 5 cm
+      max_distance: 1.0      # cm (~0.45 × body length; was 5.0)
     root_too_rotated:
-      max_degrees: 60.0
+      max_degrees: 15.0      # was 60.0 (fly value)
     pose_error:
-      max_l2_error: 450.0    # was 4.5 (SI L2 of bodies × m) → ×100
+      max_l2_error: 20.0     # rad, unit-invariant (was 450, scaled erroneously)
     nan_termination: {}
 
 walker_config:
@@ -190,6 +194,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-mesh-ppo
+  exp_name: stick-cgs-v2-boxellip-rewardfix
   clip_id: -1
   model_path: model_checkpoints/

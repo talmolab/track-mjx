@@ -52,20 +52,13 @@ env_config:
     qpos0_jitter: [-0.05, 0.05]
 
   reward_terms:
-    # Re-balanced 2026-05-14:
-    #   - bodies_pos.weight=0 (rodent parity; 42 bodies is too easy to fake)
-    #   - root_pos/quat/end_eff tightened so standing still no longer
-    #     saturates them
-    #   - up-weight joints+end_eff (the real imitation signal)
-    # 2026-05-14 (later): added leg_joints to track all 24 non-claw leg
-    # segments (coxa/femur/tibia/tarsus × 6 legs) — gives a gradient on
-    # leg pose, not just claw tip. Tightened end_eff and leg_joints
-    # exp_scale further so the reward distinguishes good from "close
-    # enough" tracking. exp_scales pick sqrt(N)·target_per_body_err:
-    #   end_eff (N=6, target 1 mm)  → s = sqrt(6)·0.001  ≈ 0.0025 m
-    #   leg_joints (N=24, target 1 mm) → s = sqrt(24)·0.001 ≈ 0.005 m
+    # CGS rebalance 2026-05-14: model now lives in CGS units (cm/g/s) to
+    # fix soft-floor penetration at SI scale. All position-domain exp_scales
+    # multiplied ×100 (m → cm); rotation/joint-angle exp_scales unchanged.
+    #   end_eff (N=6, target 1 mm = 0.1 cm)  → s = sqrt(6)·0.1  ≈ 0.25 cm
+    #   leg_joints (N=24, target 1 mm = 0.1 cm) → s = sqrt(24)·0.1 ≈ 0.5 cm
     root_pos:
-      exp_scale: 0.005
+      exp_scale: 0.5      # was 0.005 m → 0.5 cm
       weight: 1.0
     root_quat:
       exp_scale: 5.0
@@ -77,16 +70,16 @@ env_config:
       exp_scale: 1.0
       weight: 0.0
     bodies_pos:
-      exp_scale: 0.05
+      exp_scale: 5.0      # was 0.05 m → 5 cm
       weight: 0.0
     end_eff:
-      exp_scale: 0.0025
+      exp_scale: 0.25     # was 0.0025 m → 0.25 cm
       weight: 2.0
     leg_joints:
-      exp_scale: 0.005
+      exp_scale: 0.5      # was 0.005 m → 0.5 cm
       weight: 2.0
     torso_z_range:
-      healthy_z_range: [0.0, 0.1]
+      healthy_z_range: [0.0, 10.0]   # was [0, 0.1] m → [0, 10] cm
       weight: 0.3
     # Smoothness penalties bumped 2026-05-14: prior weights (both 0.02)
     # were 5% of tracking-reward magnitude once the policy converged, so
@@ -101,12 +94,13 @@ env_config:
       weight: 0.01
 
   termination_criteria:
+    # CGS rebalance: max_distance & pose_error in cm now (×100 from SI).
     root_too_far:
-      max_distance: 0.05
+      max_distance: 5.0      # was 0.05 m → 5 cm
     root_too_rotated:
       max_degrees: 60.0
     pose_error:
-      max_l2_error: 4.5
+      max_l2_error: 450.0    # was 4.5 (SI L2 of bodies × m) → ×100
     nan_termination: {}
 
 walker_config:
@@ -156,9 +150,9 @@ train_setup:
   train_subset_ratio: 1.0
 
   # Evaluation and resets
-  eval_every: 25_000_000   # 20 evals across the 500M-step run
+  eval_every: 50_000_000   # 20 evals across the 1B-step run
   episode_length: 100
-  reset_every: 25_000_000
+  reset_every: 50_000_000
 
   # ---------------------------------------------------------------------------
   # PPO Training Hyperparameters
@@ -172,7 +166,7 @@ train_setup:
     # Bumping num_envs doubles rollout throughput (which is the bottleneck)
     # without doubling the per-grad-step working memory. ratio = 4.
     num_envs: 4096
-    num_timesteps: 500_000_000
+    num_timesteps: 1_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4

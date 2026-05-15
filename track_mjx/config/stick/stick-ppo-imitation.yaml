@@ -201,6 +201,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-cgs-v6-termination-off
+  exp_name: stick-cgs-v7-ref-grounded
   clip_id: -1
   model_path: model_checkpoints/

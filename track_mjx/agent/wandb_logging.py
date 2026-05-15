@@ -199,13 +199,17 @@ def _log_rollout_video(
             title=f"{metric} per rollout frame",
         )
 
+    # Resolution is overridable in render_config; default to 720p so videos
+    # are readable for small walkers (stick bug is ~5 cm, was illegible at 480p).
+    height = int(cfg.render_config.get("height", 720))
+    width = int(cfg.render_config.get("width", 1280))
     try:
-        with imageio.get_writer(video_path, fps=render_fps) as writer:
+        with imageio.get_writer(video_path, fps=render_fps, quality=8) as writer:
             video = env.render(
                 rollout,
                 camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
-                height=480,
-                width=640,
+                height=height,
+                width=width,
             )
             for frame in video:
                 writer.append_data(frame)

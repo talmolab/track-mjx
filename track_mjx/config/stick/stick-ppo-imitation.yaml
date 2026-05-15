@@ -52,31 +52,50 @@ env_config:
     qpos0_jitter: [-0.05, 0.05]
 
   reward_terms:
+    # Re-balanced 2026-05-14:
+    #   - bodies_pos.weight=0 (rodent parity; 42 bodies is too easy to fake)
+    #   - root_pos/quat/end_eff tightened so standing still no longer
+    #     saturates them
+    #   - up-weight joints+end_eff (the real imitation signal)
+    # 2026-05-14 (later): added leg_joints to track all 24 non-claw leg
+    # segments (coxa/femur/tibia/tarsus × 6 legs) — gives a gradient on
+    # leg pose, not just claw tip. Tightened end_eff and leg_joints
+    # exp_scale further so the reward distinguishes good from "close
+    # enough" tracking. exp_scales pick sqrt(N)·target_per_body_err:
+    #   end_eff (N=6, target 1 mm)  → s = sqrt(6)·0.001  ≈ 0.0025 m
+    #   leg_joints (N=24, target 1 mm) → s = sqrt(24)·0.001 ≈ 0.005 m
     root_pos:
-      exp_scale: 0.035
+      exp_scale: 0.005
       weight: 1.0
     root_quat:
-      exp_scale: 20.0
+      exp_scale: 5.0
       weight: 1.0
     joints:
       exp_scale: 1.4
-      weight: 1.0
+      weight: 2.0
     joints_vel:
       exp_scale: 1.0
       weight: 0.0
     bodies_pos:
-      exp_scale: 0.25
-      weight: 1.0
+      exp_scale: 0.05
+      weight: 0.0
     end_eff:
-      exp_scale: 0.032
-      weight: 1.0
+      exp_scale: 0.0025
+      weight: 2.0
+    leg_joints:
+      exp_scale: 0.005
+      weight: 2.0
     torso_z_range:
       healthy_z_range: [0.0, 0.1]
-      weight: 1.0
+      weight: 0.3
+    # Smoothness penalties bumped 2026-05-14: prior weights (both 0.02)
+    # were 5% of tracking-reward magnitude once the policy converged, so
+    # the policy gladly traded jerk for tracking. New weights put the
+    # combined penalty at ~22% of tracking-reward, forcing smoother gaits.
     control_cost:
-      weight: 0.02
+      weight: 0.05
     control_diff_cost:
-      weight: 0.02
+      weight: 0.1
     energy_cost:
       max_value: 50.0
       weight: 0.01
@@ -102,6 +121,10 @@ render_config:
   render_camera_name: close_profile
   render_fps: 50
   render_interval: 1
+  # 720p — the bug is ~5 cm so a tight crop + higher res makes the
+  # legs visible in eval videos. wandb_logging respects these.
+  height: 720
+  width: 1280
 
 # =============================================================================
 # Network Architecture (intention encoder-decoder, smaller than rodent)
@@ -133,16 +156,23 @@ train_setup:
   train_subset_ratio: 1.0
 
   # Evaluation and resets
-  eval_every: 5_000_000
+  eval_every: 25_000_000   # 20 evals across the 500M-step run
   episode_length: 100
-  reset_every: 10_000_000
+  reset_every: 25_000_000
 
   # ---------------------------------------------------------------------------
   # PPO Training Hyperparameters
   # ---------------------------------------------------------------------------
   train_config:
-    num_envs: 2048
-    num_timesteps: 200_000_000
+    # RTX 5090 (32 GB) — stick has heavier obs (1071-dim flat: body_pos
+    # alone is 42×5×3=630, vs rodent's ~270). Tested on 2026-05-14:
+    #   - 8192 envs × 4096 batch  : OOM, [8,8192,20,870] transpose 24 GB peak
+    #   - 4096 envs × 2048 batch  : OOM, 22.8 GB plateau + 12 GB grad alloc
+    #   - 4096 envs × 1024 batch  : fits — only num_envs is bumped, not batch
+    # Bumping num_envs doubles rollout throughput (which is the bottleneck)
+    # without doubling the per-grad-step working memory. ratio = 4.
+    num_envs: 4096
+    num_timesteps: 500_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4

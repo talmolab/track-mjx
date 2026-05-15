@@ -52,13 +52,15 @@ env_config:
     qpos0_jitter: [-0.05, 0.05]
 
   reward_terms:
-    # CGS rebalance v2 (2026-05-15): previous run had end_eff/leg_joints
-    # rewards stuck at 0 (exp_scales too tight) AND energy_cost bound at
-    # the 50 clamp every step (qfrc_actuator is in dyne·cm = 1e7× SI),
-    # which suppressed all motion. Following the fly/CGS recipe:
-    #   - end_eff & leg_joints exp_scales loose (% of body length, fly-style)
-    #   - root_pos exp_scale tightened a bit (14% body length, fly value)
-    #   - energy_cost weight halved to fly value (0.005)
+    # CGS rebalance v3 (2026-05-15, algebra-derived from fly recipe):
+    # v2 plateaued at episode_reward~5 with end_eff/leg_joints stuck at 0.
+    # Root cause (algebra): at "untrained" per-body error ≈ body length L,
+    # total_dist = sqrt(N)·L. For gradient to bite, exp_scale s must give
+    # d/s ≈ 1.22 (fly's ratio). Solving: s = sqrt(N)·L/1.22.
+    #   end_eff (N=6, L=2.2cm):    s = sqrt(6)·2.2/1.22  = 4.4 cm
+    #   leg_joints (N=24, L=2.2):  s = sqrt(24)·2.2/1.22 = 8.8 cm
+    # Also bump end_eff/leg_joints weights so the now-firing reward
+    # dominates the energy/control penalties (~0.6/step combined).
     root_pos:
       exp_scale: 0.31     # 14% × 2.2cm body (fly recipe: 0.035 / 0.25cm fly = 14%)
       weight: 1.0
@@ -75,11 +77,11 @@ env_config:
       exp_scale: 2.2      # 100% × body length (fly recipe)
       weight: 0.0
     end_eff:
-      exp_scale: 3.0      # ↑ was 0.25 (fly uses ~200% body length; this is ~136%)
-      weight: 2.0
+      exp_scale: 4.4      # ↑ was 3.0; algebra: sqrt(6)·2.2/1.22 (fly-equivalent gradient)
+      weight: 3.0         # ↑ was 2.0; dominate energy_cost
     leg_joints:
-      exp_scale: 5.0      # ↑ was 0.5 (24 bodies need lenient threshold)
-      weight: 2.0
+      exp_scale: 8.8      # ↑ was 5.0; algebra: sqrt(24)·2.2/1.22
+      weight: 3.0         # ↑ was 2.0
     torso_z_range:
       healthy_z_range: [0.0, 10.0]   # cm
       weight: 0.3
@@ -96,15 +98,15 @@ env_config:
       weight: 0.005       # ↓ was 0.01 (match fly recipe to reduce motion-suppression in CGS)
 
   termination_criteria:
-    # v2: pose_error.max_l2_error is in RADIANS (joint angles, unit-invariant)
-    # so should NOT have been ×100. Fly uses 20. Tighten root_too_far (fly: 0.1)
-    # and root_too_rotated (fly: 15°) to match fly recipe.
+    # v3: pose_error.max_l2_error tightened to 15 (76% of max-possible L2 for
+    # 41 joints = sqrt(41)·π ≈ 20.1) — matches fly's relative tightness
+    # (fly: 20/sqrt(70)·π = 76%). Previous 20 = 99% so essentially never fired.
     root_too_far:
-      max_distance: 1.0      # cm (~0.45 × body length; was 5.0)
+      max_distance: 1.0      # cm (~0.45 × body length)
     root_too_rotated:
-      max_degrees: 15.0      # was 60.0 (fly value)
+      max_degrees: 15.0      # fly value
     pose_error:
-      max_l2_error: 20.0     # rad, unit-invariant (was 450, scaled erroneously)
+      max_l2_error: 15.0     # rad, 76% of max (matches fly's relative tightness)
     nan_termination: {}
 
 walker_config:
@@ -194,6 +196,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-cgs-v2-boxellip-rewardfix
+  exp_name: stick-cgs-v3-algebra-rewardscale
   clip_id: -1
   model_path: model_checkpoints/

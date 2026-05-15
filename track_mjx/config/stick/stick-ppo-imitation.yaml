@@ -82,11 +82,11 @@ env_config:
       exp_scale: 2.2
       weight: 0.0
     end_eff:
-      exp_scale: 4.4
-      weight: 10.0       # ↑ was 3.0 — make this the dominant reward signal
+      exp_scale: 20.0    # ↑ was 4.4 — match the actual scale of policy errors
+      weight: 10.0
     leg_joints:
-      exp_scale: 8.8
-      weight: 5.0        # ↑ was 3.0
+      exp_scale: 30.0    # ↑ was 8.8
+      weight: 5.0
     torso_z_range:
       healthy_z_range: [0.0, 10.0]   # cm
       weight: 0.3
@@ -206,6 +206,6 @@ train_setup:
 logging_config:
   project_name: ppo-stick-imitation
   group_name: stickbug
-  exp_name: stick-cgs-v8-endeff-dominant
+  exp_name: stick-cgs-v9-loose-endeff-scale
   clip_id: -1
   model_path: model_checkpoints/

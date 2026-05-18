@@ -134,7 +134,8 @@ def main(cfg: DictConfig) -> None:
             f"Unknown architecture '{arch_name}'. "
             f"Valid options are: {sorted(valid_arch_names)}"
         )
-    if cfg.network_config.action_distribution == "sigmoid":
+    action_dist = cfg.network_config.get("action_distribution", "tanh")
+    if action_dist.lower() == "sigmoid":
         logging.info("Using sigmoid action distribution")
         action_distribution = NormalSigmoidDistribution
     else:

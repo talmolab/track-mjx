@@ -19,6 +19,7 @@ from vnl_playground import registry as vnl_registry
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
 from vnl_playground.tasks.celegans import consts as celegans_consts
+from vnl_playground.tasks.stick import consts as stick_consts
 
 # Project root directory (track-mjx/)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -87,6 +88,14 @@ _TRACK_ENV_OVERRIDES_BY_ENV_NAME: dict[str, dict[str, Any]] = {
         "arena_xml_path": str(fruitfly_consts.ARENA_XML_PATH),
         "reference_data_path": _resolve_data_path(
             "data/fruitfly/fly_reference_clip.h5"
+        ),
+    },
+    "StickImitation": {
+        "walker_name": "stickbug",
+        "walker_xml_path": str(stick_consts.STICK_XML_PATH),
+        "arena_xml_path": str(stick_consts.ARENA_XML_PATH),
+        "reference_data_path": _resolve_data_path(
+            "data/stick/stick_reference_clips.h5"
         ),
     },
 }

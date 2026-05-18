@@ -66,12 +66,11 @@ def rollout_logging_fn(
     latent_logvars = []
 
     # Calculate episode length from config
-    physics_steps_per_ctrl = cfg.env_config.ctrl_dt / cfg.env_config.sim_dt
-    steps_per_mocap_frame = (1 / cfg.env_config.mocap_hz) / (
-        cfg.env_config.sim_dt * physics_steps_per_ctrl
+    physics_steps_per_ctrl = env._config.ctrl_dt / env._config.sim_dt
+    steps_per_mocap_frame = (1 / env._config.mocap_hz) / (
+        env._config.sim_dt * physics_steps_per_ctrl
     )
-
-    episode_length = int(cfg.env_config.clip_length * steps_per_mocap_frame)
+    episode_length = int(env._clip_length() * steps_per_mocap_frame)
 
     # Check if using recurrent policy
     arch_name = cfg.network_config.get("arch_name", "intention")
@@ -147,19 +146,25 @@ def _log_rollout_video(
     video_path = f"{model_path}/{current_step}.mp4"
 
     # Log per-step reward breakdowns
-    metric_names = [f"rewards/{k}" for k in env._config.reward_terms.keys()]
+    reward_names = [f"rewards/{k}" for k in env._config.reward_terms.keys()]
+    metric_names = cfg.logging_config.get("rollout_metrics", reward_names)
     for metric in metric_names:
-        log_lineplot_to_wandb(
-            name=f"eval/rollout_{metric}",
-            metric_name=metric,
-            data=list(enumerate([s.metrics[metric] for s in rollout])),
-            title=f"{metric} per rollout frame",
-        )
+        if metric in rollout[0].metrics:
+            log_lineplot_to_wandb(
+                name=f"eval/rollout_{metric}",
+                metric_name=metric,
+                data=list(enumerate([s.metrics[metric] for s in rollout])),
+                title=f"{metric} per rollout frame",
+            )
+        else:
+            logging.warning(
+                f"Rollout metric '{metric}' not found in environment metrics."
+            )
 
     try:
         with imageio.get_writer(video_path, fps=render_fps) as writer:
             video = env.render(
-                rollout,
+                trajectory=rollout,
                 camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
                 height=480,
                 width=640,
@@ -207,6 +212,30 @@ def log_lineplot_to_wandb(
 
     wandb.log(
         {name: wandb.plot.line(table, "frame", metric_name, title=title)},
+        commit=False,
+    )
+
+
+def log_histogram_to_wandb(
+    name: str, metric_name: str, data: list[float], title: str
+) -> None:
+    """Log a histogram to Weights & Biases.
+
+    Args:
+        name: Wandb log key (e.g., "eval/latent_means_histogram").
+        metric_name: Name for the histogram metric.
+        data: List of values to include in the histogram.
+        title: Title displayed on the wandb plot.
+
+    Note:
+        Logged with commit=False; caller should batch with other logs.
+    """
+    table = wandb.Table(
+        data=enumerate(data),
+        columns=["index", metric_name],
+    )
+    wandb.log(
+        {name: wandb.plot.histogram(table, value=metric_name, title=title)},  # type: ignore
         commit=False,
     )
 
@@ -270,4 +299,11 @@ def wandb_progress(num_steps: int, metrics: dict[str, Any]) -> None:
         module), so it should be called last in a logging batch.
     """
     metrics["num_steps_thousands"] = num_steps
+    for metric in metrics:
+        if metric not in wandb.run.summary.keys():
+            if "reward" in metric or "episode_length" in metric:
+                mode = "max"
+            else:
+                mode = "mean"
+            wandb.run.define_metric(metric, summary=mode)
     wandb.log(metrics)

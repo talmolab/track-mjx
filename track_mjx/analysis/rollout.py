@@ -102,7 +102,7 @@ def create_rollout_generator(
         )
 
     mocap_dt = 1.0 / cfg.env_config.mocap_hz
-    steps_per_frame = int(mocap_dt / cfg.env_config.ctrl_dt)
+    steps_per_frame = mocap_dt / cfg.env_config.ctrl_dt
     num_steps = int(cfg.env_config.clip_length * steps_per_frame) - 1
 
     unwrapped_env = env
@@ -158,23 +158,29 @@ def create_rollout_generator(
 
         if not is_recurrent:
             init_carry = (init_state, act_rng)
-            (_, _), (
-                states,
-                ctrls,
-                activations,
-                joint_forces,
-                sensor_readings,
+            (
+                (_, _),
+                (
+                    states,
+                    ctrls,
+                    activations,
+                    joint_forces,
+                    sensor_readings,
+                ),
             ) = jax.lax.scan(_step_fn_mlp, init_carry, None, length=num_steps)
         else:
             hidden = jax.tree.map(lambda x: x[0], init_hidden_fn(1))
             init_carry = (init_state, act_rng, hidden)
-            (_, _, _), (
-                states,
-                ctrls,
-                _stacked_hidden,
-                activations,
-                joint_forces,
-                sensor_readings,
+            (
+                (_, _, _),
+                (
+                    states,
+                    ctrls,
+                    _stacked_hidden,
+                    activations,
+                    joint_forces,
+                    sensor_readings,
+                ),
             ) = jax.lax.scan(_step_fn_recurrent, init_carry, None, length=num_steps)
 
         def prepend(element, arr):
@@ -186,7 +192,14 @@ def create_rollout_generator(
 
         ref_clip_idx = jnp.asarray(init_state.info["reference_clip"]).astype(int)
         ref_qpos = unwrapped_env.reference_clips.qpos[ref_clip_idx]
-        qposes_ref = jnp.repeat(ref_qpos, steps_per_frame, axis=0)
+
+        start_frame = jnp.asarray(rollout_states.info["start_frame"])
+        times = jnp.asarray(rollout_states.data.time)
+        frame_indices = jnp.round(
+            times * float(env._config.mocap_hz) + start_frame
+        ).astype(jnp.int32)
+        ref_qpos = jnp.asarray(env.reference_clips.qpos[ref_clip_idx])
+        qposes_ref = ref_qpos[frame_indices]
 
         result = {
             "qposes_ref": qposes_ref,

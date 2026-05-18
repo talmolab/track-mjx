@@ -38,6 +38,8 @@ from brax.training.acme import running_statistics
 from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
 from track_mjx.agent.networks import make_dict_value_network
 from track_mjx.agent.observation_utils import normalizer_select
+from track_mjx.agent.distributions import NormalSigmoidDistribution
+from brax.training.distribution import NormalTanhDistribution
 
 # Type aliases
 RNNCellType = Literal["simple", "gru", "lstm"]
@@ -564,6 +566,7 @@ def make_recurrent_intention_ppo_networks(
     rnn_hidden_sizes: Sequence[int] = (256,),
     proprioception_noise_std: float = 0.0,
     value_hidden_layer_sizes: Sequence[int] = (1024, 1024),
+    action_distribution: distribution.ParametricDistribution = NormalTanhDistribution,
     policy_obs_key: str = "state",
     value_obs_key: str = "state",
 ) -> RecurrentPPONetworks:
@@ -585,6 +588,7 @@ def make_recurrent_intention_ppo_networks(
         proprioception_noise_std: Stddev for multiplicative Gaussian noise on
             decoder proprioception input during stochastic training passes.
         value_hidden_layer_sizes: MLP layer sizes for value network.
+        action_distribution: Parametric distribution class for policy actions.
         policy_obs_key: Top-level observation key for policy (default: 'state').
         value_obs_key: Top-level observation key for value network (default: 'state').
 
@@ -593,9 +597,7 @@ def make_recurrent_intention_ppo_networks(
     """
     rnn_hidden_sizes = tuple(rnn_hidden_sizes)
 
-    parametric_action_distribution = distribution.NormalTanhDistribution(
-        event_size=action_size
-    )
+    parametric_action_distribution = action_distribution(event_size=action_size)
 
     policy_module = RecurrentIntentionNetwork(
         output_size=parametric_action_distribution.param_size,

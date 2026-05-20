@@ -280,7 +280,7 @@ def initialize_wandb_logging(
     wandb.init(
         project=logging_cfg.project_name,
         config=cfg_dict,
-        notes="",
+        notes=str(OmegaConf.select(logging_cfg, "notes", default="") or ""),
         id=wandb_run_id,
         resume=wandb_resume,
         group=logging_cfg.group_name,

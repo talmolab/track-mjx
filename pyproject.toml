@@ -17,8 +17,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12"]
 dependencies = [
     # JAX core (both platforms)
-    "jax>=0.8.2",
-    "jaxlib>=0.8.2",
+    "jax==0.8.2",
+    "jaxlib==0.8.2",
     "brax==0.14.0",
     "flax",
     "optax>=0.2.6",
@@ -56,8 +56,8 @@ version = {attr = "track_mjx.version.__version__"}
 readme = {file = ["README.md"], content-type="text/markdown"}
 
 [project.optional-dependencies]
-cuda12 = ["jax[cuda12]>=0.8.2 ; sys_platform == 'linux'"]
-cuda13 = ["jax[cuda13]>=0.8.2 ; sys_platform == 'linux'"]
+cuda12 = ["jax[cuda12]==0.8.2 ; sys_platform == 'linux'"]
+cuda13 = ["jax[cuda13]==0.8.2 ; sys_platform == 'linux'"]
 dev = [
     "pytest",
     "pytest-cov",

@@ -39,3 +39,63 @@ def test_build_qpos_concatenates_root_and_joints(tiny_fly_named_h5):
     np.testing.assert_array_equal(qvel[..., :3], velocity)
     np.testing.assert_array_equal(qvel[..., 3:6], angular_velocity)
     np.testing.assert_array_equal(qvel[..., 6:], joints_velocity)
+
+
+import mujoco
+from scripts.convert_fly_reference_to_legacy import resolve_body_names, DEFAULT_FLY_XML
+
+
+def test_resolve_body_names_matches_mj_forward_on_real_model():
+    """Build a known qpos via mj_forward, then verify resolve_body_names recovers
+    each body's MJCF name from its world-frame position+quaternion."""
+    model = mujoco.MjModel.from_xml_path(str(DEFAULT_FLY_XML))
+    data = mujoco.MjData(model)
+    rng = np.random.default_rng(7)
+    data.qpos[:3] = rng.standard_normal(3) * 0.01
+    q = rng.standard_normal(4); q /= np.linalg.norm(q)
+    data.qpos[3:7] = q
+    data.qpos[7:] = rng.standard_normal(model.nq - 7) * 0.05
+    mujoco.mj_forward(model, data)
+
+    model_xpos = np.array(data.xpos)
+    model_xquat = np.array(data.xquat)
+
+    # Take the first 68 bodies as the "H5 body order" — this is the layout
+    # of the actual fly_reference_clip.h5 generated before eye-camera additions.
+    n_h5 = 68
+    h5_xpos = model_xpos[:n_h5]
+    h5_xquat = model_xquat[:n_h5]
+
+    names = resolve_body_names(model, model_xpos, model_xquat, h5_xpos, h5_xquat, atol=1e-5)
+
+    expected = [
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i)
+        for i in range(n_h5)
+    ]
+    assert names == expected
+
+
+def test_resolve_body_names_aborts_on_mismatch():
+    model = mujoco.MjModel.from_xml_path(str(DEFAULT_FLY_XML))
+    data = mujoco.MjData(model)
+    # Use the same random qpos as the happy-path test so bodies are non-degenerate
+    rng = np.random.default_rng(7)
+    data.qpos[:3] = rng.standard_normal(3) * 0.01
+    q = rng.standard_normal(4); q /= np.linalg.norm(q)
+    data.qpos[3:7] = q
+    data.qpos[7:] = rng.standard_normal(model.nq - 7) * 0.05
+    mujoco.mj_forward(model, data)
+    model_xpos = np.array(data.xpos)
+    model_xquat = np.array(data.xquat)
+
+    # Corrupt H5 frame: shift body 3 (head — uniquely positioned) by 1.0 in x.
+    # With the random qpos all bodies except the coincident walker/thorax pair
+    # have distinct world positions, so the shifted body will have no match.
+    n_h5 = 5
+    h5_xpos = model_xpos[:n_h5].copy()
+    h5_xquat = model_xquat[:n_h5].copy()
+    h5_xpos[3, 0] += 1.0
+
+    import pytest
+    with pytest.raises(ValueError, match="no MJCF match"):
+        resolve_body_names(model, model_xpos, model_xquat, h5_xpos, h5_xquat, atol=1e-5)

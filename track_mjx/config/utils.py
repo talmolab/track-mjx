@@ -86,7 +86,7 @@ _TRACK_ENV_OVERRIDES_BY_ENV_NAME: dict[str, dict[str, Any]] = {
         "walker_xml_path": str(fruitfly_consts.FRUITFLY_XML_PATH),
         "arena_xml_path": str(fruitfly_consts.ARENA_XML_PATH),
         "reference_data_path": _resolve_data_path(
-            "data/fruitfly/fly_reference_clip.h5"
+            "data/fruitfly/fly_reference_clip.legacy.h5"
         ),
     },
 }

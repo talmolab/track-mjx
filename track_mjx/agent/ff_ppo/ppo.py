@@ -194,6 +194,8 @@ def train(
     max_devices_per_host: int | None = None,
     num_eval_envs: int = 128,
     learning_rate: float = 1e-4,
+    learning_rate_min: float | None = None,
+    lr_decay_start_steps: int | None = None,
     entropy_cost: float = 1e-4,
     latent_kl_weight: float = 1e-3,
     latent_ar1_weight: float = 1e-3,
@@ -567,9 +569,38 @@ def train(
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     grad_clip_threshold = 20.0
+    if learning_rate_min is not None:
+        # Optax schedules count gradient updates, not env steps. Convert env
+        # step boundaries into grad-update counts.
+        grad_updates_per_training_step = int(num_updates_per_batch) * int(num_minibatches)
+        total_grad_updates = (
+            int(num_evals_after_init) * int(num_training_steps_per_epoch)
+            * grad_updates_per_training_step
+        )
+        if lr_decay_start_steps is None or lr_decay_start_steps <= 0:
+            hold_grad_updates = 0
+            decay_grad_updates = total_grad_updates
+        else:
+            # Convert hold duration from env steps to grad updates.
+            hold_training_steps = int(lr_decay_start_steps) // int(env_step_per_training_step)
+            hold_grad_updates = hold_training_steps * grad_updates_per_training_step
+            decay_grad_updates = max(total_grad_updates - hold_grad_updates, 1)
+        logging.info(
+            f"LR schedule: hold {learning_rate} for {hold_grad_updates} grad updates "
+            f"(~{hold_grad_updates * env_step_per_training_step // grad_updates_per_training_step:_} env steps), "
+            f"then linearly decay to {learning_rate_min} over {decay_grad_updates} grad updates."
+        )
+        lr_schedule = optax.linear_schedule(
+            init_value=learning_rate,
+            end_value=learning_rate_min,
+            transition_steps=decay_grad_updates,
+            transition_begin=hold_grad_updates,
+        )
+    else:
+        lr_schedule = learning_rate
     optimizer = optax.chain(
         optax.clip_by_global_norm(grad_clip_threshold),
-        optax.adamw(learning_rate=learning_rate, weight_decay=0.0, eps=1e-5),
+        optax.adamw(learning_rate=lr_schedule, weight_decay=0.0, eps=1e-5),
     )
 
     latent_kl_schedule = None

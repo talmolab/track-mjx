@@ -99,3 +99,54 @@ def test_resolve_body_names_aborts_on_mismatch():
     import pytest
     with pytest.raises(ValueError, match="no MJCF match"):
         resolve_body_names(model, model_xpos, model_xquat, h5_xpos, h5_xquat, atol=1e-5)
+
+
+import yaml
+
+
+def test_convert_end_to_end_produces_valid_legacy_h5(tiny_fly_named_h5, tmp_path):
+    """Run the converter on the synthetic fixture and check the output H5
+    satisfies the legacy schema."""
+    from scripts.convert_fly_reference_to_legacy import convert
+
+    output = tmp_path / "tiny_fly_legacy.h5"
+    # Use the real fly MJCF; the fixture is synthetic but shapes match what
+    # the converter expects (68 bodies in H5 vs 69 in MJCF — body resolution
+    # will tolerate this because the synthetic H5's body data was generated
+    # with the same random seed and we relax atol).
+    # NOTE: because the synthetic H5's body positions are RANDOM (not derived
+    # from mj_forward on a known qpos), this end-to-end test must skip the
+    # body-name resolution step. Use convert(..., skip_body_resolution=True).
+    convert(
+        input_path=str(tiny_fly_named_h5),
+        output_path=str(output),
+        fly_xml=str(DEFAULT_FLY_XML),
+        skip_body_resolution=True,
+    )
+
+    import h5py
+    with h5py.File(output) as f:
+        assert "qpos" in f
+        assert "qvel" in f
+        assert "xpos" in f
+        assert "xquat" in f
+        assert "names_qpos" in f
+        assert "names_xpos" in f
+        assert "config" in f
+
+        # Flat layout: 2 clips * 5 frames = 10
+        assert f["qpos"].shape == (10, 43)
+        assert f["qvel"].shape == (10, 42)
+        assert f["xpos"].shape == (10, 68, 3)
+        assert f["xquat"].shape == (10, 68, 4)
+        assert f["names_qpos"].shape == (43,)
+        # names_xpos size matches H5 body count when skipped: synthesized fallback
+        assert f["names_xpos"].shape == (68,)
+
+    # Verify YAML config has snips_order
+    with h5py.File(output) as f:
+        config = yaml.safe_load(f["config"][()])
+    assert "model" in config
+    assert config["model"]["SCALE_FACTOR"] == 1.0
+    assert len(config["model"]["snips_order"]) == 2
+    assert config["model"]["snips_order"][0] == "clip_0000"

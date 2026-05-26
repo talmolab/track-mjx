@@ -880,6 +880,8 @@ def load_from_run_state(
     if cfg.train_setup.checkpoint_to_restore is not None:
         checkpoint_to_restore = _resolve_path(cfg.train_setup.checkpoint_to_restore)
         submitted_timesteps = cfg.train_setup.train_config.num_timesteps
+        submitted_eval_every = cfg.train_setup.eval_every
+        submitted_reset_every = cfg.train_setup.reset_every
 
         # Load checkpoint config
         cfg = OmegaConf.create(load_config_from_checkpoint(checkpoint_to_restore))
@@ -892,6 +894,19 @@ def load_from_run_state(
                 f"Updating num_timesteps: {restored_timesteps} -> {submitted_timesteps}"
             )
             cfg.train_setup.train_config.num_timesteps = submitted_timesteps
+
+        # Cadence params may legitimately change between runs (eval cost,
+        # reset frequency); honor the submitted values.
+        if submitted_eval_every != cfg.train_setup.eval_every:
+            logging.info(
+                f"Updating eval_every: {cfg.train_setup.eval_every} -> {submitted_eval_every}"
+            )
+            cfg.train_setup.eval_every = submitted_eval_every
+        if submitted_reset_every != cfg.train_setup.reset_every:
+            logging.info(
+                f"Updating reset_every: {cfg.train_setup.reset_every} -> {submitted_reset_every}"
+            )
+            cfg.train_setup.reset_every = submitted_reset_every
 
         checkpoint_path = checkpoint_to_restore
         run_id = os.path.basename(checkpoint_path)

@@ -22,6 +22,7 @@ Legacy format on disk (root level, flat):
 Usage:
     python -m scripts.convert_fly_reference_to_legacy <input.h5> <output.h5> [--fly-xml PATH]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -98,7 +99,9 @@ def resolve_body_names(
     names: list[str] = []
     for j in range(n_h5):
         pos_match = np.all(np.abs(model_xpos_frame - h5_xpos_frame[j]) <= atol, axis=-1)
-        quat_match = np.all(np.abs(model_xquat_frame - h5_xquat_frame[j]) <= atol, axis=-1)
+        quat_match = np.all(
+            np.abs(model_xquat_frame - h5_xquat_frame[j]) <= atol, axis=-1
+        )
         candidates = np.where(pos_match & quat_match)[0]
         # Filter out already-assigned bodies (tie-breaking for coincident bodies)
         available = [int(c) for c in candidates if int(c) not in used]
@@ -142,9 +145,7 @@ def _build_names_qpos(model) -> list[str]:
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
         names.append(name)
     if len(names) != model.nq:
-        raise ValueError(
-            f"names_qpos length {len(names)} != model.nq {model.nq}"
-        )
+        raise ValueError(f"names_qpos length {len(names)} != model.nq {model.nq}")
     return names
 
 
@@ -207,23 +208,30 @@ def convert(
     # --- self-checks ---
     if joints.shape[-1] != model.nq - 7:
         raise ValueError(
-            f"joints last dim {joints.shape[-1]} != model.nq - 7 "
-            f"({model.nq - 7})"
+            f"joints last dim {joints.shape[-1]} != model.nq - 7 " f"({model.nq - 7})"
         )
     _check_quat_norms(quaternion, "root quaternion")
     _check_quat_norms(body_quaternions, "body_quaternions")
 
     qpos, qvel = build_qpos_qvel(
-        position, quaternion, joints,
-        velocity, angular_velocity, joints_velocity,
+        position,
+        quaternion,
+        joints,
+        velocity,
+        angular_velocity,
+        joints_velocity,
     )
 
     # qpos round-trip via mj_forward at (clip 0, frame 0)
     data = mujoco.MjData(model)
     data.qpos[:] = qpos[0, 0]
     mujoco.mj_forward(model, data)
-    np.testing.assert_allclose(np.asarray(data.qpos), qpos[0, 0], atol=1e-6,
-        err_msg="qpos round-trip via mj_forward failed at (clip 0, frame 0)")
+    np.testing.assert_allclose(
+        np.asarray(data.qpos),
+        qpos[0, 0],
+        atol=1e-6,
+        err_msg="qpos round-trip via mj_forward failed at (clip 0, frame 0)",
+    )
 
     # Body name resolution
     if skip_body_resolution:
@@ -266,10 +274,14 @@ def convert(
         # (so position_{f+1} - position_{f} ~ velocity_f * dt). Compute the
         # implied dt and check it's roughly constant (low CV).
         with np.errstate(divide="ignore", invalid="ignore"):
-            implied = fd_pos / np.where(np.abs(velocity[c, :-1]) > 1e-6, velocity[c, :-1], np.nan)
+            implied = fd_pos / np.where(
+                np.abs(velocity[c, :-1]) > 1e-6, velocity[c, :-1], np.nan
+            )
         # We just check the field is non-degenerate
         if not np.isfinite(implied).any():
-            raise ValueError("qvel finite-difference check: velocity field appears degenerate")
+            raise ValueError(
+                "qvel finite-difference check: velocity field appears degenerate"
+            )
 
     # Flatten to (n_clips * n_frames, ...)
     qpos_flat = qpos.reshape(n_clips * n_frames, -1)

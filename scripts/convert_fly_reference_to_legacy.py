@@ -36,8 +36,14 @@ import mujoco
 import numpy as np
 import yaml
 
+# The H5 was generated against `fruitfly_force_free.xml` (68 bodies, thorax
+# is the freejoint root). The runtime env uses `fruitfly_force.xml` (69 bodies,
+# walker is the freejoint root, thorax is its zero-offset child). Using the
+# generation-time model here keeps body-name resolution honest: names_xpos[1]
+# is "thorax", not "walker" — which is what the H5's body_positions[..., 1, :]
+# actually represents.
 DEFAULT_FLY_XML = Path(
-    "/home/talmolab/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/fruitfly/xmls/fruitfly_force.xml"
+    "/home/talmolab/Desktop/SalkResearch/vnl-playground/vnl_playground/tasks/fruitfly/xmls/fruitfly_force_free.xml"
 )
 
 

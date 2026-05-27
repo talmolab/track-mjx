@@ -1,6 +1,11 @@
-"""Convert fly imitation reference H5 from named/semantic format to rat-style legacy flat format.
+"""Convert fly imitation reference H5 from named/semantic format to the rat-style
+legacy flat format used by every walker (rodent, stick, fly).
 
-Named format on disk (under /all_clips/):
+By convention, the canonical reference file is ``data/fly/fly_reference_clip.h5``
+in the post-migration (legacy) format. The source named-format file is preserved
+alongside as ``fly_reference_clip.named.h5`` for provenance until validated.
+
+Source (named) format, under ``/all_clips/``:
     position          (n_clips, n_frames, 3)
     quaternion        (n_clips, n_frames, 4)         [w, x, y, z]
     velocity          (n_clips, n_frames, 3)
@@ -10,7 +15,7 @@ Named format on disk (under /all_clips/):
     body_positions    (n_clips, n_frames, n_bodies, 3)
     body_quaternions  (n_clips, n_frames, n_bodies, 4)
 
-Legacy format on disk (root level, flat):
+Output (legacy) format at root level, flattened to (n_clips * n_frames, ...):
     qpos        (n_clips * n_frames, n_qpos)
     qvel        (n_clips * n_frames, n_qvel)
     xpos        (n_clips * n_frames, n_bodies, 3)
@@ -19,8 +24,11 @@ Legacy format on disk (root level, flat):
     names_xpos  (n_bodies,) strings
     config      ()          YAML string
 
-Usage:
-    python -m scripts.convert_fly_reference_to_legacy <input.h5> <output.h5> [--fly-xml PATH]
+Usage (from the track-mjx repo root):
+    python -m scripts.convert_fly_reference_to_legacy \\
+        data/fly/fly_reference_clip.named.h5 \\
+        data/fly/fly_reference_clip.h5 \\
+        [--fly-xml PATH]
 """
 
 from __future__ import annotations

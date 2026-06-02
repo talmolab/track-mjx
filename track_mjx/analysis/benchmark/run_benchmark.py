@@ -91,8 +91,12 @@ def benchmark_one(cfg, num_envs: int, reps: int, warmup: int) -> dict[str, Any]:
 
 
 def run(config_path: str, num_envs_list: list[int], reps: int, warmup: int,
-        out_dir: str, variant: str) -> pd.DataFrame:
-    cfg, cfg_dict, _ = prepare_config(OmegaConf.load(config_path))
+        out_dir: str, variant: str, overrides: list[str] | None = None) -> pd.DataFrame:
+    raw_cfg = OmegaConf.load(config_path)
+    if overrides:  # dotlist overrides applied before default-merge, e.g. env_config.mujoco_impl=jax
+        OmegaConf.set_struct(raw_cfg, False)
+        raw_cfg = OmegaConf.merge(raw_cfg, OmegaConf.from_dotlist(overrides))
+    cfg, cfg_dict, _ = prepare_config(raw_cfg)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -185,8 +189,11 @@ def main() -> None:
     p.add_argument("--warmup", type=int, default=5)
     p.add_argument("--out", default="analysis/2026-06-01-mimicmjx-step-time-breakdown")
     p.add_argument("--variant", default="rodent_mlp")
+    p.add_argument("--override", nargs="*", default=None,
+                   help="OmegaConf dotlist overrides, e.g. env_config.mujoco_impl=jax")
     args = p.parse_args()
-    run(args.config, args.num_envs, args.reps, args.warmup, args.out, args.variant)
+    run(args.config, args.num_envs, args.reps, args.warmup, args.out, args.variant,
+        overrides=args.override)
 
 
 if __name__ == "__main__":

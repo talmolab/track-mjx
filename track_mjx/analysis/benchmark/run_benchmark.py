@@ -24,32 +24,47 @@ from track_mjx.analysis.benchmark import timing, components, policy_factory
 
 
 def assemble_row(num_envs: int, res: dict, thr: dict, ctrl_dt: float) -> dict[str, Any]:
-    """Per-env amortized ms + real-time + throughput for one num_envs config."""
-    n = num_envs
-    policy_ms = res["policy"]["median_ms"] / n
-    mujoco_ms = res["mujoco"]["median_ms"] / n
-    rl_env_ms = res["rl_env"]["median_ms"] / n
-    total_ms = res["full_step"]["median_ms"] / n
-    component_sum_ms = policy_ms + mujoco_ms + rl_env_ms
-    real_time_ms = ctrl_dt * 1e3
+    """Two clearly-separated views for one num_envs config.
 
-    batch_wall_ms = thr["per_step_ms"]            # throughput regime, batch ms/step
-    env_steps_per_s = n / (batch_wall_ms / 1e3)
-    sim_s_per_wall_s = n * ctrl_dt / (batch_wall_ms / 1e3)
+    (A) Cost breakdown: per-env *amortized* component times (batch wall / num_envs),
+        reported in microseconds. ``env_step`` is the fused RL-env + MuJoCo (no policy);
+        ``control_step`` = Policy + env.step (the full per-env step cost).
+    (B) Speed: ``batch_wall_ms`` is the ACTUAL wall time for one batched control step
+        (all envs advance in lockstep). The single-env real-time factor is
+        ``ctrl_dt / batch_wall`` (NOT divided by num_envs) — it falls below 100% as the
+        batch grows. Aggregate throughput (env-steps/s, sim-s per wall-s) rises instead.
+    """
+    n = num_envs
+    ctrl_dt_ms = ctrl_dt * 1e3
+
+    # (A) per-env amortized component times (ms -> us), per-step latency regime
+    policy_ms = res["policy"]["median_ms"] / n
+    rl_env_ms = res["rl_env"]["median_ms"] / n
+    mujoco_ms = res["mujoco"]["median_ms"] / n
+    env_step_ms = res["full_step"]["median_ms"] / n         # fused RL-env + MuJoCo, NO policy
+    control_step_ms = policy_ms + env_step_ms               # full per-env control step
+    component_sum_ms = policy_ms + rl_env_ms + mujoco_ms    # cross-check (isolated parts)
+
+    # (B) actual batch wall time per control step (throughput regime: policy + env.step)
+    batch_wall_ms = thr["per_step_ms"]
+    one_env_realtime_pct = ctrl_dt_ms / batch_wall_ms * 100.0 if batch_wall_ms else float("nan")
+    env_steps_per_s = n / (batch_wall_ms / 1e3) if batch_wall_ms else float("nan")
+    sim_s_per_wall_s = n * ctrl_dt / (batch_wall_ms / 1e3) if batch_wall_ms else float("nan")
 
     return {
         "num_envs": n,
         "status": "ok",
-        "policy_ms": policy_ms,
-        "rl_env_ms": rl_env_ms,
-        "mujoco_ms": mujoco_ms,
-        "total_ms": total_ms,
-        "component_sum_ms": component_sum_ms,
-        "fused_vs_sum_ratio": (total_ms / component_sum_ms) if component_sum_ms else float("nan"),
-        "real_time_ms": real_time_ms,
-        "pct_rt_total": real_time_ms / total_ms * 100 if total_ms else float("nan"),
-        "pct_rt_mujoco": real_time_ms / mujoco_ms * 100 if mujoco_ms else float("nan"),
-        "batch_wall_ms_per_step": batch_wall_ms,
+        # (A) breakdown, microseconds per env (amortized)
+        "policy_us": policy_ms * 1e3,
+        "rl_env_us": rl_env_ms * 1e3,
+        "mujoco_us": mujoco_ms * 1e3,
+        "env_step_us": env_step_ms * 1e3,
+        "control_step_us": control_step_ms * 1e3,
+        "component_sum_us": component_sum_ms * 1e3,
+        # (B) speed
+        "real_time_sim_ms": ctrl_dt_ms,
+        "batch_wall_ms": batch_wall_ms,
+        "one_env_realtime_pct": one_env_realtime_pct,
         "env_steps_per_s": env_steps_per_s,
         "sim_s_per_wall_s": sim_s_per_wall_s,
     }
@@ -121,28 +136,45 @@ def run(config_path: str, num_envs_list: list[int], reps: int, warmup: int,
 
 
 def render_markdown_table(rows: list[dict], title: str, skipped: list[dict] | None = None) -> str:
-    """flybody Table-5-style markdown. All component times per-env amortized (ms)."""
-    head = (
-        f"### mimic-mjx step-time breakdown — {title}\n\n"
-        "All component times are **per-env amortized** (batch wall-clock ÷ num_envs), in **ms**.\n"
-        "`Total` is the true fused control step; `Σ comp` is Policy+RL env+MuJoCo (differs from "
-        "Total due to XLA fusion). % RT = ctrl_dt / time.\n\n"
-        "| num_envs | Policy | RL env | MuJoCo | Total | Σ comp | RT sim (ms) | % RT total | % RT MuJoCo | env-steps/s | sim-s/wall-s |\n"
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
-    )
-    body = ""
-    for r in rows:
-        body += (
-            f"| {r['num_envs']} | {r['policy_ms']:.4f} | {r['rl_env_ms']:.4f} | "
-            f"{r['mujoco_ms']:.4f} | {r['total_ms']:.4f} | {r['component_sum_ms']:.4f} | "
-            f"{r['real_time_ms']:.1f} | {r['pct_rt_total']:.1f}% | {r['pct_rt_mujoco']:.1f}% | "
-            f"{r['env_steps_per_s']:,.0f} | {r['sim_s_per_wall_s']:,.1f} |\n"
-        )
+    """Two clear tables: (A) per-env cost breakdown, (B) real-time + throughput."""
     note = ""
     if skipped:
         note = "\n**Skipped/failed:** " + ", ".join(
             f"num_envs={r['num_envs']} ({r['status']})" for r in skipped) + "\n"
-    return head + body + note
+    if not rows:
+        return f"### mimic-mjx step-time breakdown — {title}\n\n_No successful rows._\n" + note
+
+    rt_sim = rows[0]["real_time_sim_ms"]
+    table_a = (
+        f"### mimic-mjx step-time breakdown — {title}\n\n"
+        "**Table A — where the time goes** — per-env *amortized* cost (batch wall-clock ÷ num_envs), "
+        "in **µs/env**. `env.step` = fused RL-env + MuJoCo (no policy); `control step` = Policy + env.step.\n"
+        "_Caveat: at large batch, Policy and RL env are dispatch-floor-limited (≈ GPU kernel-launch "
+        "latency, not compute) — read them as 'negligible', not exact. MuJoCo/control-step scale with "
+        "real compute and are trustworthy._\n\n"
+        "| num_envs | Policy (µs) | RL env (µs) | MuJoCo (µs) | env.step (µs) | control step (µs) |\n"
+        "|---:|---:|---:|---:|---:|---:|\n"
+    )
+    for r in rows:
+        table_a += (
+            f"| {r['num_envs']} | {r['policy_us']:.3f} | {r['rl_env_us']:.3f} | "
+            f"{r['mujoco_us']:.3f} | {r['env_step_us']:.3f} | {r['control_step_us']:.3f} |\n"
+        )
+
+    table_b = (
+        f"\n**Table B — speed** — one control step advances **{rt_sim:.0f} ms** of simulated time. "
+        "`batch wall/step` is the ACTUAL wall time for one step of all envs (they advance in lockstep). "
+        "`1-env real-time` = ctrl_dt ÷ batch-wall (a *single* env's speed vs wall-clock; "
+        ">100% = faster than real time; falls as batch grows). Throughput columns are *aggregate* over all envs.\n\n"
+        "| num_envs | batch wall/step (ms) | 1-env real-time | env-steps/s (all) | sim-s per wall-s (all) |\n"
+        "|---:|---:|---:|---:|---:|\n"
+    )
+    for r in rows:
+        table_b += (
+            f"| {r['num_envs']} | {r['batch_wall_ms']:.2f} | {r['one_env_realtime_pct']:.1f}% | "
+            f"{r['env_steps_per_s']:,.0f} | {r['sim_s_per_wall_s']:,.1f} |\n"
+        )
+    return table_a + table_b + note
 
 
 def main() -> None:

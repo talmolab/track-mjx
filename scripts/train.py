@@ -80,11 +80,15 @@ def main(cfg: DictConfig) -> None:
     # Create the reference clips using registry, get environment name from config
     logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
     env_name = cfg.env_config.env_name
+    default_config = registry.get_default_config(env_name)
+
     reference_clips = registry.load_reference_clips(
         env_name,
         data_path=cfg.env_config.reference_data_path,
         n_frames_per_clip=cfg.env_config.clip_length,
         keep_clips_idx=cfg.env_config.keep_clips_idx,
+        joint_names=cfg.env_config.get("joints", default_config.get("joints", None)),
+        body_names=cfg.env_config.get("bodies", default_config.get("bodies", None)),
     )
     # Create train/test split
     key_split, _ = jax.random.split(

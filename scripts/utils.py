@@ -119,9 +119,17 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
     # Network factory
     policy_sizes = tuple(int(x) for x in args.policy_hidden_sizes.split(","))
     value_sizes = tuple(int(x) for x in args.value_hidden_sizes.split(","))
+    distribution_type = args.distribution_type
+    state_dependent_std = False
+    init_noise_std = args.init_noise_std
+    if distribution_type == "normal":
+        state_dependent_std = True
     params["network_factory"] = config_dict.create(
         policy_hidden_layer_sizes=policy_sizes,
         value_hidden_layer_sizes=value_sizes,
+        distribution_type=distribution_type,
+        state_dependent_std=state_dependent_std,
+        init_noise_std=init_noise_std,
     )
 
     # Apply CLI overrides (None means "use default")
@@ -304,6 +312,19 @@ def create_base_parser(
         type=str,
         default="1024,512,256",
         help="Comma-separated value hidden layer sizes (default: 1024,512,256)",
+    )
+    parser.add_argument(
+        "--distribution_type",
+        type=str,
+        default="tanh_normal",
+        help="Distribution type (default: tanh_normal)",
+        choices=["tanh_normal", "normal"],
+    )
+    parser.add_argument(
+        "--init_noise_std",
+        type=float,
+        default=1.0,
+        help="Initial noise std (default: 0.0)",
     )
 
     # Env config overrides

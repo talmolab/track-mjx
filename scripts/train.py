@@ -94,8 +94,8 @@ def main(cfg: DictConfig) -> None:
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
-    logging.info(f"Training on {len(train_clips)} clips: {train_clips}")
-    logging.info(f"Testing on {len(test_clips)} clips: {test_clips}")
+    logging.info(f"Training on {train_clips.qpos.shape[0]} clips")
+    logging.info(f"Testing on {test_clips.qpos.shape[0]} clips")
     # Create environments using registry
     env = rodent_wrappers.TrackMjxObsWrapper(
         registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)

@@ -257,6 +257,7 @@ def main(cfg: DictConfig):
     # Run training
     train_fn(environment=env, eval_env=eval_env, policy_params_fn=policy_params_fn)
     print("Training complete!")
+    wandb.finish()
 
 
 if __name__ == "__main__":

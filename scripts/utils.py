@@ -206,6 +206,7 @@ def create_policy_params_fn(
     jit_reset,
     jit_step,
     jit_logging_inference_fn,
+    rollout_metrics=None,
 ):
     """Create the policy_params_fn for evaluation and checkpointing."""
 
@@ -304,7 +305,9 @@ def create_policy_params_fn(
         orbax_checkpointer.save(path, params, force=True, save_args=save_args)
 
     return functools.partial(
-        policy_params_fn, jit_logging_inference_fn=jit_logging_inference_fn
+        policy_params_fn,
+        jit_logging_inference_fn=jit_logging_inference_fn,
+        rollout_metrics=rollout_metrics,
     )
 
 

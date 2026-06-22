@@ -1,7 +1,9 @@
 task:
 env_overrides:
 seed: 0
-mimic_checkpoint: "260210_013247_285744"
+mimic:
+  checkpoint: "260210_013247_285744"
+  step: null
 checkpoint_dir: highlvl_checkpoints
 obs_keys:
   highlvl: task_obs

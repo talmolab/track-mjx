@@ -17,7 +17,7 @@ env_config:
   rescale_factor: 1.0
 
   # MuJoCo backend: "jax" or "warp"
-  mujoco_impl: "warp"
+  mujoco_impl: "jax"
 
   # ---------------------------------------------------------------------------
   # Physics Solver Settings

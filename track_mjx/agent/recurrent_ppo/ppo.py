@@ -15,9 +15,9 @@ Key features:
 
 import functools
 import time
-from typing import Any, Callable, Tuple
+from collections.abc import Callable
+from typing import Any
 
-import flax
 import flax.struct
 import jax
 import jax.numpy as jnp
@@ -27,17 +27,19 @@ import orbax.checkpoint as ocp
 from absl import logging
 from brax import base, envs
 from brax.training import pmap, types
+from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
 
-from brax.training.acme import running_statistics
-
 from track_mjx.agent import checkpointing, gradients
-from track_mjx.agent.recurrent_ppo import losses, networks
 from track_mjx.agent.observation_utils import (
-    get_obs_sizes,
     get_obs_shape,
+    get_obs_sizes,
 )
+from track_mjx.agent.recurrent_ppo import losses, networks
+from track_mjx.device_utils import patch_brax_pmap_compat, replicate_for_pmap
+
+patch_brax_pmap_compat()
 
 # Type aliases
 InferenceParams = tuple[running_statistics.RunningStatisticsState, Params]
@@ -69,7 +71,7 @@ class TrainingState:
 
 def _unpmap(v: Any) -> Any:
     """Extract first device's values from a pmap'd pytree."""
-    return jax.tree_util.tree_map(lambda x: x[0], v)
+    return jax.tree.map(lambda x: x[0], v)
 
 
 def _strip_weak_type(tree: Any) -> Any:
@@ -79,7 +81,7 @@ def _strip_weak_type(tree: Any) -> Any:
         leaf = jnp.asarray(leaf)
         return leaf.astype(leaf.dtype)
 
-    return jax.tree_util.tree_map(f, tree)
+    return jax.tree.map(f, tree)
 
 
 def actor_step_rnn(
@@ -90,7 +92,7 @@ def actor_step_rnn(
     key: PRNGKey,
     extra_fields: tuple = (),
     cell_type: networks.RNNCellType = "gru",
-) -> Tuple[envs.State, types.Transition, HiddenState | list[HiddenState]]:
+) -> tuple[envs.State, types.Transition, HiddenState | list[HiddenState]]:
     """Collect one step with recurrent policy.
 
     Args:
@@ -137,7 +139,7 @@ def generate_unroll_rnn(
     unroll_length: int,
     extra_fields: tuple = (),
     cell_type: networks.RNNCellType = "gru",
-) -> Tuple[envs.State, types.Transition, HiddenState | list[HiddenState]]:
+) -> tuple[envs.State, types.Transition, HiddenState | list[HiddenState]]:
     """Collect trajectory with recurrent policy.
 
     Args:
@@ -332,7 +334,7 @@ def train(
     vf_loss_coefficient: float = 0.5,
     eval_env: envs.Env | None = None,
     eval_env_test_set: envs.Env | None = None,
-    policy_params_fn: Callable[..., None] = lambda *args: None,
+    policy_params_fn: Callable[..., None] = lambda *args, **kwargs: None,
     randomization_fn: (
         Callable[[base.System, jnp.ndarray], tuple[base.System, base.System]] | None
     ) = None,
@@ -425,7 +427,7 @@ def train(
         )
     ).astype(int)
 
-    key = jax.random.PRNGKey(seed)
+    key = jax.random.key(seed)
     global_key, local_key = jax.random.split(key)
     del key
     local_key = jax.random.fold_in(local_key, process_id)
@@ -452,7 +454,7 @@ def train(
         return env.reset(key_envs)
 
     key_envs = jax.random.split(key_env, num_envs // process_count)
-    key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
+    key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1, *key_envs.shape[1:]))
     if local_devices_to_use > 1 or use_pmap_on_reset:
         reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
         env_state = reset_fn_(key_envs)
@@ -582,10 +584,10 @@ def train(
 
         def convert_data(x: jnp.ndarray):
             x = jax.random.permutation(key_perm, x)
-            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
+            x = jnp.reshape(x, (num_minibatches, -1, *x.shape[1:]))
             return x
 
-        shuffled_data = jax.tree_util.tree_map(convert_data, data)
+        shuffled_data = jax.tree.map(convert_data, data)
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, key_grad, it),
@@ -595,10 +597,10 @@ def train(
         return (optimizer_state, params, key, it), metrics
 
     def training_step(
-        carry: Tuple[TrainingState, envs.State, list[HiddenState], PRNGKey, int],
+        carry: tuple[TrainingState, envs.State, list[HiddenState], PRNGKey, int],
         unused_t,
-    ) -> Tuple[
-        Tuple[TrainingState, envs.State, list[HiddenState], PRNGKey, int], Metrics
+    ) -> tuple[
+        tuple[TrainingState, envs.State, list[HiddenState], PRNGKey, int], Metrics
     ]:
         training_state, state, policy_hidden, key, it = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
@@ -631,13 +633,10 @@ def train(
         )
 
         # Reshape: (num_unrolls, unroll_length, envs_per_device) -> (batch, unroll_length)
-        data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        data = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
-        )
-        # Reshape initial hidden states similarly
-        initial_policy_hidden = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]),
+        data = jax.tree.map(lambda x: jnp.swapaxes(x, 1, 2), data)
+        data = jax.tree.map(lambda x: jnp.reshape(x, (-1, *x.shape[2:])), data)
+        initial_policy_hidden = jax.tree.map(
+            lambda x: jnp.reshape(x, (-1, *x.shape[2:])),
             initial_policy_hidden,
         )
         assert data.discount.shape[1:] == (unroll_length,)
@@ -678,9 +677,10 @@ def train(
             optimizer_state=optimizer_state,
             params=params,
             normalizer_params=normalizer_params,
-            env_steps=jnp.int32(
+            env_steps=jnp.asarray(
                 training_state.env_steps
-                + env_step_per_training_step / STEPS_IN_THOUSANDS
+                + env_step_per_training_step / STEPS_IN_THOUSANDS,
+                dtype=jnp.int32,
             ),
         )
         return (new_training_state, state, policy_hidden, new_key, it), metrics
@@ -691,14 +691,14 @@ def train(
         policy_hidden: list[HiddenState],
         key: PRNGKey,
         it: int,
-    ) -> Tuple[TrainingState, envs.State, list[HiddenState], Metrics]:
+    ) -> tuple[TrainingState, envs.State, list[HiddenState], Metrics]:
         (training_state, state, policy_hidden, _, _), loss_metrics = jax.lax.scan(
             training_step,
             (training_state, state, policy_hidden, key, it),
             (),
             length=num_training_steps_per_epoch,
         )
-        loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
+        loss_metrics = jax.tree.map(jnp.mean, loss_metrics)
         return training_state, state, policy_hidden, loss_metrics
 
     training_epoch = jax.pmap(
@@ -715,7 +715,7 @@ def train(
         policy_hidden: list[HiddenState],
         key: PRNGKey,
         it: int,
-    ) -> Tuple[TrainingState, envs.State, list[HiddenState], Metrics]:
+    ) -> tuple[TrainingState, envs.State, list[HiddenState], Metrics]:
         nonlocal training_walltime
         t = time.time()
         training_state, env_state, policy_hidden = _strip_weak_type(
@@ -725,8 +725,8 @@ def train(
         result = training_epoch(training_state, env_state, policy_hidden, key, step)
         training_state, env_state, policy_hidden, metrics = _strip_weak_type(result)
 
-        metrics = jax.tree_util.tree_map(jnp.mean, metrics)
-        jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
+        metrics = jax.tree.map(jnp.mean, metrics)
+        jax.tree.map(lambda x: x.block_until_ready(), metrics)
 
         epoch_training_time = time.time() - t
         training_walltime += epoch_training_time
@@ -743,16 +743,13 @@ def train(
         return training_state, env_state, policy_hidden, metrics
 
     # Replicate training state across devices
-    training_state = jax.device_put_replicated(
-        training_state, jax.local_devices()[:local_devices_to_use]
-    )
+    devices = jax.local_devices()[:local_devices_to_use]
+    training_state = replicate_for_pmap(training_state, devices)
 
     # Initialize policy hidden state for each device
     # Shape: [devices, envs_per_device, hidden_size]
     policy_hidden = recurrent_ppo_network.policy_network.init_hidden(envs_per_device)
-    policy_hidden = jax.device_put_replicated(
-        policy_hidden, jax.local_devices()[:local_devices_to_use]
-    )
+    policy_hidden = replicate_for_pmap(policy_hidden, devices)
 
     # Setup evaluation
     if eval_env is None:
@@ -833,7 +830,7 @@ def train(
             if checkpoint_callback is not None:
                 try:
                     checkpoint_callback(0)
-                except (OSError, IOError) as e:
+                except OSError as e:
                     logging.error(
                         f"Initial checkpoint callback failed with I/O error: {e}. "
                         "Training will continue but checkpoint state may be incomplete."
@@ -869,9 +866,7 @@ def train(
                 policy_hidden = recurrent_ppo_network.policy_network.init_hidden(
                     envs_per_device
                 )
-                policy_hidden = jax.device_put_replicated(
-                    policy_hidden, jax.local_devices()[:local_devices_to_use]
-                )
+                policy_hidden = replicate_for_pmap(policy_hidden, devices)
 
         if process_id == 0:
             policy_param = _unpmap(

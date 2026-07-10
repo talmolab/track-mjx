@@ -14,21 +14,24 @@ import hydra
 import jax
 import orbax.checkpoint as ocp
 import wandb
+from brax.training.distribution import NormalTanhDistribution
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 
-from track_mjx.config import utils
 from track_mjx.agent import checkpointing, wandb_logging
-from track_mjx.agent.ff_ppo import ppo as ff_ppo, ppo_networks as ff_networks
+from track_mjx.agent.distribution import NormalSigmoidDistribution
+from track_mjx.agent.domain_randomization import domain_randomization_maker
+from track_mjx.agent.ff_ppo import ppo as ff_ppo
+from track_mjx.agent.ff_ppo import ppo_networks as ff_networks
 from track_mjx.agent.recurrent_ppo import (
-    ppo as recurrent_ppo,
     networks as recurrent_networks,
 )
-from track_mjx.agent.domain_randomization import domain_randomization_maker
-from track_mjx.agent.distribution import NormalSigmoidDistribution
-from brax.training.distribution import NormalTanhDistribution
+from track_mjx.agent.recurrent_ppo import (
+    ppo as recurrent_ppo,
+)
+from track_mjx.config import utils
 
 
 def _setup_environment() -> None:
@@ -67,17 +70,14 @@ def main(cfg: DictConfig) -> None:
     # between discovery and saving (prepare_config modifies cfg by adding paths)
     cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
 
-    # Determine how to load from checkpoint
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
 
-    # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
         create=True,
         step_prefix="PPONetwork",
     )
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 
-    # Create the reference clips using registry, get environment name from config
     logging.info(f"Loading data: {cfg.env_config.reference_data_path}")
     env_name = cfg.env_config.env_name
     default_config = registry.get_default_config(env_name)
@@ -90,17 +90,13 @@ def main(cfg: DictConfig) -> None:
         joint_names=cfg.env_config.get("joints", default_config.get("joints", None)),
         body_names=cfg.env_config.get("bodies", default_config.get("bodies", None)),
     )
-    # Create train/test split
-    key_split, _ = jax.random.split(
-        jax.random.PRNGKey(cfg.train_setup.train_config.seed)
-    )
+    key_split, _ = jax.random.split(jax.random.key(cfg.train_setup.train_config.seed))
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
         seed=key_split,
     )
     logging.info(f"Training on {len(train_clips)} clips: {train_clips}")
     logging.info(f"Testing on {len(test_clips)} clips: {test_clips}")
-    # Create environments using registry
     env = rodent_wrappers.TrackMjxObsWrapper(
         registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
     )
@@ -127,11 +123,9 @@ def main(cfg: DictConfig) -> None:
 
     logging.info("Using PPO Pipeline")
 
-    # Select network factory and train function based on architecture
     arch_name = cfg.network_config.get("arch_name", "intention")
     logging.info(f"Using architecture: {arch_name}")
 
-    # Validate architecture name
     valid_arch_names = {"intention", "recurrent_intention"}
     if arch_name not in valid_arch_names:
         raise ValueError(
@@ -184,7 +178,6 @@ def main(cfg: DictConfig) -> None:
         )
         ppo_module = ff_ppo
 
-    # Determine wandb run ID for resuming
     wandb_logging.initialize_wandb_logging(
         logging_cfg=cfg.logging_config,
         cfg=cfg,
@@ -194,7 +187,6 @@ def main(cfg: DictConfig) -> None:
     if xml is not None:
         wandb.log({"spec_file": wandb.Html(xml)}, commit=False)
 
-    # Save initial run state after wandb initialization
     if existing_run_state is None:
         checkpointing.save_run_state(
             cfg=cfg,
@@ -203,7 +195,6 @@ def main(cfg: DictConfig) -> None:
             wandb_run_id=wandb.run.id,
         )
 
-    # Create the checkpoint callback with the correct wandb_run_id
     checkpoint_callback = checkpointing.create_checkpoint_callback(
         cfg=cfg,
         run_id=run_id,
@@ -211,7 +202,6 @@ def main(cfg: DictConfig) -> None:
         wandb_run_id=wandb.run.id,
     )
 
-    # Build common training arguments
     train_kwargs = dict(
         **cfg.train_setup.train_config,
         num_evals=int(
@@ -261,7 +251,6 @@ def main(cfg: DictConfig) -> None:
         registry.load(env_name, config=rollout_cfg, clips=None, flatten_obs=False)
     )
 
-    # define the jit reset/step functions
     jit_reset = jax.jit(rollout_env.reset)
     jit_step = jax.jit(rollout_env.step)
     policy_params_fn = functools.partial(
@@ -279,7 +268,6 @@ def main(cfg: DictConfig) -> None:
         policy_params_fn=policy_params_fn,
     )
 
-    # Clean up run state after successful completion
     try:
         checkpointing.cleanup_run_state(cfg)
         logging.info("Training completed successfully, cleaned up run state")

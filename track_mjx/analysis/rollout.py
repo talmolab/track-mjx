@@ -7,12 +7,13 @@ Rollouts can be used for evaluation, visualization, or data collection.
 Supports both feedforward and recurrent policies.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import jax
-from mujoco_playground._src import mjx_env
 from jax import numpy as jnp
 from ml_collections import config_dict
+from mujoco_playground._src import mjx_env
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as vnl_wrappers
@@ -37,7 +38,7 @@ def create_environment(env_config: dict[str, Any] | DictConfig) -> mjx_env.MjxEn
     Example:
         >>> cfg, cfg_dict, env_cfg_ml = utils.prepare_config(cfg)
         >>> env = create_environment(cfg.env_config)
-        >>> state = env.reset(jax.random.PRNGKey(0))
+        >>> state = env.reset(jax.random.key(0))
         >>> print(state.obs.keys())  # dict_keys(['state', 'privileged_state'])
     """
     if isinstance(env_config, DictConfig):
@@ -114,7 +115,7 @@ def create_rollout_generator(
     jit_step = jax.jit(env.step)
 
     def generate_rollout(clip_idx: int | None = None, seed: int = 42) -> dict[str, Any]:
-        rollout_key = jax.random.PRNGKey(seed)
+        rollout_key = jax.random.key(seed)
         rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
         init_state = jit_reset(reset_rng, clip_idx=clip_idx, start_frame=0)

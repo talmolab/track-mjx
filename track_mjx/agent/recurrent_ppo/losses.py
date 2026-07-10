@@ -13,7 +13,7 @@ Key components:
 from collections.abc import Callable
 from typing import Any
 
-import flax
+import flax.struct
 import jax
 import jax.numpy as jnp
 from brax.training import types
@@ -143,7 +143,7 @@ def compute_recurrent_ppo_loss(
     initial_policy_hidden = data.extras["policy_extras"]["initial_policy_hidden"]
 
     # Put time dimension first: [B, T, ...] -> [T, B, ...]
-    data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+    data = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
     # Restore initial_policy_hidden from before the swapaxes operation.
     # It has no time dimension, so the swapaxes would corrupt it.
@@ -192,7 +192,7 @@ def compute_recurrent_ppo_loss(
     baseline = value_apply(normalizer_params, params.value, data.observation)
 
     # Get bootstrap value from last next observation
-    last_next_obs = jax.tree_util.tree_map(lambda x: x[-1], data.next_observation)
+    last_next_obs = jax.tree.map(lambda x: x[-1], data.next_observation)
     bootstrap_value = value_apply(normalizer_params, params.value, last_next_obs)
 
     rewards = data.reward * reward_scaling

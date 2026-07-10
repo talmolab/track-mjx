@@ -42,14 +42,16 @@ from datetime import datetime
 
 import jax
 import wandb
+
+from track_mjx.device_utils import enable_jit_cache, patch_brax_pmap_compat
+
+patch_brax_pmap_compat()
+enable_jit_cache()
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from etils import epath
 from mujoco_playground import wrapper
-
-from vnl_playground import registry
-from vnl_playground.tasks import wrappers as rodent_wrappers
 from utils import (
     apply_env_overrides,
     configure_warp_backend,
@@ -59,10 +61,14 @@ from utils import (
     get_training_params,
     make_logging_inference_fn,
     parse_env_overrides_str,
-    setup_jax_cache,
 )
+from vnl_playground import registry
+from vnl_playground.tasks import wrappers as rodent_wrappers
 
-setup_jax_cache()
+from track_mjx.device_utils import enable_jit_cache, patch_brax_pmap_compat
+
+patch_brax_pmap_compat()
+enable_jit_cache()
 
 
 def create_environments(task_name, env_cfg):
@@ -174,7 +180,10 @@ def main():
         value_obs_key=args.value_obs_key,
         **ppo_params.network_factory,
     )
-    normalize = lambda x, _y: x
+
+    def normalize(x, _y):
+        return x
+
     if training_params["normalize_observations"]:
         normalize = running_statistics.normalize
 
@@ -192,7 +201,7 @@ def main():
     # Setup logging
     jit_reset = jax.jit(env.reset)
     jit_step = jax.jit(env.step)
-    rng = jax.random.PRNGKey(args.seed)
+    rng = jax.random.key(args.seed)
     start_state = jit_reset(rng)
 
     # Get observation size as nested dict (Brax handles per-key extraction)

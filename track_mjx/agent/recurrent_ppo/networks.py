@@ -24,25 +24,24 @@ The value network uses 'state' by default (configurable via value_obs_key).
 
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 import flax
 import jax
 import jax.numpy as jnp
 from brax.training import distribution, networks, types
+from brax.training.acme import running_statistics
+from brax.training.distribution import NormalTanhDistribution
 from brax.training.types import PRNGKey
 from flax import linen as nn
-
-from brax.training.acme import running_statistics
 
 from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
 from track_mjx.agent.networks import make_dict_value_network
 from track_mjx.agent.observation_utils import normalizer_select
-from brax.training.distribution import NormalTanhDistribution
 
 # Type aliases
 RNNCellType = Literal["simple", "gru", "lstm"]
-HiddenState = Union[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]
+HiddenState = jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]
 ActivationFn = Callable[[jnp.ndarray], jnp.ndarray]
 Initializer = Callable[..., Any]
 
@@ -205,11 +204,7 @@ class RecurrentDecoder(nn.Module):
         for i, (cell, h) in enumerate(zip(self.rnn_cells, hidden_list)):
             new_h, _ = cell(h, rnn_input)
             new_hidden_list.append(new_h)
-            # For LSTM, new_h is the carry tuple (c, h); extract h for next layer input
-            if self.cell_type == "lstm":
-                rnn_input = new_h[1]  # h from (c, h) carry tuple
-            else:
-                rnn_input = new_h
+            rnn_input = new_h[1] if self.cell_type == "lstm" else new_h
             if get_activation:
                 activations[f"rnn_layer_{i}"] = rnn_input
 
@@ -422,7 +417,7 @@ def make_inference_fn(
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
             # Get first leaf array from nested observation structure
-            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaves = jax.tree.leaves(observations)
             obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys for deterministic replay
@@ -725,7 +720,7 @@ def make_recurrent_intention_ppo_networks(
         "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
-    dummy_key = jax.random.PRNGKey(0)
+    dummy_key = jax.random.key(0)
 
     def policy_init(key):
         dummy_hidden = [

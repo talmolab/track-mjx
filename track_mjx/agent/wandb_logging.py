@@ -6,7 +6,8 @@ training runs.
 """
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import imageio
 import jax
@@ -14,8 +15,6 @@ import mujoco
 import wandb
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
-
-from track_mjx.agent.ff_ppo import losses
 
 
 def rollout_logging_fn(
@@ -146,7 +145,7 @@ def _log_rollout_video(
     video_path = f"{model_path}/{current_step}.mp4"
 
     # Log per-step reward breakdowns
-    reward_names = [f"rewards/{k}" for k in env._config.reward_terms.keys()]
+    reward_names = [f"rewards/{k}" for k in env._config.reward_terms]
     metric_names = cfg.logging_config.get("rollout_metrics", reward_names)
     for metric in metric_names:
         if metric in rollout[0].metrics:
@@ -300,10 +299,7 @@ def wandb_progress(num_steps: int, metrics: dict[str, Any]) -> None:
     """
     metrics["num_steps_thousands"] = num_steps
     for metric in metrics:
-        if metric not in wandb.run.summary.keys():
-            if "reward" in metric or "episode_length" in metric:
-                mode = "max"
-            else:
-                mode = "mean"
+        if metric not in wandb.run.summary:
+            mode = "max" if "reward" in metric or "episode_length" in metric else "mean"
             wandb.run.define_metric(metric, summary=mode)
     wandb.log(metrics)

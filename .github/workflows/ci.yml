@@ -22,8 +22,12 @@ jobs:
 
       - name: Install linting tools
         run: |
-          pip install "black[jupyter]"
+          pip install ruff
 
-      - name: Run Black
+      - name: Run Ruff format check
         run: |
-          black --check track_mjx/ notebooks/ scripts/
+          ruff format --check track_mjx/ scripts/
+
+      - name: Run Ruff lint
+        run: |
+          ruff check track_mjx/ scripts/

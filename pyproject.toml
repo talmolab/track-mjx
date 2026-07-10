@@ -16,34 +16,27 @@ license = {text = "BSD-3-Clause"}
 classifiers = [
     "Programming Language :: Python :: 3.12"]
 dependencies = [
-    # JAX core (both platforms)
-    "jax>=0.8.2",
-    "jaxlib>=0.8.2",
+    "jax==0.10.2",
+    "jaxlib==0.10.2",
     "brax==0.14.0",
-    "flax",
-    "optax>=0.2.6",
-    "orbax-checkpoint",
-    # MuJoCo
-    "mujoco-mjx[warp]>=3.4.0",
-    # Rendering (EGL/osmesa support)
+    "flax==0.12.7",
+    "optax==0.2.8",
+    "orbax-checkpoint==0.12.0",
+    "mujoco-mjx[warp]==3.10.1",
     "PyOpenGL==3.1.9",
-    # Data & ML utilities
-    "numpy>=2.0.0",
+    "numpy==2.1.3",
     "h5py==3.12.1",
     "numba==0.61.0",
     "scikit-learn==1.7.2",
-    # Visualization
     "matplotlib==3.10.0",
     "seaborn==0.13.2",
-    "pandas",
+    "pandas==3.0.3",
     "mediapy==1.2.2",
     "imageio[ffmpeg]==2.37.0",
-    # Config & logging
     "hydra-core==1.3.2",
     "wandb==0.19.5",
-    # HuggingFace for model/data downloads
-    "huggingface-hub",
-    # Other utilities
+    "huggingface-hub==1.20.1",
+    "jaxtyping>=0.2.34",
     "playground",
     "ipykernel",
     "vnl-playground",
@@ -56,14 +49,15 @@ version = {attr = "track_mjx.version.__version__"}
 readme = {file = ["README.md"], content-type="text/markdown"}
 
 [project.optional-dependencies]
-cuda12 = ["jax[cuda12]>=0.8.2 ; sys_platform == 'linux'"]
-cuda13 = ["jax[cuda13]>=0.8.2 ; sys_platform == 'linux'"]
+cuda12 = ["jax[cuda12]==0.10.2 ; sys_platform == 'linux'"]
+cuda13 = ["jax[cuda13]==0.10.2 ; sys_platform == 'linux'"]
+typecheck = ["beartype>=0.19"]
 dev = [
     "pytest",
     "pytest-cov",
     "pytest-watch",
-    "black[jupyter]>=26.1.0",
-    "pydocstyle",
+    "ruff>=0.11",
+    "beartype>=0.19",
     "toml",
     "twine",
     "build",
@@ -82,16 +76,41 @@ Repository = "https://github.com/talmolab/track-mjx"
 [tool.setuptools.packages.find]
 exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
 
-[tool.black]
+[tool.ruff]
 line-length = 88
+target-version = "py312"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade (modernize syntax for target Python)
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking (move imports behind TYPE_CHECKING)
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "E501",    # line too long (formatter handles this)
+    "B008",    # function call in default arg (safe for functools.partial & initializers)
+    "B905",    # zip() without strict= (too noisy for JAX code)
+    "RUF059",  # unused unpacked variable (common in ML: train_fn returns are optional)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/train*.py" = ["E402"]  # env vars must be set before GPU library imports
+
+[tool.ruff.lint.isort]
+known-first-party = ["track_mjx"]
 
 [tool.uv.sources]
 vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.13" }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
-
-[pydocstyle]
-convention = "google"
-match-dir = "track_mjx"
 
 [dependency-groups]
 dev = [

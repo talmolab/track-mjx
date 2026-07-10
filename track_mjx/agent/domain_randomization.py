@@ -124,7 +124,7 @@ def domain_randomization_maker(
             dof_armature,
         ) = rand_dynamics(rng)
 
-        in_axes = jax.tree_util.tree_map(lambda x: None, model)
+        in_axes = jax.tree.map(lambda x: None, model)
         in_axes = in_axes.tree_replace(
             {
                 "geom_friction": 0,

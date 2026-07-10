@@ -26,7 +26,7 @@ intention networks, including:
 from collections.abc import Callable
 from typing import Any
 
-import flax
+import flax.struct
 import jax
 import jax.numpy as jnp
 from brax.training import types
@@ -227,7 +227,7 @@ def compute_ppo_loss(
     value_apply = ppo_network.value_network.apply
 
     # Put the time dimension first.
-    data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 0, 1), data)
+    data = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), data)
 
     # Check for stored policy_rng for deterministic stochastic layer replay
     policy_rng = data.extras["policy_extras"].get("policy_rng")
@@ -242,12 +242,12 @@ def compute_ppo_loss(
         # policy_rng has shape [T, B, 2] after swapaxes
         # data.observation is a dict where each leaf has shape [T, B, obs_dim]
         # Flatten [T, B] into single batch dim to avoid vmap (better for buffer donation)
-        obs_leaf = jax.tree_util.tree_leaves(data.observation)[0]
+        obs_leaf = jax.tree.leaves(data.observation)[0]
         T, B = obs_leaf.shape[:2]
 
         # Flatten observations [T, B, ...] -> [T*B, ...]
-        flat_obs = jax.tree_util.tree_map(
-            lambda x: x.reshape((T * B,) + x.shape[2:]),
+        flat_obs = jax.tree.map(
+            lambda x: x.reshape((T * B, *x.shape[2:])),
             data.observation,
         )
         # Flatten keys [T, B, 2] -> [T*B, 2]
@@ -259,14 +259,14 @@ def compute_ppo_loss(
         )
 
         # Reshape outputs back to [T, B, ...]
-        policy_logits = flat_logits.reshape((T, B) + flat_logits.shape[1:])
-        latent_mean = flat_mean.reshape((T, B) + flat_mean.shape[1:])
-        latent_logvar = flat_logvar.reshape((T, B) + flat_logvar.shape[1:])
+        policy_logits = flat_logits.reshape((T, B, *flat_logits.shape[1:]))
+        latent_mean = flat_mean.reshape((T, B, *flat_mean.shape[1:]))
+        latent_logvar = flat_logvar.reshape((T, B, *flat_logvar.shape[1:]))
 
     baseline = value_apply(normalizer_params, params.value, data.observation)
 
     # Get the last timestep from dict observation (tree_map handles dict structure)
-    last_next_obs = jax.tree_util.tree_map(lambda x: x[-1], data.next_observation)
+    last_next_obs = jax.tree.map(lambda x: x[-1], data.next_observation)
     bootstrap_value = value_apply(normalizer_params, params.value, last_next_obs)
 
     rewards = data.reward * reward_scaling

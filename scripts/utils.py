@@ -2,7 +2,7 @@
 
 import argparse
 import functools
-from typing import Any, Optional
+from typing import Any
 
 import imageio
 import jax
@@ -50,7 +50,7 @@ def apply_env_overrides(env_cfg: Any, overrides: dict) -> None:
             ) from e
 
 
-def parse_env_overrides_str(overrides_str: Optional[str]) -> dict:
+def parse_env_overrides_str(overrides_str: str | None) -> dict:
     """Parse space-separated key=value overrides string."""
     if not overrides_str:
         return {}
@@ -65,22 +65,6 @@ def parse_env_overrides_str(overrides_str: Optional[str]) -> dict:
         result[key] = parse_value(value)
     return result
 
-
-# ---------------------------------------------------------------------------
-# JAX cache setup
-# ---------------------------------------------------------------------------
-
-
-def setup_jax_cache():
-    """Enable persistent JAX compilation cache."""
-    jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-    jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-    jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-
-
-# ---------------------------------------------------------------------------
-# PPO parameter helpers
-# ---------------------------------------------------------------------------
 
 DEFAULT_PPO_PARAMS = {
     "num_timesteps": int(3e8),
@@ -116,7 +100,6 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
     """
     params = get_default_ppo_params(default_num_envs)
 
-    # Network factory
     policy_sizes = tuple(int(x) for x in args.policy_hidden_sizes.split(","))
     value_sizes = tuple(int(x) for x in args.value_hidden_sizes.split(","))
     params["network_factory"] = config_dict.create(
@@ -124,7 +107,6 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
         value_hidden_layer_sizes=value_sizes,
     )
 
-    # Apply CLI overrides (None means "use default")
     override_keys = [
         "entropy_cost",
         "episode_length",
@@ -143,11 +125,6 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
         params["num_timesteps"] = int(float(args.num_timesteps))
 
     return config_dict.create(**params)
-
-
-# ---------------------------------------------------------------------------
-# Logging / evaluation helpers
-# ---------------------------------------------------------------------------
 
 
 def get_training_params(ppo_params):
@@ -207,7 +184,7 @@ def create_policy_params_fn(
         wandb.log({"training/steps_k": steps_k}, commit=False)
 
         # Generate rollout with randomized initial state based on current_step
-        rng = jax.random.PRNGKey(current_step)
+        rng = jax.random.key(current_step)
         rng, reset_rng = jax.random.split(rng)
         state = jit_reset(reset_rng)
         rollout = [state]
@@ -235,13 +212,8 @@ def create_policy_params_fn(
     )
 
 
-# ---------------------------------------------------------------------------
-# Shared argparse
-# ---------------------------------------------------------------------------
-
-
 def create_base_parser(
-    description: str, epilog: Optional[str] = None
+    description: str, epilog: str | None = None
 ) -> argparse.ArgumentParser:
     """Create an ArgumentParser with the common args shared across scripts.
 
@@ -341,11 +313,6 @@ def create_base_parser(
     )
 
     return parser
-
-
-# ---------------------------------------------------------------------------
-# Warp backend configuration
-# ---------------------------------------------------------------------------
 
 
 def configure_warp_backend(

@@ -15,26 +15,25 @@ import os
 import socket
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+import flax.struct
 import jax
 import orbax.checkpoint as ocp
 from brax.training.acme import running_statistics, specs
 from brax.training.distribution import NormalTanhDistribution
-from track_mjx.agent.distribution import NormalSigmoidDistribution
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
+from track_mjx.agent.distribution import NormalSigmoidDistribution
 from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
+from track_mjx.agent.observation_utils import get_obs_shape
 from track_mjx.agent.recurrent_ppo import losses as recurrent_ppo_losses
 from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
-import flax
-from brax.training.acme import running_statistics, specs
-
-from track_mjx.agent.observation_utils import get_obs_shape
 
 
 @flax.struct.dataclass
@@ -661,7 +660,7 @@ def _read_json_with_lock(file_path: Path) -> dict[str, Any] | None:
         return None
 
     try:
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             data = json.load(f)
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
@@ -858,7 +857,7 @@ def load_from_run_state(
         base_path = Path(cfg.logging_config.model_path).resolve()
         full_path = base_path / cfg.train_setup.restore_from_run_state
 
-        with open(full_path, "r") as f:
+        with open(full_path) as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             existing_run_state = json.load(f)
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)

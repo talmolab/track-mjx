@@ -34,7 +34,7 @@ def create_decoder_mask(params: Any, decoder_name: str = "decoder") -> Any:
         >>> # Use with optax.multi_transform to apply different optimizers
         >>> optimizer = optax.multi_transform(
         ...     {"frozen": optax.set_to_zero(), "trainable": optax.adam(1e-4)},
-        ...     param_labels=mask
+        ...     param_labels=mask,
         ... )
     """
     param_mask = copy.deepcopy(params)

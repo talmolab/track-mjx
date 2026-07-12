@@ -14,7 +14,8 @@ Key components:
 - get_obs_sizes / get_obs_shape: Extract observation metadata from example observations
 """
 
-from typing import Mapping, Any
+from collections.abc import Mapping
+from typing import Any
 
 import jax.numpy as jnp
 from brax.training.acme import running_statistics, specs
@@ -76,7 +77,7 @@ def get_obs_shape(
 
     Preserves the container types (e.g. OrderedDict) of the input so that the
     resulting normalizer pytree is compatible with environment observations in
-    ``jax.tree_util.tree_map`` calls.
+    ``jax.tree.map`` calls.
 
     Args:
         obs: Example observation dict with flat leaf arrays.

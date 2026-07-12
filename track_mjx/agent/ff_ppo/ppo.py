@@ -26,9 +26,9 @@ Based on Brax's PPO implementation with modifications for VNL tracking tasks.
 
 import functools
 import time
-from typing import Any, Callable, Tuple
+from collections.abc import Callable
+from typing import Any
 
-import flax
 import flax.struct
 import jax
 import jax.numpy as jnp
@@ -41,12 +41,16 @@ from brax.training import acting, pmap, types
 from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
+
 from track_mjx.agent import checkpointing, gradients
 from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
-    get_obs_sizes,
     get_obs_shape,
+    get_obs_sizes,
 )
+from track_mjx.device_utils import patch_brax_pmap_compat, replicate_for_pmap
+
+patch_brax_pmap_compat()
 
 # Type aliases
 InferenceParams = tuple[running_statistics.RunningStatisticsState, Params]
@@ -84,7 +88,7 @@ def _unpmap(v: Any) -> Any:
     Returns:
         Pytree with device axis removed (values from first device).
     """
-    return jax.tree_util.tree_map(lambda x: x[0], v)
+    return jax.tree.map(lambda x: x[0], v)
 
 
 def _strip_weak_type(tree: Any) -> Any:
@@ -104,7 +108,7 @@ def _strip_weak_type(tree: Any) -> Any:
         leaf = jnp.asarray(leaf)
         return leaf.astype(leaf.dtype)
 
-    return jax.tree_util.tree_map(f, tree)
+    return jax.tree.map(f, tree)
 
 
 def _agg_fn(metric, fn, to_aggregate, to_normalize, episode_lengths):
@@ -217,7 +221,7 @@ def train(
     vf_loss_coefficient: float = 0.5,
     eval_env: envs.Env | None = None,
     eval_env_test_set: envs.Env | None = None,
-    policy_params_fn: Callable[..., None] = lambda *args: None,
+    policy_params_fn: Callable[..., None] = lambda *args, **kwargs: None,
     randomization_fn: (
         Callable[[base.System, jnp.ndarray], tuple[base.System, base.System]] | None
     ) = None,
@@ -370,10 +374,10 @@ def train(
 
         def convert_data(x: jnp.ndarray):
             x = jax.random.permutation(key_perm, x)
-            x = jnp.reshape(x, (num_minibatches, -1) + x.shape[1:])
+            x = jnp.reshape(x, (num_minibatches, -1, *x.shape[1:]))
             return x
 
-        shuffled_data = jax.tree_util.tree_map(convert_data, data)
+        shuffled_data = jax.tree.map(convert_data, data)
         (optimizer_state, params, _, _), metrics = jax.lax.scan(
             functools.partial(minibatch_step, normalizer_params=normalizer_params),
             (optimizer_state, params, key_grad, it),
@@ -383,8 +387,8 @@ def train(
         return (optimizer_state, params, key, it), metrics
 
     def training_step(
-        carry: Tuple[TrainingState, envs.State, PRNGKey, int], unused_t
-    ) -> Tuple[Tuple[TrainingState, envs.State, PRNGKey, int], Metrics]:
+        carry: tuple[TrainingState, envs.State, PRNGKey, int], unused_t
+    ) -> tuple[tuple[TrainingState, envs.State, PRNGKey, int], Metrics]:
         training_state, state, key, it = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
@@ -412,10 +416,8 @@ def train(
             length=batch_size * num_minibatches // num_envs,
         )
         # Have leading dimensions (batch_size * num_minibatches, unroll_length)
-        data = jax.tree_util.tree_map(lambda x: jnp.swapaxes(x, 1, 2), data)
-        data = jax.tree_util.tree_map(
-            lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
-        )
+        data = jax.tree.map(lambda x: jnp.swapaxes(x, 1, 2), data)
+        data = jax.tree.map(lambda x: jnp.reshape(x, (-1, *x.shape[2:])), data)
         assert data.discount.shape[1:] == (unroll_length,)
 
         # Update normalization params (only if normalization is enabled).
@@ -440,23 +442,24 @@ def train(
             optimizer_state=optimizer_state,
             params=params,
             normalizer_params=normalizer_params,
-            env_steps=jnp.int32(
+            env_steps=jnp.asarray(
                 training_state.env_steps
-                + env_step_per_training_step / STEPS_IN_THOUSANDS
+                + env_step_per_training_step / STEPS_IN_THOUSANDS,
+                dtype=jnp.int32,
             ),  # env step in thousands
         )
         return (new_training_state, state, new_key, it), metrics
 
     def training_epoch(
         training_state: TrainingState, state: envs.State, key: PRNGKey, it: int
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
+    ) -> tuple[TrainingState, envs.State, Metrics]:
         (training_state, state, _, _), loss_metrics = jax.lax.scan(
             training_step,
             (training_state, state, key, it),
             (),
             length=num_training_steps_per_epoch,
         )
-        loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
+        loss_metrics = jax.tree.map(jnp.mean, loss_metrics)
         return training_state, state, loss_metrics
 
     training_epoch = jax.pmap(
@@ -468,7 +471,7 @@ def train(
     # Note that this is NOT a pure jittable method.
     def training_epoch_with_timing(
         training_state: TrainingState, env_state: envs.State, key: PRNGKey, it: int
-    ) -> Tuple[TrainingState, envs.State, Metrics]:
+    ) -> tuple[TrainingState, envs.State, Metrics]:
         nonlocal training_walltime
         t = time.time()
         training_state, env_state = _strip_weak_type((training_state, env_state))
@@ -476,8 +479,8 @@ def train(
         result = training_epoch(training_state, env_state, key, step)
         training_state, env_state, metrics = _strip_weak_type(result)
 
-        metrics = jax.tree_util.tree_map(jnp.mean, metrics)
-        jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
+        metrics = jax.tree.map(jnp.mean, metrics)
+        jax.tree.map(lambda x: x.block_until_ready(), metrics)
 
         epoch_training_time = time.time() - t
         training_walltime += epoch_training_time
@@ -497,7 +500,7 @@ def train(
             metrics,
         )  # pytype: disable=bad-return-type  # py311-upgrade
 
-    key = jax.random.PRNGKey(seed)
+    key = jax.random.key(seed)
     global_key, local_key = jax.random.split(key)
     del key
     local_key = jax.random.fold_in(local_key, process_id)
@@ -527,7 +530,7 @@ def train(
         return env.reset(key_envs)
 
     key_envs = jax.random.split(key_env, num_envs // process_count)
-    key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
+    key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1, *key_envs.shape[1:]))
     if local_devices_to_use > 1 or use_pmap_on_reset:
         reset_fn_ = jax.pmap(env.reset, axis_name=_PMAP_AXIS_NAME)
         env_state = reset_fn_(key_envs)
@@ -630,9 +633,8 @@ def train(
         clip_threshold=grad_clip_threshold,
     )
 
-    training_state = jax.device_put_replicated(
-        training_state, jax.local_devices()[:local_devices_to_use]
-    )
+    devices = jax.local_devices()[:local_devices_to_use]
+    training_state = replicate_for_pmap(training_state, devices)
 
     if eval_env is None:
         eval_env = environment
@@ -676,11 +678,9 @@ def train(
 
     # Logic to restore iteration count from checkpoint
     start_it = 0
-    if ckpt_mgr is not None:
-        if ckpt_mgr.latest_step() is not None:
-            num_evals_after_init -= ckpt_mgr.latest_step()
-            start_it = ckpt_mgr.latest_step()
-            pass
+    if ckpt_mgr is not None and ckpt_mgr.latest_step() is not None:
+        num_evals_after_init -= ckpt_mgr.latest_step()
+        start_it = ckpt_mgr.latest_step()
 
     logging.info(
         f"Starting at iteration: {start_it} with {num_evals_after_init} evals left"

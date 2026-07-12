@@ -91,7 +91,7 @@ def make_inference_fn(
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
             # Get first leaf array from nested observation structure
-            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaves = jax.tree.leaves(observations)
             obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys for deterministic replay
@@ -186,7 +186,7 @@ def make_logging_inference_fn(
 
             # Check if observations are batched (ndim >= 2) or unbatched (ndim == 1)
             # Get first leaf array from nested observation structure
-            obs_leaves = jax.tree_util.tree_leaves(observations)
+            obs_leaves = jax.tree.leaves(observations)
             obs_leaf = obs_leaves[0]
             if obs_leaf.ndim >= 2:
                 # Batched observations - generate per-sample keys

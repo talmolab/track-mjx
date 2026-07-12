@@ -1,17 +1,14 @@
 """Extra parametric action distributions not implemented in brax.training.distribution"""
 
-from brax.training import distribution
 import jax
 import jax.numpy as jnp
+from brax.training import distribution
 
 
 def _stable_sigmoid(x):
     """A (more) numerically stable sigmoid than `jax.nn.sigmoid`. Implemented based on `tensorflow.distributions.bijectors.Sigmoid`"""
     x = jnp.asarray(x)
-    if x.dtype == jnp.float64:
-        cutoff = -20
-    else:
-        cutoff = -9
+    cutoff = -20 if x.dtype == jnp.float64 else -9
     return jnp.where(x < cutoff, jnp.exp(x), jax.nn.sigmoid(x))
 
 
@@ -19,10 +16,7 @@ def _stable_sigmoid(x):
 def _stable_grad_softplus(x):
     """A (more) numerically stable softplus than `jax.nn.softplus`. Implemented based on `tensorflow.distributions.bijectors.Sigmoid`"""
     x = jnp.asarray(x)
-    if x.dtype == jnp.float64:
-        cutoff = -20
-    else:
-        cutoff = -9
+    cutoff = -20 if x.dtype == jnp.float64 else -9
 
     y = jnp.where(x < cutoff, jnp.log1p(jnp.exp(x)), jax.nn.softplus(x))
 

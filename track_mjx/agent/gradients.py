@@ -14,16 +14,16 @@
 
 """Brax training gradient utility functions."""
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import jax
-import optax
 import jax.numpy as jnp
+import optax
 
 
 def loss_and_pgrad(
     loss_fn: Callable[..., float],
-    pmap_axis_name: Optional[str],
+    pmap_axis_name: str | None,
     has_aux: bool = False,
 ):
     g = jax.value_and_grad(loss_fn, has_aux=has_aux)
@@ -38,9 +38,9 @@ def loss_and_pgrad(
 def gradient_update_fn(
     loss_fn: Callable[..., float],
     optimizer: optax.GradientTransformation,
-    pmap_axis_name: Optional[str],
+    pmap_axis_name: str | None,
     has_aux: bool = False,
-    clip_threshold: Optional[float] = None,
+    clip_threshold: float | None = None,
 ):
     """Wrapper of the loss function that apply gradient updates.
 

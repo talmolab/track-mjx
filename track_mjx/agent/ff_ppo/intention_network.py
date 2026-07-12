@@ -17,7 +17,6 @@ inner dict {'task_obs': ..., 'proprioception': ...}.
 """
 
 from collections.abc import Mapping, Sequence
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -308,8 +307,7 @@ def make_intention_policy(
 
     policy_module = IntentionNetwork(
         encoder_layers=list(encoder_hidden_layer_sizes),
-        decoder_layers=list(decoder_hidden_layer_sizes)
-        + [action_param_size],  # add action size to the last layer
+        decoder_layers=[*decoder_hidden_layer_sizes, action_param_size],
         latents=latent_size,
         proprioception_noise_std=proprioception_noise_std,
     )
@@ -349,7 +347,7 @@ def make_intention_policy(
         "task_obs": jnp.zeros((1, obs_sizes["task_obs"])),
         "proprioception": jnp.zeros((1, obs_sizes["proprioception"])),
     }
-    dummy_key = jax.random.PRNGKey(0)
+    dummy_key = jax.random.key(0)
 
     return networks.FeedForwardNetwork(
         init=lambda key: policy_module.init(key, dummy_obs, dummy_key),
@@ -382,7 +380,7 @@ def make_decoder_policy(
         FeedForwardNetwork with init and apply methods.
     """
     policy_module = Decoder(
-        layer_sizes=list(decoder_hidden_layer_sizes) + [param_size],
+        layer_sizes=[*decoder_hidden_layer_sizes, param_size],
     )
 
     def apply(processor_params, policy_params, obs):

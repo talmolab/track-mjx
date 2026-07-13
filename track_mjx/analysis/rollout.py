@@ -7,7 +7,8 @@ Rollouts can be used for evaluation, visualization, or data collection.
 Supports both feedforward and recurrent policies.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -19,7 +20,11 @@ from vnl_playground import registry
 from vnl_playground.tasks import wrappers as vnl_wrappers
 
 
-def create_environment(env_config: dict[str, Any] | DictConfig) -> mjx_env.MjxEnv:
+def create_environment(
+    env_config: dict[str, Any] | DictConfig,
+    reference_data_path: str | Path | None = None,
+    keep_clips_idx: Sequence[int] | None = None,
+) -> mjx_env.MjxEnv:
     """Create a VNL imitation learning environment from a configuration.
 
     Uses the vnl-playground registry to create the environment with reference
@@ -31,6 +36,10 @@ def create_environment(env_config: dict[str, Any] | DictConfig) -> mjx_env.MjxEn
         env_config: Environment configuration only (not the full training
             config). Must contain env_name, reference_data_path, clip_length,
             and optionally keep_clips_idx.
+        reference_data_path: Override for the reference clip H5 file path.
+            When provided, takes precedence over ``env_config.reference_data_path``.
+        keep_clips_idx: Override for the clip indices to keep.
+            When provided, takes precedence over ``env_config.keep_clips_idx``.
 
     Returns:
         A Brax-compatible environment with nested dictionary observations.
@@ -40,6 +49,10 @@ def create_environment(env_config: dict[str, Any] | DictConfig) -> mjx_env.MjxEn
         >>> env = create_environment(cfg.env_config)
         >>> state = env.reset(jax.random.key(0))
         >>> print(state.obs.keys())  # dict_keys(['state', 'privileged_state'])
+
+        >>> env = create_environment(
+        ...     cfg.env_config, reference_data_path="/data/my_clips.h5"
+        ... )
     """
     if isinstance(env_config, DictConfig):
         env_cfg_dict = OmegaConf.to_container(env_config, resolve=True)
@@ -48,12 +61,23 @@ def create_environment(env_config: dict[str, Any] | DictConfig) -> mjx_env.MjxEn
 
     env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
 
+    data_path = (
+        str(reference_data_path)
+        if reference_data_path is not None
+        else env_cfg_ml.reference_data_path
+    )
+    clips_idx = (
+        list(keep_clips_idx)
+        if keep_clips_idx is not None
+        else env_cfg_ml.get("keep_clips_idx", None)
+    )
+
     env_name = env_cfg_ml.env_name
     reference_clips = registry.load_reference_clips(
         env_name,
-        data_path=env_cfg_ml.reference_data_path,
+        data_path=data_path,
         n_frames_per_clip=env_cfg_ml.clip_length,
-        keep_clips_idx=env_cfg_ml.get("keep_clips_idx", None),
+        keep_clips_idx=clips_idx,
     )
     return vnl_wrappers.TrackMjxObsWrapper(
         registry.load(

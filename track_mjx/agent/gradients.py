@@ -26,6 +26,19 @@ def loss_and_pgrad(
     pmap_axis_name: str | None,
     has_aux: bool = False,
 ):
+    """Compute loss value and gradient, averaging gradients across pmap devices.
+
+    Args:
+        loss_fn: Scalar loss function to differentiate.
+        pmap_axis_name: Name of the pmap axis for ``pmean`` gradient sync.
+            If None, returns unsynced gradients (single-device path).
+        has_aux: Whether ``loss_fn`` returns ``(loss, aux)`` instead of ``loss``.
+
+    Returns:
+        A function with the same signature as ``loss_fn`` that returns
+        ``(value, grad)``, where gradients are averaged across devices when
+        ``pmap_axis_name`` is provided.
+    """
     g = jax.value_and_grad(loss_fn, has_aux=has_aux)
 
     def h(*args, **kwargs):

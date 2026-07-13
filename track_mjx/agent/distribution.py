@@ -1,22 +1,43 @@
-"""Extra parametric action distributions not implemented in brax.training.distribution"""
+"""Extra parametric action distributions not in ``brax.training.distribution``.
+
+Provides a sigmoid-bounded normal distribution and its associated bijector,
+adapted from TensorFlow Probability's Sigmoid bijector for numerical stability.
+"""
 
 import jax
 import jax.numpy as jnp
 from brax.training import distribution
 
+_CUTOFF_F64 = -20
+_CUTOFF_F32 = -9
+
 
 def _stable_sigmoid(x):
-    """A (more) numerically stable sigmoid than `jax.nn.sigmoid`. Implemented based on `tensorflow.distributions.bijectors.Sigmoid`"""
+    """Numerically stable sigmoid, falling back to exp(x) for very negative inputs.
+
+    Args:
+        x: Input array.
+
+    Returns:
+        Sigmoid of x with improved numerical stability for large negative values.
+    """
     x = jnp.asarray(x)
-    cutoff = -20 if x.dtype == jnp.float64 else -9
+    cutoff = _CUTOFF_F64 if x.dtype == jnp.float64 else _CUTOFF_F32
     return jnp.where(x < cutoff, jnp.exp(x), jax.nn.sigmoid(x))
 
 
 @jax.custom_gradient
 def _stable_grad_softplus(x):
-    """A (more) numerically stable softplus than `jax.nn.softplus`. Implemented based on `tensorflow.distributions.bijectors.Sigmoid`"""
+    """Numerically stable softplus with a custom gradient for large negative inputs.
+
+    Args:
+        x: Input array.
+
+    Returns:
+        Softplus of x with correct gradients for values below the stability cutoff.
+    """
     x = jnp.asarray(x)
-    cutoff = -20 if x.dtype == jnp.float64 else -9
+    cutoff = _CUTOFF_F64 if x.dtype == jnp.float64 else _CUTOFF_F32
 
     y = jnp.where(x < cutoff, jnp.log1p(jnp.exp(x)), jax.nn.softplus(x))
 
@@ -27,7 +48,15 @@ def _stable_grad_softplus(x):
 
 
 class SigmoidBijector:
-    """Sigmoid Bijector. Implemented based on `tensorflow.distributions.bijectors.Sigmoid`."""
+    """Sigmoid bijector mapping reals to ``[low, high]``.
+
+    Adapted from ``tensorflow.distributions.bijectors.Sigmoid`` with
+    numerically stable forward, inverse, and log-det-jacobian computations.
+
+    Args:
+        low: Lower bound of the output range.
+        high: Upper bound of the output range.
+    """
 
     def __init__(self, low=0.0, high=1.0):
         self.low = low
@@ -35,9 +64,10 @@ class SigmoidBijector:
         self._is_standard_sigmoid = low == 0.0 and high == 1.0
 
     def forward(self, x):
+        """Map unconstrained input to ``[low, high]``."""
         if self._is_standard_sigmoid:
             return _stable_sigmoid(x)
-        lo = jnp.asarray(self.low)  # Concretize only once
+        lo = jnp.asarray(self.low)
         hi = jnp.asarray(self.high)
         diff = hi - lo
         left = lo + diff * _stable_sigmoid(x)
@@ -45,11 +75,13 @@ class SigmoidBijector:
         return jnp.where(x < 0, left, right)
 
     def inverse(self, y):
+        """Map bounded value back to unconstrained space."""
         if self._is_standard_sigmoid:
             return jnp.log(y) - jnp.log1p(-y)
         return jnp.log(y - self.low) - jnp.log(self.high - y)
 
     def forward_log_det_jacobian(self, x):
+        """Log absolute determinant of the Jacobian of ``forward``."""
         sigmoid_fldj = -_stable_grad_softplus(-x) - _stable_grad_softplus(x)
         if self._is_standard_sigmoid:
             return sigmoid_fldj

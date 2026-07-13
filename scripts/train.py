@@ -72,6 +72,22 @@ def main(cfg: DictConfig) -> None:
 
     run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
 
+    # Initialize wandb early so that clip loading and env creation are visible
+    wandb_logging.initialize_wandb_logging(
+        logging_cfg=cfg.logging_config,
+        cfg=cfg,
+        run_id=run_id,
+        existing_run_state=existing_run_state,
+    )
+
+    if existing_run_state is None:
+        checkpointing.save_run_state(
+            cfg=cfg,
+            run_id=run_id,
+            checkpoint_path=checkpoint_path,
+            wandb_run_id=wandb.run.id,
+        )
+
     mgr_options = ocp.CheckpointManagerOptions(
         create=True,
         step_prefix="PPONetwork",
@@ -97,6 +113,13 @@ def main(cfg: DictConfig) -> None:
     )
     logging.info(f"Training on {len(train_clips)} clips: {train_clips}")
     logging.info(f"Testing on {len(test_clips)} clips: {test_clips}")
+
+    if len(train_clips) == 0:
+        raise ValueError(
+            f"train_subset_ratio={cfg.train_setup.train_subset_ratio} yields 0 "
+            f"training clips. Increase the ratio or add more clips."
+        )
+
     env = rodent_wrappers.TrackMjxObsWrapper(
         registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
     )
@@ -105,9 +128,18 @@ def main(cfg: DictConfig) -> None:
     except Exception as e:
         logging.warning(f"Failed to save environment spec: {e}")
         xml = None
-    test_env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False)
-    )
+
+    if len(test_clips) == 0:
+        logging.warning(
+            "No test clips after split — skipping held-out test-set evaluation."
+        )
+        test_env = None
+    else:
+        test_env = rodent_wrappers.TrackMjxObsWrapper(
+            registry.load(
+                env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False
+            )
+        )
 
     logging.info(f"Environment config: {cfg.env_config}")
     logging.info(f"Train environment: {env.unwrapped}")
@@ -178,22 +210,8 @@ def main(cfg: DictConfig) -> None:
         )
         ppo_module = ff_ppo
 
-    wandb_logging.initialize_wandb_logging(
-        logging_cfg=cfg.logging_config,
-        cfg=cfg,
-        run_id=run_id,
-        existing_run_state=existing_run_state,
-    )
     if xml is not None:
         wandb.log({"spec_file": wandb.Html(xml)}, commit=False)
-
-    if existing_run_state is None:
-        checkpointing.save_run_state(
-            cfg=cfg,
-            run_id=run_id,
-            checkpoint_path=checkpoint_path,
-            wandb_run_id=wandb.run.id,
-        )
 
     checkpoint_callback = checkpointing.create_checkpoint_callback(
         cfg=cfg,

@@ -12,13 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Domain randomization for the Go1 environment."""
+"""Domain randomization for MuJoCo MJX environments.
+
+Applies per-environment physics randomization (friction, mass, armature, etc.)
+to improve sim-to-sim and sim-to-real transfer. Currently uses hardcoded geom
+and body indices for the rodent model.
+"""
 
 import jax
 from mujoco import mjx
 
 FLOOR_GEOM_ID = 1
 TORSO_BODY_ID = 3
+
+FREE_JOINT_DOFS = 6
+FREE_JOINT_QPOS = 7
 
 
 def domain_randomization_maker(
@@ -30,12 +38,29 @@ def domain_randomization_maker(
     torso_mass_jitter: tuple[float, float] = (-0.02, 0.02),
     qpos0_jitter: tuple[float, float] = (-0.05, 0.05),
 ):
+    """Create a domain randomization function for MJX environments.
+
+    Returns a function compatible with Brax's ``randomization_fn`` interface
+    that randomizes physics parameters per-environment using ``jax.vmap``.
+
+    Args:
+        floor_friction: (min, max) range for uniform floor friction sampling.
+        static_friction_scale: (min, max) multiplicative scale for DOF frictionloss.
+        armature_scale: (min, max) multiplicative scale for DOF armature.
+        com_jitter: (min, max) additive jitter for torso center of mass position.
+        link_mass_scale: (min, max) multiplicative scale for all body masses.
+        torso_mass_jitter: (min, max) additive jitter for torso mass.
+        qpos0_jitter: (min, max) additive jitter for initial joint positions.
+
+    Returns:
+        A function ``(model, rng) -> (model, in_axes)`` that applies randomized
+        dynamics and returns the per-axis vmap specification.
+    """
 
     def domain_randomize(model: mjx.Model, rng: jax.Array):
         @jax.vmap
         def rand_dynamics(rng):
-            # Get the number of actuated joints
-            n_actuated = model.nv - 6  # Total DOFs minus free joints
+            n_actuated = model.nv - FREE_JOINT_DOFS
 
             # Floor friction: =U(0.4, 1.0).
             rng, key = jax.random.split(rng)
@@ -47,23 +72,27 @@ def domain_randomization_maker(
 
             # Scale static friction: *U(0.9, 1.1).
             rng, key = jax.random.split(rng)
-            frictionloss = model.dof_frictionloss[6:] * jax.random.uniform(
+            frictionloss = model.dof_frictionloss[
+                FREE_JOINT_DOFS:
+            ] * jax.random.uniform(
                 key,
                 shape=(n_actuated,),
                 minval=static_friction_scale[0],
                 maxval=static_friction_scale[1],
             )
-            dof_frictionloss = model.dof_frictionloss.at[6:].set(frictionloss)
+            dof_frictionloss = model.dof_frictionloss.at[FREE_JOINT_DOFS:].set(
+                frictionloss
+            )
 
             # Scale armature: *U(1.0, 1.05).
             rng, key = jax.random.split(rng)
-            armature = model.dof_armature[6:] * jax.random.uniform(
+            armature = model.dof_armature[FREE_JOINT_DOFS:] * jax.random.uniform(
                 key,
                 shape=(n_actuated,),
                 minval=armature_scale[0],
                 maxval=armature_scale[1],
             )
-            dof_armature = model.dof_armature.at[6:].set(armature)
+            dof_armature = model.dof_armature.at[FREE_JOINT_DOFS:].set(armature)
 
             # Jitter center of mass positiion: +U(-0.05, 0.05).
             rng, key = jax.random.split(rng)
@@ -96,8 +125,8 @@ def domain_randomization_maker(
             # Jitter qpos0: +U(-0.05, 0.05).
             rng, key = jax.random.split(rng)
             qpos0 = model.qpos0
-            qpos0 = qpos0.at[7:].set(
-                qpos0[7:]
+            qpos0 = qpos0.at[FREE_JOINT_QPOS:].set(
+                qpos0[FREE_JOINT_QPOS:]
                 + jax.random.uniform(
                     key,
                     shape=(n_actuated,),

@@ -42,6 +42,7 @@ os.environ["PYOPENGL_PLATFORM"] = "egl"
 import functools
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import hydra
@@ -81,7 +82,7 @@ enable_jit_cache()
 
 def load_mimic_checkpoint(checkpoint_path: str) -> tuple:
     """Load mimic checkpoint config and decoder policy."""
-    if os.path.isabs(checkpoint_path):
+    if Path(checkpoint_path).is_absolute():
         full_path = checkpoint_path
     else:
         full_path = hydra.utils.to_absolute_path(

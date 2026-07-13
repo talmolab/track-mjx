@@ -121,6 +121,10 @@ def rollout_logging_fn(
             commit=False,
         )
 
+    if cfg.logging_config.get("log_histograms", False):
+        log_histogram_to_wandb("eval/histograms/latent_means", means_mean.tolist())
+        log_histogram_to_wandb("eval/histograms/latent_stds", means_std.tolist())
+
     if render_video:
         _log_rollout_video(env, cfg, model_path, current_step, rollout)
 
@@ -149,16 +153,29 @@ def _log_rollout_video(
     metric_names = cfg.logging_config.get("rollout_metrics", reward_names)
     for metric in metric_names:
         if metric in rollout[0].metrics:
+            values = [s.metrics[metric] for s in rollout]
             log_lineplot_to_wandb(
                 name=f"eval/rollout_{metric}",
                 metric_name=metric,
-                data=list(enumerate([s.metrics[metric] for s in rollout])),
+                data=list(enumerate(values)),
                 title=f"{metric} per rollout frame",
             )
         else:
             logging.warning(
                 f"Rollout metric '{metric}' not found in environment metrics."
             )
+
+    # Log histograms of per-step reward distributions
+    if cfg.logging_config.get("log_histograms", False):
+        episode_rewards = [float(s.reward) for s in rollout]
+        log_histogram_to_wandb("eval/histograms/episode_reward", episode_rewards)
+        for metric in metric_names:
+            if metric in rollout[0].metrics:
+                values = [float(s.metrics[metric]) for s in rollout]
+                log_histogram_to_wandb(
+                    f"eval/histograms/{metric}",
+                    values,
+                )
 
     try:
         with imageio.get_writer(video_path, fps=render_fps) as writer:
@@ -216,27 +233,22 @@ def log_lineplot_to_wandb(
 
 
 def log_histogram_to_wandb(
-    name: str, metric_name: str, data: list[float], title: str
+    name: str,
+    data: list[float],
 ) -> None:
     """Log a histogram to Weights & Biases.
 
+    Uses ``wandb.Histogram`` for lightweight native histogram rendering
+    without creating intermediate tables.
+
     Args:
-        name: Wandb log key (e.g., "eval/latent_means_histogram").
-        metric_name: Name for the histogram metric.
-        data: List of values to include in the histogram.
-        title: Title displayed on the wandb plot.
+        name: Wandb log key (e.g., "eval/episode_reward_hist").
+        data: Values to include in the histogram.
 
     Note:
         Logged with commit=False; caller should batch with other logs.
     """
-    table = wandb.Table(
-        data=enumerate(data),
-        columns=["index", metric_name],
-    )
-    wandb.log(
-        {name: wandb.plot.histogram(table, value=metric_name, title=title)},  # type: ignore
-        commit=False,
-    )
+    wandb.log({name: wandb.Histogram(data)}, commit=False)
 
 
 def initialize_wandb_logging(

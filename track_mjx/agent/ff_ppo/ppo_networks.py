@@ -26,6 +26,7 @@ import jax
 from brax.training import distribution, networks, types
 from brax.training.acme import running_statistics
 from brax.training.types import PRNGKey
+from flax import linen as nn
 from jax import numpy as jnp
 
 from track_mjx.agent import checkpointing
@@ -279,6 +280,7 @@ def make_intention_ppo_networks(
         obs_sizes=obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
         value_obs_key=value_obs_key,
+        activation=nn.silu,
     )
 
     return PPOImitationNetworks(

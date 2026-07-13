@@ -893,7 +893,7 @@ def load_from_run_state(
             cfg.train_setup.train_config.num_timesteps = submitted_timesteps
 
         checkpoint_path = checkpoint_to_restore
-        run_id = os.path.basename(checkpoint_path)
+        run_id = Path(checkpoint_path).name
 
     logging.info(f"Run ID: {run_id}")
     logging.info(f"Training checkpoint path: {checkpoint_path}")

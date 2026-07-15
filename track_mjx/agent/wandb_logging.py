@@ -12,9 +12,10 @@ from typing import Any
 import imageio
 import jax
 import mujoco
-import wandb
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
+
+import wandb
 
 
 def rollout_logging_fn(

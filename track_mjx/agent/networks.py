@@ -12,7 +12,7 @@ def make_dict_value_network(
     obs_sizes: Mapping[str, int],
     hidden_layer_sizes: Sequence[int] = (1024,) * 2,
     value_obs_key: str = "state",
-    activation: networks.ActivationFn = nn.silu,
+    activation: networks.ActivationFn = nn.relu,
 ) -> networks.FeedForwardNetwork:
     """Create a value network that accepts nested dictionary observations.
 
@@ -23,8 +23,8 @@ def make_dict_value_network(
         obs_sizes: Dict with 'task_obs' and 'proprioception' sizes.
         hidden_layer_sizes: MLP layer sizes for value network.
         value_obs_key: Top-level observation key for value network.
-        activation: Activation function for hidden layers. Defaults to SiLU
-            to match the policy network activation.
+        activation: Activation function for hidden layers. Defaults to ReLU
+            to match Brax's previous implicit default.
 
     Returns:
         FeedForwardNetwork that accepts nested dict observations.

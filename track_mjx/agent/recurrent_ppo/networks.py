@@ -746,7 +746,6 @@ def make_recurrent_intention_ppo_networks(
         obs_sizes=obs_sizes,
         hidden_layer_sizes=value_hidden_layer_sizes,
         value_obs_key=value_obs_key,
-        activation=nn.silu,
     )
 
     return RecurrentPPONetworks(

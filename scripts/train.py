@@ -13,13 +13,13 @@ import logging
 import hydra
 import jax
 import orbax.checkpoint as ocp
-import wandb
 from brax.training.distribution import NormalTanhDistribution
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 
+import wandb
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.distribution import NormalSigmoidDistribution
 from track_mjx.agent.domain_randomization import domain_randomization_maker

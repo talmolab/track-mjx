@@ -54,7 +54,7 @@ env_config:
       exp_scale: 0.035
       weight: 1.0
     root_quat:
-      exp_scale: 20.0
+      exp_scale: 40.0
       weight: 1.0
     joints:
       exp_scale: 1.41
@@ -84,7 +84,7 @@ env_config:
     root_too_far:
       max_distance: 0.1
     root_too_rotated:
-      max_degrees: 60.0
+      max_degrees: 120.0
     pose_error:
       max_l2_error: 4.5
     nan_termination: {}

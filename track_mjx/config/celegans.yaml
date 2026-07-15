@@ -123,7 +123,7 @@ env_config:
 
     # Root orientation tracking (quaternion distance)
     root_quat:
-      exp_scale: 30
+      exp_scale: 60
       weight: 1.0
 
     # Joint angle tracking
@@ -184,7 +184,7 @@ env_config:
 
     # Root orientation deviates too much from reference
     root_too_rotated:
-      max_degrees: 60.0
+      max_degrees: 120.0
 
     # Overall pose error exceeds threshold
     pose_error:

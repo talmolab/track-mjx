@@ -109,7 +109,7 @@ ignore = [
 known-first-party = ["track_mjx"]
 
 [tool.uv.sources]
-vnl-playground = { git = "https://github.com/talmolab/vnl-playground", tag = "v0.0.13" }
+vnl-playground = { git = "https://github.com/talmolab/vnl-playground", rev = "1529ac42d952c41b9408f8bebbb25602f3881ad3" }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
 
 [dependency-groups]

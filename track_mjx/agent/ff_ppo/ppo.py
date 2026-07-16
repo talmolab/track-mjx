@@ -190,6 +190,7 @@ def train(
     num_minibatches: int = 16,
     num_updates_per_batch: int = 2,
     num_evals: int = 20,
+    vel_anneal_frac: float = 0.0,
     num_resets_per_eval: int = 0,
     normalize_observations: bool = False,
     reward_scaling: float = 1.0,
@@ -321,6 +322,13 @@ def train(
     # it could be confusing when loading a checkpoint
     # and num_evals is not the same as the one used for training.
     num_evals_after_init = max(num_evals - 1, 1)
+    # 0715_cont kappa hook: the anneal must be a function of ABSOLUTE training progress, not of
+    # remaining evals. `num_evals_after_init` is decremented on autoresume (see below), which
+    # would re-steepen the ramp and inject a discontinuity at EVERY resume (observed 2026-07-16:
+    # denom 39 -> 32 after a resume at step 7 made it=8 read 0.5625 instead of 0.6410). Capture
+    # the full-schedule denominator ONCE, here, before any resume decrement, so `it` and the
+    # denominator stay on the same absolute grid across resumes.
+    _VEL_ANNEAL_DENOM = num_evals_after_init
     # The number of training_step calls per training_epoch call.
     # equals to ceil(num_timesteps / (num_evals * env_step_per_training_step *
     #                                 num_resets_per_eval))
@@ -408,6 +416,33 @@ def train(
         training_state, state, key, it = carry
         key_sgd, key_generate_unroll, new_key = jax.random.split(key, 3)
 
+        # --- 0715_cont kappa hook ---------------------------------------------------------------
+        # `it` is the eval iteration: the outer loop is
+        #   for it in range(start_it, num_evals_after_init + start_it)
+        # so it is CONSTANT across an epoch and is restored correctly on autoresume
+        # (start_it comes back with the checkpoint).
+        #
+        # weight(it) = 1.0 * clip(1 - progress/vel_anneal_frac, 0, 1), progress = (it-1)/N
+        # With vel_anneal_frac=0.5 the weight reaches 0 at the halfway point and the whole
+        # second half trains at PURE SPARSE. That is deliberate: a ramp that only lands on
+        # 0 at the final step never trains at pure sparse and reports a success it did not
+        # earn.
+        if vel_anneal_frac > 0.0:
+            # Denominator is the FULL schedule (_VEL_ANNEAL_DENOM), NOT num_evals_after_init,
+            # which shrinks on autoresume and would re-steepen the ramp (see def above).
+            _progress = (it - 1) / _VEL_ANNEAL_DENOM
+            vel_kappa = jnp.clip(1.0 - _progress / vel_anneal_frac, 0.0, 1.0)
+            state = state.replace(
+                info={
+                    **state.info,
+                    # full_like, NOT the bare scalar: info leaves are vmapped to
+                    # (num_envs,) and the scan carry must keep identical shape AND
+                    # dtype on every iteration.
+                    "vel_kappa": jnp.full_like(state.info["vel_kappa"], vel_kappa),
+                }
+            )
+        # ---------------------------------------------------------------------------
+
         policy = make_policy(
             (training_state.normalizer_params, training_state.params.policy)
         )
@@ -472,6 +507,11 @@ def train(
                 + env_step_per_training_step / STEPS_IN_THOUSANDS
             ),  # env step in thousands
         )
+        # 0715_cont kappa hook: the ONLY handle on the ramp. Eval envs always read vel_kappa=1.0 by
+        # design, so nothing in eval/* can distinguish a working ramp from a dead one.
+        # Logged as training/vel_kappa, exactly like training/prior_residual_weight.
+        if vel_anneal_frac > 0.0:
+            metrics = {**metrics, "vel_kappa": vel_kappa}
         return (new_training_state, state, new_key, it), metrics
 
     def training_epoch(

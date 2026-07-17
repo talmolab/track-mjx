@@ -41,8 +41,8 @@ import json
 from datetime import datetime
 
 import jax
-
 import wandb
+
 from track_mjx.device_utils import enable_jit_cache
 
 enable_jit_cache()

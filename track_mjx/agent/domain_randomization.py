@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Domain randomization for MuJoCo MJX environments.
+"""Physics domain randomization for the rodent walker.
 
-Applies per-environment physics randomization (friction, mass, armature, etc.)
-to improve sim-to-sim and sim-to-real transfer. Currently uses hardcoded geom
-and body indices for the rodent model.
+Randomizes sliding friction, static (joint) friction, armature, center of mass,
+link and torso mass, and the initial joint configuration on training environments
+only. Sliding friction is applied as one per-environment scale across every geom;
+the walker's collision geoms outrank the floor plane in contact priority, so
+scaling their friction is what varies the effective floor-contact friction.
 """
 
 import jax
 from mujoco import mjx
 
-FLOOR_GEOM_ID = 1
 TORSO_BODY_ID = 3
 
 FREE_JOINT_DOFS = 6
@@ -30,7 +31,7 @@ FREE_JOINT_QPOS = 7
 
 
 def domain_randomization_maker(
-    floor_friction: tuple[float, float] = (0.4, 1.0),
+    friction_scale: tuple[float, float] = (0.6, 1.4),
     static_friction_scale: tuple[float, float] = (0.9, 1.1),
     armature_scale: tuple[float, float] = (1.0, 1.05),
     com_jitter: tuple[float, float] = (-0.05, 0.05),
@@ -62,12 +63,15 @@ def domain_randomization_maker(
         def rand_dynamics(rng):
             n_actuated = model.nv - FREE_JOINT_DOFS
 
-            # Floor friction: =U(0.4, 1.0).
+            # Sliding friction: one per-env scale across every geom. The walker's
+            # collision geoms outrank the floor in contact priority, so scaling
+            # their friction is what varies the effective floor-contact friction.
             rng, key = jax.random.split(rng)
-            geom_friction = model.geom_friction.at[FLOOR_GEOM_ID, 0].set(
-                jax.random.uniform(
-                    key, minval=floor_friction[0], maxval=floor_friction[1]
-                )
+            fscale = jax.random.uniform(
+                key, minval=friction_scale[0], maxval=friction_scale[1]
+            )
+            geom_friction = model.geom_friction.at[:, 0].set(
+                model.geom_friction[:, 0] * fscale
             )
 
             # Scale static friction: *U(0.9, 1.1).

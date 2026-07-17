@@ -247,7 +247,7 @@ def main(cfg: DictConfig) -> None:
         ),
         randomization_fn=(
             domain_randomization_maker(
-                floor_friction=cfg.env_config.domain_randomization.floor_friction,
+                friction_scale=cfg.env_config.domain_randomization.friction_scale,
                 static_friction_scale=cfg.env_config.domain_randomization.static_friction_scale,
                 armature_scale=cfg.env_config.domain_randomization.armature_scale,
                 com_jitter=cfg.env_config.domain_randomization.com_jitter,

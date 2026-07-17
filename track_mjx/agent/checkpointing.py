@@ -173,6 +173,30 @@ def load_training_state(
         )["train_state"]
 
 
+def restore_env_steps(ckpt_mgr: ocp.CheckpointManager, step: int) -> int:
+    """Restore the exact host-side environment-step count."""
+    progress = ckpt_mgr.restore(
+        step,
+        args=ocp.args.Composite(progress=ocp.args.JsonRestore()),
+    )["progress"]
+    return int(progress["env_steps"])
+
+
+def load_env_steps(
+    checkpoint_path: str,
+    step_prefix: str = "PPONetwork",
+    step: int | None = None,
+) -> int:
+    """Load the exact environment-step count from a checkpoint directory."""
+    mgr_options = ocp.CheckpointManagerOptions(create=False, step_prefix=step_prefix)
+    with ocp.CheckpointManager(checkpoint_path, options=mgr_options) as ckpt_mgr:
+        if step is None:
+            step = ckpt_mgr.latest_step()
+        if step is None:
+            raise ValueError(f"No checkpoints found in {checkpoint_path}")
+        return restore_env_steps(ckpt_mgr, step)
+
+
 def load_policy(
     checkpoint_path: str,
     cfg: DictConfig | None = None,
@@ -530,6 +554,7 @@ def save(
     policy: tuple[Any, Any],
     training_state: Any,
     config: dict[str, Any],
+    env_steps: int,
     checkpoint_callback: Callable[[int], None] | None = None,
 ) -> None:
     """Save a training checkpoint.
@@ -543,6 +568,7 @@ def save(
         policy: Policy parameters (normalizer_state, policy_params).
         training_state: Full training state for resumption.
         config: Configuration dictionary.
+        env_steps: Exact host-side environment-step count.
         checkpoint_callback: Optional callback called with step after save.
     """
     ckpt_mgr.save(
@@ -551,6 +577,7 @@ def save(
             policy=ocp.args.StandardSave(policy),
             train_state=ocp.args.StandardSave(training_state),
             config=ocp.args.JsonSave(config),
+            progress=ocp.args.JsonSave({"env_steps": int(env_steps)}),
         ),
     )
 

@@ -18,7 +18,7 @@ classifiers = [
 dependencies = [
     "jax==0.10.2",
     "jaxlib==0.10.2",
-    "brax==0.14.0",
+    "brax==0.14.2",
     "flax==0.12.7",
     "optax==0.2.8",
     "orbax-checkpoint==0.12.0",
@@ -34,7 +34,7 @@ dependencies = [
     "mediapy==1.2.2",
     "imageio[ffmpeg]==2.37.0",
     "hydra-core==1.3.2",
-    "wandb==0.19.5",
+    "wandb==0.28.0",
     "huggingface-hub==1.20.1",
     "jaxtyping>=0.2.34",
     "playground",
@@ -109,8 +109,12 @@ ignore = [
 known-first-party = ["track_mjx"]
 
 [tool.uv.sources]
+brax = { git = "https://github.com/google/brax", rev = "1aa46f127bc4208d0c6de350a58ef00c8f01b0d9" }
 vnl-playground = { git = "https://github.com/talmolab/vnl-playground", rev = "1529ac42d952c41b9408f8bebbb25602f3881ad3" }
 playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
+
+[tool.uv]
+override-dependencies = ["brax==0.14.2"]
 
 [dependency-groups]
 dev = [

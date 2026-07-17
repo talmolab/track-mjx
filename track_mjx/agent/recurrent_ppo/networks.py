@@ -35,9 +35,13 @@ from brax.training.distribution import NormalTanhDistribution
 from brax.training.types import PRNGKey
 from flax import linen as nn
 
-from track_mjx.agent.ff_ppo.intention_network import Encoder, reparameterize
+from track_mjx.agent.ff_ppo.intention_network import (
+    Encoder,
+    reparameterize,
+)
 from track_mjx.agent.networks import make_dict_value_network
 from track_mjx.agent.observation_utils import normalizer_select
+from track_mjx.random_utils import sample_normal, split_prng_key
 
 # Type aliases
 RNNCellType = Literal["simple", "gru", "lstm"]
@@ -262,9 +266,7 @@ class RecurrentIntentionNetwork(nn.Module):
             obs: Inner observation dict (already selected and normalized):
                 {'task_obs': ..., 'proprioception': ...}
             hidden: RNN hidden state(s) from previous timestep.
-            key: JAX random key for sampling. Either shape [2] (single key
-                for all samples) or [batch_size, 2] (per-sample keys for
-                deterministic replay).
+            key: Scalar typed key or typed key batch with shape [batch_size].
             deterministic: If True, use latent mean instead of sampling.
             get_activation: If True, return activations dict as 5th element.
 
@@ -277,29 +279,10 @@ class RecurrentIntentionNetwork(nn.Module):
         traj = obs["task_obs"]
         egocentric_obs = obs["proprioception"]
 
-        # Check if observations are actually batched (based on obs shape)
-        obs_is_batched = traj.ndim >= 2
-
-        # Handle key splitting based on both key shape AND observation shape
-        if key.ndim == 1:
-            # Single key - split for encoder
-            encoder_rng, noise_rng = jax.random.split(key)
-        elif not obs_is_batched:
-            # Per-sample keys but unbatched observation - use first key
-            encoder_rng, noise_rng = jax.random.split(key[0])
-        else:
-            # Per-sample keys [batch_size, 2] - vmap split over batch
-            encoder_rng, noise_rng = jax.vmap(jax.random.split)(key).swapaxes(0, 1)
+        encoder_rng, noise_rng = split_prng_key(key)
 
         if not deterministic and self.proprioception_noise_std > 0.0:
-            if noise_rng.ndim == 1:
-                noise = jax.random.normal(noise_rng, egocentric_obs.shape)
-            elif not obs_is_batched:
-                noise = jax.random.normal(noise_rng[0], egocentric_obs.shape)
-            else:
-                noise = jax.vmap(
-                    lambda rng_key, obs_i: jax.random.normal(rng_key, obs_i.shape)
-                )(noise_rng, egocentric_obs)
+            noise = sample_normal(noise_rng, egocentric_obs)
             egocentric_obs = egocentric_obs * (
                 1.0 + self.proprioception_noise_std * noise
             )
@@ -645,7 +628,7 @@ def make_recurrent_intention_ppo_networks(
             done_seq: Done flags with shape [T, B].
             key: Random key (used only if stored_keys is None).
             deterministic: If True, use latent mean instead of sampling.
-            stored_keys: Optional pre-stored RNG keys with shape [T, B, 2].
+            stored_keys: Optional pre-stored typed RNG keys with shape [T, B].
                 If provided, uses these for deterministic replay of stochastic
                 layers instead of generating fresh keys.
 
@@ -662,11 +645,12 @@ def make_recurrent_intention_ppo_networks(
         if stored_keys is not None:
             # Get expected shape from observations [T, B, ...]
             ref_obs = obs_seq_normalized["task_obs"]
-            expected_shape = (ref_obs.shape[0], ref_obs.shape[1], 2)
+            expected_shape = (ref_obs.shape[0], ref_obs.shape[1])
             if stored_keys.shape != expected_shape:
                 raise ValueError(
                     f"stored_keys has shape {stored_keys.shape}, expected {expected_shape}. "
-                    f"stored_keys must have shape [T, B, 2] matching the observation sequence."
+                    "stored_keys must have shape [T, B] matching the observation "
+                    "sequence."
                 )
 
         if stored_keys is not None:

@@ -7,12 +7,13 @@ from typing import Any
 import imageio
 import jax
 import jax.numpy as jp
-import wandb
 from etils import epath
 from flax.training import orbax_utils
 from ml_collections import config_dict
 from orbax import checkpoint as ocp
 from vnl_playground.tasks.rodent import consts
+
+import wandb
 
 
 def parse_value(value_str: str) -> Any:

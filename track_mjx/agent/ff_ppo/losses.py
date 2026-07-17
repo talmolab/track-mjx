@@ -239,7 +239,7 @@ def compute_ppo_loss(
         )
     else:
         # Deterministic replay: use stored per-sample RNGs
-        # policy_rng has shape [T, B, 2] after swapaxes
+        # policy_rng has shape [T, B] after swapaxes for typed keys.
         # data.observation is a dict where each leaf has shape [T, B, obs_dim]
         # Flatten [T, B] into single batch dim to avoid vmap (better for buffer donation)
         obs_leaf = jax.tree.leaves(data.observation)[0]
@@ -250,8 +250,8 @@ def compute_ppo_loss(
             lambda x: x.reshape((T * B, *x.shape[2:])),
             data.observation,
         )
-        # Flatten keys [T, B, 2] -> [T*B, 2]
-        flat_rng = policy_rng.reshape((T * B, 2))
+        # Flatten typed keys [T, B] -> [T*B].
+        flat_rng = policy_rng.reshape(-1)
 
         # Single call with combined batch (policy handles per-sample keys natively)
         flat_logits, flat_mean, flat_logvar = policy_apply(

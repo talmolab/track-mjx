@@ -42,22 +42,19 @@ from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
 
+from track_mjx import training_wrappers
 from track_mjx.agent import checkpointing, gradients
 from track_mjx.agent.ff_ppo import losses, ppo_networks
 from track_mjx.agent.observation_utils import (
     get_obs_shape,
     get_obs_sizes,
 )
-from track_mjx.device_utils import patch_brax_pmap_compat, replicate_for_pmap
-
-patch_brax_pmap_compat()
 
 # Type aliases
 InferenceParams = tuple[running_statistics.RunningStatisticsState, Params]
 Metrics = types.Metrics
 
 # Constants
-STEPS_IN_THOUSANDS = 1e3
 _PMAP_AXIS_NAME = "i"
 
 
@@ -70,13 +67,11 @@ class TrainingState:
         params: PPO network parameters (policy and value).
         normalizer_params: Running statistics for observation normalization.
             Has pytree structure matching observation dict.
-        env_steps: Total environment steps taken (in thousands).
     """
 
     optimizer_state: optax.OptState
     params: losses.PPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
-    env_steps: jnp.ndarray
 
 
 def _unpmap(v: Any) -> Any:
@@ -88,7 +83,7 @@ def _unpmap(v: Any) -> Any:
     Returns:
         Pytree with device axis removed (values from first device).
     """
-    return jax.tree.map(lambda x: x[0], v)
+    return jax.tree.map(lambda x: x.addressable_shards[0].data.squeeze(0), v)
 
 
 def _strip_weak_type(tree: Any) -> Any:
@@ -106,6 +101,8 @@ def _strip_weak_type(tree: Any) -> Any:
 
     def f(leaf):
         leaf = jnp.asarray(leaf)
+        if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+            return leaf
         return leaf.astype(leaf.dtype)
 
     return jax.tree.map(f, tree)
@@ -231,7 +228,7 @@ def train(
     checkpoint_callback: Callable[[int], None] | None = None,
     grad_clip_threshold: float = 20.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
-        mp_wrapper.wrap_for_brax_training, full_reset=False
+        training_wrappers.wrap_for_brax_training, full_reset=False
     ),
 ) -> tuple[Callable, InferenceParams, Metrics]:
     """Train a PPO agent on the given environment.
@@ -343,6 +340,9 @@ def train(
             * max(num_resets_per_eval, 1)
         )
     ).astype(int)
+    env_steps_per_training_epoch = int(
+        num_training_steps_per_epoch * env_step_per_training_step
+    )
 
     def minibatch_step(
         carry,
@@ -442,11 +442,6 @@ def train(
             optimizer_state=optimizer_state,
             params=params,
             normalizer_params=normalizer_params,
-            env_steps=jnp.asarray(
-                training_state.env_steps
-                + env_step_per_training_step / STEPS_IN_THOUSANDS,
-                dtype=jnp.int32,
-            ),  # env step in thousands
         )
         return (new_training_state, state, new_key, it), metrics
 
@@ -475,7 +470,7 @@ def train(
         nonlocal training_walltime
         t = time.time()
         training_state, env_state = _strip_weak_type((training_state, env_state))
-        step = jnp.ones_like(training_state.env_steps) * it
+        step = jnp.full((local_devices_to_use,), it, dtype=jnp.int32)
         result = training_epoch(training_state, env_state, key, step)
         training_state, env_state, metrics = _strip_weak_type(result)
 
@@ -614,14 +609,15 @@ def train(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
         normalizer_params=running_statistics.init_state(obs_shape),
-        env_steps=0,
     )
 
     # Load the checkpoint if it exists
+    current_step = 0
     if checkpoint_to_restore is not None:
         training_state = checkpointing.load_training_state(
             checkpoint_to_restore, training_state
         )
+        current_step = checkpointing.load_env_steps(checkpoint_to_restore)
         logging.info(f"Restored latest checkpoint at {checkpoint_to_restore}")
 
     # gradient update function with the new optimizer and loss function
@@ -633,8 +629,7 @@ def train(
         clip_threshold=grad_clip_threshold,
     )
 
-    devices = jax.local_devices()[:local_devices_to_use]
-    training_state = replicate_for_pmap(training_state, devices)
+    training_state = pmap.bcast_local_devices(training_state, local_devices_to_use)
 
     if eval_env is None:
         eval_env = environment
@@ -679,8 +674,10 @@ def train(
     # Logic to restore iteration count from checkpoint
     start_it = 0
     if ckpt_mgr is not None and ckpt_mgr.latest_step() is not None:
-        num_evals_after_init -= ckpt_mgr.latest_step()
-        start_it = ckpt_mgr.latest_step()
+        latest_step = ckpt_mgr.latest_step()
+        num_evals_after_init -= latest_step
+        start_it = latest_step
+        current_step = checkpointing.restore_env_steps(ckpt_mgr, latest_step)
 
     logging.info(
         f"Starting at iteration: {start_it} with {num_evals_after_init} evals left"
@@ -709,28 +706,21 @@ def train(
         # Save checkpoints
         logging.info("Saving initial checkpoint")
         if ckpt_mgr is not None:
-            # new orbax API
-            ckpt_mgr.save(
-                step=0,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardSave(policy_param),
-                    train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                    config=ocp.args.JsonSave(config_dict),
-                ),
+            checkpointing.save(
+                ckpt_mgr,
+                0,
+                policy_param,
+                _unpmap(training_state),
+                config_dict,
+                current_step,
+                checkpoint_callback,
             )
-            # Call checkpoint callback for initial save
-            if checkpoint_callback is not None:
-                try:
-                    checkpoint_callback(0)
-                except Exception as e:
-                    logging.warning(f"Initial checkpoint callback failed: {e}")
         else:
             logging.info("Skipping checkpoint save as ckpt_mgr is None")
 
     training_metrics = {}
     training_walltime = 0
     start_it += 1
-    current_step = 0
     for it in range(start_it, num_evals_after_init + start_it):
         logging.info("starting iteration %s %s", it, time.time() - xt)
         for _ in range(max(num_resets_per_eval, 1)):
@@ -740,7 +730,7 @@ def train(
             training_state, env_state, training_metrics = training_epoch_with_timing(
                 training_state, env_state, epoch_keys, it
             )
-            current_step = int(_unpmap(training_state.env_steps))
+            current_step += env_steps_per_training_epoch
 
             key_envs = jax.vmap(
                 lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)
@@ -803,13 +793,14 @@ def train(
                     policy_param,
                     _unpmap(training_state),
                     config_dict,
+                    current_step,
                     checkpoint_callback,
                 )
 
     total_steps = current_step
     # TODO: this assert will fail
     # assert (
-    #     total_steps >= num_timesteps / STEPS_IN_THOUSANDS
+    #     total_steps >= num_timesteps
     # ), "Total steps must be at least the number of timesteps scaled to thousands."
 
     # If there was no mistakes the training_state should still be identical on all

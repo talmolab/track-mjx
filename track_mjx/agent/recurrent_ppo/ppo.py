@@ -31,15 +31,13 @@ from brax.training.acme import running_statistics
 from brax.training.types import Params, PRNGKey
 from mujoco_playground import wrapper as mp_wrapper
 
+from track_mjx import training_wrappers
 from track_mjx.agent import checkpointing, gradients
 from track_mjx.agent.observation_utils import (
     get_obs_shape,
     get_obs_sizes,
 )
 from track_mjx.agent.recurrent_ppo import losses, networks
-from track_mjx.device_utils import patch_brax_pmap_compat, replicate_for_pmap
-
-patch_brax_pmap_compat()
 
 # Type aliases
 InferenceParams = tuple[running_statistics.RunningStatisticsState, Params]
@@ -47,7 +45,6 @@ Metrics = types.Metrics
 HiddenState = networks.HiddenState
 
 # Constants
-STEPS_IN_THOUSANDS = 1e3
 _PMAP_AXIS_NAME = "i"
 
 
@@ -60,18 +57,16 @@ class TrainingState:
         params: PPO network parameters (policy and value).
         normalizer_params: Running statistics for observation normalization.
             Has pytree structure matching observation dict.
-        env_steps: Total environment steps taken (in thousands).
     """
 
     optimizer_state: optax.OptState
     params: losses.RecurrentPPONetworkParams
     normalizer_params: running_statistics.RunningStatisticsState
-    env_steps: jnp.ndarray
 
 
 def _unpmap(v: Any) -> Any:
     """Extract first device's values from a pmap'd pytree."""
-    return jax.tree.map(lambda x: x[0], v)
+    return jax.tree.map(lambda x: x.addressable_shards[0].data.squeeze(0), v)
 
 
 def _strip_weak_type(tree: Any) -> Any:
@@ -79,6 +74,8 @@ def _strip_weak_type(tree: Any) -> Any:
 
     def f(leaf):
         leaf = jnp.asarray(leaf)
+        if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+            return leaf
         return leaf.astype(leaf.dtype)
 
     return jax.tree.map(f, tree)
@@ -343,7 +340,7 @@ def train(
     checkpoint_callback: Callable[[int], None] | None = None,
     grad_clip_threshold: float = 20.0,
     wrap_for_training: Callable[..., mp_wrapper.Wrapper] = functools.partial(
-        mp_wrapper.wrap_for_brax_training, full_reset=False
+        training_wrappers.wrap_for_brax_training, full_reset=False
     ),
 ) -> tuple[Callable, InferenceParams, Metrics]:
     """Train a recurrent PPO agent on the given environment.
@@ -426,6 +423,9 @@ def train(
             * max(num_resets_per_eval, 1)
         )
     ).astype(int)
+    env_steps_per_training_epoch = int(
+        num_training_steps_per_epoch * env_step_per_training_step
+    )
 
     key = jax.random.key(seed)
     global_key, local_key = jax.random.split(key)
@@ -537,14 +537,15 @@ def train(
         optimizer_state=optimizer.init(init_params),
         params=init_params,
         normalizer_params=running_statistics.init_state(get_obs_shape(env_state.obs)),
-        env_steps=0,
     )
 
     # Load checkpoint if provided
+    current_step = 0
     if checkpoint_to_restore is not None:
         training_state = checkpointing.load_training_state(
             checkpoint_to_restore, training_state
         )
+        current_step = checkpointing.load_env_steps(checkpoint_to_restore)
         logging.info(f"Restored checkpoint from {checkpoint_to_restore}")
 
     gradient_update_fn = gradients.gradient_update_fn(
@@ -677,11 +678,6 @@ def train(
             optimizer_state=optimizer_state,
             params=params,
             normalizer_params=normalizer_params,
-            env_steps=jnp.asarray(
-                training_state.env_steps
-                + env_step_per_training_step / STEPS_IN_THOUSANDS,
-                dtype=jnp.int32,
-            ),
         )
         return (new_training_state, state, policy_hidden, new_key, it), metrics
 
@@ -721,7 +717,7 @@ def train(
         training_state, env_state, policy_hidden = _strip_weak_type(
             (training_state, env_state, policy_hidden)
         )
-        step = jnp.ones_like(training_state.env_steps) * it
+        step = jnp.full((local_devices_to_use,), it, dtype=jnp.int32)
         result = training_epoch(training_state, env_state, policy_hidden, key, step)
         training_state, env_state, policy_hidden, metrics = _strip_weak_type(result)
 
@@ -743,13 +739,12 @@ def train(
         return training_state, env_state, policy_hidden, metrics
 
     # Replicate training state across devices
-    devices = jax.local_devices()[:local_devices_to_use]
-    training_state = replicate_for_pmap(training_state, devices)
+    training_state = pmap.bcast_local_devices(training_state, local_devices_to_use)
 
     # Initialize policy hidden state for each device
     # Shape: [devices, envs_per_device, hidden_size]
     policy_hidden = recurrent_ppo_network.policy_network.init_hidden(envs_per_device)
-    policy_hidden = replicate_for_pmap(policy_hidden, devices)
+    policy_hidden = pmap.bcast_local_devices(policy_hidden, local_devices_to_use)
 
     # Setup evaluation
     if eval_env is None:
@@ -797,6 +792,7 @@ def train(
         if latest_step is not None:
             num_evals_after_init -= latest_step
             start_it = latest_step
+            current_step = checkpointing.restore_env_steps(ckpt_mgr, latest_step)
 
     logging.info(
         f"Starting at iteration: {start_it} with {num_evals_after_init} evals left"
@@ -819,26 +815,18 @@ def train(
 
         # Save initial checkpoint
         if ckpt_mgr is not None:
-            ckpt_mgr.save(
-                step=0,
-                args=ocp.args.Composite(
-                    policy=ocp.args.StandardSave(policy_param),
-                    train_state=ocp.args.StandardSave(_unpmap(training_state)),
-                    config=ocp.args.JsonSave(config_dict),
-                ),
+            checkpointing.save(
+                ckpt_mgr,
+                0,
+                policy_param,
+                _unpmap(training_state),
+                config_dict,
+                current_step,
+                checkpoint_callback,
             )
-            if checkpoint_callback is not None:
-                try:
-                    checkpoint_callback(0)
-                except OSError as e:
-                    logging.error(
-                        f"Initial checkpoint callback failed with I/O error: {e}. "
-                        "Training will continue but checkpoint state may be incomplete."
-                    )
 
     training_metrics = {}
     start_it += 1
-    current_step = 0
 
     for it in range(start_it, num_evals_after_init + start_it):
         logging.info("starting iteration %s %s", it, time.time() - xt)
@@ -854,7 +842,7 @@ def train(
             ) = training_epoch_with_timing(
                 training_state, env_state, policy_hidden, epoch_keys, it
             )
-            current_step = int(_unpmap(training_state.env_steps))
+            current_step += env_steps_per_training_epoch
 
             key_envs = jax.vmap(
                 lambda x, s: jax.random.split(x[0], s), in_axes=(0, None)
@@ -866,7 +854,9 @@ def train(
                 policy_hidden = recurrent_ppo_network.policy_network.init_hidden(
                     envs_per_device
                 )
-                policy_hidden = replicate_for_pmap(policy_hidden, devices)
+                policy_hidden = pmap.bcast_local_devices(
+                    policy_hidden, local_devices_to_use
+                )
 
         if process_id == 0:
             policy_param = _unpmap(
@@ -903,6 +893,7 @@ def train(
                     policy_param,
                     _unpmap(training_state),
                     config_dict,
+                    current_step,
                     checkpoint_callback,
                 )
 

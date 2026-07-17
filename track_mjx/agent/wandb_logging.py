@@ -311,8 +311,10 @@ def wandb_progress(num_steps: int, metrics: dict[str, Any]) -> None:
         module), so it should be called last in a logging batch.
     """
     metrics["num_steps_thousands"] = num_steps
+    summary_keys = set(wandb.run.summary.keys())
     for metric in metrics:
-        if metric not in wandb.run.summary:
+        if metric not in summary_keys:
             mode = "max" if "reward" in metric or "episode_length" in metric else "mean"
             wandb.run.define_metric(metric, summary=mode)
+            summary_keys.add(metric)
     wandb.log(metrics)

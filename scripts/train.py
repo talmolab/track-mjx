@@ -12,14 +12,15 @@ import logging
 
 import hydra
 import jax
+import numpy as np
 import orbax.checkpoint as ocp
 from brax.training.distribution import NormalTanhDistribution
-from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 
 import wandb
+from track_mjx import training_wrappers
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.distribution import NormalSigmoidDistribution
 from track_mjx.agent.domain_randomization import domain_randomization_maker
@@ -102,19 +103,24 @@ def main(cfg: DictConfig) -> None:
         env_name,
         data_path=cfg.env_config.reference_data_path,
         n_frames_per_clip=cfg.env_config.clip_length,
-        keep_clips_idx=cfg.env_config.keep_clips_idx,
+        keep_clips_idx=(
+            np.asarray(cfg.env_config.keep_clips_idx)
+            if cfg.env_config.keep_clips_idx is not None
+            else None
+        ),
         joint_names=cfg.env_config.get("joints", default_config.get("joints", None)),
         body_names=cfg.env_config.get("bodies", default_config.get("bodies", None)),
     )
-    key_split, _ = jax.random.split(jax.random.key(cfg.train_setup.train_config.seed))
     train_clips, test_clips = reference_clips.split(
         train_ratio=cfg.train_setup.train_subset_ratio,
-        seed=key_split,
+        seed=int(cfg.train_setup.train_config.seed),
     )
-    logging.info(f"Training on {len(train_clips)} clips: {train_clips}")
-    logging.info(f"Testing on {len(test_clips)} clips: {test_clips}")
+    num_train_clips = int(train_clips.qpos.shape[0])
+    num_test_clips = int(test_clips.qpos.shape[0])
+    logging.info(f"Training on {num_train_clips} clips: {train_clips}")
+    logging.info(f"Testing on {num_test_clips} clips: {test_clips}")
 
-    if len(train_clips) == 0:
+    if num_train_clips == 0:
         raise ValueError(
             f"train_subset_ratio={cfg.train_setup.train_subset_ratio} yields 0 "
             f"training clips. Increase the ratio or add more clips."
@@ -129,7 +135,7 @@ def main(cfg: DictConfig) -> None:
         logging.warning(f"Failed to save environment spec: {e}")
         xml = None
 
-    if len(test_clips) == 0:
+    if num_test_clips == 0:
         logging.warning(
             "No test clips after split — skipping held-out test-set evaluation."
         )
@@ -237,7 +243,7 @@ def main(cfg: DictConfig) -> None:
         eval_env_test_set=test_env,
         checkpoint_callback=checkpoint_callback,
         wrap_for_training=functools.partial(
-            playground_wrappers.wrap_for_brax_training, full_reset=False
+            training_wrappers.wrap_for_brax_training, full_reset=False
         ),
         randomization_fn=(
             domain_randomization_maker(
@@ -266,7 +272,12 @@ def main(cfg: DictConfig) -> None:
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
     rollout_env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=rollout_cfg, clips=None, flatten_obs=False)
+        registry.load(
+            env_name,
+            config=rollout_cfg,
+            clips=reference_clips,
+            flatten_obs=False,
+        )
     )
 
     jit_reset = jax.jit(rollout_env.reset)

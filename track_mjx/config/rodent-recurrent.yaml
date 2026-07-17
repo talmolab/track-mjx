@@ -40,7 +40,7 @@ env_config:
   # Domain Randomization Settings
   domain_randomization:
     use_domain_randomization: true
-    floor_friction: [0.4, 1.0]
+    friction_scale: [1.0, 1.0]          # Per-env scale on floor-contact friction ([1.0,1.0]=identity)
     static_friction_scale: [0.9, 1.1]
     armature_scale: [1.0, 1.05]
     com_jitter: [-0.05, 0.05]

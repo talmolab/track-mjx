@@ -49,11 +49,14 @@ def create_environment(env_config: dict[str, Any] | DictConfig) -> mjx_env.MjxEn
     env_cfg_ml = config_dict.ConfigDict(env_cfg_dict)
 
     env_name = env_cfg_ml.env_name
+    default_config = registry.get_default_config(env_name)
     reference_clips = registry.load_reference_clips(
         env_name,
         data_path=env_cfg_ml.reference_data_path,
         n_frames_per_clip=env_cfg_ml.clip_length,
         keep_clips_idx=env_cfg_ml.get("keep_clips_idx", None),
+        joint_names=env_cfg_ml.get("joints", default_config.get("joints", None)),
+        body_names=env_cfg_ml.get("bodies", default_config.get("bodies", None)),
     )
     return vnl_wrappers.TrackMjxObsWrapper(
         registry.load(
@@ -129,7 +132,6 @@ def create_rollout_generator(
             joint_force = next_state.data.cfrc_ext if log_sensor_data else None
             sensor_reading = next_state.data.sensordata if log_sensor_data else None
             activations = extras["activations"] if log_activations else None
-
             return (next_state, new_rng), (
                 next_state,
                 ctrl,

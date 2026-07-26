@@ -171,6 +171,14 @@ def main():
     # Create environments
     env, eval_env = create_environments(args.task, env_cfg)
 
+    try:
+        wandb.log(
+            {"spec_file": wandb.Html(env.save_spec("./env_spec.xml", return_str=True))},
+            commit=False,
+        )
+    except Exception as e:
+        print(f"Error saving spec: {e}")
+
     # Setup training
     training_params = get_training_params(ppo_params)
 

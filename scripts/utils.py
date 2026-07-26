@@ -13,6 +13,7 @@ from flax.training import orbax_utils
 from ml_collections import config_dict
 from orbax import checkpoint as ocp
 from vnl_playground.tasks.rodent import consts
+from track_mjx.agent.wandb_logging import log_lineplot_to_wandb
 
 
 def parse_value(value_str: str) -> Any:
@@ -102,9 +103,17 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
 
     policy_sizes = tuple(int(x) for x in args.policy_hidden_sizes.split(","))
     value_sizes = tuple(int(x) for x in args.value_hidden_sizes.split(","))
+    distribution_type = args.distribution_type
+    state_dependent_std = False
+    init_noise_std = args.init_noise_std
+    if distribution_type == "normal":
+        state_dependent_std = True
     params["network_factory"] = config_dict.create(
         policy_hidden_layer_sizes=policy_sizes,
         value_hidden_layer_sizes=value_sizes,
+        distribution_type=distribution_type,
+        state_dependent_std=state_dependent_std,
+        init_noise_std=init_noise_std,
     )
 
     override_keys = [
@@ -174,10 +183,17 @@ def create_policy_params_fn(
     jit_reset,
     jit_step,
     jit_logging_inference_fn,
+    rollout_metrics=None,
 ):
     """Create the policy_params_fn for evaluation and checkpointing."""
 
-    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
+    def policy_params_fn(
+        current_step,
+        make_policy,
+        params,
+        jit_logging_inference_fn,
+        rollout_metrics=None,
+    ):
         del make_policy
 
         steps_k = current_step * ppo_params.eval_every / 1000
@@ -188,11 +204,69 @@ def create_policy_params_fn(
         rng, reset_rng = jax.random.split(rng)
         state = jit_reset(reset_rng)
         rollout = [state]
+        latent_means = []
+        ctrls = []
         for _ in range(int(ppo_params.episode_length)):
             _, rng = jax.random.split(rng)
-            action, _ = jit_logging_inference_fn(params, state.obs, rng)
+            action, extras = jit_logging_inference_fn(params, state.obs, rng)
             state = jit_step(state, action)
             rollout.append(state)
+            latent_means.append(action)
+            ctrls.append(state.info["action"])
+
+        latent_means = jp.stack(latent_means)
+
+        means_mean = jp.mean(latent_means, axis=0)
+        means_std = jp.std(latent_means, axis=0)
+
+        ctrls = jp.stack(ctrls)
+        ctrls_mean = jp.mean(ctrls, axis=0)
+        ctrls_std = jp.std(ctrls, axis=0)
+
+        if rollout_metrics is not None:
+            for metric in rollout_metrics:
+                if metric.lower() == "latents":
+                    for i in range(means_mean.shape[0]):
+                        wandb.log(
+                            {
+                                f"latents/latent_means_mean{i}": means_mean[i],
+                                f"latents/latent_means_std{i}": means_std[i],
+                            },
+                            commit=False,
+                        )
+                        log_lineplot_to_wandb(
+                            name=f"latents/latent_means{i}",
+                            metric_name=f"latent_means{i}",
+                            data=list(enumerate(latent_means[:, i])),
+                            title="Latent mean per rollout frame",
+                        )
+                elif metric.lower() == "ctrl":
+                    for i in range(ctrls_mean.shape[0]):
+                        wandb.log(
+                            {
+                                f"ctrls/ctrls_mean{i}": ctrls_mean[i],
+                                f"ctrls/ctrls_std{i}": ctrls_std[i],
+                            },
+                            commit=False,
+                        )
+                        log_lineplot_to_wandb(
+                            name="ctrls/ctrls{i}",
+                            metric_name=f"ctrls{i}",
+                            data=list(enumerate(ctrls[:, i])),
+                            title="Ctrl per rollout frame",
+                        )
+                else:
+                    if metric in rollout[0].metrics:
+                        log_lineplot_to_wandb(
+                            name=f"eval/rollout_{metric}",
+                            metric_name=metric,
+                            data=list(enumerate([s.metrics[metric] for s in rollout])),
+                            title=f"{metric} per rollout frame",
+                        )
+                    else:
+                        print(
+                            f"Rollout metric '{metric}' not found in environment metrics."
+                        )
 
         # Render and save video
         video_path = f"{ckpt_path}/{current_step}.mp4"
@@ -208,7 +282,9 @@ def create_policy_params_fn(
         orbax_checkpointer.save(path, params, force=True, save_args=save_args)
 
     return functools.partial(
-        policy_params_fn, jit_logging_inference_fn=jit_logging_inference_fn
+        policy_params_fn,
+        jit_logging_inference_fn=jit_logging_inference_fn,
+        rollout_metrics=rollout_metrics,
     )
 
 
@@ -276,6 +352,19 @@ def create_base_parser(
         type=str,
         default="1024,512,256",
         help="Comma-separated value hidden layer sizes (default: 1024,512,256)",
+    )
+    parser.add_argument(
+        "--distribution_type",
+        type=str,
+        default="tanh_normal",
+        help="Distribution type (default: tanh_normal)",
+        choices=["tanh_normal", "normal"],
+    )
+    parser.add_argument(
+        "--init_noise_std",
+        type=float,
+        default=1.0,
+        help="Initial noise std (default: 0.0)",
     )
 
     # Env config overrides

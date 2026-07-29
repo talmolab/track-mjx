@@ -161,7 +161,7 @@ network_config:
   proprioception_noise_std: 0.1        # Multiplicative decoder state noise std
   kl_schedule: true                    # Anneal KL divergence weight over training
   latent_kl_weight: 1e-1               # Weight for KL divergence to standard Gaussian prior
-  latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss
+  latent_ar1_weight: 0.01              # Weight for AR(1) temporal smoothness loss
 
 # =============================================================================
 # Training Setup
@@ -192,7 +192,7 @@ train_setup:
     batch_size: 1024                  # Samples per gradient update
     num_minibatches: 16               # Minibatches per epoch
     num_updates_per_batch: 4          # Epochs per PPO update
-    learning_rate: 1e-4               # Adam learning rate
+    learning_rate: 3e-4               # Adam learning rate
     grad_clip_threshold: 20.0         # Max gradient norm for clipping
     clipping_epsilon: 0.2             # PPO clip range
     discounting: 0.95                 # Discount factor (gamma)

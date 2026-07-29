@@ -43,15 +43,13 @@ from datetime import datetime
 import jax
 import wandb
 
-from track_mjx.device_utils import enable_jit_cache, patch_brax_pmap_compat
+from track_mjx.device_utils import enable_jit_cache
 
-patch_brax_pmap_compat()
 enable_jit_cache()
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
 from etils import epath
-from mujoco_playground import wrapper
 from utils import (
     apply_env_overrides,
     configure_warp_backend,
@@ -65,10 +63,7 @@ from utils import (
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 
-from track_mjx.device_utils import enable_jit_cache, patch_brax_pmap_compat
-
-patch_brax_pmap_compat()
-enable_jit_cache()
+from track_mjx import training_wrappers
 
 
 def create_environments(task_name, env_cfg):
@@ -195,7 +190,7 @@ def main():
         network_factory=network_factory,
         restore_checkpoint_path=None,
         progress_fn=wandb_progress,
-        wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training),
+        wrap_env_fn=functools.partial(training_wrappers.wrap_for_brax_training),
     )
 
     # Setup logging

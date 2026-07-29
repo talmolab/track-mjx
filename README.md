@@ -14,7 +14,7 @@ This is a package for training control policies through motion imitation using d
 
 #### Prerequisites
 
-- Python 3.11 or 3.12
+- Python 3.12
 - [uv](https://docs.astral.sh/uv/) package manager (recommended) or pip
 - CUDA 12.x or 13.x (for GPU support, optional)
 
@@ -37,31 +37,32 @@ pip install uv
 git clone https://github.com/talmolab/track-mjx.git
 cd track-mjx
 ```
-2. Create and activate a virtual environment:
-```bash
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-3. Install the package with optional dependencies based on your hardware. CUDA 12, CUDA 13, and CPU-only configurations are supported. This will take a few minutes:
+2. Install the environment with optional dependencies based on your hardware.
+`uv sync` creates `.venv` automatically. CUDA 12, CUDA 13, and CPU-only
+configurations are supported:
 
 For CUDA 12.x:
 ```bash
-uv pip install -e ".[cuda12]"
+uv sync --extra cuda12
 ```
 
 For CUDA 13.x:
 ```bash
-uv pip install -e ".[cuda13]"
+uv sync --extra cuda13
 ```
 
 For CPU-only:
 ```bash
-uv pip install -e .
+uv sync
 ```
 
-For development, include the `[dev]` extras in addition to the hardware optional dependencies:
+For development, include the `dev` extra:
 ```bash
-uv pip install -e ".[cuda13,dev]"
+uv sync --extra cuda13 --extra dev
+```
+3. Activate the environment:
+```bash
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 4. Verify the installation:
 ```bash
@@ -155,13 +156,13 @@ python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id=
 
 **Using uv:**
 ```bash
-uv run python -m track_mjx.train --config-name rodent-full-clips.yaml
+uv run python scripts/train.py --config-name rodent-full-clips
 ```
 
 **Using conda:**
 ```bash
 conda activate track_mjx
-python -m track_mjx.train --config-name rodent-full-clips.yaml
+python scripts/train.py --config-name rodent-full-clips
 ```
 
 

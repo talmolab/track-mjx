@@ -147,9 +147,16 @@ To download data, run `notebooks/rodent_demo.ipynb`
 
 ##### OR
 
-Execute the following command in terminal
+Execute the following command in terminal:
+
+**Rodent reference clips:**
 ```bash
 python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='talmolab/MIMIC-MJX', repo_type='dataset', filename='data/rodent/rodent_reference_clips.h5', local_dir='.')"
+```
+
+**Fly reference clip** (legacy/flat format, ~2.3GB):
+```bash
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='talmolab/MIMIC-MJX', repo_type='dataset', filename='data/fly/fly_reference_clip.h5', local_dir='.')"
 ```
 
 #### Run training:

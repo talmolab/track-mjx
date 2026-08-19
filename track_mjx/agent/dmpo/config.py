@@ -195,6 +195,30 @@ class DMPOConfig:
     behavior_mix_hold_env_steps: int = 0
     behavior_mix_end_env_steps: int = 0
 
+    # ------------------------------------------------------------------
+    # Replay-buffer compression (2026-08-19). The buffer lives on-device
+    # inside the fused JIT, so its depth is bounded by GPU memory; at the
+    # uncompressed ~19.5 KB/transition (two f32 copies of the 32x32x2 vision
+    # obs) 400k transitions ~= 7.8 GB ~= only 4 rollouts of history. Both
+    # flags default to the historical schema.
+    # ------------------------------------------------------------------
+
+    # Drop the `next_observation` field from stored transitions. In flashbax
+    # trajectory storage observation[t+1] IS next_observation[t] bit-for-bit
+    # (the auto-reset wrapper swaps obs on the terminal step itself, and the
+    # time axis is continuous across rollout adds because env_state persists),
+    # so the field is pure duplication -- half the observation memory. The
+    # learner then bootstraps from observation[:, n], which needs
+    # sequence_length >= n_step + 1 (the learner caps n = min(n_step, T-1)).
+    store_next_observation: bool = True
+
+    # Store obs["vision"] as uint8 (round(v*255)) instead of float32. The
+    # renderer unpacks 8-bit channels to f32 in [0,1], so quantization error
+    # is <= 1/510 of range. normalize_dict_obs already dequantizes uint8
+    # vision (/255) at sample time; the live rollout policy consumes the f32
+    # render directly and is unaffected. 4x on the dominant obs component.
+    vision_uint8_storage: bool = False
+
 
 def resolve_sgd_steps_per_rollout(cfg: DMPOConfig) -> int:
     """K = SGD updates per rollout. Explicit override wins, else the legacy formula.

@@ -400,7 +400,22 @@ def sgd_step(
     # n_steps = 1 reduces to EXACTLY the previous expressions (m = [1], g = [1],
     # R_n = r_0, D = d_0), so the default is bit-identical to the old behaviour.
     _T = batch["reward"].shape[1]
-    n_steps = int(min(cfg.n_step, _T)) if getattr(cfg, "use_n_step", False) else 1
+    # Compressed schema (cfg.store_next_observation=False): the batch has no
+    # `next_observation`; the bootstrap state s_{t+n} is observation[:, n],
+    # bit-identical to next_observation[:, n-1] in flashbax trajectory storage
+    # (the auto-reset wrapper swaps obs on the terminal step itself, and the
+    # time axis is continuous across rollout adds). That index must exist, so
+    # n is capped at T-1 -- size sequence_length = n_step + 1 to keep the full
+    # horizon. Detected from the batch (not cfg) so tests and mixed callers
+    # get the right behaviour per schema.
+    _has_next = "next_observation" in batch
+    _n_cap = _T if _has_next else _T - 1
+    if _n_cap < 1:
+        raise ValueError(
+            f"sequence_length={_T} too short for the compressed schema: "
+            "bootstrapping from observation[:, n] needs sequence_length >= 2."
+        )
+    n_steps = int(min(cfg.n_step, _n_cap)) if getattr(cfg, "use_n_step", False) else 1
     _d = batch["discount"][:, :n_steps]                       # [B, n]
     _r = batch["reward"][:, :n_steps]                         # [B, n]
     _alive = jnp.cumprod(_d, axis=1)                          # m_{i+1}
@@ -408,9 +423,12 @@ def sgd_step(
     _g = cfg.discount ** jnp.arange(n_steps, dtype=_r.dtype)
     rew_t0 = jnp.sum(_g[None, :] * _m * _r, axis=1)           # R_n
     disc_t0 = (cfg.discount ** (n_steps - 1)) * _alive[:, -1]  # gamma^(n-1) m_n
-    next_obs_t0 = jax.tree.map(
-        lambda x: x[:, n_steps - 1], batch["next_observation"]
-    )
+    if _has_next:
+        next_obs_t0 = jax.tree.map(
+            lambda x: x[:, n_steps - 1], batch["next_observation"]
+        )
+    else:
+        next_obs_t0 = jax.tree.map(lambda x: x[:, n_steps], batch["observation"])
 
     # NEW: normalize observations using the current normalizer state.
     # Normalizer is updated only in rollout (not here) to mirror Brax PPO.

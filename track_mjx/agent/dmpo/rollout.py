@@ -36,6 +36,25 @@ def _update_normalizer(normalizer_params, obs):
     return running_statistics.update(normalizer_params, obs)
 
 
+def _quantize_vision(v):
+    """f32 [0,1] -> uint8. The renderer unpacks 8-bit channels, so the
+    round-trip error through normalize_dict_obs's /255 is <= 1/510."""
+    return jnp.round(jnp.clip(v, 0.0, 1.0) * 255.0).astype(jnp.uint8)
+
+
+def _maybe_store_obs(obs, normalizer_params, vision_uint8):
+    """Flatten for storage; optionally quantize the vision component."""
+    stored = _maybe_flatten_obs(obs, normalizer_params)
+    if not vision_uint8:
+        return stored
+    if not isinstance(stored, dict) or "vision" not in stored:
+        raise ValueError(
+            "vision_uint8 storage requested but the stored observation is "
+            f"{type(stored).__name__} without a 'vision' key"
+        )
+    return {**stored, "vision": _quantize_vision(stored["vision"])}
+
+
 def _maybe_flatten_obs(obs, normalizer_params):
     """Flatten nested dict obs to {'imitation_target': ..., 'proprioception': ...}.
 
@@ -68,6 +87,8 @@ def collect_rollout(
     behavior_mix_frac=None,
     reward_remix_key=None,
     reward_remix_lambda=None,
+    store_next_observation: bool = True,
+    vision_uint8: bool = False,
 ):
     """Roll out num_envs parallel envs for num_steps timesteps.
 
@@ -114,6 +135,17 @@ def collect_rollout(
         the env reward unchanged.
       reward_remix_lambda: traced f32 scalar; required with
         ``reward_remix_key``.
+      store_next_observation: when False, the transition omits the
+        ``next_observation`` field (it is bit-identical to the NEXT
+        timestep's ``observation`` in flashbax trajectory storage -- the
+        auto-reset wrapper swaps obs on the terminal step itself, and the
+        time axis is continuous across rollout adds). Halves the stored
+        observation memory; the learner must bootstrap from
+        ``observation[:, n]`` (it detects the missing key).
+      vision_uint8: when True, store ``observation["vision"]`` quantized to
+        uint8 (``round(v*255)``). ``normalize_dict_obs`` dequantizes at
+        sample time; the live policy in this rollout keeps consuming the
+        f32 render. Requires dict observations with a "vision" key.
 
     Returns:
       trajectory: dict with keys observation/action/reward/discount/next_observation,
@@ -176,12 +208,17 @@ def collect_rollout(
         transition = {
             # Pre-flatten dict obs to the canonical 2-key shape so the replay
             # buffer's structural check matches the network/normalizer template.
-            "observation": _maybe_flatten_obs(state.obs, normalizer_params),
+            "observation": _maybe_store_obs(
+                state.obs, normalizer_params, vision_uint8
+            ),
             "action": raw_action,                # RAW (pre-tanh)
             "reward": reward,
             "discount": (1.0 - new_state.done).astype(jnp.float32),
-            "next_observation": _maybe_flatten_obs(new_state.obs, normalizer_params),
         }
+        if store_next_observation:
+            transition["next_observation"] = _maybe_store_obs(
+                new_state.obs, normalizer_params, vision_uint8
+            )
         # Extra info keys (e.g. anchor_mu_imit) -- extracted from CURRENT
         # state.info because they describe the obs the policy conditioned on.
         for key in extra_state_extras:

@@ -115,6 +115,10 @@ def make_fused_train_step(
                 cfg.reward_anneal_sparse_key if use_reward_remix else None
             ),
             reward_remix_lambda=remix_lambda,
+            store_next_observation=bool(
+                getattr(cfg, "store_next_observation", True)
+            ),
+            vision_uint8=bool(getattr(cfg, "vision_uint8_storage", False)),
         )
         state = state._replace(normalizer_params=new_normalizer_params)
         rb_state = rb.add(rb_state, traj)

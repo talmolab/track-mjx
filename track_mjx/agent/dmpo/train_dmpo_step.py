@@ -135,14 +135,16 @@ def make_fused_train_step(
         # uses the most recent chunk's mean which is post-warmup anyway.
         metrics = sgd_metrics
         if use_behavior_mix or use_reward_remix:
-            # Surface the live schedule values; shaped [K] like the other
-            # per-SGD-step metrics so the chunk-level mean reduction works.
-            ones_k = jax.numpy.ones((K,), jax.numpy.float32)
+            # Surface the live schedule values. Metrics leaving the fused step
+            # are SCALARS (scan_k already mean-reduces over K; the chunk then
+            # means over iters), so these must be scalars too -- a [K]-shaped
+            # entry survives both reductions as [K] and crashes the wandb
+            # float() conversion at the first log point.
             metrics = dict(metrics)
             if use_behavior_mix:
-                metrics["schedule/behavior_mix_frac"] = mix_frac * ones_k
+                metrics["schedule/behavior_mix_frac"] = mix_frac
             if use_reward_remix:
-                metrics["schedule/reward_anneal_lambda"] = remix_lambda * ones_k
+                metrics["schedule/reward_anneal_lambda"] = remix_lambda
         return new_state, env_state, rb_state, metrics
 
     return _step

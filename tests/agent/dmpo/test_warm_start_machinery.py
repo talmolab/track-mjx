@@ -350,3 +350,39 @@ def test_from_state_dict_rebuilds_the_flax_normalizer_struct():
     rebuilt = ser.from_state_dict(template, jax.tree.map(np.asarray, state_dict))
     assert type(rebuilt) is type(template)
     assert _leaves_equal(rebuilt, template)
+
+
+def test_schedule_metrics_are_scalars_after_the_chunk_reduction():
+    """Metrics leave the fused step as SCALARS (scan_k mean-reduces over K,
+    the chunk means over iters). A [K]-shaped schedule metric survives both
+    reductions as [K] and crashes training_loop's float() at the first wandb
+    log -- which is exactly how the first w1 smoke died. Pin the shape."""
+    from track_mjx.agent.dmpo.train_dmpo_chunk import make_train_chunk
+    from track_mjx.agent.dmpo.train_dmpo_step import make_fused_train_step
+
+    s = _setup()
+    cfg = dataclasses.replace(
+        s["cfg"],
+        reward_anneal_sparse_key=None,  # remix needs env metrics; mix alone suffices
+        behavior_mix_init=1.0,
+        behavior_mix_hold_env_steps=100,
+        behavior_mix_end_env_steps=200,
+    )
+    frozen = jax.tree.map(lambda x: x, s["state"].policy_params)
+    fused = make_fused_train_step(
+        s["env"], s["nets"], s["optimizers"], s["rb"], cfg, K=2,
+        frozen_behavior_params=frozen,
+    )
+    # Mirror the real loop: one fused step first (env_state None -> pytree),
+    # then the chunk scan (whose carry cannot start from None).
+    state, env_state, rb_state, _ = fused(
+        s["state"], None, s["rb_state"], jax.random.PRNGKey(1)
+    )
+    chunk = make_train_chunk(fused, n_iters=2)
+    state, env_state, rb_state, metrics = chunk(
+        state, env_state, rb_state, jax.random.PRNGKey(0)
+    )
+    assert "schedule/behavior_mix_frac" in metrics
+    for k, v in metrics.items():
+        assert jnp.ndim(v) == 0, f"metric {k} has shape {jnp.shape(v)}; must be scalar"
+        float(v)  # the exact operation training_loop performs

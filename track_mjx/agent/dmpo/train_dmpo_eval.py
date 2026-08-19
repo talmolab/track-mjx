@@ -25,7 +25,11 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
-def compute_rollout_metrics(rollout: list) -> dict:
+def compute_rollout_metrics(
+    rollout: list,
+    remix_key: str | None = None,
+    remix_lambda: float | None = None,
+) -> dict:
     """Aggregate per-rollout scalars matching train_highlvl's eval keys.
 
     Mirrors ``vnl_playground.train_highlvl._compute_rollout_metrics`` so
@@ -38,6 +42,12 @@ def compute_rollout_metrics(rollout: list) -> dict:
     ``anchor/r_anchor``, ``anchor/r_task``, ``anchor/action_mse``).
     Reward-component keys absent on healthy DMPO runs simply don't
     appear, preserving backward compatibility for non-kl-anchor entries.
+
+    ``remix_key``/``remix_lambda`` make the reward keys report the TRAINING
+    reward -- what ``rollout.py`` stored in replay after the dense->sparse
+    anneal -- with the un-annealed env total kept under a ``_env`` suffix. See
+    ``remix_eval_reward``. Defaults of None reproduce the pre-2026-08-19
+    behaviour exactly.
     """
     total_reward = 0.0
     episode_rewards: list[float] = []
@@ -45,15 +55,30 @@ def compute_rollout_metrics(rollout: list) -> dict:
     current_ep_reward = 0.0
     current_ep_length = 0
     total_gap_crossings = 0
+    total_reward_env = 0.0
+    episode_rewards_env: list[float] = []
+    current_ep_reward_env = 0.0
+    lam = float(remix_lambda) if remix_lambda is not None else 0.0
     # Per-step anchor metric collection. We grab a value for every
     # ``anchor/*`` key that appears anywhere in the rollout's
     # ``state.metrics`` dicts.
     anchor_values: dict[str, list[float]] = {}
 
     for state in rollout[1:]:  # skip initial reset state
-        r = float(np.asarray(state.reward))
+        r_env = float(np.asarray(state.reward))
+        # Mirror rollout.py:200-207 -- the buffer stores the remixed reward, so
+        # that is what the primary keys must report. Only the sparse term is
+        # nan_to_num'd; the env already sanitises its summed reward.
+        if remix_key is not None:
+            _m = getattr(state, "metrics", None) or {}
+            _sparse = float(np.nan_to_num(np.asarray(_m.get(remix_key, 0.0))))
+            r = _sparse + lam * (r_env - _sparse)
+        else:
+            r = r_env
         total_reward += r
+        total_reward_env += r_env
         current_ep_reward += r
+        current_ep_reward_env += r_env
         current_ep_length += 1
 
         # Gap crossings come from state.info, not from the reward metrics. See
@@ -84,12 +109,15 @@ def compute_rollout_metrics(rollout: list) -> dict:
 
         if float(np.asarray(getattr(state, "done", 0.0))) > 0.5:
             episode_rewards.append(current_ep_reward)
+            episode_rewards_env.append(current_ep_reward_env)
             episode_lengths.append(current_ep_length)
             current_ep_reward = 0.0
+            current_ep_reward_env = 0.0
             current_ep_length = 0
 
     if current_ep_length > 0:
         episode_rewards.append(current_ep_reward)
+        episode_rewards_env.append(current_ep_reward_env)
         episode_lengths.append(current_ep_length)
 
     n_episodes = len(episode_rewards)
@@ -105,6 +133,13 @@ def compute_rollout_metrics(rollout: list) -> dict:
             sum(episode_lengths) / n_episodes if n_episodes > 0 else 0.0
         ),
         "total_gap_crossings": total_gap_crossings,
+        # Un-annealed env total: the pre-2026-08-19 meaning of the three reward
+        # keys above.
+        "cumulative_reward_env": total_reward_env,
+        "mean_reward_per_step_env": total_reward_env / n_steps,
+        "mean_episode_reward_env": (
+            sum(episode_rewards_env) / n_episodes if n_episodes > 0 else 0.0
+        ),
     }
     # Anchor metric aggregates. Use a single nesting level (``anchor/<suffix>_<stat>``)
     # so wandb groups them under an "anchor" panel.
@@ -324,7 +359,47 @@ def run_eval_rollout_envzero(
     return rollout, termination_events, compute_batch_rollout_metrics(allenv)
 
 
-def compute_batch_rollout_metrics(allenv: dict) -> dict:
+def remix_eval_reward(
+    allenv: dict,
+    remix_key: str | None,
+    remix_lambda: float | None,
+) -> tuple[np.ndarray, float]:
+    """Reconstruct the reward that ``rollout.py`` actually stored in replay.
+
+    The eval env is unremixed -- it reports the raw env total, the sum of the
+    weighted reward terms (base.py:314-322). The TRAINING rollout stores
+    ``sparse + lambda(t) * (total - sparse)`` instead (rollout.py:200-207), so
+    an eval that reports ``state.reward`` is measuring a reward the learner is
+    not being paid. Mirror that expression here, on the [T, N] arrays the scan
+    already collected -- no extra rollout cost.
+
+    Only the sparse term is ``nan_to_num``'d, matching rollout.py: the env
+    already sanitises its summed reward.
+
+    Returns:
+        ``(r_train, measured)``. ``measured`` is 1.0 when the stored reward was
+        genuinely reconstructed and 0.0 when ``remix_key`` was configured but
+        absent from ``allenv`` -- in which case ``r_train`` falls back to the
+        env total. A zero here means "this number is the OLD env-total
+        semantics", not "the reward was zero"; see `batch/gap_measured` and
+        test_gap_crossing_metric.py for the precedent this idiom comes from.
+    """
+    rew = np.asarray(allenv["reward"], dtype=np.float64)
+    if remix_key is None:
+        # No anneal configured: rollout.py stores the env reward unchanged.
+        return rew, 1.0
+    if remix_key not in allenv:
+        return rew, 0.0
+    lam = float(remix_lambda) if remix_lambda is not None else 0.0
+    sparse = np.nan_to_num(np.asarray(allenv[remix_key], dtype=np.float64))
+    return sparse + lam * (rew - sparse), 1.0
+
+
+def compute_batch_rollout_metrics(
+    allenv: dict,
+    remix_key: str | None = None,
+    remix_lambda: float | None = None,
+) -> dict:
     """Proper episode statistics over ALL envs, from the [T, N] scan output.
 
     Replaces the env-0 estimator, whose `mean_episode_length` was identically
@@ -343,8 +418,21 @@ def compute_batch_rollout_metrics(allenv: dict) -> dict:
         This is what brax's Evaluator reports, so it is the only number
         comparable to PPO's `eval/avg_episode_length`. Still censored, so it is
         a LOWER bound once episodes approach T.
+
+    Reward keys report the TRAINING reward -- what `rollout.py` stored in replay
+    after the dense->sparse anneal -- when `remix_key`/`remix_lambda` are given.
+    The un-annealed env total stays available under a `_env` suffix. Defaults of
+    None reproduce the pre-2026-08-19 behaviour exactly, so one-arg calls (and
+    test_gap_crossing_metric.py) are unaffected.
+
+    Per-term `episode_rewards/<term>` keys are deliberately NOT annealed -- they
+    are the raw weighted breakdown. `batch/reward_anneal_lambda` is published
+    once; lambda scales the whole dense remainder uniformly, so that scalar plus
+    the raw terms reconstructs any term's stored contribution.
     """
     rew = np.asarray(allenv["reward"])          # [T, N]
+    rew_env = rew
+    rew, reward_train_measured = remix_eval_reward(allenv, remix_key, remix_lambda)
     done = np.asarray(allenv["done"]) > 0.5     # [T, N]
     T, N = rew.shape
     # Prefer the task's own crossing flag over the reward bonus. The bonus is
@@ -366,6 +454,7 @@ def compute_batch_rollout_metrics(allenv: dict) -> dict:
 
     comp_len: list[int] = []
     comp_rew: list[float] = []
+    comp_rew_env: list[float] = []
     first_len = np.full(N, T, dtype=np.int64)
     first_done = np.zeros(N, dtype=bool)
 
@@ -378,6 +467,7 @@ def compute_batch_rollout_metrics(allenv: dict) -> dict:
         for d in idx:
             comp_len.append(int(d - start + 1))
             comp_rew.append(float(rew[start:d + 1, e].sum()))
+            comp_rew_env.append(float(rew_env[start:d + 1, e].sum()))
             start = d + 1
         # trailing partial episode deliberately DROPPED
 
@@ -391,6 +481,18 @@ def compute_batch_rollout_metrics(allenv: dict) -> dict:
             float(np.std(comp_len, ddof=1) / np.sqrt(len(comp_len))) if len(comp_len) > 1 else 0.0
         ),
         "batch/mean_episode_reward": float(np.mean(comp_rew)) if comp_rew else 0.0,
+        # Un-annealed env total, i.e. the pre-2026-08-19 meaning of the keys
+        # above. Kept so runs that straddle the change stay comparable.
+        "batch/reward_per_step_env": float(rew_env.mean()),
+        "batch/mean_episode_reward_env": (
+            float(np.mean(comp_rew_env)) if comp_rew_env else 0.0
+        ),
+        # The lambda used to rebuild the stored reward at this eval, and whether
+        # the rebuild actually happened (0.0 => the keys above are env totals).
+        "batch/reward_anneal_lambda": (
+            float(remix_lambda) if remix_lambda is not None else 1.0
+        ),
+        "batch/reward_train_measured": reward_train_measured,
         "batch/first_episode_length": float(first_len.mean()),
         "batch/first_episode_length_sem": float(first_len.std(ddof=1) / np.sqrt(N)) if N > 1 else 0.0,
         "batch/frac_envs_terminated": float(first_done.mean()),
@@ -445,6 +547,9 @@ def compute_batch_rollout_metrics(allenv: dict) -> dict:
     ep_rew = _first_ep_sum(rew)
     out["episode_reward"] = float(ep_rew.mean())
     out["episode_reward_std"] = float(ep_rew.std())
+    ep_rew_env = _first_ep_sum(rew_env)
+    out["episode_reward_env"] = float(ep_rew_env.mean())
+    out["episode_reward_std_env"] = float(ep_rew_env.std())
     out["avg_episode_length"] = float(alive.sum(axis=0).mean())
     for k, v in allenv.items():
         if not isinstance(k, str):

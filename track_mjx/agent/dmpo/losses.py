@@ -483,19 +483,48 @@ def compute_parametric_kl_penalty_and_dual_loss(
   return loss_kl, loss_alpha
 
 
-def clip_mpo_params(params: MPOParams) -> MPOParams:
+def clip_mpo_params(
+    params: MPOParams,
+    min_log_temperature: float = _MIN_LOG_TEMPERATURE,
+) -> MPOParams:
   """Floor each dual variable in log-space at _MIN_LOG_{TEMPERATURE,ALPHA}.
 
   Mirrors the projection that vnl-ray/Acme apply at the start of every MPO
   __call__. log_penalty_temperature is preserved iff it was created
   (i.e. iff the loss was constructed with action_penalization=True).
+
+  ``min_log_temperature`` is exposed because the default of -18 is not a safe
+  floor under a SPARSE reward, where Q can go exactly flat across the N sampled
+  actions. When that happens ``compute_weights_and_temperature_loss`` reduces to
+
+      loss = t * (epsilon + Q/t + log N - log N) = t * epsilon + Q
+
+  whose derivative is ``epsilon > 0`` for every t, so the temperature decays
+  without bound and pins here. Measured on arm_m1_sparse_gaponly:
+  log_temperature -4.06 @10.1M -> -9.31 @20.8M -> -18.00 @31.4M, with kl_q_rel
+  (realized KL(q||pi)/epsilon) falling 0.966 -> 0.441 -> 0.00002 and gap
+  crossings/episode collapsing 0.221 -> 0.260 -> 0.030. With genuinely spread Q
+  the small-t limit is ``epsilon - log N`` = 0.1 - 3.0 < 0, i.e. a restoring
+  force; exact flatness is what removes it.
+
+  A HIGHER floor is the conservative choice: it keeps the E-step weights
+  near-uniform (a no-op update) instead of letting 1/t amplify critic noise into
+  a hard argmax over the sampled actions. For reference the healthy dense arm
+  arm_i1_nstep100_proprio sits at log_temperature -0.54 at 297.7M.
+
+  NOTE this bounds the FAILURE, it does not fix the CAUSE. If Q is flat because
+  the critic has stopped depending on the action, a higher floor stops the
+  policy chasing noise but does not restore an improvement signal.
+
+  The default reproduces the previous behaviour exactly, so no completed arm
+  changes.
   """
   clipped_params = MPOParams(
-      log_temperature=jnp.maximum(_MIN_LOG_TEMPERATURE, params.log_temperature),
+      log_temperature=jnp.maximum(min_log_temperature, params.log_temperature),
       log_alpha_mean=jnp.maximum(_MIN_LOG_ALPHA, params.log_alpha_mean),
       log_alpha_stddev=jnp.maximum(_MIN_LOG_ALPHA, params.log_alpha_stddev))
   if params.log_penalty_temperature is None:
     return clipped_params
   return clipped_params._replace(
       log_penalty_temperature=jnp.maximum(
-          _MIN_LOG_TEMPERATURE, params.log_penalty_temperature))
+          min_log_temperature, params.log_penalty_temperature))

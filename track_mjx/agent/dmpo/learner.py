@@ -505,7 +505,9 @@ def sgd_step(
     new_dual_params = optax.apply_updates(state.dual_params, dual_updates)
     # Project dual params to feasible (positive) set per Acme's
     # `_dual_clip_fn`: floor each log-variable at -18.
-    new_dual_params = clip_mpo_params(new_dual_params)
+    new_dual_params = clip_mpo_params(
+        new_dual_params, getattr(cfg, "min_log_temperature", -18.0)
+    )
 
     # ------------------------------------------------------------------
     # 4) Hard target updates on schedule (jax.lax.cond, jit-friendly).

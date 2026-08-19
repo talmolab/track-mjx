@@ -120,6 +120,29 @@ class DMPOConfig:
     # less reuse. To match at batch B: sgd_steps_per_rollout = 3.236*unroll*num_envs/B.
     sgd_steps_per_rollout: Optional[int] = None
 
+    # Floor for the MPO temperature dual, in log space. The Acme/vnl-ray value
+    # is -18 and is the default, so every completed arm is unchanged.
+    #
+    # WHY IT IS EXPOSED. Under a SPARSE reward Q can go exactly flat across the
+    # N=20 sampled actions, and the temperature dual then has derivative
+    # `epsilon` for EVERY temperature (see clip_mpo_params in losses.py), so it
+    # decays without bound and pins at the floor. Measured on
+    # arm_m1_sparse_gaponly: log_temperature -4.06 @10.1M -> -9.31 @20.8M ->
+    # -18.00 @31.4M, with the realized E-step KL (kl_q_rel) falling
+    # 0.966 -> 0.441 -> 0.00002 and gap crossings/episode collapsing
+    # 0.221 -> 0.260 -> 0.030. At the floor 1/t is ~7e7, so any residual critic
+    # noise becomes a hard argmax over the sampled actions.
+    #
+    # A higher floor is the conservative setting: near-uniform E-step weights are
+    # a no-op update, which is strictly better than chasing noise. The healthy
+    # DENSE reference arm_i1_nstep100_proprio sits at -0.54 at 297.7M.
+    #
+    # NOTE also that this floor is in ABSOLUTE temperature while Q scales with
+    # the reward weight, so scaling the reward up is equivalent to lowering this
+    # floor. That is why "make the sparse reward bigger" is not the fix it looks
+    # like -- see arm_m2_scale100.
+    min_log_temperature: float = -18.0
+
     # Use an n-step return (n = min(n_step, sequence_length)) for the critic
     # target instead of single-step TD. `n_step` has been declared and unread
     # since the port; False keeps the historical single-step behaviour

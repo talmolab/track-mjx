@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional
 
 import jax
 
-from track_mjx.agent.dmpo.config import DMPOConfig
+from track_mjx.agent.dmpo.config import DMPOConfig, realized_ratios
 from track_mjx.agent.dmpo.train_dmpo_chunk import make_train_chunk
 from track_mjx.agent.dmpo.train_dmpo_step import make_fused_train_step
 
@@ -45,6 +45,7 @@ def run(
     eval_every_steps: Optional[int] = None,
     num_timesteps: Optional[int] = None,
     extra_state_extras: tuple = (),
+    start_env_steps: int = 0,
 ) -> tuple[Any, Any, Any, dict]:
     """Run the DMPO training loop until ``num_timesteps`` env steps.
 
@@ -86,8 +87,16 @@ def run(
 
     env_steps_per_chunk = cfg.num_envs * cfg.unroll_length * iters_per_chunk
     last_train_metrics: dict = {}
-    total_env_steps = 0
-    last_eval_step = 0
+    # Resume support. Checkpoints are SAVED at `step=total_env_steps`
+    # (`ckpt_save_callback(state, total_env_steps)`), so the checkpoint's own
+    # step number IS the env-step count -- the caller passes `mgr.latest_step()`
+    # here after a successful restore. Previously this was hard-coded to 0, so a
+    # resumed run restored the params but restarted the env-step counter: it
+    # would train `num_timesteps` MORE steps, re-save checkpoints under
+    # already-used step numbers, and log a wandb x-axis that jumped backwards.
+    # Default 0 keeps every fresh run bit-identical.
+    total_env_steps = int(start_env_steps)
+    last_eval_step = int(start_env_steps)
     chunks_completed = 0
     first_step = True
     second_step = True
@@ -148,10 +157,14 @@ def run(
         chunks_completed += 1
 
         elapsed = max(time.time() - t0, 1e-6)
+        # Throughput must count only the steps THIS process ran; on a resumed
+        # run `total_env_steps` starts at the checkpoint's value while `elapsed`
+        # starts at 0, so the cumulative ratio would report a fictitious spike.
+        session_sps = (total_env_steps - int(start_env_steps)) / elapsed
         log.info(
             "chunk env_steps=%d steps_per_sec=%.0f policy_loss=%.4g critic_loss=%.4g",
             int(total_env_steps),
-            total_env_steps / elapsed,
+            session_sps,
             float(last_train_metrics.get("policy_loss", 0.0)),
             float(last_train_metrics.get("critic_loss", 0.0)),
         )
@@ -162,8 +175,21 @@ def run(
             if wandb_log_callback is not None and last_train_metrics:
                 payload = {f"train/{k}": float(v) for k, v in last_train_metrics.items()}
                 payload["env_steps"] = int(total_env_steps)
-                payload["steps_per_sec"] = total_env_steps / elapsed
+                payload["steps_per_sec"] = session_sps
+                # PPO-convention alias so the two projects' throughput panels
+                # overlay. NOTE the known track-mjx caveat: PPO's `training/sps`
+                # is inflated by num_resets_per_eval, whereas this one is a plain
+                # env_steps/wall-clock. This number is the honest one; do not
+                # "correct" it upward to match a PPO curve.
+                payload["training/sps"] = session_sps
                 payload["num_updates_per_rollout"] = K
+                # Learner-throughput ratios, MEASURED rather than configured (the
+                # configured samples_per_insert knob is inverted in the live entry
+                # points; see DMPOConfig.sgd_steps_per_rollout). The Ray run that
+                # solves this task realizes 3.236 samples/insert; this port 0.5.
+                payload.update(
+                    {f"replay/{k}": float(v) for k, v in realized_ratios(cfg, K).items()}
+                )
                 wandb_log_callback(payload, total_env_steps)
             rng, k_eval = jax.random.split(rng)
             if eval_callback is not None:

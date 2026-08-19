@@ -303,7 +303,9 @@ def _policy_loss_fn(
     # Default w_now to the static `kl_anchor_w` so the metric is meaningful
     # even when the anchor branch doesn't execute.
     anchor_w_now = jnp.float32(cfg.kl_anchor_w)
-    if cfg.kl_anchor_alpha != 0.0 and anchor_mu_imit is not None:
+    if (
+        cfg.kl_anchor_alpha != 0.0 or cfg.kl_anchor_beta_linear != 0.0
+    ) and anchor_mu_imit is not None:
         from track_mjx.agent.dmpo.kl_anchor_utils import pretanh_gaussian_kl
         # Linear-decay schedule for w. `cfg.kl_anchor_decay_sgd_steps` is a
         # static Python int from the dataclass, so the branch is selected at
@@ -327,7 +329,14 @@ def _policy_loss_fn(
         anchor_reward = jnp.exp(-w_now * kl)
         anchor_kl_mean = jnp.mean(kl)
         anchor_reward_mean = jnp.mean(anchor_reward)
+        # Saturating term (historical): gradient ~ exp(-w*kl), dies when kl is large.
         anchor_loss_term = -cfg.kl_anchor_alpha * anchor_reward_mean
+        # Linear term: gradient is constant in kl, so it keeps braking at the
+        # large-kl operating point where the exp form has switched itself off.
+        if cfg.kl_anchor_beta_linear != 0.0:
+            anchor_loss_term = (
+                anchor_loss_term + cfg.kl_anchor_beta_linear * anchor_kl_mean
+            )
         anchor_w_now = w_now
         loss = loss + anchor_loss_term
 
@@ -373,9 +382,35 @@ def sgd_step(
     # except for the slice itself.
     obs_t0 = jax.tree.map(lambda x: x[:, 0], batch["observation"])
     act_t0 = batch["action"][:, 0, :]
-    rew_t0 = batch["reward"][:, 0]
-    disc_t0 = batch["discount"][:, 0]
-    next_obs_t0 = jax.tree.map(lambda x: x[:, 0], batch["next_observation"])
+
+    # ---- n-step return -------------------------------------------------------
+    # `cfg.n_step = 50` was declared in DMPOConfig from the start and NEVER read:
+    # this learner did single-step TD on the t=0 slice while discarding the other
+    # 49 timesteps of every sampled sequence. That is the structural asymmetry
+    # against the PPO reference, which gets its advantage from REALIZED returns
+    # via GAE -- returns that directly encode "this action made you fall 40 steps
+    # later". DMPO's Q is its ENTIRE policy-improvement signal and was a one-step
+    # bootstrap through a critic that cannot observe torso height or orientation.
+    #
+    # With m_i = prod_{j<i} d_j (still-alive mask entering step i):
+    #     R_n = sum_{i<n} gamma^i m_i r_i          bootstrap coeff = gamma^n m_n
+    # `compute_categorical_target` forms `rewards + cfg.discount * discounts * z`,
+    # so passing discounts = gamma^(n-1) * m_n reproduces gamma^n * m_n exactly.
+    #
+    # n_steps = 1 reduces to EXACTLY the previous expressions (m = [1], g = [1],
+    # R_n = r_0, D = d_0), so the default is bit-identical to the old behaviour.
+    _T = batch["reward"].shape[1]
+    n_steps = int(min(cfg.n_step, _T)) if getattr(cfg, "use_n_step", False) else 1
+    _d = batch["discount"][:, :n_steps]                       # [B, n]
+    _r = batch["reward"][:, :n_steps]                         # [B, n]
+    _alive = jnp.cumprod(_d, axis=1)                          # m_{i+1}
+    _m = jnp.concatenate([jnp.ones_like(_d[:, :1]), _alive[:, :-1]], axis=1)
+    _g = cfg.discount ** jnp.arange(n_steps, dtype=_r.dtype)
+    rew_t0 = jnp.sum(_g[None, :] * _m * _r, axis=1)           # R_n
+    disc_t0 = (cfg.discount ** (n_steps - 1)) * _alive[:, -1]  # gamma^(n-1) m_n
+    next_obs_t0 = jax.tree.map(
+        lambda x: x[:, n_steps - 1], batch["next_observation"]
+    )
 
     # NEW: normalize observations using the current normalizer state.
     # Normalizer is updated only in rollout (not here) to mirror Brax PPO.

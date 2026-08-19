@@ -82,6 +82,16 @@ class _ValueVisionCriticNet(nn.Module):
     mono_channels: int
     shared_weights: bool
     activation: Callable = nn.silu
+    # Feed the 277-D proprioception vector to the critic as well.
+    #
+    # Default False = the historical behaviour (vision + task_obs + action),
+    # which is input-identical to the PPO reference's value head. That is
+    # benign for PPO, where V(s) is only a GAE baseline and the policy
+    # gradient is carried by the empirical return -- but MPO's E-step ranks
+    # its 20 candidate actions by Q(s,a) ALONE, so a critic that cannot see
+    # torso height or world_zaxis cannot know which action ends the episode.
+    # Those two quantities are exactly the `fallen` termination variables.
+    use_proprio: bool = False
 
     @nn.compact
     def __call__(self, obs, action: jnp.ndarray) -> tfd.Distribution:
@@ -91,7 +101,11 @@ class _ValueVisionCriticNet(nn.Module):
             mono_channels=self.mono_channels,
             shared_weights=self.shared_weights,
         )(obs["vision"])
-        h = jnp.concatenate([vis, obs["imitation_target"], action], axis=-1)
+        parts = [vis, obs["imitation_target"]]
+        if self.use_proprio:
+            parts.append(obs["proprioception"])
+        parts.append(action)
+        h = jnp.concatenate(parts, axis=-1)
         for size in self.layer_sizes:
             h = nn.Dense(size)(h)
             h = nn.LayerNorm()(h)

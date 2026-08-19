@@ -48,6 +48,23 @@ def make_kl_anchor_optimizers(
     base_lr = cfg.policy_lr
 
     def _block_chain(lr_mult):
+        # A true freeze, not adam(0.0).
+        #
+        # adam(base_lr * 0.0) zeroes the update by MULTIPLICATION, which is an
+        # exact freeze only while every gradient is finite. It is not NaN-safe:
+        # clip_by_global_norm computes the global norm over this masked branch
+        # alone, so one NaN gradient anywhere in the block makes that norm NaN,
+        # divides every leaf by it, and then 0 * NaN = NaN -- silently turning
+        # the whole "frozen" prior or decoder into NaN mid-run and destroying
+        # the warm-start the design depends on.
+        #
+        # optax.set_to_zero() emits exact zeros unconditionally, carries no
+        # state, and therefore also avoids accumulating Adam mu/nu moments in a
+        # block that never moves (2x param memory per frozen block, written
+        # into every checkpoint, and a full-magnitude jolt if the multiplier is
+        # ever un-zeroed on resume).
+        if lr_mult == 0.0:
+            return optax.set_to_zero()
         return optax.chain(
             optax.clip_by_global_norm(cfg.grad_clip),
             optax.adam(base_lr * lr_mult),

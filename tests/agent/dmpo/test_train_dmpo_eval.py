@@ -84,7 +84,7 @@ def test_run_eval_rollout_envzero_returns_expected_length():
                 return jnp.zeros((3,))
         return _D()
 
-    rollout, term_events, _batch = run_eval_rollout_envzero(
+    rollout, term_events, _batch, _allenv = run_eval_rollout_envzero(
         env=_StubEnv(),
         policy_apply=policy_apply,
         params=None,
@@ -231,7 +231,7 @@ def test_run_eval_rollout_envzero_applies_normalizer_when_given():
     )
 
     # 1. Without normalizer: policy sees raw ones → bind(1)=tanh(1)≈0.7616.
-    rollout_raw, _, _ = run_eval_rollout_envzero(
+    rollout_raw, _, _, _ = run_eval_rollout_envzero(
         env=_StubDictEnv(),
         policy_apply=policy_apply,
         params=None,
@@ -248,7 +248,7 @@ def test_run_eval_rollout_envzero_applies_normalizer_when_given():
 
     # 2. With normalizer (mean=ones, std=ones for proprio): policy sees
     #    zeros → bind(0)=tanh(0)=0.
-    rollout_norm, _, _ = run_eval_rollout_envzero(
+    rollout_norm, _, _, _ = run_eval_rollout_envzero(
         env=_StubDictEnv(),
         policy_apply=policy_apply,
         params=None,

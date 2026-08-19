@@ -183,7 +183,7 @@ def run_eval_rollout_envzero(
     episode_length: int,
     num_envs: int,
     normalizer_params=None,
-) -> tuple[list, list]:
+) -> tuple[list, list, dict, dict]:
     """Roll out the *batched* eval env for ``episode_length`` steps and
     return env-0's per-step state.
 
@@ -218,6 +218,13 @@ def run_eval_rollout_envzero(
             ``episode_length + 1`` (initial reset state, then one per
             scan step).
         termination_events: list of ``(frame_idx, reason)`` tuples.
+        batch_metrics: ``compute_batch_rollout_metrics(allenv)`` WITHOUT the
+            reward remix -- reward keys are env totals.
+        allenv: the raw ``[T, N]`` per-step arrays (``reward``, ``done``, every
+            ``rewards/*`` / ``terminations/*`` / ``anchor/*`` metric, and
+            ``info/just_crossed_gap``). Returned so the caller, which knows the
+            training state and hence the reward-anneal lambda, can recompute the
+            batch metrics against the reward the replay buffer actually stored.
     """
     from track_mjx.agent.dmpo.action_utils import bind
     from track_mjx.agent.dmpo.learner import _normalize_obs
@@ -356,7 +363,10 @@ def run_eval_rollout_envzero(
         new_obs = jax.tree.map(_swap, cur.obs, prev.obs)
         rollout[t] = cur.replace(data=new_data, obs=new_obs)
 
-    return rollout, termination_events, compute_batch_rollout_metrics(allenv)
+    # `allenv` is returned so the caller can re-derive the batch metrics with the
+    # reward-anneal lambda (which lives in the training state, not here). The
+    # third element stays the un-remixed metrics so existing callers keep working.
+    return rollout, termination_events, compute_batch_rollout_metrics(allenv), allenv
 
 
 def remix_eval_reward(
@@ -576,6 +586,7 @@ def render_eval_video(
     reward_config: dict | None = None,
     termination_events: list[tuple[int, str]] | None = None,
     eye_qpos_indices: list | None = None,
+    reward_remix: dict | None = None,
 ) -> str:
     """Render a tracking-camera MP4 with full HUD + vision overlay (env 0).
 
@@ -609,6 +620,10 @@ def render_eval_video(
         termination_events: list of ``(frame_idx, reason_string)`` tuples.
         eye_qpos_indices: optional indices into qpos for eye joints
             (used by HUD when ``show_eye_angles`` is enabled).
+        reward_remix: optional ``{"sparse_key": str, "lambda": float}``. When
+            given, the HUD reports the reward the replay buffer STORED
+            (``sparse + lambda*(total - sparse)``, rollout.py:200-207) instead
+            of the raw env total, with the env total shown alongside.
     """
     # Lazy import to avoid pulling in vnl-playground unless we render.
     from vnl_playground.train_highlvl import render_video as _vnl_render_video
@@ -632,6 +647,7 @@ def render_eval_video(
             reward_config=reward_config,
             use_obs_vision=overlay_vision,
             eye_qpos_indices=eye_qpos_indices,
+            reward_remix=reward_remix,
         )
     finally:
         renderer.close()

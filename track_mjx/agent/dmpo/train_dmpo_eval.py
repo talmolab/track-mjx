@@ -56,11 +56,24 @@ def compute_rollout_metrics(rollout: list) -> dict:
         current_ep_reward += r
         current_ep_length += 1
 
+        # Gap crossings come from state.info, not from the reward metrics. See
+        # compute_batch_rollout_metrics: `rewards/gap_crossing_bonus` exists only
+        # when that term is enabled in env_config.reward_terms, which the
+        # frozen-prior arms deliberately switch off -- so reading the bonus
+        # reported 0 crossings unconditionally on exactly the arms being studied,
+        # while the batch metric (reading info) measured 2.89 per env on the same
+        # rollout. The reward bonus stays as a fallback for configs that enable it.
+        info = getattr(state, "info", None)
+        if isinstance(info, dict) and "just_crossed_gap" in info:
+            if bool(np.any(np.asarray(info["just_crossed_gap"]))):
+                total_gap_crossings += 1
+
         metrics = getattr(state, "metrics", None)
         if metrics is not None:
-            gap_bonus = float(np.asarray(metrics.get("rewards/gap_crossing_bonus", 0.0)))
-            if gap_bonus > 0:
-                total_gap_crossings += 1
+            if not (isinstance(info, dict) and "just_crossed_gap" in info):
+                gap_bonus = float(np.asarray(metrics.get("rewards/gap_crossing_bonus", 0.0)))
+                if gap_bonus > 0:
+                    total_gap_crossings += 1
             for k in metrics.keys():
                 if isinstance(k, str) and k.startswith("anchor/"):
                     try:
@@ -199,15 +212,70 @@ def run_eval_rollout_envzero(
             out = env.step(st, bound)
             new_st = out[0] if isinstance(out, tuple) else out
             env0 = _index_zero(new_st)
-            return (new_st, k), env0
+            # ALL-ENV statistics. The scan already steps every env; keeping only
+            # env 0 threw away 2047/2048 of the sample and made
+            # mean_episode_length == episode_length/n_episodes with n a small
+            # integer (sd 35.3 over the baseline's own flat window). These three
+            # [num_envs] vectors are what make the eval an estimator.
+            allenv = {"reward": new_st.reward, "done": new_st.done}
+            # Carry every per-step `rewards/*` and `terminations/*` env metric
+            # through for ALL envs. brax's EvalWrapper sums exactly these over
+            # the episode and reports them as `eval/episode_<key>`, which is how
+            # the PPO reference produced eval/episode_rewards/forward_velocity
+            # and eval/episode_terminations/fallen. Carrying them here is what
+            # lets DMPO emit the identical keys.
+            m = getattr(new_st, "metrics", None)
+            if isinstance(m, dict):
+                for mk, mv in m.items():
+                    if isinstance(mk, str) and (
+                        mk.startswith("rewards/")
+                        or mk.startswith("terminations/")
+                        # `anchor/*` added 2026-08-18. These were previously
+                        # reported from the env-0 path ONLY, i.e. n=1. At h1's
+                        # 253.1M eval that produced an apparent regime shift --
+                        # r_task 0.847 -> 0.517, r_anchor 0.294 -> 0.505 -- which
+                        # fully reverted one eval later; the all-env
+                        # `reward_per_step` in the same log line barely moved. It
+                        # was one rat having a bad episode. `anchor/r_anchor` is
+                        # the only continuous readout of drift from the frozen
+                        # prior, so it cannot stay the least reliable number we
+                        # log -- it is the primary measurement for the decoder-thaw
+                        # arm.
+                        or mk.startswith("anchor/")
+                    ):
+                        arr = jnp.asarray(mv, dtype=new_st.reward.dtype)
+                        # Only per-env scalars are aggregatable. Anything else
+                        # (a per-joint vector, say) is skipped rather than
+                        # allowed to raise inside the jitted scan, which would
+                        # take down the whole training run at its first eval.
+                        if arr.shape == new_st.reward.shape or arr.ndim == 0:
+                            allenv[mk] = jnp.broadcast_to(arr, new_st.reward.shape)
+            # Gap crossings must come from state.info, NOT from the reward
+            # metrics above. `rewards/gap_crossing_bonus` only exists when
+            # `gap_crossing_bonus` is listed in env_config.reward_terms, and every
+            # frozen-prior arm deliberately DROPS that term to keep the reward
+            # velocity-only and matched to the PPO reference. The old code read
+            # the bonus with a `.get(..., zeros)` default, so on exactly those
+            # arms it reported 0.000 crossings unconditionally -- a metric that
+            # could not ever be nonzero, reported as if it were a measurement.
+            # `info["just_crossed_gap"]` is maintained by the task on every step
+            # regardless of the reward configuration (run_gap.py:542-546).
+            inf = getattr(new_st, "info", None)
+            if isinstance(inf, dict) and "just_crossed_gap" in inf:
+                jc = jnp.asarray(inf["just_crossed_gap"], dtype=new_st.reward.dtype)
+                if jc.shape == new_st.reward.shape or jc.ndim == 0:
+                    allenv["info/just_crossed_gap"] = jnp.broadcast_to(
+                        jc, new_st.reward.shape
+                    )
+            return (new_st, k), (env0, allenv)
 
-        (_, _), traj = jax.lax.scan(
+        (_, _), (traj, allenv) = jax.lax.scan(
             body, (initial_state, k_scan), None, length=episode_length
         )
-        return traj
+        return traj, allenv
 
     rng, k_scan = jax.random.split(rng)
-    traj = _scan_envzero(state, k_scan)
+    traj, allenv = _scan_envzero(state, k_scan)
     # ``traj`` has leading axis [episode_length] on every array leaf.
     # Touch one leaf to materialise the scan; subsequent slicing is cheap.
     jax.block_until_ready(jax.tree.leaves(traj)[0])
@@ -253,7 +321,139 @@ def run_eval_rollout_envzero(
         new_obs = jax.tree.map(_swap, cur.obs, prev.obs)
         rollout[t] = cur.replace(data=new_data, obs=new_obs)
 
-    return rollout, termination_events
+    return rollout, termination_events, compute_batch_rollout_metrics(allenv)
+
+
+def compute_batch_rollout_metrics(allenv: dict) -> dict:
+    """Proper episode statistics over ALL envs, from the [T, N] scan output.
+
+    Replaces the env-0 estimator, whose `mean_episode_length` was identically
+    `episode_length / n_episodes` for a small integer n -- on the baseline's own
+    flat 31.3M-105.9M window that gave 55.6, 62.5, 83.3, 100.0, 62.5, 166.7,
+    83.3, 71.4: mean 87.7, sd 35.3, a 3x spread while every training metric was
+    constant. Any arm smaller than ~2x was unmeasurable.
+
+    Two statistics are reported because they answer different questions:
+
+    `batch/mean_episode_length`  -- COMPLETE episodes only, pooled over envs.
+        Unbiased for the fall rate. Excludes the trailing partial episode; the
+        old code appended it, which is what forced the sum to equal T exactly.
+
+    `batch/first_episode_length` -- first episode per env, censored at T.
+        This is what brax's Evaluator reports, so it is the only number
+        comparable to PPO's `eval/avg_episode_length`. Still censored, so it is
+        a LOWER bound once episodes approach T.
+    """
+    rew = np.asarray(allenv["reward"])          # [T, N]
+    done = np.asarray(allenv["done"]) > 0.5     # [T, N]
+    T, N = rew.shape
+    # Prefer the task's own crossing flag over the reward bonus. The bonus is
+    # absent whenever `gap_crossing_bonus` is not in env_config.reward_terms --
+    # which is EVERY frozen-prior arm, by design, to keep the reward
+    # velocity-only and matched to the PPO reference. Reading the bonus with a
+    # zeros default therefore reported "0.000 crossings" as a measurement when it
+    # was really "this metric is not wired up on this config". `gap_measured`
+    # records which source was used so a zero can be told apart from a blind spot.
+    if "info/just_crossed_gap" in allenv:
+        gap = np.asarray(allenv["info/just_crossed_gap"])
+        gap_measured = 1.0
+    elif "rewards/gap_crossing_bonus" in allenv:
+        gap = np.asarray(allenv["rewards/gap_crossing_bonus"])
+        gap_measured = 1.0
+    else:
+        gap = np.zeros_like(rew)
+        gap_measured = 0.0
+
+    comp_len: list[int] = []
+    comp_rew: list[float] = []
+    first_len = np.full(N, T, dtype=np.int64)
+    first_done = np.zeros(N, dtype=bool)
+
+    for e in range(N):
+        idx = np.flatnonzero(done[:, e])
+        if idx.size:
+            first_len[e] = idx[0] + 1
+            first_done[e] = True
+        start = 0
+        for d in idx:
+            comp_len.append(int(d - start + 1))
+            comp_rew.append(float(rew[start:d + 1, e].sum()))
+            start = d + 1
+        # trailing partial episode deliberately DROPPED
+
+    out = {
+        "batch/num_envs": float(N),
+        "batch/steps": float(T),
+        "batch/reward_per_step": float(rew.mean()),
+        "batch/n_complete_episodes": float(len(comp_len)),
+        "batch/mean_episode_length": float(np.mean(comp_len)) if comp_len else float(T),
+        "batch/episode_length_sem": (
+            float(np.std(comp_len, ddof=1) / np.sqrt(len(comp_len))) if len(comp_len) > 1 else 0.0
+        ),
+        "batch/mean_episode_reward": float(np.mean(comp_rew)) if comp_rew else 0.0,
+        "batch/first_episode_length": float(first_len.mean()),
+        "batch/first_episode_length_sem": float(first_len.std(ddof=1) / np.sqrt(N)) if N > 1 else 0.0,
+        "batch/frac_envs_terminated": float(first_done.mean()),
+        # Rate, not a count: the env-0 count was 0 at all 28 baseline evals, so
+        # it could not distinguish "never crosses" from "crosses rarely".
+        # NOTE the denominators differ, and the difference matters. An env runs
+        # SEVERAL episodes inside the T-step window (T/mean_episode_length of
+        # them), so `per_env` is a per-WINDOW figure and reads several times
+        # larger than the per-attempt rate. `per_episode` is the interpretable
+        # one: crossings per episode actually attempted.
+        "batch/gap_crossings_per_env": float((gap > 0).sum() / N),
+        "batch/gap_crossings_per_episode": (
+            float((gap > 0).sum() / len(comp_len)) if comp_len else 0.0
+        ),
+        "batch/frac_envs_crossing_gap": float(((gap > 0).any(axis=0)).mean()),
+        # 1.0 = the two keys above came from a real signal; 0.0 = neither source
+        # was present and they are structurally zero. Treat a 0 crossing rate as
+        # meaningful ONLY when this is 1.0.
+        "batch/gap_measured": gap_measured,
+    }
+
+    # All-env anchor diagnostics, alongside the legacy env-0 `anchor/*` keys
+    # (kept so older runs stay comparable). SEM over the [T, N] pool is reported
+    # because the whole reason these moved here is that the n=1 version could not
+    # tell a real drift from one bad episode.
+    for k, v in allenv.items():
+        if not k.startswith("anchor/"):
+            continue
+        a = np.asarray(v, dtype=np.float64)
+        out[f"batch/{k}"] = float(a.mean())
+        out[f"batch/{k}_sem"] = float(a.std(ddof=1) / np.sqrt(a.size)) if a.size > 1 else 0.0
+
+    # ---- PPO-CONVENTION KEYS -------------------------------------------------
+    # brax's EvalWrapper accumulates state.metrics over the FIRST episode of each
+    # env (censored at the rollout cap), averages over envs, and prefixes
+    # `eval/episode_`. Reproducing that exactly is the only way DMPO's numbers can
+    # be put on the same axis as the PPO reference's. Note the semantic trap this
+    # removes: DMPO's native `cumulative_reward` is the sum over the WHOLE rollout
+    # (all episodes), whereas PPO's `episode_reward` is a PER-EPISODE sum -- two
+    # similarly-named quantities that differ by a factor of n_episodes.
+    alive = np.ones((T, N), dtype=bool)
+    if done.any():
+        # steps strictly after the first done are outside episode 1
+        alive = np.cumsum(done, axis=0) - done.astype(int) == 0
+
+    def _first_ep_sum(x):
+        return (np.asarray(x) * alive).sum(axis=0)   # [N]
+
+    # Keys are UNPREFIXED on purpose: the entry point logs these as
+    # `wandb.log({f"eval/{k}": v ...})`, so `episode_reward` lands as
+    # `eval/episode_reward` -- byte-identical to the PPO reference's key.
+    ep_rew = _first_ep_sum(rew)
+    out["episode_reward"] = float(ep_rew.mean())
+    out["episode_reward_std"] = float(ep_rew.std())
+    out["avg_episode_length"] = float(alive.sum(axis=0).mean())
+    for k, v in allenv.items():
+        if not isinstance(k, str):
+            continue
+        if k.startswith("rewards/") or k.startswith("terminations/"):
+            s = _first_ep_sum(v)
+            out[f"episode_{k}"] = float(s.mean())
+            out[f"episode_{k}_std"] = float(s.std())
+    return out
 
 
 def render_eval_video(

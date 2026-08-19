@@ -19,6 +19,11 @@ import jax
 
 from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.rollout import collect_rollout
+from track_mjx.agent.dmpo.schedules import (
+    behavior_mix_frac,
+    env_steps_estimate,
+    reward_anneal_lambda,
+)
 from track_mjx.agent.dmpo.train_dmpo_sgd import make_scan_k_body
 
 
@@ -30,6 +35,7 @@ def make_fused_train_step(
     cfg: DMPOConfig,
     K: int,
     extra_state_extras: tuple = (),
+    frozen_behavior_params: Any = None,
 ) -> Callable[[Any, Any, Any, jax.Array], Tuple[Any, Any, Any, dict]]:
     """Build a single jitted ``(state, env_state, rb_state, rng) -> ...`` step.
 
@@ -42,6 +48,13 @@ def make_fused_train_step(
       cfg: ``DMPOConfig``; ``num_envs`` and ``unroll_length`` are baked in
         as Python ints.
       K: number of inner SGD updates per fused step.
+      frozen_behavior_params: optional frozen policy params for behavior
+        mixing (see ``DMPOConfig.behavior_mix_init``). Closed over — the
+        pytree never changes, so it is safe as a capture, and this keeps the
+        ``(state, env_state, rb_state, rng)`` contract intact. The mixing
+        fraction and the reward-anneal lambda are DERIVED inside the step
+        from ``state.steps`` (see schedules.py), so they advance per rollout
+        without host threading.
 
     Returns:
       Jitted callable. Inputs ``env_state`` and ``rb_state`` are donated
@@ -60,6 +73,18 @@ def make_fused_train_step(
     unroll = int(cfg.unroll_length)
     scan_k = make_scan_k_body(rb, nets, optimizers, cfg, K)
 
+    # Warm-start transition features (all off by default; trace-time flags).
+    use_behavior_mix = (
+        frozen_behavior_params is not None and float(cfg.behavior_mix_init) > 0.0
+    )
+    use_reward_remix = getattr(cfg, "reward_anneal_sparse_key", None) is not None
+    if float(getattr(cfg, "behavior_mix_init", 0.0)) > 0.0 and frozen_behavior_params is None:
+        raise ValueError(
+            "cfg.behavior_mix_init > 0 but no frozen_behavior_params supplied "
+            "to make_fused_train_step -- the mix would silently not happen. "
+            "Pass the warm-start policy params through the training loop."
+        )
+
     @functools.partial(jax.jit, donate_argnums=(1, 2))
     def _step(state, env_state, rb_state, rng):
         # RNG layout (part of the step's contract): split into 3 keys —
@@ -68,6 +93,10 @@ def make_fused_train_step(
         # to derive identical k_roll / k_sgd in the unfused reference path.
         # If you reorder or grow this split, update the test in lockstep.
         rng, k_roll, k_sgd = jax.random.split(rng, 3)
+        # Schedule scalars from the SGD counter (traced; advance per rollout).
+        t_env = env_steps_estimate(state.steps, cfg, K)
+        mix_frac = behavior_mix_frac(t_env, cfg) if use_behavior_mix else None
+        remix_lambda = reward_anneal_lambda(t_env, cfg) if use_reward_remix else None
         traj, env_state, new_normalizer_params = collect_rollout(
             env,
             policy_apply,
@@ -78,6 +107,14 @@ def make_fused_train_step(
             num_steps=unroll,
             init_state=env_state,
             extra_state_extras=extra_state_extras,
+            frozen_policy_params=(
+                frozen_behavior_params if use_behavior_mix else None
+            ),
+            behavior_mix_frac=mix_frac,
+            reward_remix_key=(
+                cfg.reward_anneal_sparse_key if use_reward_remix else None
+            ),
+            reward_remix_lambda=remix_lambda,
         )
         state = state._replace(normalizer_params=new_normalizer_params)
         rb_state = rb.add(rb_state, traj)
@@ -97,6 +134,15 @@ def make_fused_train_step(
         # Metrics carry the would-be values regardless; eval-time logging
         # uses the most recent chunk's mean which is post-warmup anyway.
         metrics = sgd_metrics
+        if use_behavior_mix or use_reward_remix:
+            # Surface the live schedule values; shaped [K] like the other
+            # per-SGD-step metrics so the chunk-level mean reduction works.
+            ones_k = jax.numpy.ones((K,), jax.numpy.float32)
+            metrics = dict(metrics)
+            if use_behavior_mix:
+                metrics["schedule/behavior_mix_frac"] = mix_frac * ones_k
+            if use_reward_remix:
+                metrics["schedule/reward_anneal_lambda"] = remix_lambda * ones_k
         return new_state, env_state, rb_state, metrics
 
     return _step

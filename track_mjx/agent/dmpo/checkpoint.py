@@ -151,6 +151,53 @@ def load_policy(
     return restored["policy"]
 
 
+def load_train_state_items_numpy(
+    ckpt_step_dir: str | pathlib.Path,
+    items: tuple[str, ...] = ("policy_params", "target_policy_params", "normalizer_params"),
+) -> dict:
+    """Load selected ``train_state`` subtrees from ANOTHER run's checkpoint.
+
+    For warm-starting a FRESH run from a different run's ``DMPONetwork_<step>``
+    directory. ``restore``/``load_policy`` above need a template whose shapes
+    match the SAVED state — impossible here when e.g. the new run's critic has
+    a different atom count than the checkpoint's. This loader instead reads
+    the checkpoint's own metadata tree and restores each leaf as host numpy
+    (``RestoreArgs(restore_type=np.ndarray)``), which sidesteps the sharding
+    round-trip entirely (a GPU-saved checkpoint restores fine in a CPU test
+    process and vice versa; JAX re-devices the arrays when they are grafted
+    into a live TrainingState).
+
+    Args:
+      ckpt_step_dir: path to one step directory, e.g.
+        ``.../checkpoints/arm_i1_nstep100_proprio/DMPONetwork_297676800``.
+      items: top-level ``train_state`` keys to return. Defaults to the
+        warm-start graft set: online policy, its target, and the observation
+        normalizer (the policy is useless without the running stats it was
+        trained under).
+
+    Returns:
+      dict mapping each requested key to its numpy pytree.
+    """
+    import jax
+    import numpy as np
+
+    path = pathlib.Path(ckpt_step_dir) / "train_state"
+    if not path.is_dir():
+        raise FileNotFoundError(f"no train_state item at {path}")
+    ptc = ocp.PyTreeCheckpointer()
+    meta_tree = ptc.metadata(str(path)).item_metadata.tree
+    missing = [k for k in items if k not in meta_tree]
+    if missing:
+        raise KeyError(
+            f"train_state at {path} has no {missing}; available: {sorted(meta_tree)}"
+        )
+    restore_args = jax.tree.map(
+        lambda m: ocp.RestoreArgs(restore_type=np.ndarray), meta_tree
+    )
+    restored = ptc.restore(str(path), restore_args=restore_args)
+    return {k: restored[k] for k in items}
+
+
 def load_config(
     mgr: ocp.CheckpointManager,
     step: int | None = None,

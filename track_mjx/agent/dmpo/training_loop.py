@@ -46,6 +46,7 @@ def run(
     num_timesteps: Optional[int] = None,
     extra_state_extras: tuple = (),
     start_env_steps: int = 0,
+    frozen_behavior_params: Any = None,
 ) -> tuple[Any, Any, Any, dict]:
     """Run the DMPO training loop until ``num_timesteps`` env steps.
 
@@ -82,6 +83,7 @@ def run(
     fused_step = make_fused_train_step(
         env, nets, optimizers, rb, cfg, K=K,
         extra_state_extras=extra_state_extras,
+        frozen_behavior_params=frozen_behavior_params,
     )
     train_chunk = make_train_chunk(fused_step, n_iters=iters_per_chunk)
 

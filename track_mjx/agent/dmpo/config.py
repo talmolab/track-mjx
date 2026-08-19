@@ -149,6 +149,52 @@ class DMPOConfig:
     # bit-identical, so this is opt-in and does not disturb any existing arm.
     use_n_step: bool = False
 
+    # ------------------------------------------------------------------
+    # Warm-start transition machinery (2026-08-19). All defaults are "off"
+    # so every completed arm is bit-unchanged. Designed for dense->sparse
+    # reward handover: warm-start the policy from a dense-reward checkpoint,
+    # let a fresh critic fit the warm policy's data before the policy moves,
+    # anneal the dense reward component to zero, and keep a decaying fraction
+    # of the env batch driven by the frozen dense policy so dense-competent
+    # behaviour stays in replay while the learner takes over.
+    #
+    # Schedules are functions of the env-step ESTIMATE derived inside jit
+    # from the SGD counter: t = state.steps * (num_envs * unroll_length / K).
+    # This follows the kl_anchor w-decay precedent (schedules from
+    # state.steps, no signature changes to the fused-step contract). The
+    # estimate ignores the replay warm-up offset (~2 rollouts, <0.5% of any
+    # schedule used here).
+    # ------------------------------------------------------------------
+
+    # Critic-only warmup: while state.steps < N, policy and dual params (and
+    # their optimizer states) are held fixed via lax.select in
+    # learner.sgd_step; the critic and its target still train. The M-step and
+    # dual gradients are computed and discarded (wasted FLOPs, numerically
+    # inert), mirroring the existing can_sample gate.
+    critic_warmup_sgd_steps: int = 0
+
+    # Reward re-mix at rollout time:
+    #   reward_stored = sparse + lambda(t) * (reward_total - sparse)
+    # where sparse = nan_to_num(new_state.metrics[reward_anneal_sparse_key])
+    # and lambda(t) falls linearly 1 -> 0 over [0, reward_anneal_env_steps],
+    # clamped at 0 after. The env must be configured with BOTH the sparse and
+    # the dense terms in reward_terms (reward_total is their sum); the mix is
+    # applied to the value stored in replay, not to the env's own metrics.
+    # None disables the remix entirely (bit-identical path).
+    reward_anneal_sparse_key: Optional[str] = None
+    reward_anneal_env_steps: int = 0
+
+    # Behavior mixing: the FIRST ceil(x(t) * num_envs) envs of the batch act
+    # with a frozen copy of the warm-start policy instead of the learner.
+    #   x(t) = behavior_mix_init                          t <  hold
+    #        = init * (1 - (t-hold)/(end-hold))           hold <= t < end
+    #        = 0                                          t >= end
+    # Requires frozen_behavior_params to be supplied to the training loop
+    # (the entry point passes the warm-start policy params). 0.0 disables.
+    behavior_mix_init: float = 0.0
+    behavior_mix_hold_env_steps: int = 0
+    behavior_mix_end_env_steps: int = 0
+
 
 def resolve_sgd_steps_per_rollout(cfg: DMPOConfig) -> int:
     """K = SGD updates per rollout. Explicit override wins, else the legacy formula.

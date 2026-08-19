@@ -64,6 +64,10 @@ def collect_rollout(
     num_steps: int,
     init_state=None,
     extra_state_extras=(),
+    frozen_policy_params=None,
+    behavior_mix_frac=None,
+    reward_remix_key=None,
+    reward_remix_lambda=None,
 ):
     """Roll out num_envs parallel envs for num_steps timesteps.
 
@@ -93,6 +97,23 @@ def collect_rollout(
         at trace time -- this is intentional, a silent default would mask
         wrapper-wiring bugs. The tuple is read at trace time; pass via
         closure or ``static_argnames`` if calling from a jitted wrapper.
+      frozen_policy_params: optional second params pytree (same network) for
+        BEHAVIOR MIXING: the first ``ceil(behavior_mix_frac * num_envs)``
+        envs act with these params instead of ``policy_params``. Both
+        policies share the per-env sample key (common random numbers). The
+        stored transition action is the EXECUTED one, as MPO expects.
+        ``None`` (default) keeps the single-policy path bit-identical.
+      behavior_mix_frac: traced f32 scalar in [0, 1]; required when
+        ``frozen_policy_params`` is given. May change between calls without
+        retracing (it is data, not a static).
+      reward_remix_key: optional ``new_state.metrics`` key naming the SPARSE
+        reward component (e.g. ``"rewards/gap_crossing_bonus"``). When set,
+        the STORED reward becomes ``sparse + lambda * (reward - sparse)``,
+        i.e. the dense remainder is scaled by ``reward_remix_lambda``. The
+        env's own reward/metrics are not modified. ``None`` (default) stores
+        the env reward unchanged.
+      reward_remix_lambda: traced f32 scalar; required with
+        ``reward_remix_key``.
 
     Returns:
       trajectory: dict with keys observation/action/reward/discount/next_observation,
@@ -125,11 +146,33 @@ def collect_rollout(
         raw_action = jax.vmap(
             lambda o, k: policy_apply(policy_params, o).sample(seed=k)
         )(norm_obs, keys)
+        if frozen_policy_params is not None:
+            # Behavior mixing: envs [0, ceil(frac*N)) act with the frozen
+            # policy. Same per-env keys as the learner branch -> common
+            # random numbers; the executed action is what gets stored.
+            frozen_action = jax.vmap(
+                lambda o, k: policy_apply(frozen_policy_params, o).sample(seed=k)
+            )(norm_obs, keys)
+            n_frozen = jnp.ceil(behavior_mix_frac * num_envs)
+            frozen_mask = jnp.arange(num_envs) < n_frozen
+            raw_action = jnp.where(
+                frozen_mask.reshape((num_envs,) + (1,) * (raw_action.ndim - 1)),
+                frozen_action,
+                raw_action,
+            )
         bound_action = bind(raw_action)
         if pre_batched:
             new_state, reward = env.step(state, bound_action)
         else:
             new_state, reward = jax.vmap(env.step)(state, bound_action)
+        if reward_remix_key is not None:
+            # Store sparse + lambda * dense-remainder. The sparse component
+            # is read from the env's per-term metrics on the POST-step state
+            # (recomputed every step; unaffected by full_reset=False
+            # auto-resets, unlike info). Per-term metrics are not
+            # nan_to_num'd by the env (the summed reward is), so sanitize.
+            sparse = jnp.nan_to_num(new_state.metrics[reward_remix_key])
+            reward = sparse + reward_remix_lambda * (reward - sparse)
         transition = {
             # Pre-flatten dict obs to the canonical 2-key shape so the replay
             # buffer's structural check matches the network/normalizer template.

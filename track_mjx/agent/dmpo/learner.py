@@ -510,6 +510,30 @@ def sgd_step(
     )
 
     # ------------------------------------------------------------------
+    # 3b) Critic-only warmup gate. For the first `critic_warmup_sgd_steps`
+    # updates the policy and duals are held at their (warm-started) values
+    # while the critic trains -- same tree_map/lax.select pattern as the
+    # can_sample gate in train_dmpo_step.py. MUST run before the hard
+    # target-policy copy in (4), or a warmup-period target update would
+    # copy gated-off params into target_policy_params. Duals are gated too:
+    # with the policy frozen, the alpha duals would otherwise decay against
+    # a trivially-satisfied KL constraint and the temperature would descend
+    # against a half-trained critic's Q. Default 0 = gate always open,
+    # bit-identical to the pre-gate behaviour.
+    # ------------------------------------------------------------------
+    warmup_n = int(getattr(cfg, "critic_warmup_sgd_steps", 0) or 0)
+    if warmup_n > 0:
+        policy_updates_open = state.steps >= warmup_n
+        (new_pol_params, new_dual_params, new_pol_opt_state, new_dual_opt_state) = (
+            jax.tree_util.tree_map(
+                lambda new, old: jax.lax.select(policy_updates_open, new, old),
+                (new_pol_params, new_dual_params, new_pol_opt_state, new_dual_opt_state),
+                (state.policy_params, state.dual_params,
+                 state.policy_opt_state, state.dual_opt_state),
+            )
+        )
+
+    # ------------------------------------------------------------------
     # 4) Hard target updates on schedule (jax.lax.cond, jit-friendly).
     # ------------------------------------------------------------------
     new_steps = state.steps + 1

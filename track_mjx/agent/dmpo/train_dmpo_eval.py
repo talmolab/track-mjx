@@ -160,6 +160,7 @@ def compute_vision_sensitivity(
     params: Any,
     obs: dict,
     rng: jax.Array,
+    hidden: Any = None,
 ) -> float:
     """L2 norm of action(real_vision) - action(blank_vision).
 
@@ -167,11 +168,20 @@ def compute_vision_sensitivity(
     values mean the policy is using vision to disambiguate identical
     proprio + task obs. Compare against the expected scale of the policy
     output (~1.0 for tanh-bounded actions).
+
+    ``hidden`` (default None => FF policy, unchanged) switches to the
+    recurrent apply signature ``(params, obs, hidden) -> (dist, new_hidden)``.
+    The SAME hidden is fed to both the real and the blanked obs -- a single
+    step, so the diff isolates the vision input, not accumulated memory.
     """
     obs_blank = dict(obs)
     obs_blank["vision"] = jnp.zeros_like(obs["vision"])
-    act_real = policy_apply(params, obs).mode()
-    act_blank = policy_apply(params, obs_blank).mode()
+    if hidden is None:
+        act_real = policy_apply(params, obs).mode()
+        act_blank = policy_apply(params, obs_blank).mode()
+    else:
+        act_real = policy_apply(params, obs, hidden)[0].mode()
+        act_blank = policy_apply(params, obs_blank, hidden)[0].mode()
     return float(jnp.linalg.norm(act_real - act_blank))
 
 
@@ -183,6 +193,7 @@ def run_eval_rollout_envzero(
     episode_length: int,
     num_envs: int,
     normalizer_params=None,
+    recurrent_meta=None,
 ) -> tuple[list, list, dict, dict]:
     """Roll out the *batched* eval env for ``episode_length`` steps and
     return env-0's per-step state.
@@ -212,6 +223,18 @@ def run_eval_rollout_envzero(
             via the same ``_normalize_obs`` dispatch as the training rollout
             before being passed to ``policy_apply``. Default ``None`` preserves
             the legacy behavior of feeding raw obs to the policy.
+        recurrent_meta: Optional ``RecurrentPolicyMeta``-like object exposing
+            ``init_hidden(batch_size)``. Trace-time flag (Python ``if``); the
+            default ``None`` keeps the FF scan body byte-identical. When set,
+            ``policy_apply`` must have the recurrent signature
+            ``(params, obs, hidden) -> (distribution, new_hidden)``, the scan
+            carry gains a zeros-init hidden, and the hidden is zeroed where
+            ``done`` AFTER each env.step -- zeros-at-start alone would leak
+            memory across the many auto-reset episodes inside one eval window.
+            The 4-tuple return is unchanged (it is unpacked positionally by
+            three entry points); the final hidden is deliberately NOT returned
+            -- eval always starts cold, matching the training rollout's
+            fresh-reset semantics.
 
     Returns:
         rollout: list of CPU-side State pytrees (env 0 only) of length
@@ -228,6 +251,9 @@ def run_eval_rollout_envzero(
     """
     from track_mjx.agent.dmpo.action_utils import bind
     from track_mjx.agent.dmpo.learner import _normalize_obs
+    from track_mjx.agent.dmpo.rollout import _reset_hidden_where_done
+
+    recurrent = recurrent_meta is not None
 
     rng, k_reset = jax.random.split(rng)
     keys = jax.random.split(k_reset, num_envs)
@@ -243,16 +269,36 @@ def run_eval_rollout_envzero(
     @jax.jit
     def _scan_envzero(initial_state, k_scan):
         def body(carry, _):
-            st, k = carry
+            if recurrent:
+                st, k, hidden = carry
+            else:
+                st, k = carry
+                hidden = None
             k, _ = jax.random.split(k)
             if normalizer_params is None:
                 obs_for_policy = st.obs
             else:
                 obs_for_policy = _normalize_obs(st.obs, normalizer_params)
-            raw = jax.vmap(lambda o: policy_apply(params, o).mode())(obs_for_policy)
+            if recurrent:
+                # Per-env vmap over unbatched obs/hidden slices, matching the
+                # training rollout's convention (the module is shape-agnostic).
+                # Deterministic .mode(), exactly as the FF branch below.
+                def _act(o, h):
+                    dist, nh = policy_apply(params, o, h)
+                    return dist.mode(), nh
+
+                raw, new_hidden = jax.vmap(_act)(obs_for_policy, hidden)
+            else:
+                new_hidden = None
+                raw = jax.vmap(lambda o: policy_apply(params, o).mode())(obs_for_policy)
             bound = bind(raw)
             out = env.step(st, bound)
             new_st = out[0] if isinstance(out, tuple) else out
+            if recurrent:
+                # AFTER env.step: the auto-reset wrapper swaps in the post-reset
+                # obs on the terminal step itself, so the hidden consumed with
+                # that obs next step must be the fresh-episode zero state.
+                new_hidden = _reset_hidden_where_done(new_hidden, new_st.done)
             env0 = _index_zero(new_st)
             # ALL-ENV statistics. The scan already steps every env; keeping only
             # env 0 threw away 2047/2048 of the sample and made
@@ -309,10 +355,17 @@ def run_eval_rollout_envzero(
                     allenv["info/just_crossed_gap"] = jnp.broadcast_to(
                         jc, new_st.reward.shape
                     )
+            if recurrent:
+                return (new_st, k, new_hidden), (env0, allenv)
             return (new_st, k), (env0, allenv)
 
-        (_, _), (traj, allenv) = jax.lax.scan(
-            body, (initial_state, k_scan), None, length=episode_length
+        carry0 = (
+            (initial_state, k_scan, recurrent_meta.init_hidden(num_envs))
+            if recurrent
+            else (initial_state, k_scan)
+        )
+        _, (traj, allenv) = jax.lax.scan(
+            body, carry0, None, length=episode_length
         )
         return traj, allenv
 

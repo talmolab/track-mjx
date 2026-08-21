@@ -219,6 +219,32 @@ class DMPOConfig:
     # render directly and is unaffected. 4x on the dominant obs component.
     vision_uint8_storage: bool = False
 
+    # ------------------------------------------------------------------
+    # Recurrent (GRU) policy head: short-BPTT learner (2026-08-20).
+    # ------------------------------------------------------------------
+
+    # BPTT unroll depth L = the number of loss points per sampled sequence.
+    # 0 (default) keeps the feed-forward learner: `sgd_step` branches on this
+    # at Python trace time, so every completed FF arm stays bit-identical --
+    # no retrace, no new ops, no schema change.
+    #
+    # When L > 0 the learner runs R2D2-style stored-state + short BPTT: the
+    # online policy is unrolled L steps WITH gradients from the STORED
+    # window-start hidden (batch["policy_hidden"][:, 0]), the MPO loss is
+    # applied at each of the L unrolled points, and each point t bootstraps
+    # with its own n-step return from observation[:, t + n] using the stored
+    # hidden at t + n (single-step target apply). L is therefore the MEMORY
+    # horizon -- how far back the GRU can learn what to remember (~100-400 ms
+    # of context => L ~ 20-40 at 100 Hz) -- NOT the reward horizon, which
+    # stays `n_step` (n = 100 for the gap task). The two meet only through
+    # the sampled window: `sequence_length` MUST equal
+    # `rnn_bptt_length + n_step` so that every loss point t < L has a full
+    # n-step reward window and a bootstrap state at index t + n (checked
+    # fail-loud at trace time). The recurrent learner also requires
+    # `use_n_step=True` and the compressed replay schema
+    # (`store_next_observation=False`); it raises otherwise.
+    rnn_bptt_length: int = 0
+
 
 def resolve_sgd_steps_per_rollout(cfg: DMPOConfig) -> int:
     """K = SGD updates per rollout. Explicit override wins, else the legacy formula.

@@ -261,3 +261,126 @@ def test_run_eval_rollout_envzero_applies_normalizer_when_given():
     np.testing.assert_allclose(
         qpos_norm, np.zeros(proprio_size, dtype=np.float32), atol=1e-6
     )
+
+
+def test_run_eval_rollout_envzero_recurrent_threads_and_resets_hidden():
+    """Recurrent eval: same 4-tuple structure, finite metrics, hidden reset on done.
+
+    The hidden lives inside the jitted scan, so it is observed through the
+    action channel: the stub policy's ``mode()`` echoes a slice of the
+    PRE-step hidden it consumed, and the stub env persists the bound action
+    into ``data.qpos`` (same trick as the normalizer test above). The stub
+    cell increments the hidden by 1 per step and the env forces done=1 at
+    step 3, which makes the reset semantics distinguishable frame by frame:
+
+        step 1 consumes h=0 -> qpos=tanh(0);  step 2 consumes h=1 -> tanh(1)
+        step 3 consumes h=2, done fires -> hidden must be zeroed AFTER env.step
+        step 4 consumes h=0 -> tanh(0)   (tanh(3)~0.995 if the reset leaked)
+        step 5 consumes h=1 -> tanh(1)   (recurrence resumed accumulating)
+
+    Frame 3 itself is not asserted: the termination splice deliberately
+    replaces the done frame's data with the previous frame's for rendering.
+    """
+    import flax.struct
+    import numpy as np
+
+    from track_mjx.agent.dmpo.networks_kl_anchor_rnn import RecurrentPolicyMeta
+    from track_mjx.agent.dmpo.train_dmpo_eval import run_eval_rollout_envzero
+
+    hidden_size = 4
+    act_dim = 3
+    num_envs = 2
+
+    @flax.struct.dataclass
+    class _Data:
+        qpos: jax.Array
+        qvel: jax.Array
+
+    @flax.struct.dataclass
+    class _State:
+        obs: Any
+        data: _Data
+        done: jax.Array
+        reward: jax.Array
+        t: jax.Array  # per-env step counter driving the forced done
+
+    class _StubRecEnv:
+        action_size = act_dim
+
+        def reset(self, keys):
+            n = keys.shape[0]
+            return _State(
+                obs={
+                    "vision": jnp.zeros((n, 8, 8, 2)),
+                    "proprioception": jnp.zeros((n, 5)),
+                    "imitation_target": jnp.zeros((n, 2)),
+                },
+                data=_Data(
+                    qpos=jnp.zeros((n, act_dim)),
+                    qvel=jnp.zeros((n, 3)),
+                ),
+                done=jnp.zeros((n,)),
+                reward=jnp.zeros((n,)),
+                t=jnp.zeros((n,), dtype=jnp.int32),
+            )
+
+        def step(self, st, action):
+            t_new = st.t + 1
+            return _State(
+                obs=st.obs,
+                # Persist the bound action so the rollout exposes the hidden
+                # the policy consumed this step.
+                data=_Data(qpos=action, qvel=st.data.qvel),
+                done=(t_new == 3).astype(jnp.float32),
+                reward=jnp.ones_like(st.reward),
+                t=t_new,
+            )
+
+    def policy_apply(_params, obs, hidden):
+        # Recurrent signature: (params, obs, hidden) -> (dist, new_hidden).
+        # Under the per-env vmap this sees unbatched slices: hidden[0] is
+        # [hidden_size]. mode() echoes the PRE-step hidden; the "cell" adds 1.
+        h0 = hidden[0]
+
+        class _D:
+            def mode(self):
+                return h0[:act_dim]
+
+        return _D(), (h0 + 1.0,)
+
+    meta = RecurrentPolicyMeta(
+        cell_type="gru", hidden_sizes=(hidden_size,), store_dtype=jnp.float16
+    )
+    rollout, term_events, batch, allenv = run_eval_rollout_envzero(
+        env=_StubRecEnv(),
+        policy_apply=policy_apply,
+        params=None,
+        rng=jax.random.PRNGKey(0),
+        episode_length=5,
+        num_envs=num_envs,
+        recurrent_meta=meta,
+    )
+
+    # Same 4-tuple structure as the FF path.
+    assert len(rollout) == 6  # initial + 5 steps
+    assert term_events == [(3, "done")]
+    assert isinstance(batch, dict) and isinstance(allenv, dict)
+    assert allenv["reward"].shape == (5, num_envs)
+    assert allenv["done"].shape == (5, num_envs)
+    for k, v in batch.items():
+        assert np.isfinite(v), f"non-finite eval metric {k}={v}"
+
+    t1 = np.tanh(1.0)
+    # Step 2: hidden was carried (0 -> 1) across the scan.
+    np.testing.assert_allclose(
+        np.asarray(rollout[2].data.qpos), np.full(act_dim, t1), atol=1e-5
+    )
+    # Step 4: the done at step 3 zeroed the hidden AFTER env.step; a leak
+    # would echo tanh(3) ~ 0.995 here instead of tanh(0) = 0.
+    np.testing.assert_allclose(
+        np.asarray(rollout[4].data.qpos), np.zeros(act_dim), atol=1e-6
+    )
+    # Step 5: post-reset the recurrence accumulates again from zero.
+    np.testing.assert_allclose(
+        np.asarray(rollout[5].data.qpos), np.full(act_dim, t1), atol=1e-5
+    )

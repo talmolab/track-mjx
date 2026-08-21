@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import optax
 import rlax
 from brax.training.acme import running_statistics, specs
+from tensorflow_probability.substrates import jax as tfp
 
 from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.losses import MPO, MPOParams, clip_mpo_params
@@ -21,6 +22,8 @@ from track_mjx.agent.observation_utils import (
     init_dict_normalizer,
     normalize_dict_obs,
 )
+
+tfd = tfp.distributions
 
 
 class TrainingState(NamedTuple):
@@ -372,6 +375,12 @@ def sgd_step(
     Returns:
       (new_state, metrics) where metrics is a flat dict of jnp scalars.
     """
+    # Recurrent (short-BPTT) learner path. The branch resolves at Python
+    # trace time, so with the default rnn_bptt_length=0 the FF body below is
+    # bit-identical for every existing arm (no retrace, no new ops).
+    if getattr(cfg, "rnn_bptt_length", 0) > 0:
+        return _sgd_step_rnn(state, batch, nets, optimizers, cfg)
+
     pol_opt, crit_opt, dual_opt = optimizers
     rng, k_pol = jax.random.split(state.rng)
 
@@ -609,5 +618,540 @@ def sgd_step(
         "kl_anchor/w_now": stats.anchor_w_now,
         # Convenience: surface log_temperature as a scalar.
         "log_temperature": new_dual_params.log_temperature.squeeze(),
+    }
+    return new_state, metrics
+
+
+# ---------------------------------------------------------------------------
+# Recurrent (short-BPTT) learner path (2026-08-20).
+#
+# R2D2-style stored-state + short BPTT, reached from `sgd_step` when
+# cfg.rnn_bptt_length > 0. Each sampled sequence of T = L + n transitions
+# yields L loss points: the online policy is unrolled L steps WITH gradients
+# from the stored window-start hidden, the MPO loss is applied at every
+# unrolled point, and each point t bootstraps with its own n-step return
+# from observation[:, t + n] paired with the STORED hidden at t + n (a
+# single-step, stop-gradient target apply -- staleness there only biases the
+# targets, never the gradients). The critic stays feed-forward. All [B, L]
+# loss points are folded into the batch axis ([B*L]) and fed through the same
+# loss helpers as the FF path; the MPO loss module is batch-shape agnostic
+# (every reduction is a mean over -- or linear in a mean over -- the batch
+# axis; verified in test_learner_rnn), so folding L into B changes nothing
+# but the sample count per update.
+#
+# The learner's ONLY contract with the recurrent networks is the raw-apply
+# signature `policy.apply(params, obs, hidden, method="raw") ->
+# (mu, scale, new_hidden)` with hidden a tuple of per-layer [B, H_l] arrays.
+# It deliberately does NOT import RecurrentPolicyMeta or any networks-side
+# type: the batch (schema + stored hidden) is its single source of truth.
+# ---------------------------------------------------------------------------
+
+
+def _reset_hidden(hidden: Any, done: jnp.ndarray) -> Any:
+    """Zero every hidden leaf where ``done`` is set.
+
+    ``hidden`` is the tuple-of-per-layer-arrays convention ([B, H_l] leaves);
+    ``done`` is [B] (bool). The reshape appends singleton axes so the same
+    helper broadcasts over any trailing hidden shape. Mirrors the rollout's
+    post-env.step reset: auto-reset swaps obs on the terminal step itself, so
+    the hidden consumed with the post-reset obs at t+1 must be zeros.
+    """
+
+    def _r(h):
+        d = done.reshape(done.shape + (1,) * (h.ndim - done.ndim))
+        return jnp.where(d, jnp.zeros_like(h), h)
+
+    return jax.tree.map(_r, hidden)
+
+
+def _per_point_nstep_returns(
+    rewards: jnp.ndarray,
+    discounts: jnp.ndarray,
+    gamma: float,
+    length: int,
+    n: int,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Vectorized per-loss-point n-step returns over a [B, T] window.
+
+    For each start t < length over the gathered window idx[t, j] = t + j
+    (j < n), with m_j = prod_{i<j} d_{t+i} (still-alive mask entering t+j):
+
+        R_n[t]  = sum_j gamma^j * m_j * r_{t+j}
+        disc[t] = gamma^(n-1) * prod_{j<n} d_{t+j}
+
+    These are EXACTLY the FF ``sgd_step`` n-step expressions applied at every
+    t instead of only t=0 -- length=1 reduces to them bit-for-bit (guarded in
+    test_learner_rnn). ``compute_categorical_target`` then forms
+    ``r + gamma * disc * z``, reproducing the full gamma^n * m_n bootstrap
+    coefficient. Windows crossing a done are handled by the alive mask: the
+    reward sum stops accumulating and the bootstrap coefficient is zeroed.
+
+    Returns:
+      (R_n, disc), both [B, length].
+    """
+    idx = jnp.arange(length)[:, None] + jnp.arange(n)[None, :]  # [L, n]
+    d_win = discounts[:, idx]                                   # [B, L, n]
+    r_win = rewards[:, idx]                                     # [B, L, n]
+    alive = jnp.cumprod(d_win, axis=-1)                         # m_{j+1}
+    m = jnp.concatenate(
+        [jnp.ones_like(d_win[..., :1]), alive[..., :-1]], axis=-1
+    )
+    g = gamma ** jnp.arange(n, dtype=r_win.dtype)
+    returns = jnp.sum(g[None, None, :] * m * r_win, axis=-1)    # [B, L]
+    disc = (gamma ** (n - 1)) * alive[..., -1]                  # [B, L]
+    return returns, disc
+
+
+def _unroll_policy_raw(
+    policy_params: Any,
+    nets: DMPONetworks,
+    obs_tm: Any,
+    done_tm: jnp.ndarray,
+    h0: Any,
+) -> Tuple[jnp.ndarray, jnp.ndarray, Any]:
+    """Unroll the recurrent policy over a time-major window via ``lax.scan``.
+
+    Args:
+      policy_params: params to apply (online or target -- the FUNCTION is
+        differentiable throughout; the caller decides whether gradients flow).
+      nets: networks whose policy exposes ``raw(obs, hidden)`` returning
+        arrays (mu, scale, new_hidden) -- scan-safe, unlike a tfd object.
+      obs_tm: normalized obs pytree, leaves [L, B, ...] (time-major).
+      done_tm: [L, B] bool, ``discount == 0`` per step. The hidden entering
+        step t+1 is zeroed where done_tm[t] -- the exact mirror of the
+        rollout-side reset, so recomputed hiddens track stored ones.
+      h0: hidden entering step 0, tuple of [B, H_l]. It comes from replay
+        storage and is DATA: gradients stop at it by construction.
+
+    Returns:
+      (mu, scale, h_pre): mu/scale [L, B, A]; h_pre the tuple of [L, B, H_l]
+      pre-step hiddens actually consumed at each t (h_pre[0] == h0), used for
+      the staleness diagnostic and the |h| metric.
+    """
+
+    def _step(h, xs):
+        obs_t, done_t = xs
+        # Per-env vmap over unbatched obs -- the codebase convention (the
+        # vision CNN and the policy module are written for unbatched input).
+        mu_t, scale_t, h_new = jax.vmap(
+            lambda o, hh: nets.policy.apply(policy_params, o, hh, method="raw")
+        )(obs_t, h)
+        return _reset_hidden(h_new, done_t), (mu_t, scale_t, h)
+
+    _, (mu, scale, h_pre) = jax.lax.scan(_step, h0, (obs_tm, done_tm))
+    return mu, scale, h_pre
+
+
+def _policy_loss_fn_rnn(
+    policy_params: Any,
+    dual_params: MPOParams,
+    nets: DMPONetworks,
+    obs_tm: Any,
+    done_tm: jnp.ndarray,
+    h0: Any,
+    h_stored_tm: Any,
+    obs_flat: Any,
+    target_mu: jnp.ndarray,
+    target_scale: jnp.ndarray,
+    target_critic_params: Any,
+    cfg: DMPOConfig,
+    key: jax.Array,
+    anchor_mu_imit: Any = None,
+    anchor_log_std_imit: Any = None,
+    step: jnp.ndarray = jnp.int32(0),
+):
+    """Recurrent counterpart of ``_policy_loss_fn``: BPTT unroll + MPO on [B*L].
+
+    The online unroll lives INSIDE this function so that ``value_and_grad``
+    backpropagates through all L cell applications -- that is the entire
+    point of L > 1. The target dist (mu/scale, precomputed by the caller from
+    its own unroll and stop-gradient'd) and the q_values are gradient-free,
+    exactly as in the FF path. The [B, L] loss points are folded into the
+    batch axis: dists with batch shape [B*L], samples [N, B*L, A]; the
+    flattening order (b*L + t) matches ``obs_flat`` and the anchor slices.
+
+    Aux is ``(stats, rnn_metrics)``: the staleness diagnostic must come from
+    the online unroll's recomputed pre-step hiddens, which only exist here.
+
+    Returns:
+      (loss, (stats, rnn_metrics)).
+    """
+    length, bsz = done_tm.shape
+    mu, scale, h_pre = _unroll_policy_raw(
+        policy_params, nets, obs_tm, done_tm, h0
+    )
+    action_size = mu.shape[-1]
+    # [L, B, A] -> [B, L, A] -> [B*L, A]: transpose FIRST so the flattened
+    # ordering matches obs_flat / target_mu (both built from [B, L] slices).
+    mu_bl = jnp.swapaxes(mu, 0, 1).reshape(bsz * length, action_size)
+    scale_bl = jnp.swapaxes(scale, 0, 1).reshape(bsz * length, action_size)
+    online_dist = tfd.MultivariateNormalDiag(loc=mu_bl, scale_diag=scale_bl)
+    target_dist = tfd.MultivariateNormalDiag(
+        loc=target_mu, scale_diag=target_scale
+    )
+    sampled = target_dist.sample(sample_shape=(cfg.num_samples,), seed=key)
+
+    def _q_mean_for_n(actions_n: jnp.ndarray) -> jnp.ndarray:
+        dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
+            target_critic_params, obs_flat, actions_n
+        )
+        return dist.mean()
+
+    q_values = jax.vmap(_q_mean_for_n)(sampled)
+    q_values = jax.lax.stop_gradient(q_values)
+
+    loss_module = _build_loss(cfg)
+    loss, stats = loss_module(
+        params=dual_params,
+        online_action_distribution=online_dist,
+        target_action_distribution=target_dist,
+        actions=sampled,
+        q_values=q_values,
+    )
+
+    # Optional kl-anchor loss term -- same math as the FF `_policy_loss_fn`,
+    # applied to the flattened [B*L] batch (anchor inputs are the caller's
+    # [:, :L] slices flattened in the same order as the dists).
+    anchor_kl_mean = jnp.float32(0.0)
+    anchor_reward_mean = jnp.float32(0.0)
+    anchor_loss_term = jnp.float32(0.0)
+    anchor_w_now = jnp.float32(cfg.kl_anchor_w)
+    if (
+        cfg.kl_anchor_alpha != 0.0 or cfg.kl_anchor_beta_linear != 0.0
+    ) and anchor_mu_imit is not None:
+        from track_mjx.agent.dmpo.kl_anchor_utils import pretanh_gaussian_kl
+        if cfg.kl_anchor_decay_sgd_steps > 0:
+            progress = jnp.minimum(
+                step.astype(jnp.float32) / float(cfg.kl_anchor_decay_sgd_steps),
+                1.0,
+            )
+            w_now = (
+                cfg.kl_anchor_w
+                + (cfg.kl_anchor_w_floor - cfg.kl_anchor_w) * progress
+            )
+        else:
+            w_now = jnp.float32(cfg.kl_anchor_w)
+        mu_theta = online_dist.mean()
+        log_std_theta = jnp.log(online_dist.stddev())
+        kl = pretanh_gaussian_kl(
+            mu_theta, log_std_theta, anchor_mu_imit, anchor_log_std_imit
+        )
+        anchor_reward = jnp.exp(-w_now * kl)
+        anchor_kl_mean = jnp.mean(kl)
+        anchor_reward_mean = jnp.mean(anchor_reward)
+        anchor_loss_term = -cfg.kl_anchor_alpha * anchor_reward_mean
+        if cfg.kl_anchor_beta_linear != 0.0:
+            anchor_loss_term = (
+                anchor_loss_term + cfg.kl_anchor_beta_linear * anchor_kl_mean
+            )
+        anchor_w_now = w_now
+        loss = loss + anchor_loss_term
+
+    stats = stats._replace(
+        anchor_kl_mean=anchor_kl_mean,
+        anchor_reward_mean=anchor_reward_mean,
+        anchor_loss_term=anchor_loss_term,
+        anchor_w_now=anchor_w_now,
+    )
+
+    # RNN diagnostics (aux-only; stop_gradient for clarity). Staleness is the
+    # normalized squared distance between the hidden the unroll recomputes at
+    # each t and the hidden the rollout stored there -- how much the replayed
+    # hidden has drifted from what the CURRENT policy would produce. t=0
+    # contributes zero by construction (h_pre[0] == h0 == stored).
+    staleness = jnp.mean(
+        jnp.stack(
+            [
+                jnp.mean(
+                    jnp.sum((re - st) ** 2, axis=-1)
+                    / (jnp.sum(st**2, axis=-1) + 1e-6)
+                )
+                for re, st in zip(h_pre, h_stored_tm)
+            ]
+        )
+    )
+    hidden_abs_mean = jnp.mean(
+        jnp.stack([jnp.mean(jnp.abs(h)) for h in h_pre])
+    )
+    rnn_metrics = {
+        "rnn/hidden_staleness": jax.lax.stop_gradient(staleness),
+        "rnn/hidden_abs_mean": jax.lax.stop_gradient(hidden_abs_mean),
+    }
+    return loss.squeeze(), (stats, rnn_metrics)
+
+
+def _sgd_step_rnn(
+    state: TrainingState,
+    batch: Dict[str, jnp.ndarray],
+    nets: DMPONetworks,
+    optimizers: Tuple[optax.GradientTransformation, ...],
+    cfg: DMPOConfig,
+) -> Tuple[TrainingState, Dict[str, jnp.ndarray]]:
+    """One recurrent (short-BPTT) DMPO SGD step. See the section header above.
+
+    Batch schema (compressed, recurrent): observation [B, T, ...] pytree,
+    action [B, T, A], reward/discount [B, T], policy_hidden tuple of
+    [B, T, H_l] (store_dtype, cast to f32 here), optional anchor keys
+    [B, T, ...]; T == cfg.rnn_bptt_length + cfg.n_step.
+    """
+    L = int(cfg.rnn_bptt_length)
+    n = int(cfg.n_step)
+
+    # Fail-loud schema checks (Python/trace time, mirroring the anchor_mu
+    # guard in the FF path): a silently-wrong window layout would train on
+    # misaligned targets with no error, so every assumption the window math
+    # relies on is asserted before any GPU time is spent.
+    if "policy_hidden" not in batch:
+        raise ValueError(
+            "cfg.rnn_bptt_length > 0 but batch has no 'policy_hidden'. The "
+            "recurrent learner needs the stored per-step hidden: add "
+            "'policy_hidden' to the transition template AND pass "
+            "recurrent_meta to collect_rollout so it is populated."
+        )
+    T = batch["reward"].shape[1]
+    if T != L + n:
+        raise ValueError(
+            f"sequence_length={T} != rnn_bptt_length + n_step = {L} + {n} = "
+            f"{L + n}. Every loss point t < L needs a full n-step reward "
+            "window and a bootstrap state at observation[:, t + n]."
+        )
+    if not getattr(cfg, "use_n_step", False):
+        raise ValueError(
+            "cfg.rnn_bptt_length > 0 requires use_n_step=True: the recurrent "
+            "learner's per-point returns are n-step by construction and "
+            "there is no single-step fallback."
+        )
+    if "next_observation" in batch:
+        raise ValueError(
+            "cfg.rnn_bptt_length > 0 requires the compressed replay schema "
+            "(store_next_observation=False): bootstrap states are read from "
+            "observation[:, t + n], and a duplicate next_observation field "
+            "would double the observation memory for no benefit."
+        )
+
+    pol_opt, crit_opt, dual_opt = optimizers
+    rng, k_pol = jax.random.split(state.rng)
+    B = batch["reward"].shape[0]
+
+    # (1) Normalize only the two windows that are ever consumed: the unroll
+    # window [:, :L] and the bootstrap window [:, n:n+L] (2L of T steps;
+    # 40 of 120 for the goal arm). Slicing BEFORE the normalize matters for
+    # the uint8-stored vision leaf: normalizing the full [B, T, ...] window
+    # would dequantize ~T/(2L)x more f32 vision than is used if XLA fails to
+    # fuse the downstream slices through normalize_dict_obs's per-key ops.
+    # Normalization is elementwise over trailing feature dims, so
+    # slice-then-normalize is exact. (For L > n the windows overlap and a few
+    # steps normalize twice -- cheap elementwise work, still a net win.)
+    obs_L = _normalize_obs(
+        jax.tree.map(lambda x: x[:, :L], batch["observation"]),
+        state.normalizer_params,
+    )
+    next_obs = _normalize_obs(
+        jax.tree.map(lambda x: x[:, n : n + L], batch["observation"]),
+        state.normalizer_params,
+    )
+
+    # (2) Stored hidden (store_dtype in replay, e.g. f16) -> f32 for compute.
+    # h0 seeds the unroll; h_boot pairs with the bootstrap obs at t + n.
+    # Both are DATA -- no gradient flows into the replay buffer.
+    h_all = jax.tree.map(
+        lambda h: h.astype(jnp.float32), batch["policy_hidden"]
+    )
+    h0 = jax.tree.map(lambda h: h[:, 0], h_all)
+    h_boot = jax.tree.map(lambda h: h[:, n : n + L], h_all)      # [B, L, H]
+    h_stored_tm = jax.tree.map(
+        lambda h: jnp.swapaxes(h[:, :L], 0, 1), h_all            # [L, B, H]
+    )
+
+    # Time-major unroll window. done == (discount == 0) mirrors the rollout's
+    # reset trigger exactly, so the recomputed hiddens track the stored ones.
+    obs_tm = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), obs_L)
+    done_tm = jnp.swapaxes(batch["discount"][:, :L] == 0, 0, 1)  # [L, B]
+
+    # Flattened [B*L] views for the critic and the MPO loss. Row-major
+    # reshape of [B, L, ...] gives ordering b*L + t -- every flattened
+    # quantity below uses the same [B, L]-first layout.
+    obs_flat = jax.tree.map(
+        lambda x: x.reshape((B * L,) + x.shape[2:]), obs_L
+    )
+    act_flat = batch["action"][:, :L].reshape(B * L, -1)
+
+    # (4) Target unroll: same scan with target params, gradient-free.
+    tgt_mu, tgt_scale, _ = _unroll_policy_raw(
+        state.target_policy_params, nets, obs_tm, done_tm, h0
+    )
+    action_size = tgt_mu.shape[-1]
+    tgt_mu = jax.lax.stop_gradient(
+        jnp.swapaxes(tgt_mu, 0, 1).reshape(B * L, action_size)
+    )
+    tgt_scale = jax.lax.stop_gradient(
+        jnp.swapaxes(tgt_scale, 0, 1).reshape(B * L, action_size)
+    )
+
+    # (6) Per-point n-step returns, [B, L] each.
+    rew_bl, disc_bl = _per_point_nstep_returns(
+        batch["reward"], batch["discount"], cfg.discount, L, n
+    )
+
+    # (7) Critic target: bootstrap from observation[:, n:n+L] paired with the
+    # STORED hidden at t + n -- a single-step target apply (no unroll needed:
+    # the stored hidden already encodes the history up to t + n).
+    # Deterministic next-action via mu (== mode for a diag Gaussian), the FF
+    # path's target_policy_dist_next.mode() analog. next_obs was normalized
+    # above in (1).
+    next_mu, _, _ = jax.vmap(
+        jax.vmap(
+            lambda o, hh: nets.policy.apply(
+                state.target_policy_params, o, hh, method="raw"
+            )
+        )
+    )(next_obs, h_boot)
+    next_action = jax.lax.stop_gradient(next_mu)                 # [B, L, A]
+    target_probs = jax.lax.stop_gradient(
+        compute_categorical_target(
+            nets,
+            state.target_critic_params,
+            next_obs,
+            next_action,
+            rew_bl,
+            disc_bl,
+            cfg,
+        )
+    ).reshape(B * L, cfg.num_atoms)
+
+    # (8) Critic update on the flattened [B*L] loss points -- the same
+    # `_critic_loss_fn` body as the FF path, just a bigger batch.
+    crit_loss, crit_grads = jax.value_and_grad(_critic_loss_fn)(
+        state.critic_params, nets, obs_flat, act_flat, target_probs,
+    )
+    crit_updates, new_crit_opt_state = crit_opt.update(
+        crit_grads, state.critic_opt_state, state.critic_params,
+    )
+    new_critic_params = optax.apply_updates(state.critic_params, crit_updates)
+
+    # (9) Policy + dual update. Anchor terms are the [:, :L] slices flattened
+    # in the same [B, L] order as the dists; guard mirrors the FF path.
+    anchor_mu = batch.get("anchor_mu_imit") if isinstance(batch, dict) else None
+    anchor_ls = batch.get("anchor_log_std_imit") if isinstance(batch, dict) else None
+    if cfg.kl_anchor_alpha != 0.0 and anchor_mu is None:
+        raise ValueError(
+            "cfg.kl_anchor_alpha != 0 but batch has no 'anchor_mu_imit'. "
+            "Check that the kl-anchor entry's transition_template includes "
+            "anchor_mu_imit / anchor_log_std_imit AND that "
+            "extra_state_extras=('anchor_mu_imit','anchor_log_std_imit') "
+            "is passed to run_training_loop / make_fused_train_step / "
+            "collect_rollout."
+        )
+    if anchor_mu is not None:
+        anchor_mu = anchor_mu[:, :L].reshape(B * L, -1)
+    if anchor_ls is not None:
+        anchor_ls = anchor_ls[:, :L].reshape(B * L, -1)
+
+    (pol_loss, (stats, rnn_metrics)), pol_dual_grads = jax.value_and_grad(
+        _policy_loss_fn_rnn, argnums=(0, 1), has_aux=True,
+    )(
+        state.policy_params,
+        state.dual_params,
+        nets,
+        obs_tm,
+        done_tm,
+        h0,
+        h_stored_tm,
+        obs_flat,
+        tgt_mu,
+        tgt_scale,
+        state.target_critic_params,
+        cfg,
+        k_pol,
+        anchor_mu,
+        anchor_ls,
+        state.steps,
+    )
+    pol_grads, dual_grads = pol_dual_grads
+
+    # (10) Optimizer updates / warmup gate / target schedule: duplicated from
+    # the FF `sgd_step` body (deliberately, to keep that body diff-free).
+    pol_updates, new_pol_opt_state = pol_opt.update(
+        pol_grads, state.policy_opt_state, state.policy_params,
+    )
+    dual_updates, new_dual_opt_state = dual_opt.update(
+        dual_grads, state.dual_opt_state, state.dual_params,
+    )
+    new_pol_params = optax.apply_updates(state.policy_params, pol_updates)
+    new_dual_params = optax.apply_updates(state.dual_params, dual_updates)
+    new_dual_params = clip_mpo_params(
+        new_dual_params, getattr(cfg, "min_log_temperature", -18.0)
+    )
+
+    warmup_n = int(getattr(cfg, "critic_warmup_sgd_steps", 0) or 0)
+    if warmup_n > 0:
+        policy_updates_open = state.steps >= warmup_n
+        (new_pol_params, new_dual_params, new_pol_opt_state, new_dual_opt_state) = (
+            jax.tree_util.tree_map(
+                lambda new, old: jax.lax.select(policy_updates_open, new, old),
+                (new_pol_params, new_dual_params, new_pol_opt_state, new_dual_opt_state),
+                (state.policy_params, state.dual_params,
+                 state.policy_opt_state, state.dual_opt_state),
+            )
+        )
+
+    new_steps = state.steps + 1
+    new_target_pol = jax.lax.cond(
+        (new_steps % cfg.target_policy_update_period) == 0,
+        lambda _: new_pol_params,
+        lambda _: state.target_policy_params,
+        operand=None,
+    )
+    new_target_crit = jax.lax.cond(
+        (new_steps % cfg.target_critic_update_period) == 0,
+        lambda _: new_critic_params,
+        lambda _: state.target_critic_params,
+        operand=None,
+    )
+
+    new_state = TrainingState(
+        policy_params=new_pol_params,
+        critic_params=new_critic_params,
+        target_policy_params=new_target_pol,
+        target_critic_params=new_target_crit,
+        dual_params=new_dual_params,
+        policy_opt_state=new_pol_opt_state,
+        critic_opt_state=new_crit_opt_state,
+        dual_opt_state=new_dual_opt_state,
+        normalizer_params=state.normalizer_params,   # unchanged in SGD
+        steps=new_steps,
+        rng=rng,
+    )
+
+    metrics = {
+        "policy_loss": pol_loss,
+        "critic_loss": crit_loss,
+        # MPOStats fields (see losses.MPOStats).
+        "loss_policy": stats.loss_policy,
+        "loss_alpha": stats.loss_alpha,
+        "loss_temperature": stats.loss_temperature,
+        "dual_alpha_mean": stats.dual_alpha_mean,
+        "dual_alpha_stddev": stats.dual_alpha_stddev,
+        "dual_temperature": stats.dual_temperature,
+        "kl_q_rel": stats.kl_q_rel,
+        "kl_mean_rel": jnp.mean(stats.kl_mean_rel),
+        "kl_stddev_rel": jnp.mean(stats.kl_stddev_rel),
+        "q_min": stats.q_min,
+        "q_max": stats.q_max,
+        "pi_stddev_min": stats.pi_stddev_min,
+        "pi_stddev_max": stats.pi_stddev_max,
+        "pi_stddev_cond": stats.pi_stddev_cond,
+        "mean_action_norm": stats.mean_action_norm,
+        "max_action_norm": stats.max_action_norm,
+        # KL-anchor stats (zero-valued if cfg.kl_anchor_alpha == 0).
+        "anchor_kl_mean": stats.anchor_kl_mean,
+        "anchor_reward_mean": stats.anchor_reward_mean,
+        "anchor_loss_term": stats.anchor_loss_term,
+        "kl_anchor/w_now": stats.anchor_w_now,
+        # Convenience: surface log_temperature as a scalar.
+        "log_temperature": new_dual_params.log_temperature.squeeze(),
+        # Recurrent-only diagnostics from the online unroll.
+        "rnn/hidden_staleness": rnn_metrics["rnn/hidden_staleness"],
+        "rnn/hidden_abs_mean": rnn_metrics["rnn/hidden_abs_mean"],
     }
     return new_state, metrics

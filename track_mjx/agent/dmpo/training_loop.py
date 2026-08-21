@@ -80,12 +80,23 @@ def run(
     eval_every = eval_every_steps if eval_every_steps is not None else cfg.eval_every_steps
     timesteps = num_timesteps if num_timesteps is not None else cfg.num_timesteps
 
+    # Recurrent policy head: the fused step / chunk builds grow a
+    # policy_hidden carry (see make_fused_train_step). The hidden is
+    # TRANSIENT — never checkpointed, starts None here on fresh AND resumed
+    # runs alike (the rollout zero-inits when None; on resume env_state is
+    # also None, so episodes restart from reset and zero hidden is the
+    # correct pairing, not an approximation).
+    recurrent = getattr(nets, "recurrent_meta", None) is not None
+    policy_hidden = None
+
     fused_step = make_fused_train_step(
         env, nets, optimizers, rb, cfg, K=K,
         extra_state_extras=extra_state_extras,
         frozen_behavior_params=frozen_behavior_params,
     )
-    train_chunk = make_train_chunk(fused_step, n_iters=iters_per_chunk)
+    train_chunk = make_train_chunk(
+        fused_step, n_iters=iters_per_chunk, recurrent=recurrent
+    )
 
     env_steps_per_chunk = cfg.num_envs * cfg.unroll_length * iters_per_chunk
     last_train_metrics: dict = {}
@@ -120,16 +131,26 @@ def run(
             if first_step:
                 log.info("Compiling fused_step (reset path)...")
                 t1 = time.time()
-                state, env_state, rb_state, metrics = fused_step(
-                    state, env_state, rb_state, k_step
-                )
+                if recurrent:
+                    state, env_state, policy_hidden, rb_state, metrics = fused_step(
+                        state, env_state, policy_hidden, rb_state, k_step
+                    )
+                else:
+                    state, env_state, rb_state, metrics = fused_step(
+                        state, env_state, rb_state, k_step
+                    )
                 jax.block_until_ready(metrics["policy_loss"])
                 log.info("fused_step (reset) compiled in %.1fs", time.time() - t1)
                 first_step = False
             else:
-                state, env_state, rb_state, metrics = fused_step(
-                    state, env_state, rb_state, k_step
-                )
+                if recurrent:
+                    state, env_state, policy_hidden, rb_state, metrics = fused_step(
+                        state, env_state, policy_hidden, rb_state, k_step
+                    )
+                else:
+                    state, env_state, rb_state, metrics = fused_step(
+                        state, env_state, rb_state, k_step
+                    )
             last_train_metrics = metrics
             total_env_steps += cfg.num_envs * cfg.unroll_length
             if not bool(rb.can_sample(rb_state)):
@@ -141,19 +162,36 @@ def run(
             continue
 
         # Steady state — one chunk = N fused_step iters in one dispatch.
+        if recurrent and policy_hidden is None:
+            # Only reachable with warmup_done=True (tests pre-filling the
+            # replay): the warm-up branch above otherwise materializes the
+            # hidden. The scan carry needs a concrete pytree (structure
+            # cannot change None -> tuple mid-scan), and zeros is the same
+            # fresh-reset pairing the rollout itself would use.
+            policy_hidden = nets.recurrent_meta.init_hidden(cfg.num_envs)
         if second_step:
             log.info("Compiling train_chunk (n_iters=%d)...", iters_per_chunk)
             t1 = time.time()
-            state, env_state, rb_state, metrics = train_chunk(
-                state, env_state, rb_state, k_step
-            )
+            if recurrent:
+                state, env_state, policy_hidden, rb_state, metrics = train_chunk(
+                    state, env_state, policy_hidden, rb_state, k_step
+                )
+            else:
+                state, env_state, rb_state, metrics = train_chunk(
+                    state, env_state, rb_state, k_step
+                )
             jax.block_until_ready(metrics["policy_loss"])
             log.info("train_chunk compiled in %.1fs", time.time() - t1)
             second_step = False
         else:
-            state, env_state, rb_state, metrics = train_chunk(
-                state, env_state, rb_state, k_step
-            )
+            if recurrent:
+                state, env_state, policy_hidden, rb_state, metrics = train_chunk(
+                    state, env_state, policy_hidden, rb_state, k_step
+                )
+            else:
+                state, env_state, rb_state, metrics = train_chunk(
+                    state, env_state, rb_state, k_step
+                )
         last_train_metrics = metrics
         total_env_steps += env_steps_per_chunk
         chunks_completed += 1

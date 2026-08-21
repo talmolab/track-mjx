@@ -10,7 +10,7 @@ networks_vision.py and Acme's LayerNormMLP pattern). SiLU is used in
 place of Acme's tanh+ELU for compatibility with the wider track-mjx
 convention. The loss-relevant *heads* are byte-for-byte Acme.
 """
-from typing import Callable, NamedTuple, Optional, Sequence
+from typing import Any, Callable, NamedTuple, Optional, Sequence
 
 import flax.linen as nn
 import jax
@@ -199,10 +199,17 @@ class CategoricalCriticHead(nn.Module):
 
 
 class DMPONetworks(NamedTuple):
-    """Bundle of (policy, critic) flax modules used by DMPO."""
+    """Bundle of (policy, critic) flax modules used by DMPO.
+
+    `recurrent_meta` is a `RecurrentPolicyMeta` (networks_kl_anchor_rnn) when
+    the policy is recurrent, else None — the trace-time switch that
+    rollout/learner/eval branch on; the default keeps every existing 2-arg
+    construction (and all FF behavior) unchanged.
+    """
 
     policy: nn.Module
     critic: nn.Module
+    recurrent_meta: Any = None
 
 
 class _PolicyNet(nn.Module):

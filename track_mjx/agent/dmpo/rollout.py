@@ -55,6 +55,23 @@ def _maybe_store_obs(obs, normalizer_params, vision_uint8):
     return {**stored, "vision": _quantize_vision(stored["vision"])}
 
 
+def _reset_hidden_where_done(hidden, done):
+    """Zero the per-env hidden rows where the episode just ended.
+
+    The auto-reset wrapper swaps in the post-reset obs on the terminal step
+    itself, so the hidden consumed alongside that obs at t+1 must be the
+    fresh-episode zero state -- otherwise stale memory leaks across episode
+    boundaries. ``done`` ([num_envs], 0/1) broadcasts over each leaf's
+    trailing feature dims. Local helper on purpose: no dependency on
+    RecurrentPolicyMeta or the recurrent_ppo cell types.
+    """
+    def _reset(h):
+        mask = done.reshape(done.shape + (1,) * (h.ndim - done.ndim)) > 0
+        return jnp.where(mask, jnp.zeros_like(h), h)
+
+    return jax.tree.map(_reset, hidden)
+
+
 def _maybe_flatten_obs(obs, normalizer_params):
     """Flatten nested dict obs to {'imitation_target': ..., 'proprioception': ...}.
 
@@ -89,6 +106,8 @@ def collect_rollout(
     reward_remix_lambda=None,
     store_next_observation: bool = True,
     vision_uint8: bool = False,
+    recurrent_meta=None,
+    policy_hidden=None,
 ):
     """Roll out num_envs parallel envs for num_steps timesteps.
 
@@ -146,6 +165,20 @@ def collect_rollout(
         uint8 (``round(v*255)``). ``normalize_dict_obs`` dequantizes at
         sample time; the live policy in this rollout keeps consuming the
         f32 render. Requires dict observations with a "vision" key.
+      recurrent_meta: optional ``RecurrentPolicyMeta``-like object exposing
+        ``init_hidden(batch_size)`` and ``store_dtype``. Trace-time flag:
+        ``None`` (default) keeps the feed-forward path byte-identical. When
+        set, ``policy_apply`` must have the recurrent signature
+        ``(params, obs, hidden) -> (distribution, new_hidden)`` with hidden
+        a tuple of per-layer arrays; the transition gains a
+        ``"policy_hidden"`` entry (the PRE-step hidden the policy consumed
+        at this obs, cast to ``store_dtype`` -- the learner unrolls BPTT
+        from it), and the return grows a 4th element ``final_hidden``.
+      policy_hidden: optional starting hidden (tuple of [num_envs, H_l]
+        arrays) for chaining rollouts. ``None`` zero-inits via
+        ``recurrent_meta.init_hidden(num_envs)`` -- both on the reset path
+        AND on resume, because hidden is transient (never checkpointed).
+        Only valid together with ``recurrent_meta``.
 
     Returns:
       trajectory: dict with keys observation/action/reward/discount/next_observation,
@@ -153,9 +186,25 @@ def collect_rollout(
         Gaussian sample. Observations are RAW (not normalized).
       final_state: env state after num_steps.
       new_normalizer_params: updated running-statistics state (count+=N*T).
+      final_hidden: ONLY when ``recurrent_meta`` is given (4-tuple return):
+        the post-step, post-done-reset hidden after num_steps -- feed it
+        back as ``policy_hidden`` together with ``init_state=final_state``
+        to continue seamlessly.
     """
     pre_batched = bool(getattr(env, "pre_batched", False))
     extra_state_extras = tuple(extra_state_extras)
+    recurrent = recurrent_meta is not None
+
+    if recurrent and frozen_policy_params is not None:
+        raise NotImplementedError(
+            "behavior mixing with a recurrent policy is not supported (v1)"
+        )
+    if policy_hidden is not None and not recurrent:
+        # Fail loud: silently dropping a supplied hidden would mask a
+        # wiring bug in the caller (hidden threaded but meta not).
+        raise ValueError(
+            "policy_hidden was provided without recurrent_meta"
+        )
 
     if init_state is None:
         rng, k_reset = jax.random.split(rng)
@@ -167,17 +216,36 @@ def collect_rollout(
     else:
         state = init_state
 
+    if recurrent and policy_hidden is None:
+        # Hidden is transient (never checkpointed): zero-init on the reset
+        # path AND as the fallback on resume.
+        policy_hidden = recurrent_meta.init_hidden(num_envs)
+
     def step_fn(carry, _):
-        state, rng = carry
+        if recurrent:
+            state, rng, hidden = carry
+        else:
+            state, rng = carry
+            hidden = None
         rng, k_act = jax.random.split(rng)
         keys = jax.random.split(k_act, num_envs)
         # Normalize the obs the policy sees; do NOT mutate the obs stored
         # in the trajectory (it stays raw so SGD can re-normalize with
         # up-to-date stats).
         norm_obs = _normalize_obs(state.obs, normalizer_params)
-        raw_action = jax.vmap(
-            lambda o, k: policy_apply(policy_params, o).sample(seed=k)
-        )(norm_obs, keys)
+        if recurrent:
+            # Per-env vmap over unbatched obs/hidden slices -- the module is
+            # shape-agnostic, matching the FF convention below.
+            def _act(o, h, k):
+                dist, nh = policy_apply(policy_params, o, h)
+                return dist.sample(seed=k), nh
+
+            raw_action, new_hidden = jax.vmap(_act)(norm_obs, hidden, keys)
+        else:
+            new_hidden = None
+            raw_action = jax.vmap(
+                lambda o, k: policy_apply(policy_params, o).sample(seed=k)
+            )(norm_obs, keys)
         if frozen_policy_params is not None:
             # Behavior mixing: envs [0, ceil(frac*N)) act with the frozen
             # policy. Same per-env keys as the learner branch -> common
@@ -219,18 +287,32 @@ def collect_rollout(
             transition["next_observation"] = _maybe_store_obs(
                 new_state.obs, normalizer_params, vision_uint8
             )
+        if recurrent:
+            # PRE-step hidden: the state the policy consumed at this obs,
+            # which is what the learner's BPTT unroll must start from.
+            # Cast to the replay storage dtype (learner upcasts on read).
+            transition["policy_hidden"] = jax.tree.map(
+                lambda h: h.astype(recurrent_meta.store_dtype), hidden
+            )
+            new_hidden = _reset_hidden_where_done(new_hidden, new_state.done)
         # Extra info keys (e.g. anchor_mu_imit) -- extracted from CURRENT
         # state.info because they describe the obs the policy conditioned on.
         for key in extra_state_extras:
             transition[key] = state.info[key]
+        if recurrent:
+            return (new_state, rng, new_hidden), transition
         return (new_state, rng), transition
 
-    (final_state, _), traj = jax.lax.scan(
-        step_fn, (state, rng), None, length=num_steps,
+    carry0 = (state, rng, policy_hidden) if recurrent else (state, rng)
+    final_carry, traj = jax.lax.scan(
+        step_fn, carry0, None, length=num_steps,
     )
+    final_state = final_carry[0]
     # scan stacks along axis 0 (time); flashbax wants [B, T, ...].
     traj = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), traj)
 
     # Update normalizer from all observed obs (shape [N, T, ...]).
     new_normalizer_params = _update_normalizer(normalizer_params, traj["observation"])
+    if recurrent:
+        return traj, final_state, new_normalizer_params, final_carry[2]
     return traj, final_state, new_normalizer_params

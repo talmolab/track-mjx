@@ -797,7 +797,16 @@ def _policy_loss_fn_rnn(
         )
         return dist.mean()
 
-    q_values = jax.vmap(_q_mean_for_n)(sampled)
+    # lax.map (sequential) over the N-sample axis, NOT vmap as in the FF
+    # path: with the [B, L] loss points folded into the batch, a full vmap
+    # materializes num_samples * B * L parallel vision-CNN activations
+    # (409,600 images at the goal arm's B=1024, L=20) and OOMs the 5090
+    # with a ~9 GiB conv buffer (measured, first smoke of
+    # arm_r1_rnn_puresparse). Mapping N sequentially caps the peak at
+    # B * L parallel forwards -- the FF path's own peak (N * B = 20 * 1024)
+    # -- at identical FLOPs and identical values (the critic is per-sample;
+    # map == vmap semantically).
+    q_values = jax.lax.map(_q_mean_for_n, sampled)
     q_values = jax.lax.stop_gradient(q_values)
 
     loss_module = _build_loss(cfg)
@@ -999,14 +1008,27 @@ def _sgd_step_rnn(
     # Deterministic next-action via mu (== mode for a diag Gaussian), the FF
     # path's target_policy_dist_next.mode() analog. next_obs was normalized
     # above in (1).
-    next_mu, _, _ = jax.vmap(
-        jax.vmap(
+    # Sequential lax.map over the L axis (time-major), vmap over B inside:
+    # a double vmap would run B * L = 20,480 parallel policy-CNN forwards
+    # at the goal arm -- 20x the FF path's bootstrap peak and part of the
+    # first-smoke OOM. Mapping L caps the peak at B parallel forwards,
+    # exactly the FF scale; values identical (per-sample network).
+    next_obs_tm = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), next_obs)
+    h_boot_tm = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), h_boot)
+
+    def _boot_step(args):
+        o_t, h_t = args
+        mu_t, _, _ = jax.vmap(
             lambda o, hh: nets.policy.apply(
                 state.target_policy_params, o, hh, method="raw"
             )
-        )
-    )(next_obs, h_boot)
-    next_action = jax.lax.stop_gradient(next_mu)                 # [B, L, A]
+        )(o_t, h_t)
+        return mu_t
+
+    next_mu_tm = jax.lax.map(_boot_step, (next_obs_tm, h_boot_tm))  # [L, B, A]
+    next_action = jax.lax.stop_gradient(
+        jnp.swapaxes(next_mu_tm, 0, 1)                              # [B, L, A]
+    )
     target_probs = jax.lax.stop_gradient(
         compute_categorical_target(
             nets,

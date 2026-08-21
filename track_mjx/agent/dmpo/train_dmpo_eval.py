@@ -640,6 +640,7 @@ def render_eval_video(
     termination_events: list[tuple[int, str]] | None = None,
     eye_qpos_indices: list | None = None,
     reward_remix: dict | None = None,
+    cameras: list | None = None,
 ) -> str:
     """Render a tracking-camera MP4 with full HUD + vision overlay (env 0).
 
@@ -662,8 +663,17 @@ def render_eval_video(
         mj_model: MuJoCo physics model for the renderer.
         video_path: output ``.mp4`` path.
         fps, height, width: video parameters.
-        camera: MJC camera name (only used for the default tracking; the
-            vnl_render uses a tracking camera that follows the torso body).
+        camera: DEAD PARAMETER, kept for call-site compatibility. It has never
+            been forwarded anywhere -- ``render_video`` builds its own tracking
+            camera -- so setting ``eval_render_config.camera`` to an MJCF
+            camera name does nothing. Use ``cameras`` instead.
+        cameras: optional list of panel specs forwarded to
+            ``render_video``; each is ``{distance, azimuth, elevation,
+            lookat_z, label}`` and becomes one panel, left to right, in a
+            single wider frame. ``None`` keeps the historical single camera
+            and byte-identical output. Needed for maze-like arenas, where the
+            historical ``elevation=-20, distance=1.0`` camera sits behind a
+            wall most of the time.
         overlay_vision: if False, skip the vision overlay (plain tracking video).
         overlay_scale: kept for API compatibility (vnl_render handles its own scale).
         hud_config: dict gating the HUD (see
@@ -701,6 +711,7 @@ def render_eval_video(
             use_obs_vision=overlay_vision,
             eye_qpos_indices=eye_qpos_indices,
             reward_remix=reward_remix,
+            cameras=cameras,
         )
     finally:
         renderer.close()

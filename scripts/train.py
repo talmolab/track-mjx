@@ -124,9 +124,7 @@ def main(cfg: DictConfig) -> None:
             f"training clips. Increase the ratio or add more clips."
         )
 
-    training_worlds_per_device = (
-        int(cfg.train_setup.train_config.num_envs) // n_devices
-    )
+    training_worlds_per_device = int(cfg.train_setup.train_config.num_envs) // n_devices
     num_eval_envs = int(cfg.train_setup.train_config.get("num_eval_envs", 128))
 
     env = rodent_wrappers.TrackMjxObsWrapper(

@@ -42,7 +42,11 @@ def apply_env_overrides(env_cfg: Any, overrides: dict) -> None:
         try:
             for part in parts[:-1]:
                 obj = getattr(obj, part)
-            setattr(obj, parts[-1], value)
+            field = parts[-1]
+            current_value = getattr(obj, field)
+            if isinstance(current_value, epath.Path) and isinstance(value, str):
+                value = epath.Path(value)
+            setattr(obj, field, value)
         except AttributeError as e:
             raise ValueError(
                 f"Invalid env config override '{key}={value}': {e}. "
@@ -79,6 +83,7 @@ DEFAULT_PPO_PARAMS = {
     "learning_rate": 1e-4,
     "entropy_cost": 0.01,
     "num_envs": 4096,
+    "num_eval_envs": 128,
     "batch_size": 1024,
     "max_grad_norm": 1.0,
     "eval_every": 5_000_000,

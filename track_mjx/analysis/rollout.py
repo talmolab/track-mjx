@@ -23,7 +23,8 @@ from vnl_playground.tasks import wrappers as vnl_wrappers
 def create_environment(
     env_config: dict[str, Any] | DictConfig,
     reference_data_path: str | Path | None = None,
-    keep_clips_idx: Sequence[int] | None = None,
+    clip_indices: Sequence[int] | None = None,
+    num_worlds: int = 1,
 ) -> mjx_env.MjxEnv:
     """Create a VNL imitation learning environment from a configuration.
 
@@ -35,11 +36,14 @@ def create_environment(
     Args:
         env_config: Environment configuration only (not the full training
             config). Must contain env_name, reference_data_path, clip_length,
-            and optionally keep_clips_idx.
+            and optionally clip_indices.
         reference_data_path: Override for the reference clip H5 file path.
             When provided, takes precedence over ``env_config.reference_data_path``.
-        keep_clips_idx: Override for the clip indices to keep.
-            When provided, takes precedence over ``env_config.keep_clips_idx``.
+        clip_indices: Override for the clip indices to keep.
+            When provided, takes precedence over ``env_config.clip_indices``.
+        num_worlds: Number of environments sharing the MJX-Warp model. This
+            controls allocation of per-world contact capacity for batched Warp
+            rollouts and defaults to 1 for a single rollout.
 
     Returns:
         A Brax-compatible environment with nested dictionary observations.
@@ -66,10 +70,10 @@ def create_environment(
         if reference_data_path is not None
         else env_cfg_ml.reference_data_path
     )
-    clips_idx = (
-        list(keep_clips_idx)
-        if keep_clips_idx is not None
-        else env_cfg_ml.get("keep_clips_idx", None)
+    selected_clip_indices = (
+        list(clip_indices)
+        if clip_indices is not None
+        else env_cfg_ml.get("clip_indices", None)
     )
 
     env_name = env_cfg_ml.env_name
@@ -77,11 +81,15 @@ def create_environment(
         env_name,
         data_path=data_path,
         n_frames_per_clip=env_cfg_ml.clip_length,
-        keep_clips_idx=clips_idx,
+        clip_indices=selected_clip_indices,
     )
     return vnl_wrappers.TrackMjxObsWrapper(
         registry.load(
-            env_name, config=env_cfg_ml, clips=reference_clips, flatten_obs=False
+            env_name,
+            config=env_cfg_ml,
+            clips=reference_clips,
+            flatten_obs=False,
+            num_worlds=num_worlds,
         )
     )
 

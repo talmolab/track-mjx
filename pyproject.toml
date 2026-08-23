@@ -12,18 +12,18 @@ authors = [
 description=  "Track-MJX: A Python package for fast reinforcement learning-based imitation learning tracking for agents"
 requires-python = ">=3.12,<3.13"
 keywords = ["tracking", "imitation learning", "deep learning"]
-license = {text = "BSD-3-Clause"}
+license = "BSD-3-Clause"
 classifiers = [
     "Programming Language :: Python :: 3.12"]
 dependencies = [
     "jax==0.10.2",
     "jaxlib==0.10.2",
-    "brax==0.14.2",
+    "brax @ git+https://github.com/google/brax.git@303d89dfac42919e5fde7c91f24c28a505373b24",
     "flax==0.12.7",
     "optax==0.2.8",
     "orbax-checkpoint==0.12.0",
-    "mujoco==3.8.1",
-    "mujoco-mjx[warp]==3.8.1",
+    "mujoco==3.11.0",
+    "mujoco-mjx[warp]==3.11.0",
     "PyOpenGL==3.1.9",
     "numpy==2.1.3",
     "h5py==3.12.1",
@@ -38,9 +38,9 @@ dependencies = [
     "wandb==0.28.0",
     "huggingface-hub==1.20.1",
     "jaxtyping>=0.2.34",
-    "playground",
+    "playground @ git+https://github.com/google-deepmind/mujoco_playground.git@b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16",
     "ipykernel",
-    "vnl-playground",
+    "vnl-playground @ git+https://github.com/talmolab/vnl-playground.git@860cdfbefc1fdd00ca290e697c12178dd6e4e48d",
 ]
 
 dynamic = ["version", "readme"]
@@ -75,7 +75,10 @@ dev = [
 Repository = "https://github.com/talmolab/track-mjx"
 
 [tool.setuptools.packages.find]
-exclude = ["site", "model_checkpoints*", "wandb", "outputs"]
+include = ["track_mjx*"]
+
+[tool.setuptools.package-data]
+track_mjx = ["py.typed", "config/*.yaml"]
 
 [tool.ruff]
 line-length = 88
@@ -109,13 +112,7 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["track_mjx"]
 
-[tool.uv.sources]
-brax = { git = "https://github.com/google/brax", rev = "1aa46f127bc4208d0c6de350a58ef00c8f01b0d9" }
-vnl-playground = { git = "https://github.com/talmolab/vnl-playground", rev = "1529ac42d952c41b9408f8bebbb25602f3881ad3" }
-playground = { git = "https://github.com/google-deepmind/mujoco_playground", rev = "b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16" }
-
 [tool.uv]
-override-dependencies = ["brax==0.14.2"]
 no-sources-package = ["mujoco", "mujoco-mjx"]
 
 [dependency-groups]

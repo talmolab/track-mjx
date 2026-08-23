@@ -95,6 +95,7 @@ env_config:
   # ---------------------------------------------------------------------------
   reference_length: 5                 # Future reference frames provided to policy
   start_frame_range: [0, 50]          # Random episode start within [min, max] frames
+  clip_indices: null                  # Specific clip indices to use (null = all)
   mujoco_impl: jax                    # MuJoCo backend: "jax" for GPU via MJX
 
   # ---------------------------------------------------------------------------

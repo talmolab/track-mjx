@@ -11,6 +11,11 @@ Usage:
     # Basic usage (any registered task)
     python train_task.py --task RodentBowlEscape
     python train_task.py --task RodentRearing
+    python train_task.py --task RodentImitation
+
+    # Override the bundled MIMIC-MJX path when using custom reference data
+    python train_task.py --task RodentImitation \
+        --env "reference_data_path=/path/to/reference_clips.h5"
 
     # With PPO overrides
     python train_task.py --task RodentRearing --num_timesteps 1e8 --entropy_cost 0.1
@@ -24,7 +29,7 @@ Usage:
 
     # Warp backend (full-collision rodent model)
     python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp"
-    python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp naconmax=92160 njmax=1200"
+    python train_task.py --task RodentBowlEscape --env "mujoco_impl=warp contacts_per_world=20 constraints_per_world=600"
 """
 
 import os
@@ -64,15 +69,29 @@ from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 
 from track_mjx import training_wrappers
+from track_mjx.config.utils import get_track_env_overrides
 
 
-def create_environments(task_name, env_cfg):
+def create_environments(task_name, env_cfg, num_envs, num_eval_envs):
     """Create training and eval environments."""
+    training_worlds_per_device = num_envs // jax.device_count()
     env = rodent_wrappers.BraxObsWrapper(
-        registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
+        registry.load(
+            task_name,
+            config=env_cfg,
+            clips=None,
+            flatten_obs=False,
+            num_worlds=training_worlds_per_device,
+        )
     )
     eval_env = rodent_wrappers.BraxObsWrapper(
-        registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False)
+        registry.load(
+            task_name,
+            config=env_cfg,
+            clips=None,
+            flatten_obs=False,
+            num_worlds=num_eval_envs,
+        )
     )
     return env, eval_env
 
@@ -109,13 +128,19 @@ def main():
     # Create configs
     cli_env_overrides = parse_env_overrides_str(args.env)
     env_cfg = registry.get_default_config(args.task)
+    track_defaults = get_track_env_overrides(args.task)
+    if "reference_data_path" in track_defaults:
+        apply_env_overrides(
+            env_cfg,
+            {"reference_data_path": track_defaults["reference_data_path"]},
+        )
 
     # Detect Warp from parsed overrides (before applying to env_cfg)
     is_warp = cli_env_overrides.get("mujoco_impl") == "warp"
     default_num_envs = 1024 if is_warp else 4096
     ppo_params = create_ppo_params(args, default_num_envs=default_num_envs)
 
-    # Set Warp defaults first, then apply all user overrides (can override naconmax, njmax)
+    # Set Warp defaults first, then apply all user overrides (including capacities).
     if is_warp:
         env_cfg.mujoco_impl = "warp"
         configure_warp_backend(env_cfg, ppo_params.num_envs, task_name=args.task)
@@ -164,7 +189,9 @@ def main():
         wandb.log(metrics)
 
     # Create environments
-    env, eval_env = create_environments(args.task, env_cfg)
+    env, eval_env = create_environments(
+        args.task, env_cfg, ppo_params.num_envs, ppo_params.num_eval_envs
+    )
 
     # Setup training
     training_params = get_training_params(ppo_params)

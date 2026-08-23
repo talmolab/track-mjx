@@ -25,8 +25,8 @@ env_config:
   solver: "cg"
   iterations: 5
   ls_iterations: 5
-  naconmax: 10240
-  njmax: 20
+  contacts_per_world: 5
+  constraints_per_world: 20
   noslip_iterations: 0
 
   # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ env_config:
   reference_length: 5
   start_frame_range: [0, 50]
   qvel_init: "zeros"
-  keep_clips_idx: null
+  clip_indices: null
 
   # ---------------------------------------------------------------------------
   # Domain Randomization Settings

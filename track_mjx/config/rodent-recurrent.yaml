@@ -19,9 +19,8 @@ env_config:
   solver: "newton"
   iterations: 5
   ls_iterations: 5
-  nconmax: 256
-  naconmax: 131072
-  njmax: 128
+  contacts_per_world: 32
+  constraints_per_world: 128
   noslip_iterations: 0
 
   # Timing Configuration
@@ -35,7 +34,7 @@ env_config:
   reference_length: 5
   start_frame_range: [0, 50]
   qvel_init: "zeros"
-  keep_clips_idx: null
+  clip_indices: null
 
   # Domain Randomization Settings
   domain_randomization:

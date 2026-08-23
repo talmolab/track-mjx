@@ -99,15 +99,13 @@ def main(cfg: DictConfig) -> None:
     env_name = cfg.env_config.env_name
     default_config = registry.get_default_config(env_name)
 
+    clip_indices = cfg.env_config.get("clip_indices", None)
+
     reference_clips = registry.load_reference_clips(
         env_name,
         data_path=cfg.env_config.reference_data_path,
         n_frames_per_clip=cfg.env_config.clip_length,
-        keep_clips_idx=(
-            np.asarray(cfg.env_config.keep_clips_idx)
-            if cfg.env_config.keep_clips_idx is not None
-            else None
-        ),
+        clip_indices=np.asarray(clip_indices) if clip_indices is not None else None,
         joint_names=cfg.env_config.get("joints", default_config.get("joints", None)),
         body_names=cfg.env_config.get("bodies", default_config.get("bodies", None)),
     )
@@ -126,8 +124,19 @@ def main(cfg: DictConfig) -> None:
             f"training clips. Increase the ratio or add more clips."
         )
 
+    training_worlds_per_device = (
+        int(cfg.train_setup.train_config.num_envs) // n_devices
+    )
+    num_eval_envs = int(cfg.train_setup.train_config.get("num_eval_envs", 128))
+
     env = rodent_wrappers.TrackMjxObsWrapper(
-        registry.load(env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False)
+        registry.load(
+            env_name,
+            config=env_cfg_ml,
+            clips=train_clips,
+            flatten_obs=False,
+            num_worlds=training_worlds_per_device,
+        )
     )
     try:
         xml = env.save_spec("./env_spec.xml", return_str=True)
@@ -143,7 +152,11 @@ def main(cfg: DictConfig) -> None:
     else:
         test_env = rodent_wrappers.TrackMjxObsWrapper(
             registry.load(
-                env_name, config=env_cfg_ml, clips=test_clips, flatten_obs=False
+                env_name,
+                config=env_cfg_ml,
+                clips=test_clips,
+                flatten_obs=False,
+                num_worlds=num_eval_envs,
             )
         )
 
@@ -277,6 +290,7 @@ def main(cfg: DictConfig) -> None:
             config=rollout_cfg,
             clips=reference_clips,
             flatten_obs=False,
+            num_worlds=1,
         )
     )
 

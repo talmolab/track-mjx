@@ -26,9 +26,8 @@ env_config:
   solver: "newton"
   iterations: 5           # Max solver iterations per step
   ls_iterations: 5        # Line search iterations for Newton solver
-  nconmax: 32             # Max contacts (increase if contact clipping occurs)
-  naconmax: 131072        # Max arena contacts
-  njmax: 128              # Max constraint rows
+  contacts_per_world: 32      # Contact capacity allocated per environment
+  constraints_per_world: 128  # Constraint capacity allocated per environment
   noslip_iterations: 0    # No-slip solver iterations (0 = disabled)
 
   # -----------------------------------------------------------------------------
@@ -47,7 +46,7 @@ env_config:
   reference_length: 5             # Future reference frames provided to policy
   start_frame_range: [0, 50]      # Random episode start within [min, max] frames
   qvel_init: "zeros"              # Initial velocity: "zeros" or "reference"
-  keep_clips_idx: null            # Specific clip indices to use (null = all)
+  clip_indices: null              # Specific clip indices to use (null = all)
 
   # -----------------------------------------------------------------------------
   # Domain Randomization Settings

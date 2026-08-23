@@ -119,11 +119,11 @@ Expected output:
     conda activate track-mjx
     ```
 4. Install the package with desired CUDA version:
-    If your machine supports up to CUDA 13:
+    If your machine supports CUDA 12:
     ```bash
     pip install -e ".[cuda12]"
     ```
-    If your machine supports up to CUDA 12:
+    If your machine supports CUDA 13:
     ```bash
     pip install -e ".[cuda13]"
     ```
@@ -143,11 +143,17 @@ The main training entrypoint is defined in [`scripts/train.py`](scripts/train.py
 
 #### Download the data
 
-To download data, run `notebooks/rodent_demo.ipynb`
+The complete dataset is about 101 GB and contains reference motion for rodent,
+fruit fly, mouse arm, stick, and worm tasks. Download it into the repository's
+`data/` directory so the bundled task configs resolve it automatically:
 
-##### OR
+```bash
+uv run hf download talmolab/MIMIC-MJX --repo-type dataset --include 'data/**' --local-dir .
+```
 
-Execute the following command in terminal
+To download only the rodent reference clips, run
+`notebooks/rodent_demo.ipynb` or execute:
+
 ```bash
 python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='talmolab/MIMIC-MJX', repo_type='dataset', filename='data/rodent/rodent_reference_clips.h5', local_dir='.')"
 ```

@@ -79,12 +79,37 @@ _TRACK_ENV_OVERRIDES_BY_ENV_NAME: dict[str, dict[str, Any]] = {
             "data/rodent/rodent_reference_clips.h5"
         ),
     },
+    "RodentSparseImitation": {
+        "walker_name": "rodent",
+        "walker_xml_path": str(rodent_consts.RODENT_XML_PATH),
+        "arena_xml_path": str(rodent_consts.ARENA_XML_PATH),
+        "reference_data_path": _resolve_data_path(
+            "data/rodent/rodent_reference_clips.h5"
+        ),
+    },
     "FruitflyImitation": {
         "walker_name": "fruitfly",
         "walker_xml_path": str(fruitfly_consts.FRUITFLY_XML_PATH),
         "arena_xml_path": str(fruitfly_consts.ARENA_XML_PATH),
+        "reference_data_path": _resolve_data_path("data/fly/fly_reference_clip.h5"),
+    },
+    "MouseImitation": {
+        "reference_data_path": _resolve_data_path("data/mouse_arm"),
+    },
+    "StickImitation": {
         "reference_data_path": _resolve_data_path(
-            "data/fruitfly/fly_reference_clip.h5"
+            "data/stick/stick_box_model_reference.h5"
+        ),
+    },
+    "WormImitation": {
+        "reference_data_path": _resolve_data_path(
+            "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5"
+        ),
+    },
+    # CelegansImitation is a backwards-compatible registry alias for WormImitation.
+    "CelegansImitation": {
+        "reference_data_path": _resolve_data_path(
+            "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5"
         ),
     },
 }
@@ -106,20 +131,11 @@ def _to_omegaconf_compatible(value: Any) -> Any:
     return value
 
 
-def _get_track_env_overrides(env_name: str) -> dict[str, Any]:
+def get_track_env_overrides(env_name: str) -> dict[str, Any]:
     """Return track-mjx-specific env overrides for a given env_name."""
     overrides = _TRACK_ENV_OVERRIDES_BY_ENV_NAME.get(env_name)
-    if overrides is not None:
-        # Return a copy so callers cannot mutate module-level defaults.
-        return dict(overrides)
-
-    if env_name:
-        logging.warning(
-            "No track-mjx-specific env overrides found for env_name='%s'. "
-            "Using vnl-playground defaults and user env_config only.",
-            env_name,
-        )
-    return {}
+    # Return a copy so callers cannot mutate module-level defaults.
+    return dict(overrides) if overrides is not None else {}
 
 
 def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
@@ -149,7 +165,13 @@ def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
             "Expected a registered vnl_playground task name."
         ) from exc
 
-    track_overrides = _get_track_env_overrides(env_name)
+    track_overrides = get_track_env_overrides(env_name)
+    if not track_overrides:
+        logging.warning(
+            "No track-mjx-specific env overrides found for env_name='%s'. "
+            "Using vnl-playground defaults and user env_config only.",
+            env_name,
+        )
 
     merged_env_cfg = OmegaConf.merge(
         OmegaConf.create(_to_omegaconf_compatible(default_env_cfg.to_dict())),

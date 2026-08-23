@@ -104,8 +104,11 @@ def create_environments(
     highlvl_obs_key: str,
     policy_obs_key: str = "state",
     value_obs_key: str = "state",
+    num_envs: int = 4096,
+    num_eval_envs: int = 128,
 ):
     """Create training and eval environments with HighLevelWrapper."""
+    training_worlds_per_device = num_envs // jax.device_count()
     wrapper_kwargs = dict(
         decoder_inference_fn=decoder_policy_fn,
         latent_size=intention_size,
@@ -115,11 +118,23 @@ def create_environments(
         lowlvl_obs_key="proprioception",
     )
     env = rodent_wrappers.HighLevelWrapper(
-        registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False),
+        registry.load(
+            task_name,
+            config=env_cfg,
+            clips=None,
+            flatten_obs=False,
+            num_worlds=training_worlds_per_device,
+        ),
         **wrapper_kwargs,
     )
     eval_env = rodent_wrappers.HighLevelWrapper(
-        registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False),
+        registry.load(
+            task_name,
+            config=env_cfg,
+            clips=None,
+            flatten_obs=False,
+            num_worlds=num_eval_envs,
+        ),
         **wrapper_kwargs,
     )
     return env, eval_env
@@ -179,7 +194,7 @@ def main():
     default_num_envs = 1024 if is_warp else 4096
     ppo_params = create_ppo_params(args, default_num_envs=default_num_envs)
 
-    # Set Warp defaults first, then apply all user overrides (can override naconmax, njmax)
+    # Set Warp defaults first, then apply all user overrides (including capacities).
     if is_warp:
         env_cfg.mujoco_impl = "warp"
         configure_warp_backend(env_cfg, ppo_params.num_envs, task_name=args.task)
@@ -232,6 +247,8 @@ def main():
         args.highlvl_obs_key,
         policy_obs_key=args.policy_obs_key,
         value_obs_key=args.value_obs_key,
+        num_envs=ppo_params.num_envs,
+        num_eval_envs=ppo_params.num_eval_envs,
     )
 
     # Setup training

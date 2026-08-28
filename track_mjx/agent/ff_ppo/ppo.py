@@ -479,10 +479,13 @@ def train(
 
         epoch_training_time = time.time() - t
         training_walltime += epoch_training_time
+        # epoch_training_time times a single training_epoch (one iteration of the
+        # `for _ in range(max(num_resets_per_eval, 1))` reset loop in the main
+        # training loop). num_training_steps_per_epoch already divides the step
+        # budget by num_resets_per_eval, so multiplying the numerator by it again
+        # double-counts and over-reports sps by exactly that factor.
         sps = (
-            num_training_steps_per_epoch
-            * env_step_per_training_step
-            * max(num_resets_per_eval, 1)
+            num_training_steps_per_epoch * env_step_per_training_step
         ) / epoch_training_time
         metrics = {
             "training/sps": sps,

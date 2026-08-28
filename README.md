@@ -2,11 +2,16 @@
 
 This is a package for training control policies through motion imitation using deep reinforcement learning. Part of [MIMIC-MJX](https://mimic-mjx.talmolab.org/), along with [STAC-MJX](https://github.com/talmolab/stac-mjx) (a tool for performing inverse kinematics on markerless motion tracking data).
 
-## IMPORTANT (For reviewers and new users):
-**Please use the latest stable version of track-mjx (v0.0.1) for notebook demos and running rodent training example.**
+## Release compatibility
 
-## Prerelease (track-mjx >= v1.0.0)
-**track-mjx v1 will soon include all body models, related notebooks and training logic. track-mjx v1 and on will rely on [vnl-playground](https://github.com/talmolab/vnl-playground) for the environment and task logic. vnl-playground will be installed during the following installation steps along with other needed libraries. For more information regarding the environment and task logic, please visit [vnl-playground](https://github.com/talmolab/vnl-playground).**
+Track-MJX v1.1.0 uses
+[VNL Playground v0.0.14](https://github.com/talmolab/vnl-playground/releases/tag/v0.0.14)
+for environment and task logic. The tested simulation stack is Python 3.12,
+JAX/JAXlib 0.10.2, MuJoCo/MJX 3.11.0, and Warp 1.14.0.
+
+This release supports the rodent, fruit fly, mouse arm, stick insect, and worm
+models included in the
+[MIMIC-MJX dataset](https://huggingface.co/datasets/talmolab/MIMIC-MJX).
 
 ## Installation
 
@@ -68,12 +73,15 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```bash
 python -c "import jax; print(f'JAX version: {jax.__version__}'); print(f'Available devices: {jax.devices()}')"
 ```
-5. Register the environment as a Jupyter kernel:
+5. In Jupyter or VS Code, select `.venv/bin/python` as the notebook kernel. If
+your editor does not discover it automatically, register it explicitly and then
+select `Python (track-mjx)`:
 ```bash
 python -m ipykernel install --user --name=track-mjx --display-name="Python (track-mjx)"
 ```
 6. Test the environment:
-    Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
+    Execute [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). It checks
+    GPU visibility, JAX device execution, MuJoCo import, and EGL rendering.
 
 #### Alternative: Using `pip`
 
@@ -132,7 +140,7 @@ Expected output:
     pip install -e .
     ```
 5. Test the environment:
-    Execute the tests in [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb). This will check if MuJoCo, GPU support and Jax appear to be working.
+    Execute [`notebooks/test_setup.ipynb`](notebooks/test_setup.ipynb).
 
 
 ## Training
@@ -150,6 +158,16 @@ fruit fly, mouse arm, stick, and worm tasks. Download it into the repository's
 ```bash
 uv run hf download talmolab/MIMIC-MJX --repo-type dataset --include 'data/**' --local-dir .
 ```
+
+The bundled configurations resolve these locations automatically:
+
+| Task | Reference data |
+| --- | --- |
+| Rodent | `data/rodent/rodent_reference_clips.h5` |
+| Fruit fly | `data/fly/fly_reference_clip.h5` |
+| Mouse arm | `data/mouse_arm/` |
+| Stick insect | `data/stick/stick_box_model_reference.h5` |
+| Worm | `data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5` |
 
 To download only the rodent reference clips, run
 `notebooks/rodent_demo.ipynb` or execute:
@@ -170,6 +188,12 @@ uv run python scripts/train.py --config-name rodent-full-clips
 conda activate track_mjx
 python scripts/train.py --config-name rodent-full-clips
 ```
+
+The default configurations are intended for full training runs. For local
+smoke tests, select a small clip subset with a Hydra override such as
+`'env_config.clip_indices=[0,1]'` and reduce `num_envs`, `num_timesteps`, and
+network sizes. In particular, compiling all 1,730 fruit-fly clips at once can
+exceed the memory available on a consumer GPU.
 
 
 ## Task Training
@@ -208,6 +232,11 @@ python scripts/train_highlvl.py --task RodentRearing \
 ```
 
 Both scripts support `--policy_hidden_sizes`, `--value_hidden_sizes`, `--env` (for env config overrides), and standard PPO hyperparameter flags. Run with `--help` for full usage.
+
+Imitation tasks accept `clip_indices` through `--env` when a small local subset
+is desired. Warp capacity is configured per environment with
+`contacts_per_world` and `constraints_per_world`; VNL Playground scales these
+values for the requested number of worlds.
 
 
 ## Citation

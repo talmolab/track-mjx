@@ -98,7 +98,7 @@ _TRACK_ENV_OVERRIDES_BY_ENV_NAME: dict[str, dict[str, Any]] = {
     },
     "StickImitation": {
         "reference_data_path": _resolve_data_path(
-            "data/stick/stick_box_model_reference.h5"
+            "data/stick/stick_mesh_reference.h5"
         ),
     },
     "WormImitation": {

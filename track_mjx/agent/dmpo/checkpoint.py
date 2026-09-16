@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 def make_checkpointer(
     directory: str,
-    max_to_keep: int = 3,
+    max_to_keep: int | None = None,
     create: bool = True,
     step_prefix: str | None = STEP_PREFIX,
 ) -> ocp.CheckpointManager:
@@ -45,6 +45,17 @@ def make_checkpointer(
     Args:
         directory: Filesystem path for checkpoint storage.
         max_to_keep: Number of historical step directories to retain.
+            ``None`` (the DEFAULT) means KEEP EVERY CHECKPOINT -- orbax prunes
+            nothing. Do not set this to a small integer.
+
+            WHY: on 2026-08-28 arm_gen1_prior went NaN at ~162M env steps and
+            kept running. Checkpoints save every ~10.6M steps and the old
+            default retained THREE, so the last healthy weights (159.2M, the
+            arm's best-ever 16.5 crossings/ep) were ~2 saves from being pruned
+            by NaN checkpoints. A diverged run silently eats its own history:
+            the longer it runs after diverging, the less of it survives.
+            Checkpoints here are ~74 MB, so retention is cheap and the
+            replicability it buys is not.
         create: If True, create the directory when missing (training mode).
             Pass ``False`` from analysis/restore scripts to fail fast on a
             wrong path.

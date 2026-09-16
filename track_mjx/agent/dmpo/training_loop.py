@@ -114,6 +114,10 @@ def run(
     first_step = True
     second_step = True
     t0 = time.time()
+    # L0 instrumentation (2026-08-25): wall-clock spent in eval / checkpoint callbacks,
+    # so train-vs-eval share can be read from the log (GPU_UTILIZATION.md lever L0).
+    cum_eval_wall_s = 0.0
+    cum_ckpt_wall_s = 0.0
 
     while True:
         # Stop conditions.
@@ -223,6 +227,10 @@ def run(
                 # "correct" it upward to match a PPO curve.
                 payload["training/sps"] = session_sps
                 payload["num_updates_per_rollout"] = K
+                # L0: cumulative callback wall-clock up to the PREVIOUS eval (this eval runs below)
+                payload["timing/eval_wall_s_cum"] = cum_eval_wall_s
+                payload["timing/ckpt_wall_s_cum"] = cum_ckpt_wall_s
+                payload["timing/eval_ckpt_frac"] = (cum_eval_wall_s + cum_ckpt_wall_s) / elapsed
                 # Learner-throughput ratios, MEASURED rather than configured (the
                 # configured samples_per_insert knob is inverted in the live entry
                 # points; see DMPOConfig.sgd_steps_per_rollout). The Ray run that
@@ -232,10 +240,23 @@ def run(
                 )
                 wandb_log_callback(payload, total_env_steps)
             rng, k_eval = jax.random.split(rng)
+            t_eval = time.time()
             if eval_callback is not None:
                 eval_callback(state, total_env_steps, k_eval)
+            eval_wall_s = time.time() - t_eval
+            t_ckpt = time.time()
             if ckpt_save_callback is not None:
                 ckpt_save_callback(state, total_env_steps)
+            ckpt_wall_s = time.time() - t_ckpt
+            cum_eval_wall_s += eval_wall_s
+            cum_ckpt_wall_s += ckpt_wall_s
+            wall_total = max(time.time() - t0, 1e-6)
+            log.info(
+                "timing env_steps=%d eval_wall_s=%.1f ckpt_wall_s=%.1f | cumulative eval=%.0fs ckpt=%.0fs "
+                "of %.0fs session wall (eval+ckpt share %.1f%%)",
+                int(total_env_steps), eval_wall_s, ckpt_wall_s, cum_eval_wall_s, cum_ckpt_wall_s,
+                wall_total, 100.0 * (cum_eval_wall_s + cum_ckpt_wall_s) / wall_total,
+            )
             last_eval_step = total_env_steps
 
     return state, env_state, rb_state, last_train_metrics

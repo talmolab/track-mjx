@@ -26,8 +26,28 @@ jobs:
 
       - name: Run Ruff format check
         run: |
-          ruff format --check track_mjx/ scripts/
+          ruff format --check track_mjx/ scripts/ tests/
 
       - name: Run Ruff lint
         run: |
-          ruff check track_mjx/ scripts/
+          ruff check track_mjx/ scripts/ tests/
+
+  test:
+    name: Tests (CPU)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package with dev dependencies
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: |
+          JAX_PLATFORMS=cpu python -m pytest -q tests

@@ -12,9 +12,18 @@ from typing import Any
 import imageio
 import jax
 import mujoco
+import numpy as np
 import wandb
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
+
+# Per-term episode-reward failures already warned about for the current wandb
+# run, as (term, exception type) pairs, so that a repeat of the same failure is
+# quiet but a new kind of failure is not. Cleared when the run id changes, so a
+# second run in the same process (a multirun job, a re-run in a notebook) warns
+# again.
+_warned_reward_terms: set[tuple[str, str]] = set()
+_warned_run_id: str | None = None
 
 
 def rollout_logging_fn(
@@ -121,12 +130,190 @@ def rollout_logging_fn(
             commit=False,
         )
 
+    # Cumulative episode-reward scalars, summed up to the first done step.
+    # These are the return of this one rollout episode, under their own keys.
+    # They are not the same quantity as Brax's eval/episode_reward, which PPO
+    # logs via progress_fn as a mean over its evaluator's episodes. Trainers
+    # that don't run a Brax evaluator have no other episode-reward scalar.
+    _log_cumulative_reward_scalars(env, current_step, rollout)
+
     if cfg.logging_config.get("log_histograms", False):
         log_histogram_to_wandb("eval/histograms/latent_means", means_mean.tolist())
         log_histogram_to_wandb("eval/histograms/latent_stds", means_std.tolist())
 
     if render_video:
         _log_rollout_video(env, cfg, model_path, current_step, rollout)
+
+
+def _log_cumulative_reward_scalars(
+    env: Any,
+    current_step: int,
+    rollout: list[Any],
+) -> None:
+    """Log eval/rollout_episode_reward and per-term cumulatives as wandb scalars.
+
+    Sums ``state.reward`` and ``state.metrics["rewards/<term>"]`` over the first
+    episode of the rollout, skipping the reset state at index 0. Like Brax's
+    evaluator, the step on which ``done`` first becomes true is counted and
+    every later step is not; if ``done`` never fires, the whole rollout is
+    summed. Logged with commit=False so they batch with the next train-metrics
+    commit.
+
+    This runs inside the training loop, so it never raises. A scalar that
+    cannot be computed or logged is skipped with a warning naming it and the
+    exception. Per-term warnings are emitted once per term, exception type and
+    wandb run, so a term that fails the same way on every eval does not flood
+    the log, while a new kind of failure is still reported.
+
+    Args:
+        env: Environment whose ``_config.reward_terms`` names the per-term
+            metrics.
+        current_step: Current training step (unused; kept for call-site
+            symmetry with the other rollout loggers).
+        rollout: Unbatched environment states, starting with the reset state.
+    """
+    try:
+        episode = _first_episode(rollout)
+    except Exception as e:
+        logging.warning(
+            "Failed to log episode_reward scalars: cannot read done flags: %s: %s",
+            type(e).__name__,
+            e,
+        )
+        return
+    if not episode:
+        return
+
+    try:
+        ep_reward = float(sum(jnp.asarray(s.reward) for s in episode))
+        wandb.log({"eval/rollout_episode_reward": ep_reward}, commit=False)
+    except Exception as e:
+        logging.warning(
+            "Failed to log episode_reward scalar: %s: %s", type(e).__name__, e
+        )
+
+    try:
+        cfg_terms = getattr(getattr(env, "_config", None), "reward_terms", None)
+        if isinstance(cfg_terms, (str, bytes)):
+            raise TypeError(
+                f"expected a collection of term names, got {type(cfg_terms).__name__}"
+            )
+        terms = list(cfg_terms or ())
+    except Exception as e:
+        if _should_warn(("<reward_terms>", type(e).__name__)):
+            logging.warning(
+                "Failed to log per-term episode_reward scalars: cannot read "
+                "reward_terms: %s: %s (not logged again for this run)",
+                type(e).__name__,
+                e,
+            )
+        return
+
+    if not terms and _should_warn(("<reward_terms>", "empty")):
+        logging.warning(
+            "Not logging per-term episode_reward scalars: the environment "
+            "config lists no reward terms (not logged again for this run)"
+        )
+    for term in terms:
+        try:
+            metric_key = f"rewards/{term}"
+            term_total = float(sum(jnp.asarray(s.metrics[metric_key]) for s in episode))
+            wandb.log(
+                {f"eval/rollout_episode_reward_{term}": term_total},
+                commit=False,
+            )
+        except Exception as e:
+            label = _term_label(term)
+            if _should_warn((label, type(e).__name__)):
+                logging.warning(
+                    "Failed to log episode_reward_%s scalar: %s: %s "
+                    "(the same failure is not logged again for this run)",
+                    label,
+                    type(e).__name__,
+                    e,
+                )
+
+
+def _should_warn(key: tuple[str, str]) -> bool:
+    """Whether to warn about this failure, recording it so repeats stay quiet.
+
+    Keys are (term, exception type) pairs. The record is dropped whenever the
+    wandb run changes, so each run reports its failures once.
+
+    Args:
+        key: Identifies the failure being warned about.
+
+    Returns:
+        True if the caller should emit the warning.
+    """
+    global _warned_run_id
+
+    run_id = _current_run_id()
+    if run_id != _warned_run_id:
+        _warned_run_id = run_id
+        _warned_reward_terms.clear()
+    if key in _warned_reward_terms:
+        return False
+    _warned_reward_terms.add(key)
+    return True
+
+
+def _current_run_id() -> str:
+    """Return a label for the active wandb run, without ever raising.
+
+    wandb may be uninitialised, in which case ``wandb.run`` is None.
+    """
+    try:
+        return _term_label(getattr(getattr(wandb, "run", None), "id", None))
+    except Exception:
+        return "<unreadable wandb run>"
+
+
+def _term_label(term: Any) -> str:
+    """Return a printable name for a reward term, without ever raising."""
+    for to_text in (str, repr):
+        try:
+            return to_text(term)
+        except Exception:
+            pass
+    return "<unprintable reward term>"
+
+
+def _first_episode(rollout: list[Any]) -> list[Any]:
+    """Return the post-reset states that belong to the rollout's first episode.
+
+    The rollout environment is not auto-reset, so it keeps stepping after
+    ``done``. The first episode runs from index 1 up to and including the first
+    state whose ``done`` flag is set. This matches Brax's evaluator, which
+    starts an ``active`` mask at 1 on reset, weights each step's reward by the
+    mask before that step, and then updates it cumulatively with
+    ``active *= 1 - done``: once ``done`` fires the mask stays 0, even if a
+    later ``done`` flag clears. The reset state's own ``done`` flag is ignored,
+    as in Brax.
+
+    The done flags are stacked and copied to the host in a single transfer.
+
+    Args:
+        rollout: Unbatched environment states, starting with the reset state.
+
+    Returns:
+        The states whose rewards count towards the episode return.
+
+    Raises:
+        ValueError: If the done flags are not scalars, or are not finite. A
+            non-finite flag would make Brax's ``active`` mask NaN from that step
+            on, so there is no episode boundary to honor.
+    """
+    steps = rollout[1:]
+    if not steps:
+        return []
+    done = np.asarray(jnp.stack([jnp.asarray(s.done) for s in steps]))
+    if done.shape != (len(steps),):
+        raise ValueError(f"expected scalar done flags, got shape {done.shape[1:]}")
+    if not np.isfinite(done).all():
+        raise ValueError("expected finite done flags, got a non-finite value")
+    ended = np.flatnonzero(done)
+    return steps[: ended[0] + 1] if ended.size else steps
 
 
 def _log_rollout_video(

@@ -1,0 +1,151 @@
+# @package _global_
+# =============================================================================
+# PPO config for StickImitation (mesh Sungaya walker, 48 qpos / 41 actuators)
+# =============================================================================
+# Launch with:
+#   python scripts/train.py --config-name=stick/stick-ppo-imitation
+#
+# `# @package _global_` makes hydra merge this YAML at the root namespace
+# rather than nesting it under a `stick:` group.
+#
+# DELIBERATELY MINIMAL env_config. `config/utils.py::_merge_env_config_with_defaults`
+# layers configs as:
+#
+#     vnl-playground registry defaults  <  track-mjx overrides  <  this YAML
+#
+# vnl-playground main (>= #72) already ships the stick-exp6 calibration as its
+# StickImitation defaults -- sim_dt 0.002, solver newton, contacts/constraints
+# per world 128/512, clip_length 225, reference_length 5, start_frame_range
+# [0, 44], rescale_factor 1.0, and the full reward_terms / termination_criteria
+# blocks. Re-stating those here would fork the calibration and let the two
+# repos drift, so this file sets only what the registry cannot know: the env
+# name and the training harness.
+#
+# In particular reward_terms and termination_criteria are intentionally ABSENT.
+# The registry defaults are already the post-#75 quaternion convention
+# (root_quat.exp_scale 40.0, root_too_rotated 120.0 -- the exp6 run's 20.0/60.0
+# doubled) and already set leg_joints.weight to 0.0. Setting leg_joints to a
+# non-zero weight double-counts the 24 leg segments, because _end_eff_reward
+# scores END_EFFECTORS + LEG_JOINTS (30 bodies) rather than the 6 claws.
+# =============================================================================
+
+env_config:
+  env_name: "StickImitation"
+  walker_name: "stickbug"
+
+  # Everything else -- physics, timing, clip layout, rewards, terminations --
+  # comes from the vnl-playground registry defaults. reference_data_path is
+  # force-applied from track-mjx's _TRACK_ENV_OVERRIDES_BY_ENV_NAME, which
+  # points at data/stick/stick_mesh_reference.h5 (75 clips x 225 frames).
+
+  # Which clips to train on. null = all 75.
+  clip_indices: null
+
+  # ---------------------------------------------------------------------------
+  # Domain Randomization
+  # ---------------------------------------------------------------------------
+  # Required: scripts/train.py dereferences
+  # cfg.env_config.domain_randomization.use_domain_randomization
+  # unconditionally, so this block must exist even when disabled.
+  # Untuned for the stick -- the ranges below are the rodent/fly defaults and
+  # have never been exercised on this walker.
+  domain_randomization:
+    use_domain_randomization: false
+    friction_scale: [1.0, 1.0]
+    static_friction_scale: [0.9, 1.1]
+    armature_scale: [1.0, 1.05]
+    com_jitter: [-0.05, 0.05]
+    link_mass_scale: [0.9, 1.1]
+    torso_mass_jitter: [-0.02, 0.02]
+    qpos0_jitter: [-0.05, 0.05]
+
+# =============================================================================
+# Rendering Configuration
+# =============================================================================
+render_config:
+  render_camera_name: close_profile
+  render_fps: 50
+  render_interval: 1
+  # 720p -- the nymph is ~3 cm, so a tight crop plus higher resolution is what
+  # makes individual legs legible in eval videos.
+  height: 720
+  width: 1280
+
+# =============================================================================
+# Network Architecture (intention encoder-decoder, smaller than rodent)
+# =============================================================================
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [512, 256, 256]
+  decoder_layer_sizes: [256, 256, 256]
+  critic_layer_sizes: [512, 512, 256]
+  intention_size: 32
+  proprioception_noise_std: 0.0
+  kl_schedule: true
+  latent_kl_weight: 3e-2
+  latent_ar1_weight: 0.0
+
+# =============================================================================
+# Training Setup
+# =============================================================================
+train_setup:
+  agent_name: stickbug
+  run_name: stick-ppo
+
+  # Checkpointing and restoration
+  checkpoint_to_restore: null
+  restore_from_run_state: null
+
+  # Data splitting. The mesh H5 has 75 clips, so a held-out test split is
+  # meaningful here -- the old box H5 had a single clip, which is why the
+  # pre-merge config used a ratio of 1.0.
+  train_test_split_info: null
+  train_subset_ratio: 0.8
+
+  # Evaluation and resets
+  eval_every: 25_000_000
+  reset_every: 25_000_000
+  # NOTE: derived, not read. scripts/train.py computes
+  #   (clip_length - start_frame_range[-1] - reference_length) * steps_per_frame
+  #   = (225 - 44 - 5) * ((1/50) / 0.01) = 352
+  # and ignores this key. Listed for reference only -- editing it does nothing.
+  episode_length: 352
+
+  # ---------------------------------------------------------------------------
+  # PPO Training Hyperparameters
+  # ---------------------------------------------------------------------------
+  train_config:
+    # RTX 5090 (32 GB). Stick has heavy observations (body_pos alone is
+    # 43 x 5 x 3 = 645). Memory tested 2026-05-14 on the mesh walker:
+    #   - 8192 envs x 4096 batch : OOM, [8,8192,20,870] transpose peaked 24 GB
+    #   - 4096 envs x 2048 batch : OOM, 22.8 GB plateau + 12 GB grad alloc
+    #   - 4096 envs x 1024 batch : fits
+    # Rollout is the bottleneck, so num_envs is raised without raising batch.
+    num_envs: 4096
+    num_timesteps: 1_000_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    grad_clip_threshold: 20.0
+    clipping_epsilon: 0.2
+    discounting: 0.95
+    action_repeat: 1
+    entropy_cost: 1e-2
+    vf_loss_coefficient: 0.25
+    reward_scaling: 1
+    normalize_observations: true
+    unroll_length: 20
+    seed: 0
+    get_activation: false
+    deterministic_eval: true
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging_config:
+  project_name: ppo-stick-imitation
+  group_name: stickbug
+  exp_name: stick-mesh-ppo-v0
+  clip_id: -1
+  model_path: model_checkpoints/

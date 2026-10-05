@@ -4,9 +4,10 @@ This is a package for training control policies through motion imitation using d
 
 ## Release compatibility
 
-Track-MJX v1.1.0 uses
-[VNL Playground v0.0.14](https://github.com/talmolab/vnl-playground/releases/tag/v0.0.14)
-for environment and task logic. The tested simulation stack is Python 3.12,
+Track-MJX uses
+[VNL Playground](https://github.com/talmolab/vnl-playground) at commit
+[`79da61d`](https://github.com/talmolab/vnl-playground/commit/79da61d91), which
+adds the mesh-based stick-insect walker, for environment and task logic. The tested simulation stack is Python 3.12,
 JAX/JAXlib 0.10.2, MuJoCo/MJX 3.11.0, and Warp 1.14.0.
 
 This release supports the rodent, fruit fly, mouse arm, stick insect, and worm
@@ -167,7 +168,7 @@ The bundled configurations resolve these locations automatically:
 | Fruit fly | `data/fly/fly_reference_clip.h5` |
 | Mouse arm | `data/mouse_arm/` |
 | Stick insect | `data/stick/stick_mesh_reference.h5` |
-| Worm | `data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5` |
+| Worm | `data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d_scale-0.1.h5` |
 
 To download only the rodent reference clips, run
 `notebooks/rodent_demo.ipynb` or execute:
@@ -189,12 +190,44 @@ conda activate track_mjx
 python scripts/train.py --config-name rodent-full-clips
 ```
 
+Each body model has a bundled config; select the MuJoCo backend with
+`env_config.mujoco_impl=jax` (MJX) or `env_config.mujoco_impl=warp`:
+
+| Body | Config | Default backend |
+| --- | --- | --- |
+| Rodent | `rodent-full-clips` | jax |
+| Fruit fly | `fly` | warp |
+| Mouse arm | `mouse-arm` | jax |
+| Stick insect | `stick` | jax |
+| Worm | `celegans` | jax |
+
+```bash
+uv run python scripts/train.py --config-name stick env_config.mujoco_impl=warp
+```
+
+Warp memory grows quickly with the number of environments; on a 96 GB GPU the
+worm needs `train_setup.train_config.num_envs=2048` with Warp.
+
 The default configurations are intended for full training runs. For local
 smoke tests, select a small clip subset with a Hydra override such as
 `'env_config.clip_indices=[0,1]'` and reduce `num_envs`, `num_timesteps`, and
 network sizes. In particular, compiling all 1,730 fruit-fly clips at once can
 exceed the memory available on a consumer GPU.
 
+
+### Pretrained checkpoints
+
+The [MIMIC-MJX model repository](https://huggingface.co/talmolab/MIMIC-MJX)
+contains one imitation policy per body model and backend, trained with the
+bundled configs above. Each lives in `<body>/track-mjx-v1.1/<jax|warp>/`, where
+`<body>` is `rodent`, `fruitfly`, `arm`, `stick`, or `worm`:
+
+```bash
+uv run hf download talmolab/MIMIC-MJX --include 'rodent/track-mjx-v1.1/warp/**' --local-dir checkpoints
+```
+
+Load it with `checkpointing.load_checkpoint_for_eval("checkpoints/rodent/track-mjx-v1.1/warp")`
+as in [`notebooks/rollout_from_checkpoint.ipynb`](notebooks/rollout_from_checkpoint.ipynb).
 
 ## Task Training
 

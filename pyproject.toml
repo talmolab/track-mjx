@@ -40,7 +40,7 @@ dependencies = [
     "jaxtyping>=0.2.34",
     "playground @ git+https://github.com/google-deepmind/mujoco_playground.git@b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16",
     "ipykernel",
-    "vnl-playground @ git+https://github.com/talmolab/vnl-playground.git@v0.0.14",
+    "vnl-playground @ git+https://github.com/talmolab/vnl-playground.git@79da61d913c6100761a13e3031fab82a574588d1",
 ]
 
 dynamic = ["version", "readme"]

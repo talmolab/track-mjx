@@ -15,8 +15,11 @@ from typing import Any
 from ml_collections import config_dict
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry as vnl_registry
+from vnl_playground.tasks.celegans import consts as worm_consts
 from vnl_playground.tasks.fruitfly import consts as fruitfly_consts
+from vnl_playground.tasks.mouse import consts as mouse_consts
 from vnl_playground.tasks.rodent import consts as rodent_consts
+from vnl_playground.tasks.stick import consts as stick_consts
 
 # Project root directory (track-mjx/)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -70,6 +73,16 @@ def _resolve_data_path(relative_path: str) -> str:
     return str(_PROJECT_ROOT / relative_path)
 
 
+# The reference clips are scaled by 0.1 to match the vnl-playground worm model;
+# the unscaled STAC fit is 10x larger, so every episode ends at step 1.
+_WORM_OVERRIDES: dict[str, Any] = {
+    "walker_xml_path": str(worm_consts.CELEGANS_XML_PATH),
+    "arena_xml_path": str(worm_consts.ARENA_XML_PATH),
+    "reference_data_path": _resolve_data_path(
+        "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d_scale-0.1.h5"
+    ),
+}
+
 _TRACK_ENV_OVERRIDES_BY_ENV_NAME: dict[str, dict[str, Any]] = {
     "RodentImitation": {
         "walker_name": "rodent",
@@ -94,22 +107,18 @@ _TRACK_ENV_OVERRIDES_BY_ENV_NAME: dict[str, dict[str, Any]] = {
         "reference_data_path": _resolve_data_path("data/fly/fly_reference_clip.h5"),
     },
     "MouseImitation": {
+        "walker_xml_path": str(mouse_consts.MOUSE_XML_PATH),
+        "arena_xml_path": str(mouse_consts.MOUSE_ARENA_XML_PATH),
         "reference_data_path": _resolve_data_path("data/mouse_arm"),
     },
     "StickImitation": {
+        "walker_xml_path": str(stick_consts.STICK_XML_PATH),
+        "arena_xml_path": str(stick_consts.ARENA_XML_PATH),
         "reference_data_path": _resolve_data_path("data/stick/stick_mesh_reference.h5"),
     },
-    "WormImitation": {
-        "reference_data_path": _resolve_data_path(
-            "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5"
-        ),
-    },
+    "WormImitation": _WORM_OVERRIDES,
     # CelegansImitation is a backwards-compatible registry alias for WormImitation.
-    "CelegansImitation": {
-        "reference_data_path": _resolve_data_path(
-            "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5"
-        ),
-    },
+    "CelegansImitation": _WORM_OVERRIDES,
 }
 
 

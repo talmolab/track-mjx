@@ -177,11 +177,13 @@ def _log_rollout_video(
                     values,
                 )
 
+    camera = _resolve_render_camera(env, cfg.render_config.render_camera_name)
+
     try:
         with imageio.get_writer(video_path, fps=render_fps) as writer:
             video = env.render(
                 trajectory=rollout,
-                camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
+                camera=camera,
                 height=480,
                 width=640,
             )
@@ -194,6 +196,38 @@ def _log_rollout_video(
         )
     except mujoco.FatalError as e:
         logging.warning(f"Rendering video failed with MuJoCo error: {e}")
+
+
+def _resolve_render_camera(env: Any, camera_name: str) -> str | None:
+    """Pick the camera to render with.
+
+    Walker-attached cameras carry the walker suffix (e.g. ``close_profile-rodent``),
+    but some tasks define their cameras on the arena (e.g. the mouse arm), where no
+    suffix is applied. Prefer the suffixed name, fall back to the bare name, and
+    finally to the environment default (``None``) so rendering never fails on a
+    camera-name mismatch.
+
+    Args:
+        env: Environment (possibly wrapped) exposing ``_suffix`` and ``mj_model``.
+        camera_name: Camera name from ``render_config.render_camera_name``.
+
+    Returns:
+        A camera name present in the model, or None for the env default.
+    """
+    suffix = getattr(env, "_suffix", "")
+    candidates = [f"{camera_name}{suffix}", camera_name]
+    mj_model = getattr(env, "mj_model", None)
+    if mj_model is None:
+        return candidates[0]
+    available = {mj_model.camera(i).name for i in range(mj_model.ncam)}
+    for candidate in candidates:
+        if candidate in available:
+            return candidate
+    logging.warning(
+        f"Render camera '{camera_name}' (with/without suffix '{suffix}') not in model "
+        f"cameras {sorted(available)}; using the environment default camera."
+    )
+    return None
 
 
 def log_lineplot_to_wandb(

@@ -235,7 +235,7 @@ train_setup:
   # PPO Training Hyperparameters
   # ---------------------------------------------------------------------------
   train_config:
-    num_envs: 8192                    # Parallel environments
+    num_envs: 8192                    # Parallel environments (use 2048 with mujoco_impl=warp)
     num_timesteps: 1_500_000_000      # Total training steps
     batch_size: 1024                  # Samples per gradient update
     num_minibatches: 16               # Minibatches per epoch

@@ -177,11 +177,15 @@ def _log_rollout_video(
                     values,
                 )
 
+    camera = f"{cfg.render_config.render_camera_name}{env._suffix}"
+    if mujoco.mj_name2id(env.mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera) < 0:
+        camera = cfg.render_config.render_camera_name  # arena camera (mouse arm)
+
     try:
         with imageio.get_writer(video_path, fps=render_fps) as writer:
             video = env.render(
                 trajectory=rollout,
-                camera=f"{cfg.render_config.render_camera_name}{env._suffix}",
+                camera=camera,
                 height=480,
                 width=640,
             )

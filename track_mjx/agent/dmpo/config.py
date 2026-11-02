@@ -246,6 +246,20 @@ class DMPOConfig:
     # (`store_next_observation=False`); it raises otherwise.
     rnn_bptt_length: int = 0
 
+    # ------------------------------------------------------------------
+    # Privileged critic input (asymmetric actor-critic).
+    # ------------------------------------------------------------------
+
+    # Batch key holding a per-step task-state vector that ONLY the critic sees
+    # (e.g. which maze arm is baited). The env writes it to state.info[key];
+    # the rollout stores it via `extra_state_extras` from the PRE-step state,
+    # so batch[key][:, t] is aligned with observation[:, t]. The learner
+    # attaches it as obs["privileged"] to critic applies only, gathered at the
+    # index of the obs each apply consumes (t0 / bootstrap / loss points). The
+    # critic must be built with a matching `critic_privileged_dim` (> 0).
+    # "" (default) = off: no gather, no new ops -- every old path unchanged.
+    critic_privileged_key: str = ""
+
 
 def resolve_sgd_steps_per_rollout(cfg: DMPOConfig) -> int:
     """K = SGD updates per rollout. Explicit override wins, else the legacy formula.

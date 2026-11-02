@@ -93,6 +93,13 @@ class _ValueVisionCriticNet(nn.Module):
     # torso height or world_zaxis cannot know which action ends the episode.
     # Those two quantities are exactly the `fallen` termination variables.
     use_proprio: bool = False
+    # Width of an optional privileged task-state vector, read from
+    # obs["privileged"] and concatenated LAST (after `action`) -- so a critic
+    # grafted from a privileged_dim=0 checkpoint only gains trailing zero rows
+    # on its first Dense kernel. Training-time only (asymmetric actor-critic):
+    # the learner attaches the key to critic inputs alone, never to the
+    # policy. 0 (default) = the historical inputs and param tree.
+    privileged_dim: int = 0
 
     @nn.compact
     def __call__(self, obs, action: jnp.ndarray) -> tfd.Distribution:
@@ -106,6 +113,15 @@ class _ValueVisionCriticNet(nn.Module):
         if self.use_proprio:
             parts.append(obs["proprioception"])
         parts.append(action)
+        if self.privileged_dim > 0:
+            priv = obs["privileged"]
+            if priv.shape[-1] != self.privileged_dim:
+                raise ValueError(
+                    f"obs['privileged'] has width {priv.shape[-1]} but the "
+                    f"critic was built with privileged_dim="
+                    f"{self.privileged_dim}."
+                )
+            parts.append(priv)
         h = jnp.concatenate(parts, axis=-1)
         for size in self.layer_sizes:
             h = nn.Dense(size)(h)

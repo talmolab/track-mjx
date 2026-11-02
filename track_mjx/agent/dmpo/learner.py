@@ -6,6 +6,7 @@
 """
 
 import functools
+from collections.abc import Mapping
 from typing import Any, NamedTuple
 
 import jax
@@ -99,8 +100,25 @@ def init_training_state(
         )
     act_dummy = jnp.zeros((env_spec["action_size"],))
 
+    # A critic with a privileged input reads obs["privileged"]; it is a
+    # critic-only key, so it goes into the critic's dummy obs alone (never
+    # the policy's, never the normalizer's). privileged_dim 0 / absent (any
+    # critic class without the field) = the historical init, unchanged.
+    critic_obs_dummy = obs_dummy
+    priv_dim = int(getattr(nets.critic, "privileged_dim", 0) or 0)
+    if priv_dim > 0:
+        if not isinstance(obs_dummy, Mapping):
+            raise ValueError(
+                "critic privileged_dim > 0 requires dict observations "
+                "(env_spec['obs_template'])."
+            )
+        critic_obs_dummy = {
+            **obs_dummy,
+            "privileged": jnp.zeros((priv_dim,), jnp.float32),
+        }
+
     policy_params = nets.policy.init(k_pol, obs_dummy)
-    critic_params = nets.critic.init(k_crit, obs_dummy, act_dummy)
+    critic_params = nets.critic.init(k_crit, critic_obs_dummy, act_dummy)
 
     loss_fn = _build_loss(cfg)
     dual_params = loss_fn.init_params(env_spec["action_size"], jnp.float32)
@@ -133,6 +151,100 @@ def _normalize_obs(obs, normalizer_params):
     if isinstance(normalizer_params, DictRunningStatisticsState):
         return normalize_dict_obs(obs, normalizer_params)
     return running_statistics.normalize(obs, normalizer_params)
+
+
+# ---------------------------------------------------------------------------
+# Privileged critic input (asymmetric actor-critic).
+#
+# The critic may see a task-state vector the policy never does. The env writes
+# it to state.info[cfg.critic_privileged_key]; the rollout's
+# `extra_state_extras` side channel stores it from the PRE-step state, so
+# batch[key][:, t] is aligned with observation[:, t]. Every critic apply gets
+# it as obs["privileged"], gathered at the time index of the obs that apply
+# consumes; policy applies never see the key. All branching is Python /
+# trace-time: with the default key "" the helpers return their input object
+# and no op is added.
+# ---------------------------------------------------------------------------
+
+
+def _check_privileged_config(nets: DMPONetworks, cfg: DMPOConfig) -> str:
+    """Return the active privileged key ("" = off); fail loud on a mismatch.
+
+    Both mismatch directions are silent-or-cryptic otherwise: a key with a
+    privileged_dim=0 critic would train a critic that ignores the vector,
+    and a privileged critic with no key dies on a bare KeyError.
+    """
+    key = getattr(cfg, "critic_privileged_key", "") or ""
+    dim = int(getattr(nets.critic, "privileged_dim", 0) or 0)
+    if key and dim <= 0:
+        raise ValueError(
+            f"cfg.critic_privileged_key={key!r} but the critic has no "
+            "privileged input (critic_privileged_dim=0): the vector would be "
+            "silently ignored. Build the networks with critic_privileged_dim "
+            "> 0, or clear cfg.critic_privileged_key."
+        )
+    if dim > 0 and not key:
+        raise ValueError(
+            f"the critic was built with critic_privileged_dim={dim} but "
+            "cfg.critic_privileged_key is empty, so the learner has nothing "
+            "to feed obs['privileged']. Set cfg.critic_privileged_key to the "
+            "batch key that stores the vector (e.g. 'critic_priv')."
+        )
+    return key
+
+
+def _critic_obs(obs: Any, batch: dict[str, Any], key: str, idx: Any) -> Any:
+    """Attach the privileged critic input to ``obs`` for a CRITIC apply.
+
+    Args:
+      obs: (normalized) obs pytree a critic apply consumes; its leading dims
+        must match the gathered vector's ([B] or [B, L]).
+      batch: replay batch. ``batch[key]`` is [B, T, D], aligned with
+        ``batch["observation"][:, t]``.
+      key: ``cfg.critic_privileged_key``; "" = off.
+      idx: time index of the state ``obs`` holds. A Python int or slice is
+        shared by every row (``batch[key][:, idx]``); an integer array gives
+        per-row indices, [B] -> [B, D] or [B, L] -> [B, L, D] (e.g. the
+        bootstrap index of each row, or per-row tick positions).
+
+    Returns:
+      ``obs`` itself when ``key`` is "" (no new ops on the default path);
+      otherwise a new dict ``{**obs, "privileged": gathered}`` (``obs`` is
+      not mutated, so the policy-side pytree never carries the key).
+    """
+    if not key:
+        return obs
+    if key not in batch:
+        raise ValueError(
+            f"cfg.critic_privileged_key={key!r} but the batch has no {key!r}. "
+            f"Add {key!r} to the transition template AND to "
+            "extra_state_extras (run_training_loop / make_fused_train_step / "
+            "collect_rollout) so the rollout stores state.info[key]."
+        )
+    if not isinstance(obs, Mapping):
+        raise ValueError(
+            "the privileged critic input needs dict observations; got "
+            f"{type(obs).__name__}."
+        )
+    priv = batch[key]
+    if isinstance(idx, (int, slice)) and not isinstance(idx, bool):
+        gathered = priv[:, idx]
+    else:
+        idx = jnp.asarray(idx)
+        if idx.ndim == 0:
+            gathered = priv[:, idx]
+        elif idx.ndim in (1, 2) and idx.shape[0] == priv.shape[0]:
+            rows = idx.reshape(idx.shape[0], -1)  # [B, L']
+            rows = rows.reshape(rows.shape + (1,) * (priv.ndim - 2))
+            gathered = jnp.take_along_axis(priv, rows, axis=1)  # [B, L', D]
+            gathered = gathered.reshape(idx.shape + priv.shape[2:])
+        else:
+            raise ValueError(
+                "privileged gather indices must be an int, a slice, or an "
+                f"integer array of shape [B] or [B, L] with B={priv.shape[0]};"
+                f" got shape {idx.shape}."
+            )
+    return {**obs, "privileged": gathered}
 
 
 def compute_categorical_target(
@@ -258,8 +370,14 @@ def _policy_loss_fn(
     anchor_mu_imit: Any = None,
     anchor_log_std_imit: Any = None,
     step: jnp.ndarray = jnp.int32(0),
+    critic_obs_t0: Any = None,
 ):
     """E-step + M-step + dual losses + optional kl-anchor loss term.
+
+    ``critic_obs_t0`` is the obs the target critic rates the sampled actions
+    on -- ``obs_t0`` plus the privileged key when that is on (see
+    ``_critic_obs``). None (default) uses ``obs_t0`` itself, so the policy and
+    the critic read the same pytree exactly as before.
 
     When ``cfg.kl_anchor_alpha > 0`` AND ``anchor_mu_imit`` is provided,
     augments the loss with ``-alpha * mean(exp(-w * KL(pi_theta ‖ pi_imit)))``
@@ -277,10 +395,11 @@ def _policy_loss_fn(
         target_policy_params, obs_t0
     )
     sampled = target_dist.sample(sample_shape=(cfg.num_samples,), seed=key)
+    critic_obs = obs_t0 if critic_obs_t0 is None else critic_obs_t0
 
     def _q_mean_for_n(actions_n: jnp.ndarray) -> jnp.ndarray:
         dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
-            target_critic_params, obs_t0, actions_n
+            target_critic_params, critic_obs, actions_n
         )
         return dist.mean()
 
@@ -443,6 +562,22 @@ def sgd_step(
     obs_t0 = _normalize_obs(obs_t0, state.normalizer_params)
     next_obs_t0 = _normalize_obs(next_obs_t0, state.normalizer_params)
 
+    # Critic-only views with the privileged input attached (after the
+    # normalize, which would drop the key; the vector is used raw). With the
+    # key off these ARE obs_t0 / next_obs_t0. batch[key][:, t] pairs with
+    # observation[:, t], so the bootstrap state -- observation[:, n], or the
+    # identical next_observation[:, n-1] -- pairs with index n in BOTH
+    # schemas. Policy applies keep reading obs_t0 / next_obs_t0.
+    priv_key = _check_privileged_config(nets, cfg)
+    if priv_key and n_steps >= _T:
+        raise ValueError(
+            f"privileged critic input: the bootstrap state is t={n_steps} but "
+            f"the batch only stores {priv_key!r} for t < {_T} (no next-step "
+            "copy exists). Use sequence_length >= n_step + 1."
+        )
+    crit_obs_t0 = _critic_obs(obs_t0, batch, priv_key, 0)
+    crit_next_obs_t0 = _critic_obs(next_obs_t0, batch, priv_key, n_steps)
+
     # ------------------------------------------------------------------
     # 1) Critic target: deterministic next-action via target policy mean.
     # `compute_categorical_target` expects a [B, T, ...] layout, so we
@@ -455,7 +590,7 @@ def sgd_step(
     next_action = target_policy_dist_next.mode()
     # Add a singleton T axis to every leaf so [B, ...] -> [B, 1, ...]. Works
     # uniformly for flat arrays and dict / pytree observations.
-    next_obs_t0_BT = jax.tree.map(lambda x: x[:, None], next_obs_t0)
+    next_obs_t0_BT = jax.tree.map(lambda x: x[:, None], crit_next_obs_t0)
     target_probs = jax.lax.stop_gradient(
         compute_categorical_target(
             nets,
@@ -474,7 +609,7 @@ def sgd_step(
     crit_loss, crit_grads = jax.value_and_grad(_critic_loss_fn)(
         state.critic_params,
         nets,
-        obs_t0,
+        crit_obs_t0,
         act_t0,
         target_probs,
     )
@@ -526,6 +661,8 @@ def sgd_step(
         anchor_mu,
         anchor_ls,
         state.steps,
+        # None when off: the loss reads obs_t0 for the critic, as before.
+        crit_obs_t0 if priv_key else None,
     )
     pol_grads, dual_grads = pol_dual_grads
 
@@ -989,8 +1126,16 @@ def _sgd_step_rnn(
 
     # Flattened [B*L] views for the critic and the MPO loss. Row-major
     # reshape of [B, L, ...] gives ordering b*L + t -- every flattened
-    # quantity below uses the same [B, L]-first layout.
-    obs_flat = jax.tree.map(lambda x: x.reshape((B * L, *x.shape[2:])), obs_L)
+    # quantity below uses the same [B, L]-first layout. obs_flat feeds
+    # CRITIC applies only (online loss + the policy loss's target-critic Q),
+    # so it carries the privileged input of loss point t when that is on
+    # (attached before the flatten so the vector is gathered in the same
+    # [B, L] layout; with the key off it is exactly obs_L).
+    priv_key = _check_privileged_config(nets, cfg)
+    obs_flat = jax.tree.map(
+        lambda x: x.reshape((B * L, *x.shape[2:])),
+        _critic_obs(obs_L, batch, priv_key, slice(0, L)),
+    )
     act_flat = batch["action"][:, :L].reshape(B * L, -1)
 
     # (4) Target unroll: same scan with target params, gradient-free.
@@ -1037,11 +1182,13 @@ def _sgd_step_rnn(
     next_action = jax.lax.stop_gradient(
         jnp.swapaxes(next_mu_tm, 0, 1)  # [B, L, A]
     )
+    # The target critic rates the bootstrap state t + n, so its privileged
+    # input is gathered at [:, n:n+L] (the policy above read next_obs bare).
     target_probs = jax.lax.stop_gradient(
         compute_categorical_target(
             nets,
             state.target_critic_params,
-            next_obs,
+            _critic_obs(next_obs, batch, priv_key, slice(n, n + L)),
             next_action,
             rew_bl,
             disc_bl,

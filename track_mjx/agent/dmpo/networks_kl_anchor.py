@@ -294,6 +294,7 @@ def make_dmpo_kl_anchor_networks(
     residual_mode: str = "sigma_tanh",
     residual_scale: float = 2.0,
     critic_use_proprio: bool = False,
+    critic_privileged_dim: int = 0,
 ) -> DMPONetworks:
     """Build B-aggressive DMPO policy + critic for kl-anchor training.
 
@@ -320,6 +321,9 @@ def make_dmpo_kl_anchor_networks(
             latents=latent_size).init(...)['params']`.
         warm_start_decoder_params: Optional flax inner-params dict to
             splice into `params['params']['decoder']` after init.
+        critic_privileged_dim: Width of the critic-only privileged input
+            (obs["privileged"], appended last). 0 = off; pair a value > 0
+            with `cfg.critic_privileged_key` so the learner supplies it.
 
     Returns:
         DMPONetworks(policy, critic).
@@ -352,6 +356,7 @@ def make_dmpo_kl_anchor_networks(
         mono_channels=mono_channels,
         shared_weights=shared_weights,
         use_proprio=critic_use_proprio,
+        privileged_dim=critic_privileged_dim,
     )
 
     _orig_init = policy.init

@@ -261,6 +261,7 @@ def make_dmpo_kl_anchor_rnn_networks(
     residual_mode: str = "sigma_ball",
     residual_scale: float = 5.0,
     critic_use_proprio: bool = False,
+    critic_privileged_dim: int = 0,
 ) -> DMPONetworks:
     """Build recurrent B-aggressive DMPO policy + FF critic for kl-anchor mode.
 
@@ -274,7 +275,8 @@ def make_dmpo_kl_anchor_rnn_networks(
 
     The critic stays feed-forward on purpose: matches the recurrent-PPO
     precedent; Q's memory limitation is a documented v1 tradeoff, not an
-    accident.
+    accident. `critic_privileged_dim > 0` gives it a training-only
+    privileged task-state input instead (see `_ValueVisionCriticNet`).
 
     Returns:
         `DMPONetworks(policy, critic, recurrent_meta)` — recurrent_meta is
@@ -317,6 +319,7 @@ def make_dmpo_kl_anchor_rnn_networks(
         mono_channels=mono_channels,
         shared_weights=shared_weights,
         use_proprio=critic_use_proprio,
+        privileged_dim=critic_privileged_dim,
     )
 
     meta = RecurrentPolicyMeta(

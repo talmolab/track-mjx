@@ -19,7 +19,10 @@ Coverage:
   (d) metrics contain the rnn/ diagnostics;
   (e) the FF fused build from the SAME module still works (4-arg signature,
       no policy_hidden anywhere) — the wiring did not disturb the FF path;
-  (f) training_loop.run threads the hidden through warmup + chunk.
+  (f) training_loop.run threads the hidden through warmup + chunk;
+  (g) a slow-core head's (slow_h, phase) hidden survives the jitted chunk
+      scan: the phase clock runs on across inner iterations and across
+      calls, and a second call reuses the compiled chunk.
 """
 
 import flax.struct
@@ -36,6 +39,9 @@ from track_mjx.agent.dmpo.learner import (
 )
 from track_mjx.agent.dmpo.networks_kl_anchor_rnn import (
     make_dmpo_kl_anchor_rnn_networks,
+)
+from track_mjx.agent.dmpo.networks_kl_anchor_slow import (
+    make_dmpo_kl_anchor_slow_networks,
 )
 from track_mjx.agent.dmpo.obs_utils import init_dict_normalizer
 from track_mjx.agent.dmpo.replay import make_replay
@@ -153,6 +159,11 @@ def _setup_rnn(seed=0):
         value_hidden_layer_sizes=(16,),
         critic_use_proprio=True,
     )
+    return _build(cfg, env, nets, seed)
+
+
+def _build(cfg, env, nets, seed):
+    """TrainingState + replay for recurrent ``nets`` against ``env``."""
     optimizers = make_optimizers(cfg)
     pol_opt, crit_opt, dual_opt = optimizers
 
@@ -362,6 +373,103 @@ def test_training_loop_threads_hidden_recurrent():
     assert int(final_state.steps) == 3
     assert int(final_rb_state.current_index) == 3 * cfg.unroll_length
     assert "rnn/hidden_staleness" in metrics
+    _assert_finite_scalars(metrics)
+
+
+def _setup_slow(tick_stride, unroll_length, seed=0):
+    """`_setup_rnn` with the slow-core head (tick_stride k) and the strided
+    learner's window T = L*k + n (L = 2 ticks, n = 2)."""
+    L, n = 2, 2
+    cfg = DMPOConfig(
+        num_envs=2,
+        batch_size=4,
+        sequence_length=L * tick_stride + n,
+        n_step=n,
+        rnn_bptt_length=L,
+        rnn_tick_stride=tick_stride,
+        use_n_step=True,
+        store_next_observation=False,
+        unroll_length=unroll_length,
+        max_replay_size=64,
+        min_replay_size=4,
+        num_samples=3,
+        num_atoms=11,
+        vmin=0.0,
+        vmax=5.0,
+        discount=0.9,
+    )
+    env = _DictObsEnv()
+    nets = make_dmpo_kl_anchor_slow_networks(
+        proprio_size=PROPRIO,
+        task_obs_size=TASK_OBS,
+        action_size=ACTION,
+        latent_size=LATENT,
+        vision_shape=VISION_SHAPE,
+        cfg=cfg,
+        prior_layer_sizes=(8,),
+        decoder_layer_sizes=(8,),
+        policy_head_layer_sizes=(8,),
+        slow_hidden_size=RNN_HIDDEN[0],
+        tick_stride=tick_stride,
+        rnn_store_dtype="float16",
+        cnn_feature_size=4,
+        cnn_channels=(2, 4, 8),
+        mono_channels=1,
+        shared_weights=True,
+        value_hidden_layer_sizes=(16,),
+        critic_use_proprio=True,
+    )
+    return _build(cfg, env, nets, seed)
+
+
+def test_slow_core_hidden_survives_jitted_chunk_scan():
+    """(g): the slow-core hidden (slow_h, phase) rides the recurrent chunk's
+    scan carry. From a fresh reset (phase 0) and with no env reset, the
+    phase after a 2-iter chunk is (2 * unroll) % k for every env -- not
+    unroll % k (re-zeroed per inner iteration) and not 0 (dropped) -- and a
+    second call continues the clock to (4 * unroll) % k without retracing.
+    k = 3 and unroll = 5 make those three outcomes distinct."""
+    k, unroll = 3, 5
+    s = _setup_slow(tick_stride=k, unroll_length=unroll)
+    cfg, nets = s["cfg"], s["nets"]
+    fused = make_fused_train_step(s["env"], nets, s["optimizers"], s["rb"], cfg, K=1)
+    traces = []
+
+    def counted_fused(*args):
+        traces.append(1)  # runs only while jit traces the chunk
+        return fused(*args)
+
+    chunk = make_train_chunk(counted_fused, n_iters=2, recurrent=True)
+    env_state = s["env"].reset(jax.random.split(jax.random.key(0), cfg.num_envs))
+    hidden = nets.recurrent_meta.init_hidden(cfg.num_envs)
+    keys = jax.random.split(jax.random.key(1), 2)
+
+    state, env_state, hidden, rb_state, _ = chunk(
+        s["state"], env_state, hidden, s["rb_state"], keys[0]
+    )
+    slow_h, phase = (np.asarray(h) for h in hidden)
+    np.testing.assert_array_equal(
+        phase[:, 0], np.full(cfg.num_envs, (2 * unroll) % k, np.float32)
+    )
+    assert np.any(slow_h != 0.0), "the slow core never ticked"
+    assert int(rb_state.current_index) == 2 * unroll
+    n_traces = len(traces)
+    assert n_traces >= 1
+
+    state, env_state, hidden, rb_state, metrics = chunk(
+        state, env_state, hidden, rb_state, keys[1]
+    )
+    assert len(traces) == n_traces, "the 2nd chunk call retraced"
+    slow_h2, phase2 = (np.asarray(h) for h in hidden)
+    np.testing.assert_array_equal(
+        phase2[:, 0], np.full(cfg.num_envs, (4 * unroll) % k, np.float32)
+    )
+    assert not np.allclose(slow_h2, slow_h)
+    # The strided learner ran inside the scan on the stored phases: the
+    # first inner iteration only fills replay (5 rows < the 9 a sequence of
+    # T = 8 needs), the other three each take one SGD step.
+    assert int(state.steps) == 3
+    assert float(metrics["rnn/tick_fill_frac"]) == 0.0
     _assert_finite_scalars(metrics)
 
 

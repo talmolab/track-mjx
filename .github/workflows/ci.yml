@@ -48,6 +48,10 @@ jobs:
         run: |
           pip install -e ".[dev]"
 
+      # No MUJOCO_GL here: this runner has no GPU, and the handful of test
+      # files that need a render backend already set MUJOCO_GL=egl
+      # themselves at module level where they need it. Tests marked gpu,
+      # slow (> 30 s) or artifact (local checkpoints or priors) are deselected.
       - name: Run tests
         run: |
-          JAX_PLATFORMS=cpu python -m pytest -q tests
+          JAX_PLATFORMS=cpu python -m pytest -q tests -m "not gpu and not slow and not artifact"

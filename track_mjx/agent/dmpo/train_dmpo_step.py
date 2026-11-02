@@ -115,8 +115,9 @@ def make_fused_train_step(
                 "nets.recurrent_meta is set (recurrent policy head) but "
                 f"cfg.rnn_bptt_length={getattr(cfg, 'rnn_bptt_length', 0)}. "
                 "The recurrent learner needs rnn_bptt_length > 0 (and "
-                "sequence_length == rnn_bptt_length + n_step); set "
-                "train_config.rnn_bptt_length or build FF networks."
+                "sequence_length == rnn_bptt_length * rnn_tick_stride + "
+                "n_step; rnn_tick_stride=1 gives rnn_bptt_length + n_step); "
+                "set train_config.rnn_bptt_length or build FF networks."
             )
 
         # Recurrent build. A separate function (rather than trace-time

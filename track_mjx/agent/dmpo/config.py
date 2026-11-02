@@ -238,13 +238,28 @@ class DMPOConfig:
     # horizon -- how far back the GRU can learn what to remember (~100-400 ms
     # of context => L ~ 20-40 at 100 Hz) -- NOT the reward horizon, which
     # stays `n_step` (n = 100 for the gap task). The two meet only through
-    # the sampled window: `sequence_length` MUST equal
-    # `rnn_bptt_length + n_step` so that every loss point t < L has a full
-    # n-step reward window and a bootstrap state at index t + n (checked
-    # fail-loud at trace time). The recurrent learner also requires
+    # the sampled window: `sequence_length` MUST equal T = L*k + n_step, with
+    # k = `rnn_tick_stride` (below; the default k = 1 gives
+    # `rnn_bptt_length + n_step`), so that every loss point -- step t < L, or
+    # tick t < L*k for a slow-core head -- has a full n-step reward window and
+    # a bootstrap state at index t + n (checked fail-loud at trace time). The
+    # recurrent learner also requires
     # `use_n_step=True` and the compressed replay schema
     # (`store_next_observation=False`); it raises otherwise.
     rnn_bptt_length: int = 0
+
+    # Strided ("tick") BPTT for slow-core heads (networks_kl_anchor_slow).
+    # k = the env steps between updates of a slow memory core whose hidden
+    # carries a phase leaf (`recurrent_meta.phase_leaf`); the core ticks where
+    # the stored phase is 0 and holds in between. With k > 1,
+    # `rnn_bptt_length` counts TICKS (L), the sampled window is W = L * k
+    # steps, and `sequence_length` MUST equal L * k + n_step (checked
+    # fail-loud). The learner gathers frames, actions and loss points at the
+    # first L ticks of the window (read from the stored phase), unrolls one
+    # core update per tick, and still sums n-step rewards over every step. It
+    # must equal the net's `tick_stride`. 1 (default) with a hidden that has
+    # no phase leaf is the per-step learner above, bit-identical.
+    rnn_tick_stride: int = 1
 
     # ------------------------------------------------------------------
     # Privileged critic input (asymmetric actor-critic).

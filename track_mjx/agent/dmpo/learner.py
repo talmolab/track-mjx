@@ -801,6 +801,19 @@ def sgd_step(
 # (mu, scale, new_hidden)` with hidden a tuple of per-layer [B, H_l] arrays.
 # It deliberately does NOT import RecurrentPolicyMeta or any networks-side
 # type: the batch (schema + stored hidden) is its single source of truth.
+#
+# Strided ("tick") BPTT. A slow-core head (networks_kl_anchor_slow) carries a
+# phase leaf at `nets.recurrent_meta.phase_leaf`: its memory core ticks where
+# the stored phase is 0 -- every k = cfg.rnn_tick_stride steps, and on the
+# first step after a done -- and holds in between. Then L = rnn_bptt_length
+# counts ticks, T = L*k + n, and the loss points are the first L ticks of the
+# window W = L*k (`tick_indices`): frames, actions, privileged inputs and
+# returns are gathered there, the unroll runs one scan step per tick with the
+# phase forced to 0 (so every unrolled step updates the core), the hidden is
+# zeroed where a done falls between ticks, and each tick bootstraps at
+# idx + n with the stored (unforced) hidden. The CNN sees 2L frames per
+# sequence, as on the per-step path; the reward sums still use every step.
+# Without a phase leaf the per-step path runs unchanged.
 # ---------------------------------------------------------------------------
 
 
@@ -857,12 +870,75 @@ def _per_point_nstep_returns(
     return returns, disc
 
 
+def tick_indices(phase_w: jnp.ndarray, L: int) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Per-row positions of the first ``L`` slow-core ticks in a window.
+
+    Args:
+      phase_w: [B, W] stored PRE-step phase (any float dtype; the replay
+        stores float16). Step t is a tick iff phase_w[:, t] < 0.5: the core
+        updates where the phase is 0, and a done zeroes the hidden so the
+        step after it restarts the clock with a tick.
+      L: number of ticks to return (``cfg.rnn_bptt_length``).
+
+    Returns:
+      (idx, fill_frac). ``idx`` is int32 [B, L], increasing per row:
+      ``jnp.nonzero(size=L, fill_value=W-1)`` vmapped over rows. A window of
+      W = L*k steps always holds >= L ticks (exactly L without a reset; a
+      reset only adds ticks), so ``fill_frac`` -- the fraction of the [B, L]
+      slots padded with W-1 because a row had fewer than L ticks -- must be 0
+      (logged as ``rnn/tick_fill_frac``). Nonzero means corrupted stored
+      phases or a net/learner stride mismatch, and the padded slots would
+      train on a non-tick step.
+    """
+    W = phase_w.shape[-1]
+    is_tick = phase_w < 0.5
+    idx = jax.vmap(lambda row: jnp.nonzero(row, size=L, fill_value=W - 1)[0])(is_tick)
+    n_ticks = jnp.sum(is_tick, axis=-1)
+    fill_frac = jnp.mean(jnp.maximum(L - n_ticks, 0).astype(jnp.float32)) / L
+    return idx.astype(jnp.int32), fill_frac
+
+
+def _take_steps(x: jnp.ndarray, sel: Any) -> jnp.ndarray:
+    """``x[:, sel]`` over the time axis 1 of a [B, T, ...] array.
+
+    ``sel`` is a static ``slice`` (shared by every row; the per-step path --
+    the exact op it always used) or an int [B, L] array of per-row indices
+    (the tick path) -> [B, L, ...].
+    """
+    if isinstance(sel, slice):
+        return x[:, sel]
+    return jax.vmap(lambda xb, ib: xb[ib])(x, sel)
+
+
+def _done_between_ticks(discount: jnp.ndarray, idx: jnp.ndarray, W: int) -> jnp.ndarray:
+    """[B, L] bool: any ``discount == 0`` in [idx_i, idx_{i+1}).
+
+    The last interval runs to the window end W (its flag only resets the
+    hidden after the final unrolled tick, which nothing consumes). A done at
+    step j zeroes the hidden entering j+1, and j+1 is then the next tick, so
+    the flag is exactly "the hidden entering tick i+1 is the reset zeros".
+    Counted with a cumsum: C[j] = #dones in [0, j).
+    """
+    done = (discount == 0).astype(jnp.int32)
+    csum = jnp.concatenate(
+        [jnp.zeros_like(done[:, :1]), jnp.cumsum(done, axis=1)], axis=1
+    )  # [B, T+1]
+    nxt = jnp.concatenate([idx[:, 1:], jnp.full_like(idx[:, :1], W)], axis=1)  # [B, L]
+    return (_take_steps(csum, nxt) - _take_steps(csum, idx)) > 0
+
+
+def _force_phase(hidden: Any, leaf: int) -> Any:
+    """``hidden`` (a tuple of leaves) with leaf ``leaf`` replaced by zeros."""
+    return tuple(jnp.zeros_like(h) if i == leaf else h for i, h in enumerate(hidden))
+
+
 def _unroll_policy_raw(
     policy_params: Any,
     nets: DMPONetworks,
     obs_tm: Any,
     done_tm: jnp.ndarray,
     h0: Any,
+    force_phase_leaf: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, Any]:
     """Unroll the recurrent policy over a time-major window via ``lax.scan``.
 
@@ -877,15 +953,22 @@ def _unroll_policy_raw(
         rollout-side reset, so recomputed hiddens track stored ones.
       h0: hidden entering step 0, tuple of [B, H_l]. It comes from replay
         storage and is DATA: gradients stop at it by construction.
+      force_phase_leaf: tick path only (None = off, no new op). The index of
+        a slow-core phase leaf, zeroed in the hidden entering EVERY step so
+        each scan step is a core tick: the scan steps are the gathered tick
+        positions, k env steps apart, whose stored phase is 0 by definition.
 
     Returns:
       (mu, scale, h_pre): mu/scale [L, B, A]; h_pre the tuple of [L, B, H_l]
-      pre-step hiddens actually consumed at each t (h_pre[0] == h0), used for
-      the staleness diagnostic and the |h| metric.
+      pre-step hiddens actually consumed at each t (h_pre[0] == h0, up to
+      the forced phase), used for the staleness diagnostic and the |h|
+      metric.
     """
 
     def _step(h, xs):
         obs_t, done_t = xs
+        if force_phase_leaf is not None:
+            h = _force_phase(h, force_phase_leaf)
         # Per-env vmap over unbatched obs -- the codebase convention (the
         # vision CNN and the policy module are written for unbatched input).
         mu_t, scale_t, h_new = jax.vmap(
@@ -914,6 +997,7 @@ def _policy_loss_fn_rnn(
     anchor_mu_imit: Any = None,
     anchor_log_std_imit: Any = None,
     step: jnp.ndarray = jnp.int32(0),
+    phase_leaf: int | None = None,
 ):
     """Recurrent counterpart of ``_policy_loss_fn``: BPTT unroll + MPO on [B*L].
 
@@ -928,11 +1012,19 @@ def _policy_loss_fn_rnn(
     Aux is ``(stats, rnn_metrics)``: the staleness diagnostic must come from
     the online unroll's recomputed pre-step hiddens, which only exist here.
 
+    ``phase_leaf`` (tick path only; None = the per-step path, unchanged) is
+    the slow-core phase leaf: forced to 0 in the unroll (see
+    ``_unroll_policy_raw``) and left out of both rnn/ diagnostics -- a clock
+    counter, not memory, it would dominate |h| (values up to k-1) and add a
+    zero-staleness term to the leaf mean.
+
     Returns:
       (loss, (stats, rnn_metrics)).
     """
     length, bsz = done_tm.shape
-    mu, scale, h_pre = _unroll_policy_raw(policy_params, nets, obs_tm, done_tm, h0)
+    mu, scale, h_pre = _unroll_policy_raw(
+        policy_params, nets, obs_tm, done_tm, h0, force_phase_leaf=phase_leaf
+    )
     action_size = mu.shape[-1]
     # [L, B, A] -> [B, L, A] -> [B*L, A]: transpose FIRST so the flattened
     # ordering matches obs_flat / target_mu (both built from [B, L] slices).
@@ -1018,18 +1110,21 @@ def _policy_loss_fn_rnn(
     # normalized squared distance between the hidden the unroll recomputes at
     # each t and the hidden the rollout stored there -- how much the replayed
     # hidden has drifted from what the CURRENT policy would produce. t=0
-    # contributes zero by construction (h_pre[0] == h0 == stored).
+    # contributes zero by construction (h_pre[0] == h0 == stored). Memory
+    # leaves only: the phase leaf (if any) is skipped.
+    mem = [i for i in range(len(h_pre)) if i != phase_leaf]
     staleness = jnp.mean(
         jnp.stack(
             [
                 jnp.mean(
-                    jnp.sum((re - st) ** 2, axis=-1) / (jnp.sum(st**2, axis=-1) + 1e-6)
+                    jnp.sum((h_pre[i] - h_stored_tm[i]) ** 2, axis=-1)
+                    / (jnp.sum(h_stored_tm[i] ** 2, axis=-1) + 1e-6)
                 )
-                for re, st in zip(h_pre, h_stored_tm)
+                for i in mem
             ]
         )
     )
-    hidden_abs_mean = jnp.mean(jnp.stack([jnp.mean(jnp.abs(h)) for h in h_pre]))
+    hidden_abs_mean = jnp.mean(jnp.stack([jnp.mean(jnp.abs(h_pre[i])) for i in mem]))
     rnn_metrics = {
         "rnn/hidden_staleness": jax.lax.stop_gradient(staleness),
         "rnn/hidden_abs_mean": jax.lax.stop_gradient(hidden_abs_mean),
@@ -1049,10 +1144,22 @@ def _sgd_step_rnn(
     Batch schema (compressed, recurrent): observation [B, T, ...] pytree,
     action [B, T, A], reward/discount [B, T], policy_hidden tuple of
     [B, T, H_l] (store_dtype, cast to f32 here), optional anchor keys
-    [B, T, ...]; T == cfg.rnn_bptt_length + cfg.n_step.
+    [B, T, ...]; T == cfg.rnn_bptt_length * cfg.rnn_tick_stride + cfg.n_step.
+
+    Two window layouts, chosen at trace time by the hidden's phase leaf
+    (``nets.recurrent_meta.phase_leaf``):
+      * none (per-step heads): loss points t in [0, L), bootstrap t + n --
+        static slices, the original path op for op;
+      * phase leaf (slow-core heads, any stride k incl. 1): loss points at
+        the first L ticks ``idx`` of the window [0, L*k), bootstrap idx + n,
+        per-row gathers (``tick_indices``; see the section header).
     """
     L = int(cfg.rnn_bptt_length)
     n = int(cfg.n_step)
+    k = int(getattr(cfg, "rnn_tick_stride", 1))
+    W = L * k
+    meta = getattr(nets, "recurrent_meta", None)
+    phase_leaf = getattr(meta, "phase_leaf", None)
 
     # Fail-loud schema checks (Python/trace time, mirroring the anchor_mu
     # guard in the FF path): a silently-wrong window layout would train on
@@ -1065,12 +1172,39 @@ def _sgd_step_rnn(
             "'policy_hidden' to the transition template AND pass "
             "recurrent_meta to collect_rollout so it is populated."
         )
+    if k < 1:
+        raise ValueError(f"rnn_tick_stride must be >= 1, got {k}.")
+    if phase_leaf is None and k != 1:
+        raise ValueError(
+            f"cfg.rnn_tick_stride={k} but the recurrent head's hidden has no "
+            "phase leaf (nets.recurrent_meta.phase_leaf), so the learner "
+            "cannot locate the core's ticks. Strided BPTT is for slow-core "
+            "heads (networks_kl_anchor_slow); per-step heads need "
+            "rnn_tick_stride=1."
+        )
+    meta_k = getattr(meta, "tick_stride", None)
+    if phase_leaf is not None and meta_k is not None and int(meta_k) != k:
+        raise ValueError(
+            f"the slow core ticks every tick_stride={int(meta_k)} steps but "
+            f"cfg.rnn_tick_stride={k}: the sampled window would hold the "
+            "wrong number of ticks. Set rnn_tick_stride to the net's "
+            "tick_stride (and sequence_length = rnn_bptt_length * "
+            "tick_stride + n_step)."
+        )
     T = batch["reward"].shape[1]
-    if L + n != T:
+    if k == 1 and L + n != T:
         raise ValueError(
             f"sequence_length={T} != rnn_bptt_length + n_step = {L} + {n} = "
             f"{L + n}. Every loss point t < L needs a full n-step reward "
             "window and a bootstrap state at observation[:, t + n]."
+        )
+    if W + n != T:
+        raise ValueError(
+            f"sequence_length={T} != rnn_bptt_length * rnn_tick_stride + "
+            f"n_step = {L} * {k} + {n} = {W + n}. The L ticks are found in "
+            f"the first L*k = {W} steps, and every tick (index <= {W - 1}) "
+            "needs a full n-step reward window and a bootstrap state at "
+            "observation[:, idx + n]."
         )
     if not getattr(cfg, "use_n_step", False):
         raise ValueError(
@@ -1090,6 +1224,19 @@ def _sgd_step_rnn(
     rng, k_pol = jax.random.split(state.rng)
     B = batch["reward"].shape[0]
 
+    # (0) Window layout. `sel_loss` / `sel_boot` pick the loss-point and
+    # bootstrap steps of every row: static slices on the per-step path (the
+    # exact ops it has always used), per-row [B, L] tick indices otherwise.
+    # The ticks are read from the stored PRE-step phase (f16 holds every
+    # phase 0..k-1 exactly); index arrays are data, not differentiated.
+    if phase_leaf is None:
+        idx = None
+        sel_loss, sel_boot = slice(0, L), slice(n, n + L)
+    else:
+        phase_w = batch["policy_hidden"][phase_leaf][:, :W, 0]
+        idx, tick_fill_frac = tick_indices(phase_w.astype(jnp.float32), L)
+        sel_loss, sel_boot = idx, idx + n
+
     # (1) Normalize only the two windows that are ever consumed: the unroll
     # window [:, :L] and the bootstrap window [:, n:n+L] (2L of T steps;
     # 40 of 120 for the goal arm). Slicing BEFORE the normalize matters for
@@ -1099,30 +1246,42 @@ def _sgd_step_rnn(
     # Normalization is elementwise over trailing feature dims, so
     # slice-then-normalize is exact. (For L > n the windows overlap and a few
     # steps normalize twice -- cheap elementwise work, still a net win.)
+    # (On the tick path the same holds with "window" = the 2L gathered steps.)
     obs_L = _normalize_obs(
-        jax.tree.map(lambda x: x[:, :L], batch["observation"]),
+        jax.tree.map(lambda x: _take_steps(x, sel_loss), batch["observation"]),
         state.normalizer_params,
     )
     next_obs = _normalize_obs(
-        jax.tree.map(lambda x: x[:, n : n + L], batch["observation"]),
+        jax.tree.map(lambda x: _take_steps(x, sel_boot), batch["observation"]),
         state.normalizer_params,
     )
 
     # (2) Stored hidden (store_dtype in replay, e.g. f16) -> f32 for compute.
     # h0 seeds the unroll; h_boot pairs with the bootstrap obs at t + n.
     # Both are DATA -- no gradient flows into the replay buffer.
+    # On the tick path h0 is the stored hidden at the first tick, and h_boot
+    # the stored hidden at idx + n -- its real phase, NOT forced: the target
+    # policy must act as it would at step idx + n, tick or hold.
     h_all = jax.tree.map(lambda h: h.astype(jnp.float32), batch["policy_hidden"])
-    h0 = jax.tree.map(lambda h: h[:, 0], h_all)
-    h_boot = jax.tree.map(lambda h: h[:, n : n + L], h_all)  # [B, L, H]
+    if idx is None:
+        h0 = jax.tree.map(lambda h: h[:, 0], h_all)
+    else:
+        h0 = jax.tree.map(lambda h: _take_steps(h, idx[:, :1])[:, 0], h_all)
+    h_boot = jax.tree.map(lambda h: _take_steps(h, sel_boot), h_all)  # [B, L, H]
     h_stored_tm = jax.tree.map(
-        lambda h: jnp.swapaxes(h[:, :L], 0, 1),
+        lambda h: jnp.swapaxes(_take_steps(h, sel_loss), 0, 1),
         h_all,  # [L, B, H]
     )
 
     # Time-major unroll window. done == (discount == 0) mirrors the rollout's
     # reset trigger exactly, so the recomputed hiddens track the stored ones.
+    # Tick path: the hidden entering tick i+1 is zeroed iff a done falls in
+    # [idx_i, idx_{i+1}) -- held steps in between carry the state unchanged.
     obs_tm = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), obs_L)
-    done_tm = jnp.swapaxes(batch["discount"][:, :L] == 0, 0, 1)  # [L, B]
+    if idx is None:
+        done_tm = jnp.swapaxes(batch["discount"][:, :L] == 0, 0, 1)  # [L, B]
+    else:
+        done_tm = jnp.swapaxes(_done_between_ticks(batch["discount"], idx, W), 0, 1)
 
     # Flattened [B*L] views for the critic and the MPO loss. Row-major
     # reshape of [B, L, ...] gives ordering b*L + t -- every flattened
@@ -1134,13 +1293,18 @@ def _sgd_step_rnn(
     priv_key = _check_privileged_config(nets, cfg)
     obs_flat = jax.tree.map(
         lambda x: x.reshape((B * L, *x.shape[2:])),
-        _critic_obs(obs_L, batch, priv_key, slice(0, L)),
+        _critic_obs(obs_L, batch, priv_key, sel_loss),
     )
-    act_flat = batch["action"][:, :L].reshape(B * L, -1)
+    act_flat = _take_steps(batch["action"], sel_loss).reshape(B * L, -1)
 
     # (4) Target unroll: same scan with target params, gradient-free.
     tgt_mu, tgt_scale, _ = _unroll_policy_raw(
-        state.target_policy_params, nets, obs_tm, done_tm, h0
+        state.target_policy_params,
+        nets,
+        obs_tm,
+        done_tm,
+        h0,
+        force_phase_leaf=phase_leaf,
     )
     action_size = tgt_mu.shape[-1]
     tgt_mu = jax.lax.stop_gradient(
@@ -1150,14 +1314,23 @@ def _sgd_step_rnn(
         jnp.swapaxes(tgt_scale, 0, 1).reshape(B * L, action_size)
     )
 
-    # (6) Per-point n-step returns, [B, L] each.
-    rew_bl, disc_bl = _per_point_nstep_returns(
-        batch["reward"], batch["discount"], cfg.discount, L, n
-    )
+    # (6) Per-point n-step returns, [B, L] each. Tick path: the returns of
+    # every start in [0, W) -- each sums the n rewards after its start, tick
+    # or not -- gathered at the ticks.
+    if idx is None:
+        rew_bl, disc_bl = _per_point_nstep_returns(
+            batch["reward"], batch["discount"], cfg.discount, L, n
+        )
+    else:
+        rew_w, disc_w = _per_point_nstep_returns(
+            batch["reward"], batch["discount"], cfg.discount, W, n
+        )
+        rew_bl, disc_bl = _take_steps(rew_w, idx), _take_steps(disc_w, idx)
 
-    # (7) Critic target: bootstrap from observation[:, n:n+L] paired with the
-    # STORED hidden at t + n -- a single-step target apply (no unroll needed:
-    # the stored hidden already encodes the history up to t + n).
+    # (7) Critic target: bootstrap from observation[:, n:n+L] (tick path:
+    # idx + n) paired with the STORED hidden at t + n -- a single-step target
+    # apply (no unroll needed: the stored hidden already encodes the history
+    # up to t + n).
     # Deterministic next-action via mu (== mode for a diag Gaussian), the FF
     # path's target_policy_dist_next.mode() analog. next_obs was normalized
     # above in (1).
@@ -1183,12 +1356,13 @@ def _sgd_step_rnn(
         jnp.swapaxes(next_mu_tm, 0, 1)  # [B, L, A]
     )
     # The target critic rates the bootstrap state t + n, so its privileged
-    # input is gathered at [:, n:n+L] (the policy above read next_obs bare).
+    # input is gathered at [:, n:n+L] / idx + n (the policy above read
+    # next_obs bare).
     target_probs = jax.lax.stop_gradient(
         compute_categorical_target(
             nets,
             state.target_critic_params,
-            _critic_obs(next_obs, batch, priv_key, slice(n, n + L)),
+            _critic_obs(next_obs, batch, priv_key, sel_boot),
             next_action,
             rew_bl,
             disc_bl,
@@ -1226,9 +1400,9 @@ def _sgd_step_rnn(
             "collect_rollout."
         )
     if anchor_mu is not None:
-        anchor_mu = anchor_mu[:, :L].reshape(B * L, -1)
+        anchor_mu = _take_steps(anchor_mu, sel_loss).reshape(B * L, -1)
     if anchor_ls is not None:
-        anchor_ls = anchor_ls[:, :L].reshape(B * L, -1)
+        anchor_ls = _take_steps(anchor_ls, sel_loss).reshape(B * L, -1)
 
     (pol_loss, (stats, rnn_metrics)), pol_dual_grads = jax.value_and_grad(
         _policy_loss_fn_rnn,
@@ -1251,6 +1425,7 @@ def _sgd_step_rnn(
         anchor_mu,
         anchor_ls,
         state.steps,
+        phase_leaf=phase_leaf,
     )
     pol_grads, dual_grads = pol_dual_grads
 
@@ -1352,4 +1527,8 @@ def _sgd_step_rnn(
         "rnn/hidden_staleness": rnn_metrics["rnn/hidden_staleness"],
         "rnn/hidden_abs_mean": rnn_metrics["rnn/hidden_abs_mean"],
     }
+    if idx is not None:
+        # Fraction of tick slots padded because a row had < L ticks in W.
+        # Must be 0 (see tick_indices); tick path only.
+        metrics["rnn/tick_fill_frac"] = tick_fill_frac
     return new_state, metrics

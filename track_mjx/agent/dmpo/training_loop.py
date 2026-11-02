@@ -72,7 +72,8 @@ def run(
         training metrics. Caller decides whether to upload.
       ckpt_mgr: an orbax CheckpointManager or None.
       ckpt_save_callback(state, env_step) → None: called at eval cadence
-        when ckpt_mgr is non-None.
+        when ckpt_mgr is non-None, and once more at loop exit when the last
+        save was not at the final env-step count.
       cfg_dict: snapshotted hydra config dict for checkpoint metadata.
       log_every_steps, eval_every_steps, num_timesteps: pulled from
         ``cfg`` if not provided. Argument form lets test override.
@@ -120,6 +121,9 @@ def run(
     # Default 0 keeps every fresh run bit-identical.
     total_env_steps = int(start_env_steps)
     last_eval_step = int(start_env_steps)
+    # Env-step count of the newest checkpoint. A resumed run starts at the step
+    # it restored from, which already exists on disk and must not be re-saved.
+    last_ckpt_step = int(start_env_steps)
     chunks_completed = 0
     first_step = True
     second_step = True
@@ -267,6 +271,7 @@ def run(
             t_ckpt = time.time()
             if ckpt_save_callback is not None:
                 ckpt_save_callback(state, total_env_steps)
+                last_ckpt_step = total_env_steps
             ckpt_wall_s = time.time() - t_ckpt
             cum_eval_wall_s += eval_wall_s
             cum_ckpt_wall_s += ckpt_wall_s
@@ -283,5 +288,13 @@ def run(
                 100.0 * (cum_eval_wall_s + cum_ckpt_wall_s) / wall_total,
             )
             last_eval_step = total_env_steps
+
+    # Checkpoints are otherwise written only at eval cadence, so a budget that is
+    # not a multiple of the cadence would leave the final stretch of training
+    # unsaved. Write one more at the exact final step, unless the last periodic
+    # save already landed there.
+    if ckpt_save_callback is not None and last_ckpt_step != total_env_steps:
+        ckpt_save_callback(state, total_env_steps)
+        log.info("final checkpoint saved at env_steps=%d", int(total_env_steps))
 
     return state, env_state, rb_state, last_train_metrics

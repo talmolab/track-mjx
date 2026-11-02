@@ -338,6 +338,9 @@ def run_eval_rollout_envzero(
                         # log -- it is the primary measurement for the decoder-thaw
                         # arm.
                         or mk.startswith("anchor/")
+                        # Per-step scalars a task reports under its own
+                        # `spout/` namespace.
+                        or mk.startswith("spout/")
                     ):
                         arr = jnp.asarray(mv, dtype=new_st.reward.dtype)
                         # Only per-env scalars are aggregatable. Anything else

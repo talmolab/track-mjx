@@ -413,3 +413,81 @@ def test_run_eval_rollout_envzero_recurrent_threads_and_resets_hidden():
     np.testing.assert_allclose(
         np.asarray(rollout[5].data.qpos), np.full(act_dim, t1), atol=1e-5
     )
+
+
+def test_allenv_metric_filter_keeps_spout_prefix():
+    """Per-step env metrics under ``spout/`` reach the all-env eval aggregate.
+
+    The all-env filter keeps only known metric-key prefixes; a task that
+    reports its own ``spout/*`` per-env scalars must not have them dropped,
+    while an unrelated key must still be filtered out.
+    """
+    import flax.struct
+    import numpy as np
+
+    from track_mjx.agent.dmpo.train_dmpo_eval import run_eval_rollout_envzero
+
+    @flax.struct.dataclass
+    class _Obs:
+        vision: jax.Array
+        proprioception: jax.Array
+        imitation_target: jax.Array
+
+    @flax.struct.dataclass
+    class _Data:
+        qpos: jax.Array
+        qvel: jax.Array
+
+    @flax.struct.dataclass
+    class _State:
+        obs: _Obs
+        data: _Data
+        done: jax.Array
+        reward: jax.Array
+        metrics: Any
+
+    class _StubEnv:
+        action_size = 3
+
+        def reset(self, keys):
+            n = keys.shape[0]
+            return _State(
+                obs=_Obs(
+                    vision=jnp.zeros((n, 8, 8, 2)),
+                    proprioception=jnp.zeros((n, 4)),
+                    imitation_target=jnp.zeros((n, 2)),
+                ),
+                data=_Data(qpos=jnp.zeros((n, 5)), qvel=jnp.zeros((n, 4))),
+                done=jnp.zeros((n,)),
+                reward=jnp.zeros((n,)),
+                metrics={
+                    "spout/hit": jnp.ones((n,)),
+                    "rewards/forward": jnp.ones((n,)),
+                    "other/ignored": jnp.ones((n,)),
+                },
+            )
+
+        def step(self, st, _action):
+            return st
+
+    def policy_apply(_params, obs):
+        class _D:
+            def mode(self):
+                return jnp.zeros((3,))
+
+        return _D()
+
+    num_envs, episode_length = 4, 6
+    _, _, _, allenv = run_eval_rollout_envzero(
+        env=_StubEnv(),
+        policy_apply=policy_apply,
+        params=None,
+        rng=jax.random.key(0),
+        episode_length=episode_length,
+        num_envs=num_envs,
+    )
+    assert "spout/hit" in allenv, f"spout/ metric dropped by filter: {sorted(allenv)}"
+    assert allenv["spout/hit"].shape == (episode_length, num_envs)
+    np.testing.assert_allclose(np.asarray(allenv["spout/hit"]), 1.0)
+    assert "rewards/forward" in allenv  # existing prefixes still kept
+    assert "other/ignored" not in allenv  # unknown prefixes still filtered

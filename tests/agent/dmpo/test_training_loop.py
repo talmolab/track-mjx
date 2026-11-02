@@ -79,3 +79,76 @@ def test_training_loop_one_chunk_matches_inline():
         assert jnp.allclose(la, lb, rtol=1e-5, atol=1e-6), (
             f"state leaf mismatch: {la} vs {lb}"
         )
+
+
+def _run_with_ckpt_callback(
+    num_timesteps, eval_every_steps, start_env_steps=0, with_callback=True
+):
+    """Run the loop for 32-env-step chunks; return every checkpoint save step."""
+    s = _setup()
+    cfg = s["cfg"]
+    K, iters = 1, 1
+    rng = jax.random.key(0)
+
+    # Pre-fill replay so every loop iteration is one full chunk of
+    # num_envs * unroll_length = 32 env steps.
+    fused = make_fused_train_step(
+        s["env"], s["nets"], s["optimizers"], s["rb"], cfg, K=K
+    )
+    state, env_state, rb_state, _ = fused(s["state"], None, s["rb_state"], rng)
+
+    saved = []
+    train_loop_run(
+        env=s["env"],
+        nets=s["nets"],
+        optimizers=s["optimizers"],
+        rb=s["rb"],
+        cfg=cfg,
+        K=K,
+        iters_per_chunk=iters,
+        rng=rng,
+        state=state,
+        env_state=env_state,
+        rb_state=rb_state,
+        warmup_done=True,
+        ckpt_save_callback=(
+            (lambda st, step: saved.append(int(step))) if with_callback else None
+        ),
+        eval_every_steps=eval_every_steps,
+        num_timesteps=num_timesteps,
+        start_env_steps=start_env_steps,
+    )
+    return saved
+
+
+def test_final_checkpoint_written_after_loop():
+    """A budget that is not a multiple of the eval cadence still ends saved.
+
+    Evals (and so periodic saves) fire at 64; the loop then runs one more chunk
+    to 96 without reaching the next cadence boundary. The last
+    ``ckpt_save_callback`` must be at the final env-step count, not at 64.
+    """
+    saved = _run_with_ckpt_callback(num_timesteps=3 * 32, eval_every_steps=64)
+    assert saved == [64, 96], f"expected a final save at loop exit, got {saved}"
+
+
+def test_final_checkpoint_not_double_saved_when_cadence_aligned():
+    """When the last periodic save already sits at the final step, don't repeat it."""
+    saved = _run_with_ckpt_callback(num_timesteps=4 * 32, eval_every_steps=64)
+    assert saved == [64, 128], f"final step saved twice or missed: {saved}"
+
+
+def test_final_checkpoint_not_rewritten_when_resumed_at_budget():
+    """Resuming a run already at its budget must not re-save the restored step."""
+    saved = _run_with_ckpt_callback(
+        num_timesteps=3 * 32, eval_every_steps=64, start_env_steps=3 * 32
+    )
+    assert saved == [], f"re-saved an already-existing checkpoint step: {saved}"
+
+
+def test_final_checkpoint_skipped_without_save_callback():
+    """No checkpointing configured -> the loop exit saves nothing and still runs."""
+    saved = _run_with_ckpt_callback(
+        num_timesteps=3 * 32, eval_every_steps=64, with_callback=False
+    )
+    assert saved == []

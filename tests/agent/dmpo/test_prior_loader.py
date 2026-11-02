@@ -17,14 +17,29 @@ import sys
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
+from brax.training.acme import running_statistics, specs
+from scamper.agent import observation_utils
+from scamper.agent.mlp_prior import prior_networks
+from scamper.agent.task_transfer.walk_rear import checkpoint_utils
 
 from track_mjx.agent.dmpo import obs_utils, prior_utils
 
 ROOT = os.environ.get("DMPO_PRIOR_ROOT")
 GOLDEN_PATH = Path(__file__).parent / "golden" / "prior_loader_checksums.json"
 PRIOR_IDS = ["260407_183223_056788", "260827_153154_576196"]
+REQUIREMENTS_PATH = Path(__file__).parents[3] / "requirements-dmpo-prior.txt"
+# Tiny config: enough for the factories to build their closures (no params needed).
+TINY_CONFIG = {
+    "network_config": {
+        "action_size": 2,
+        "intention_size": 3,
+        "decoder_layer_sizes": [4],
+        "prior_layer_sizes": [4],
+    }
+}
 
 
 def needs_prior_artifacts(fn):
@@ -33,6 +48,14 @@ def needs_prior_artifacts(fn):
         ROOT is None, reason="DMPO_PRIOR_ROOT not set (prior artifacts absent)"
     )(fn)
     return pytest.mark.artifact(fn)
+
+
+def _prior_path(prior_id: str) -> str:
+    """Path of one staged prior; skip the test if that prior is not staged."""
+    path = Path(ROOT) / prior_id
+    if not path.is_dir():
+        pytest.skip(f"prior {prior_id} is not staged under DMPO_PRIOR_ROOT")
+    return str(path)
 
 
 def _path_key(entry) -> str:
@@ -63,6 +86,15 @@ def _config_checksum(cfg: dict) -> str:
     ).hexdigest()
 
 
+def _dmpo_normalizer(proprio_size: int = 3) -> obs_utils.DictRunningStatisticsState:
+    def state(size):
+        return running_statistics.init_state(specs.Array((size,), jnp.dtype("float32")))
+
+    return obs_utils.DictRunningStatisticsState(
+        imitation_target=state(2), proprioception=state(proprio_size)
+    )
+
+
 def _latest_step(path: str) -> int:
     return max(
         int(d.rsplit("_", 1)[1])
@@ -82,7 +114,7 @@ def scamper_missing(monkeypatch):
 @needs_prior_artifacts
 def test_load_gap_naive_prior_latest_step():
     enc, prior, dec, norm, cfg = prior_utils.load_prior_checkpoint(
-        f"{ROOT}/260407_183223_056788"
+        _prior_path("260407_183223_056788")
     )
     assert cfg["network_config"]["intention_size"] > 0
     assert set(prior) >= {"hidden_0", "fc2_mean", "fc2_logvar"}
@@ -95,11 +127,9 @@ def test_load_gap_naive_prior_latest_step():
 @needs_prior_artifacts
 def test_prior_fn_returns_latent_mean_and_logvar():
     enc, prior, dec, norm, cfg = prior_utils.load_prior_checkpoint(
-        f"{ROOT}/260827_153154_576196", step=24
+        _prior_path("260414_072827_774853"), step=24
     )
     fn = prior_utils.make_prior_inference_fn(prior, norm, cfg)
-    import jax.numpy as jnp
-
     proprio = jnp.zeros((2, cfg["network_config"]["obs_sizes"]["proprioception"]))
     mean, logvar = fn(proprio)
     assert (
@@ -109,11 +139,35 @@ def test_prior_fn_returns_latent_mean_and_logvar():
 
 
 @needs_prior_artifacts
+def test_decoder_fn_logits_agree_with_local_logits_fn():
+    """SCAMPER's decoder factory and the local logits factory see the same logits."""
+    enc, prior, dec, norm, cfg = prior_utils.load_prior_checkpoint(
+        _prior_path("260827_153154_576196"), step=24
+    )
+    nc = cfg["network_config"]
+    rng = np.random.RandomState(0)
+    latent_proprio = jnp.asarray(
+        rng.randn(3, nc["intention_size"] + nc["obs_sizes"]["proprioception"]).astype(
+            "float32"
+        )
+    )
+
+    action, extras = prior_utils.make_decoder_inference_fn(dec, norm, cfg)(
+        latent_proprio
+    )
+    logits, _ = prior_utils.make_decoder_logits_fn(dec, norm, cfg)(latent_proprio)
+
+    assert action.shape == (3, nc["action_size"])
+    assert logits.shape == (3, 2 * nc["action_size"])
+    np.testing.assert_array_equal(np.asarray(extras["logits"]), np.asarray(logits))
+
+
+@needs_prior_artifacts
 @pytest.mark.parametrize("prior_id", PRIOR_IDS)
 def test_loader_matches_vendored_checksums(prior_id):
     """Every restored leaf is bit-identical to what the vendored loader gave."""
     golden = json.loads(GOLDEN_PATH.read_text())["priors"][prior_id]
-    path = f"{ROOT}/{prior_id}"
+    path = _prior_path(prior_id)
     assert _latest_step(path) == golden["step"]
 
     enc, prior, dec, norm, cfg = prior_utils.load_prior_checkpoint(path)
@@ -130,12 +184,11 @@ def test_loader_matches_vendored_checksums(prior_id):
 @needs_prior_artifacts
 @pytest.mark.parametrize("prior_id", PRIOR_IDS)
 def test_loader_returns_dmpo_normalizer_type(prior_id):
-    *_, norm, _cfg = prior_utils.load_prior_checkpoint(f"{ROOT}/{prior_id}")
+    *_, norm, _cfg = prior_utils.load_prior_checkpoint(_prior_path(prior_id))
     assert isinstance(norm, obs_utils.DictRunningStatisticsState)
 
 
 def test_prior_is_the_scamper_prior():
-    prior_networks = pytest.importorskip("scamper.agent.mlp_prior.prior_networks")
     assert prior_utils.Prior is prior_networks.Prior
 
 
@@ -148,11 +201,6 @@ def test_vendored_loader_helpers_are_gone():
 
 def test_loader_delegates_and_converts_the_normalizer(monkeypatch):
     """The SCAMPER loader's own state class becomes the DMPO one, values intact."""
-    checkpoint_utils = pytest.importorskip(
-        "scamper.agent.task_transfer.walk_rear.checkpoint_utils"
-    )
-    observation_utils = pytest.importorskip("scamper.agent.observation_utils")
-
     enc, prior, dec, cfg = {"e": 1}, {"p": 2}, {"d": 3}, {"network_config": {}}
     scamper_norm = observation_utils.DictRunningStatisticsState(
         imitation_target=object(), proprioception=object()
@@ -175,9 +223,50 @@ def test_loader_delegates_and_converts_the_normalizer(monkeypatch):
     assert norm.proprioception is scamper_norm.proprioception
 
 
+def test_inference_factories_delegate_to_scamper(monkeypatch):
+    norm = _dmpo_normalizer()
+
+    # Unpatched: the returned callables are SCAMPER's closures, and they accept
+    # DMPO's normalizer type. The logits factory is the one local implementation.
+    decoder_fn = prior_utils.make_decoder_inference_fn({}, norm, TINY_CONFIG)
+    prior_fn = prior_utils.make_prior_inference_fn({}, norm, TINY_CONFIG)
+    logits_fn = prior_utils.make_decoder_logits_fn({}, norm, TINY_CONFIG)
+    assert decoder_fn.__module__ == checkpoint_utils.__name__
+    assert prior_fn.__module__ == checkpoint_utils.__name__
+    assert logits_fn.__module__ == prior_utils.__name__
+
+    # Patched: the public entry points call SCAMPER's functions and return what
+    # they return, with the arguments untouched.
+    for name in ("make_decoder_inference_fn", "make_prior_inference_fn"):
+        sentinel = object()
+        calls = []
+
+        def fake(*args, _calls=calls, _sentinel=sentinel):
+            _calls.append(args)
+            return _sentinel
+
+        monkeypatch.setattr(checkpoint_utils, name, fake)
+        params = {"p": 1}
+        assert getattr(prior_utils, name)(params, norm, TINY_CONFIG) is sentinel
+        assert calls == [(params, norm, TINY_CONFIG)]
+
+
 def test_missing_scamper_message(scamper_missing):
     install = re.escape("pip install --no-deps -r requirements-dmpo-prior.txt")
-    with pytest.raises(ImportError, match=install):
-        prior_utils.load_prior_checkpoint("does/not/matter")
-    with pytest.raises(ImportError, match=install):
-        _ = prior_utils.Prior
+    pin = REQUIREMENTS_PATH.read_text().strip()
+    norm = _dmpo_normalizer()
+    needs_scamper = [
+        lambda: prior_utils.load_prior_checkpoint("does/not/matter"),
+        lambda: prior_utils.Prior,
+        lambda: prior_utils.make_decoder_inference_fn({}, norm, TINY_CONFIG),
+        lambda: prior_utils.make_prior_inference_fn({}, norm, TINY_CONFIG),
+    ]
+    for call in needs_scamper:
+        with pytest.raises(ImportError, match=install) as err:
+            call()
+        # The message also carries the pinned requirement for installs without
+        # the requirements file (it must match that file exactly).
+        assert pin in str(err.value)
+
+    # Only the decoder-logits factory is local, so it works without SCAMPER.
+    assert callable(prior_utils.make_decoder_logits_fn({}, norm, TINY_CONFIG))

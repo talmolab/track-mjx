@@ -34,12 +34,12 @@ def test_warm_start_invariant_at_step_zero(cfg):
     import jax.numpy as jnp
     from brax.training import distribution
     from brax.training.acme import running_statistics
+    from scamper.agent.mlp_prior.prior_networks import Prior as ScamperPrior
 
     from track_mjx.agent.dmpo.action_utils import bind
     from track_mjx.agent.dmpo.networks_kl_anchor import (
         make_dmpo_kl_anchor_networks,
     )
-    from track_mjx.agent.dmpo.prior_utils import Prior as ScamperPrior
     from track_mjx.agent.ff_ppo.intention_network import Decoder as ScamperDecoder
 
     rng = jax.random.key(7)

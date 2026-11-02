@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 from brax.training.acme import running_statistics
+from scamper.agent.mlp_prior.prior_networks import Prior as ScamperPrior
 
 from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.kl_anchor_utils import pretanh_gaussian_kl
@@ -28,7 +29,6 @@ from track_mjx.agent.dmpo.obs_utils import (
     init_dict_normalizer,
     normalize_dict_obs,
 )
-from track_mjx.agent.dmpo.prior_utils import Prior as ScamperPrior
 from track_mjx.agent.ff_ppo.intention_network import Decoder as ScamperDecoder
 
 

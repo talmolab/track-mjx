@@ -123,6 +123,94 @@ class _PolicyHeadModule(nn.Module):
         return residual
 
 
+def latent_residual(
+    raw: jnp.ndarray,
+    z_logvar: jnp.ndarray,
+    residual_mode: str,
+    residual_scale: float,
+) -> jnp.ndarray:
+    """Policy-head output -> the latent residual added to the prior mean.
+
+    The one residual transform shared by every kl-anchor policy head: the FF
+    head below, the recurrent head (networks_kl_anchor_rnn) and the
+    slow-core head (networks_kl_anchor_slow) all compute
+    ``z = z_prior + latent_residual(raw, z_logvar, mode, scale)``.
+
+    Args:
+      raw: the policy head's output, [..., latent_size].
+      z_logvar: the prior's log-variance head, same shape as ``raw``.
+      residual_mode: one of
+        - "sigma_ball": sigma_prior * eps, ``||eps||`` soft-clipped to
+          ``residual_scale`` with its direction preserved;
+        - "sigma_tanh": residual_scale * sigma_prior * tanh(raw);
+        - "tanh": residual_scale * tanh(raw) (PPO-equivalent);
+        - "none": raw (legacy, UNBOUNDED).
+      residual_scale: k for the tanh modes, the ball radius r for
+        "sigma_ball".
+
+    Every mode maps raw == 0 to residual == 0 exactly, so a zero-init head
+    reproduces the prior mean at step 0.
+
+    Raises:
+      ValueError: for an unknown ``residual_mode``.
+    """
+    # --- Bound the latent residual in the prior's OWN units. ------------
+    # The imitation decoder was trained on reparameterized latents
+    #     z = mu(s) + sigma(s) * eps ,   eps ~ N(0, I)
+    # (scamper/agent/imitation/intention_network.py:139-141), and the prior's
+    # logvar head is fit by KL against that same encoder posterior
+    # (scamper/agent/mlp_prior/losses.py), so sigma_prior is a calibrated
+    # estimate of the noise scale the decoder actually saw.
+    #
+    # So the principled transfer constraint is not "clip the residual to
+    # +-1" (an arbitrary isotropic box in a space whose natural scale is
+    # neither 1 nor isotropic) but: let the policy CHOOSE eps instead of
+    # sampling it, restricted to a plausible range. `residual_scale * tanh`
+    # IS that eps, bounded to (-k, k): k=2 covers 95.4% of the training
+    # noise, k=3 covers 99.7%. In-distribution by construction, and
+    # correctly anisotropic because sigma is per-dimension.
+    #
+    # tanh(0) = 0, so the zero-init residual head still gives z = prior_mean
+    # exactly at step 0 and the warm-start invariant (r_anchor = 1.0) holds.
+    if residual_mode == "sigma_ball":
+        # MEASURED PROBLEM with the per-dim `sigma_tanh` box: bounding each
+        # of d=16 dims to +-k permits a JOINT radius ||eps|| <= k*sqrt(d)
+        # = 8 at k=2, and the policy exploited exactly that corner --
+        # per-dim |eps| median came out at 2.00 (pinned on the ceiling) with
+        # ||eps|| = 7.39, against a training radius of only ||eps|| ~ 4.0
+        # (median of chi_16). Every dim was individually plausible while the
+        # joint configuration sat deep in a tail N(0,I) never visits.
+        #
+        # So constrain the NORM, in the space where the training noise was
+        # isotropic. residual_scale is then r, read straight off chi^2_16:
+        #   r = 4.00 median training radius | 5.13 95th pct | 5.66 99th pct
+        #
+        # Soft-clip ||eps|| -> r while preserving direction. The norm is
+        # computed as sqrt(sum(x^2) + tiny) rather than jnp.linalg.norm
+        # because the residual head is ZERO-INIT: at raw = 0 exactly,
+        # d||raw||/draw is undefined and jnp.linalg.norm returns a NaN
+        # gradient, which would poison the very first update. With the
+        # epsilon the map is ~identity near 0 (r*tanh(n/r)/n -> 1), so the
+        # gradient is finite and residual is still exactly 0 at init.
+        sigma_prior = jnp.exp(0.5 * z_logvar)
+        r = residual_scale
+        sq = jnp.sum(raw * raw, axis=-1, keepdims=True)
+        norm = jnp.sqrt(sq + 1e-12)
+        eps = raw * (r * jnp.tanh(norm / r) / norm)
+        return sigma_prior * eps
+    if residual_mode == "sigma_tanh":
+        sigma_prior = jnp.exp(0.5 * z_logvar)
+        return residual_scale * sigma_prior * jnp.tanh(raw)
+    if residual_mode == "tanh":
+        return residual_scale * jnp.tanh(raw)
+    if residual_mode == "none":
+        return raw
+    raise ValueError(
+        f"unknown residual_mode {residual_mode!r}; "
+        "expected one of 'sigma_ball', 'sigma_tanh', 'tanh', 'none'"
+    )
+
+
 class _BAggressivePolicyNet(nn.Module):
     """Trainable Prior + PolicyHead + Decoder.
 
@@ -144,8 +232,10 @@ class _BAggressivePolicyNet(nn.Module):
     cnn_channels: Sequence[int]
     mono_channels: int
     shared_weights: bool
-    # How the policy head's raw output is turned into the latent residual.
+    # How the policy head's raw output is turned into the latent residual
+    # (see `latent_residual` for each mode and its rationale).
     #   "sigma_tanh" (default) -- z = prior_mean + sigma_prior * k*tanh(raw)
+    #   "sigma_ball"           -- z = prior_mean + sigma_prior * eps, ||eps|| < k
     #   "tanh"                 -- z = prior_mean + k*tanh(raw)   (PPO-equivalent)
     #   "none"                 -- z = prior_mean + raw           (legacy, UNBOUNDED)
     residual_mode: str = "sigma_tanh"
@@ -179,64 +269,9 @@ class _BAggressivePolicyNet(nn.Module):
 
         z_prior, z_logvar = self.prior(proprio)
         raw = self.policy_head(vision, task_obs, proprio)
-
-        # --- Bound the latent residual in the prior's OWN units. ------------
-        # The imitation decoder was trained on reparameterized latents
-        #     z = mu(s) + sigma(s) * eps ,   eps ~ N(0, I)
-        # (scamper/agent/imitation/intention_network.py:139-141), and the prior's
-        # logvar head is fit by KL against that same encoder posterior
-        # (scamper/agent/mlp_prior/losses.py), so sigma_prior is a calibrated
-        # estimate of the noise scale the decoder actually saw.
-        #
-        # So the principled transfer constraint is not "clip the residual to
-        # +-1" (an arbitrary isotropic box in a space whose natural scale is
-        # neither 1 nor isotropic) but: let the policy CHOOSE eps instead of
-        # sampling it, restricted to a plausible range. `residual_scale * tanh`
-        # IS that eps, bounded to (-k, k): k=2 covers 95.4% of the training
-        # noise, k=3 covers 99.7%. In-distribution by construction, and
-        # correctly anisotropic because sigma is per-dimension.
-        #
-        # tanh(0) = 0, so the zero-init residual head still gives z = prior_mean
-        # exactly at step 0 and the warm-start invariant (r_anchor = 1.0) holds.
-        if self.residual_mode == "sigma_ball":
-            # MEASURED PROBLEM with the per-dim `sigma_tanh` box: bounding each
-            # of d=16 dims to +-k permits a JOINT radius ||eps|| <= k*sqrt(d)
-            # = 8 at k=2, and the policy exploited exactly that corner --
-            # per-dim |eps| median came out at 2.00 (pinned on the ceiling) with
-            # ||eps|| = 7.39, against a training radius of only ||eps|| ~ 4.0
-            # (median of chi_16). Every dim was individually plausible while the
-            # joint configuration sat deep in a tail N(0,I) never visits.
-            #
-            # So constrain the NORM, in the space where the training noise was
-            # isotropic. residual_scale is then r, read straight off chi^2_16:
-            #   r = 4.00 median training radius | 5.13 95th pct | 5.66 99th pct
-            #
-            # Soft-clip ||eps|| -> r while preserving direction. The norm is
-            # computed as sqrt(sum(x^2) + tiny) rather than jnp.linalg.norm
-            # because the residual head is ZERO-INIT: at raw = 0 exactly,
-            # d||raw||/draw is undefined and jnp.linalg.norm returns a NaN
-            # gradient, which would poison the very first update. With the
-            # epsilon the map is ~identity near 0 (r*tanh(n/r)/n -> 1), so the
-            # gradient is finite and residual is still exactly 0 at init.
-            sigma_prior = jnp.exp(0.5 * z_logvar)
-            r = self.residual_scale
-            sq = jnp.sum(raw * raw, axis=-1, keepdims=True)
-            norm = jnp.sqrt(sq + 1e-12)
-            eps = raw * (r * jnp.tanh(norm / r) / norm)
-            residual = sigma_prior * eps
-        elif self.residual_mode == "sigma_tanh":
-            sigma_prior = jnp.exp(0.5 * z_logvar)
-            residual = self.residual_scale * sigma_prior * jnp.tanh(raw)
-        elif self.residual_mode == "tanh":
-            residual = self.residual_scale * jnp.tanh(raw)
-        elif self.residual_mode == "none":
-            residual = raw
-        else:
-            raise ValueError(
-                f"unknown residual_mode {self.residual_mode!r}; "
-                "expected one of 'sigma_tanh', 'tanh', 'none'"
-            )
-        z = z_prior + residual
+        z = z_prior + latent_residual(
+            raw, z_logvar, self.residual_mode, self.residual_scale
+        )
 
         decoder_input = jnp.concatenate([z, proprio], axis=-1)
         decoder_out = self.decoder(decoder_input)

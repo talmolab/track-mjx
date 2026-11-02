@@ -48,6 +48,9 @@ from track_mjx.agent.dmpo.networks_kl_anchor import (
     _PriorModule,
     _splice_warm_start,
 )
+from track_mjx.agent.dmpo.networks_kl_anchor import (
+    latent_residual as _latent_residual,
+)
 from track_mjx.agent.dmpo.networks_vision_bottleneck import (
     _ValueVisionCriticNet,
 )
@@ -136,31 +139,6 @@ class _SlowCorePolicyHeadModule(nn.Module):
         )(h)
         new_phase = jnp.mod(phase + 1.0, float(self.tick_stride))
         return residual, (slow_h, new_phase)
-
-
-def _latent_residual(raw, z_logvar, mode: str, scale: float):
-    """Head output -> latent residual. Same math as `_BAggressivePolicyNet` /
-    `_BAggressiveRecurrentPolicyNet` (measured rationale for each mode lives
-    in networks_kl_anchor.py); every mode maps raw == 0 to residual == 0."""
-    if mode == "sigma_ball":
-        # Norm-bounded eps in the prior's sigma units; sqrt(sum + 1e-12)
-        # keeps the gradient finite at the zero-init raw == 0.
-        sigma_prior = jnp.exp(0.5 * z_logvar)
-        sq = jnp.sum(raw * raw, axis=-1, keepdims=True)
-        norm = jnp.sqrt(sq + 1e-12)
-        eps = raw * (scale * jnp.tanh(norm / scale) / norm)
-        return sigma_prior * eps
-    if mode == "sigma_tanh":
-        sigma_prior = jnp.exp(0.5 * z_logvar)
-        return scale * sigma_prior * jnp.tanh(raw)
-    if mode == "tanh":
-        return scale * jnp.tanh(raw)
-    if mode == "none":
-        return raw
-    raise ValueError(
-        f"unknown residual_mode {mode!r}; "
-        "expected one of 'sigma_ball', 'sigma_tanh', 'tanh', 'none'"
-    )
 
 
 class _BAggressiveSlowCorePolicyNet(nn.Module):

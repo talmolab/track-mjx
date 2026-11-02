@@ -45,6 +45,7 @@ from track_mjx.agent.dmpo.networks_kl_anchor import (
     _DecoderModule,
     _PriorModule,
     _splice_warm_start,
+    latent_residual,
 )
 from track_mjx.agent.dmpo.networks_vision_bottleneck import (
     _ValueVisionCriticNet,
@@ -134,9 +135,9 @@ class _BAggressiveRecurrentPolicyNet(nn.Module):
         the learner's BPTT `lax.scan` can stack per-step outputs (tfd
         distributions are not scan carries/outputs).
 
-    The residual transform matches `_BAggressivePolicyNet` exactly (see
-    networks_kl_anchor.py for the full measured rationale behind each mode);
-    only the head is recurrent.
+    The residual transform is the FF head's own,
+    `networks_kl_anchor.latent_residual` (which documents the measured
+    rationale behind each mode); only the head is recurrent.
     """
 
     action_size: int
@@ -152,10 +153,9 @@ class _BAggressiveRecurrentPolicyNet(nn.Module):
     shared_weights: bool
     rnn_cell: str = "gru"
     # sigma_ball is the default here (unlike the FF net's sigma_tanh): this
-    # module postdates the measured per-dim-box exploit (see the sigma_ball
-    # comment below) and every live sigma-mode arm on this branch runs
-    # sigma_ball. residual_scale is the ball radius r (chi^2_16 95th pct
-    # ~5.13; arms run 5.0).
+    # module postdates the measured per-dim-box exploit documented in
+    # `latent_residual`. residual_scale is the ball radius r (chi^2_16 95th
+    # pct ~5.13; 5.0 is the usual setting).
     residual_mode: str = "sigma_ball"
     residual_scale: float = 5.0
 
@@ -190,37 +190,12 @@ class _BAggressiveRecurrentPolicyNet(nn.Module):
         z_prior, z_logvar = self.prior(proprio)
         raw, new_hidden = self.policy_head(vision, task_obs, proprio, hidden)
 
-        # Residual transform copied from _BAggressivePolicyNet — the residual
-        # is the policy's chosen reparameterization noise eps, bounded to the
-        # range the frozen decoder saw in training. Full derivations + measured
-        # failure modes live in networks_kl_anchor.py; keep the math identical.
-        if self.residual_mode == "sigma_ball":
-            # Norm-bounded eps (soft-clip ||eps|| -> r, direction preserved) in
-            # the prior's own sigma units — the per-dim tanh box let the policy
-            # sit at joint radius k*sqrt(d), a corner N(0,I) never visits.
-            # sqrt(sum + 1e-12) instead of jnp.linalg.norm: at raw == 0 (the
-            # zero-init head) linalg.norm has a NaN gradient that would poison
-            # the first update; with the epsilon the map is ~identity near 0
-            # and residual is still exactly 0 at init.
-            sigma_prior = jnp.exp(0.5 * z_logvar)
-            r = self.residual_scale
-            sq = jnp.sum(raw * raw, axis=-1, keepdims=True)
-            norm = jnp.sqrt(sq + 1e-12)
-            eps = raw * (r * jnp.tanh(norm / r) / norm)
-            residual = sigma_prior * eps
-        elif self.residual_mode == "sigma_tanh":
-            sigma_prior = jnp.exp(0.5 * z_logvar)
-            residual = self.residual_scale * sigma_prior * jnp.tanh(raw)
-        elif self.residual_mode == "tanh":
-            residual = self.residual_scale * jnp.tanh(raw)
-        elif self.residual_mode == "none":
-            residual = raw
-        else:
-            raise ValueError(
-                f"unknown residual_mode {self.residual_mode!r}; "
-                "expected one of 'sigma_ball', 'sigma_tanh', 'tanh', 'none'"
-            )
-        z = z_prior + residual
+        # The shared kl-anchor residual transform: the policy's chosen
+        # reparameterization noise eps, bounded to the range the frozen
+        # decoder saw in training.
+        z = z_prior + latent_residual(
+            raw, z_logvar, self.residual_mode, self.residual_scale
+        )
 
         decoder_input = jnp.concatenate([z, proprio], axis=-1)
         decoder_out = self.decoder(decoder_input)

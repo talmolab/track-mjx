@@ -240,3 +240,50 @@ def test_scale_parameterization_matches_normaltanh(cfg):
     assert abs(actual_scale - expected_scale) < 1e-4, (
         f"scale should be softplus(0)+1e-3 ≈ {expected_scale:.4f}, got {actual_scale:.4f}"
     )
+
+
+def test_residual_transform_single_source(cfg, monkeypatch):
+    """One residual transform for every kl-anchor policy head. The recurrent
+    and slow-core modules use `networks_kl_anchor.latent_residual` itself
+    (not a copy that could drift), and the FF head calls it through its
+    module, so a patched transform reaches the FF forward pass."""
+    from track_mjx.agent.dmpo import (
+        networks_kl_anchor,
+        networks_kl_anchor_rnn,
+        networks_kl_anchor_slow,
+    )
+
+    shared = networks_kl_anchor.latent_residual
+    assert networks_kl_anchor_slow._latent_residual is shared
+    assert networks_kl_anchor_rnn.latent_residual is shared
+
+    calls = []
+
+    def spy(raw, z_logvar, residual_mode, residual_scale):
+        calls.append((residual_mode, residual_scale))
+        return shared(raw, z_logvar, residual_mode, residual_scale)
+
+    monkeypatch.setattr(networks_kl_anchor, "latent_residual", spy)
+    nets = make_dmpo_kl_anchor_networks(
+        proprio_size=5,
+        task_obs_size=4,
+        action_size=3,
+        latent_size=4,
+        vision_shape=(8, 8, 2),
+        cfg=cfg,
+        prior_layer_sizes=(8,),
+        decoder_layer_sizes=(8,),
+        policy_head_layer_sizes=(8,),
+        cnn_feature_size=4,
+        cnn_channels=(2, 4, 8),
+        residual_mode="tanh",
+        residual_scale=3.0,
+    )
+    obs = {
+        "vision": jnp.zeros((8, 8, 2)),
+        "imitation_target": jnp.zeros((4,)),
+        "proprioception": jnp.zeros((5,)),
+    }
+    nets.policy.init(jax.random.key(0), obs)
+    assert calls
+    assert set(calls) == {("tanh", 3.0)}

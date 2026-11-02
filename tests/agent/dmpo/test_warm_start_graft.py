@@ -20,6 +20,7 @@ import logging
 import os
 import pathlib
 
+import flax.serialization as ser
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -35,7 +36,17 @@ from track_mjx.agent.dmpo.networks_kl_anchor import make_dmpo_kl_anchor_networks
 from track_mjx.agent.dmpo.networks_kl_anchor_slow import (
     make_dmpo_kl_anchor_slow_networks,
 )
-from track_mjx.agent.dmpo.warm_start_graft import graft_params, load_graft_source
+from track_mjx.agent.dmpo.obs_utils import (
+    DictRunningStatisticsState,
+    init_dict_normalizer,
+    update_dict_normalizer,
+)
+from track_mjx.agent.dmpo.rollout import _normalize_obs
+from track_mjx.agent.dmpo.warm_start_graft import (
+    graft_normalizer,
+    graft_params,
+    load_graft_source,
+)
 
 # ---------------------------------------------------------------------------
 # graft_params on hand-built trees.
@@ -201,6 +212,60 @@ def test_graft_accepts_numpy_source_and_frozen_target():
     np.testing.assert_array_equal(np.asarray(k[:4]), src["params"]["a"]["kernel"])
     np.testing.assert_array_equal(np.asarray(k[4:]), np.zeros((2, 2)))
     assert report["widened"] == ["params/a/kernel"]
+
+
+def test_graft_casts_to_target_dtype():
+    """float64 numpy source -> float32 target (equal-shape copy), and a
+    bfloat16 target on the widened path: the grafted leaf has the TARGET's
+    dtype, the source rows are the cast values, the new rows exact zeros."""
+    rng = np.random.default_rng(0)
+    bias64 = rng.standard_normal(3)
+    kern64 = rng.standard_normal((4, 3))
+    source = {"params": {"l": {"bias": bias64, "kernel": kern64}}}
+
+    target32 = {
+        "params": {
+            "l": {
+                "bias": jnp.zeros((3,), jnp.float32),
+                "kernel": jnp.zeros((4, 3), jnp.float32),
+            }
+        }
+    }
+    out, _ = graft_params(target32, source)
+    assert out["params"]["l"]["bias"].dtype == jnp.float32
+    np.testing.assert_array_equal(
+        np.asarray(out["params"]["l"]["bias"]), bias64.astype(np.float32)
+    )
+
+    target_bf16 = {
+        "params": {
+            "l": {
+                "bias": jnp.zeros((3,), jnp.bfloat16),
+                "kernel": jnp.ones((6, 3), jnp.bfloat16),
+            }
+        }
+    }
+    out, report = graft_params(target_bf16, source)
+    assert report["widened"] == ["params/l/kernel"]
+    k = out["params"]["l"]["kernel"]
+    assert k.dtype == jnp.bfloat16 and k.shape == (6, 3)
+    np.testing.assert_array_equal(
+        np.asarray(k[:4].astype(jnp.float32)),
+        np.asarray(jnp.asarray(kern64, jnp.bfloat16).astype(jnp.float32)),
+    )
+    np.testing.assert_array_equal(np.asarray(k[4:].astype(jnp.float32)), 0.0)
+    assert out["params"]["l"]["bias"].dtype == jnp.bfloat16
+
+
+def test_graft_params_scalar_leaf_is_not_an_attribute_error():
+    """A bare Python-scalar leaf (e.g. a state-dict std_eps) has no .shape;
+    it must be handled, not crash with AttributeError."""
+    out, report = graft_params(
+        {"params": {"eps": 0.0}}, {"params": {"eps": np.float32(0.0)}}
+    )
+    assert report == {"copied": 1, "widened": [], "new": []}
+    with pytest.raises(ValueError, match="params/eps"):
+        graft_params({"params": {"eps": 0.0}}, {"params": {"eps": np.zeros((2,))}})
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +485,202 @@ def test_privileged_critic_graft_q_unchanged(cfg):
 
 
 # ---------------------------------------------------------------------------
+# graft_normalizer: the observation normalizer (a DictRunningStatisticsState,
+# not a params tree).
+# ---------------------------------------------------------------------------
+
+N_IMIT, N_PROP = 6, 10
+
+
+def _obs_template(n_imit=N_IMIT, n_prop=N_PROP):
+    """The trainer's dict-obs template (init_training_state -> init_dict_normalizer)."""
+    return {
+        "vision": jnp.zeros(VISION_SHAPE, jnp.float32),
+        "imitation_target": jnp.zeros((n_imit,), jnp.float32),
+        "proprioception": jnp.zeros((n_prop,), jnp.float32),
+    }
+
+
+def _numpy_state_dict(state):
+    """What load_graft_source returns for normalizer_params: the flax
+    state-dict of the saved state, every leaf host numpy."""
+    return jax.tree.map(np.asarray, ser.to_state_dict(state))
+
+
+def _trained_normalizer(n_imit=N_IMIT, n_prop=N_PROP, seed=0):
+    """A normalizer that has seen data (count > 0, non-trivial mean/std)."""
+    k1, k2 = jax.random.split(jax.random.PRNGKey(seed))
+    batch = {
+        "vision": jnp.zeros((64, *VISION_SHAPE)),
+        "imitation_target": 2.0 + 3.0 * jax.random.normal(k1, (64, n_imit)),
+        "proprioception": -1.0 + 0.5 * jax.random.normal(k2, (64, n_prop)),
+    }
+    return update_dict_normalizer(
+        init_dict_normalizer(_obs_template(n_imit, n_prop)), batch
+    )
+
+
+def test_graft_normalizer_round_trip_from_init_dict_normalizer():
+    trained = _trained_normalizer()
+    assert int(trained.proprioception.count.lo) == 64  # really non-trivial
+    src = _numpy_state_dict(trained)
+    assert isinstance(src, dict)  # NOT a DictRunningStatisticsState
+
+    target = init_dict_normalizer(_obs_template())
+    out = graft_normalizer(target, src)
+
+    # A real DictRunningStatisticsState (rollout._normalize_obs dispatches on it).
+    assert type(out) is DictRunningStatisticsState
+    assert jax.tree.structure(out) == jax.tree.structure(target)
+    assert out.proprioception.mode == target.proprioception.mode
+    for got, want, tgt in zip(
+        jax.tree.leaves(out), jax.tree.leaves(trained), jax.tree.leaves(target)
+    ):
+        np.testing.assert_array_equal(np.asarray(got), np.asarray(want))
+        assert np.asarray(got).dtype == np.asarray(tgt).dtype
+    # The target is untouched (still the fresh init).
+    np.testing.assert_array_equal(np.asarray(target.proprioception.mean), 0.0)
+    assert int(target.proprioception.count.lo) == 0
+
+    # And it normalizes exactly like the trained state, through the same
+    # dispatch the rollout uses.
+    obs = {
+        "vision": jnp.zeros(VISION_SHAPE),
+        "imitation_target": jnp.arange(N_IMIT, dtype=jnp.float32),
+        "proprioception": jnp.linspace(-3.0, 3.0, N_PROP),
+    }
+    got = _normalize_obs(obs, out)
+    want = _normalize_obs(obs, trained)
+    for k in ("imitation_target", "proprioception"):
+        np.testing.assert_array_equal(np.asarray(got[k]), np.asarray(want[k]))
+    # Control: the un-grafted init normalizer does not match.
+    bad = _normalize_obs(obs, target)
+    assert not np.allclose(
+        np.asarray(bad["proprioception"]), np.asarray(want["proprioception"])
+    )
+
+
+def test_graft_normalizer_accepts_a_state_object_source():
+    trained = _trained_normalizer(seed=3)
+    out = graft_normalizer(init_dict_normalizer(_obs_template()), trained)
+    for a, b in zip(jax.tree.leaves(out), jax.tree.leaves(trained)):
+        np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+
+
+def test_graft_normalizer_shape_mismatch_names_the_path():
+    # A changed proprio dim: every proprioception array leaf mismatches, the
+    # untouched imitation_target branch is not blamed.
+    src = _numpy_state_dict(_trained_normalizer(n_prop=N_PROP + 1))
+    target = init_dict_normalizer(_obs_template())
+    with pytest.raises(ValueError) as exc:
+        graft_normalizer(target, src)
+    msg = str(exc.value)
+    for leaf in ("mean", "std", "summed_variance"):
+        assert f"proprioception/{leaf}" in msg
+    assert "imitation_target" not in msg
+    assert f"target ({N_PROP},)" in msg and f"source ({N_PROP + 1},)" in msg
+
+    # Same for the task-obs branch.
+    src = _numpy_state_dict(_trained_normalizer(n_imit=N_IMIT + 2))
+    with pytest.raises(ValueError, match="imitation_target/mean") as exc:
+        graft_normalizer(target, src)
+    assert "proprioception" not in str(exc.value)
+
+
+def test_graft_normalizer_carries_count_exactly():
+    target = init_dict_normalizer(_obs_template())
+    src = _numpy_state_dict(target)
+    # Beyond float32 / int32 range on purpose: the split uint32 count must be
+    # carried bit-exact, per branch.
+    src["proprioception"]["count"] = {
+        "hi": np.asarray(3, np.uint32),
+        "lo": np.asarray(4_000_000_000, np.uint32),
+    }
+    src["imitation_target"]["count"] = {
+        "hi": np.asarray(0, np.uint32),
+        "lo": np.asarray(17, np.uint32),
+    }
+    out = graft_normalizer(target, src)
+    c = out.proprioception.count
+    assert int(c.hi) == 3 and int(c.lo) == 4_000_000_000
+    assert c.hi.dtype == jnp.uint32 and c.lo.dtype == jnp.uint32
+    assert int(out.imitation_target.count.lo) == 17
+    assert int(out.imitation_target.count.hi) == 0
+
+    # A real trained count survives too.
+    trained = _trained_normalizer()
+    out = graft_normalizer(target, _numpy_state_dict(trained))
+    assert int(out.imitation_target.count.lo) == 64
+
+
+def test_graft_normalizer_casts_to_target_dtype():
+    target = init_dict_normalizer(_obs_template())
+    src = _numpy_state_dict(_trained_normalizer())
+    src64 = jax.tree.map(
+        lambda x: x.astype(np.float64) if x.dtype == np.float32 else x, src
+    )
+    out = graft_normalizer(target, src64)
+    assert out.proprioception.mean.dtype == jnp.float32
+    np.testing.assert_array_equal(
+        np.asarray(out.proprioception.mean), src["proprioception"]["mean"]
+    )
+
+
+def test_graft_normalizer_std_eps():
+    src = _numpy_state_dict(_trained_normalizer())
+    # The checkpoint stores std_eps as a float32 scalar ARRAY; a fresh init
+    # holds a Python float. Equal values: the target's value is kept as-is.
+    assert isinstance(
+        init_dict_normalizer(_obs_template()).proprioception.std_eps, float
+    )
+    out = graft_normalizer(init_dict_normalizer(_obs_template()), src)
+    assert out.proprioception.std_eps == 0.0
+    assert out.imitation_target.std_eps == 0.0
+
+    # Nonzero eps that survives the float32 round trip through a checkpoint.
+    t = init_dict_normalizer(_obs_template())
+    t = t.replace(
+        proprioception=t.proprioception.replace(std_eps=1e-6),
+        imitation_target=t.imitation_target.replace(std_eps=1e-6),
+    )
+    src_eps = _numpy_state_dict(t)
+    # The checkpoint holds std_eps as a float32 scalar (a saved jax array).
+    for branch in src_eps.values():
+        branch["std_eps"] = np.asarray(branch["std_eps"], np.float32)
+    assert src_eps["proprioception"]["std_eps"].dtype == np.float32
+    out = graft_normalizer(t, src_eps)
+    assert out.proprioception.std_eps == 1e-6
+
+    # Differing eps: refuse (the normalization would silently change).
+    with pytest.raises(ValueError, match="proprioception/std_eps"):
+        graft_normalizer(init_dict_normalizer(_obs_template()), src_eps)
+    # A non-scalar eps is malformed.
+    bad = _numpy_state_dict(init_dict_normalizer(_obs_template()))
+    bad["imitation_target"]["std_eps"] = np.zeros((2,), np.float32)
+    with pytest.raises(ValueError, match="imitation_target/std_eps"):
+        graft_normalizer(init_dict_normalizer(_obs_template()), bad)
+
+
+def test_graft_normalizer_rejects_missing_and_extra_branches():
+    target = init_dict_normalizer(_obs_template())
+    src = _numpy_state_dict(target)
+
+    missing = {k: v for k, v in src.items() if k != "proprioception"}
+    with pytest.raises(ValueError, match="proprioception/mean"):
+        graft_normalizer(target, missing)
+
+    extra = dict(src, vision=src["proprioception"])
+    with pytest.raises(ValueError, match="vision/mean"):
+        graft_normalizer(target, extra)
+
+    # And a leaf missing inside a branch (a count that is not split).
+    unsplit = {k: dict(v) for k, v in src.items()}
+    unsplit["proprioception"]["count"] = np.asarray(5, np.uint32)
+    with pytest.raises(ValueError, match="proprioception/count"):
+        graft_normalizer(target, unsplit)
+
+
+# ---------------------------------------------------------------------------
 # load_graft_source on synthetic checkpoints.
 # ---------------------------------------------------------------------------
 
@@ -479,9 +740,12 @@ def test_load_graft_source_tolerates_absent_critic(saved_state, tmp_path, caplog
     with caplog.at_level(logging.WARNING):
         src = load_graft_source(step_dir)
     assert set(src) == {"policy_params", "target_policy_params", "normalizer_params"}
-    # Reported, not silent: the critic stays at its init.
-    assert "critic_params" in caplog.text
-    assert "target_critic_params" in caplog.text
+    # Reported, not silent: the critic stays at its init. The warning carries
+    # the exact list of absent items ("critic_params" alone would also match
+    # inside "target_critic_params", so match the whole list).
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "['critic_params', 'target_critic_params']" in warnings[0]
 
 
 def test_load_graft_source_requires_policy_and_normalizer(saved_state, tmp_path):
@@ -570,3 +834,59 @@ def test_real_gen1_checkpoint_grafts_into_widened_shapes():
         assert report["widened"] == ["params/Dense_0/kernel"]
         assert report["new"] == []
         assert report["copied"] == 29
+
+
+@pytest.mark.artifact
+@pytest.mark.skipif(_SKIP_NO_GEN1, reason=_SKIP_REASON)
+def test_real_gen1_normalizer_grafts_into_a_real_state():
+    src = load_graft_source(_GEN1_CKPT)["normalizer_params"]
+    # As loaded: a plain nested numpy dict -- the thing the trainer cannot use.
+    assert isinstance(src, dict)
+    assert set(src) == {"imitation_target", "proprioception"}
+    assert src["imitation_target"]["mean"].shape == (51,)
+    assert src["proprioception"]["mean"].shape == (277,)
+
+    # Target: built the way the trainer does, from a dict-obs template with the
+    # checkpoint's obs sizes (vision is not normalized, so it has no statistics).
+    template = {
+        "vision": jnp.zeros((32, 32, 2), jnp.float32),
+        "imitation_target": jnp.zeros((51,), jnp.float32),
+        "proprioception": jnp.zeros((277,), jnp.float32),
+    }
+    target = init_dict_normalizer(template)
+    out = graft_normalizer(target, src)
+
+    assert type(out) is DictRunningStatisticsState
+    assert jax.tree.structure(out) == jax.tree.structure(target)
+    for name in ("imitation_target", "proprioception"):
+        got, want = getattr(out, name), src[name]
+        np.testing.assert_array_equal(np.asarray(got.mean), want["mean"])
+        np.testing.assert_array_equal(np.asarray(got.std), want["std"])
+        np.testing.assert_array_equal(
+            np.asarray(got.summed_variance), want["summed_variance"]
+        )
+        assert int(got.count.hi) == int(want["count"]["hi"])
+        assert int(got.count.lo) == int(want["count"]["lo"])
+        assert got.mean.dtype == jnp.float32 and got.count.lo.dtype == jnp.uint32
+    # The checkpoint really holds trained statistics (not a fresh init).
+    assert (
+        int(out.proprioception.count.hi) * 2**32 + int(out.proprioception.count.lo) > 0
+    )
+    assert not np.allclose(np.asarray(out.proprioception.std), 1.0)
+
+    # Same normalization as the (unchecked) from_state_dict path, through the
+    # rollout's own dispatch.
+    legacy = ser.from_state_dict(target, src)
+    obs = {
+        "vision": jnp.zeros((32, 32, 2)),
+        "imitation_target": jax.random.normal(jax.random.PRNGKey(0), (51,)),
+        "proprioception": jax.random.normal(jax.random.PRNGKey(1), (277,)),
+    }
+    got, want = _normalize_obs(obs, out), _normalize_obs(obs, legacy)
+    for k in ("imitation_target", "proprioception"):
+        np.testing.assert_array_equal(np.asarray(got[k]), np.asarray(want[k]))
+
+    # A proprio-dim change is refused, naming the path.
+    wrong = init_dict_normalizer(dict(template, proprioception=jnp.zeros((278,))))
+    with pytest.raises(ValueError, match="proprioception/mean"):
+        graft_normalizer(wrong, src)

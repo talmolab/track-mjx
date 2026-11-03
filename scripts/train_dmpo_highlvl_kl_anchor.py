@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -343,11 +344,55 @@ _GRAFT_CONFIG_KEYS = (
     ("transfer", "prior_checkpoint_step", None),
 )
 
+# `transfer.prior_checkpoint_path` is compared by PRIOR IDENTITY, not by path:
+# the same prior is named by different paths once configs point at
+# ${oc.env:DMPO_PRIOR_ROOT}/<id> while a graft source recorded the absolute
+# path it was trained with. A prior's id is its directory name, with the
+# byte-identical aliases of the prior manifest mapped to the id they copy.
+_PRIOR_MANIFEST = (
+    Path(__file__).resolve().parents[1]
+    / "track_mjx"
+    / "config"
+    / "dmpo"
+    / "priors"
+    / "MANIFEST.md"
+)
+_MANIFEST_ALIAS_ROW = re.compile(r"^\| `([^`]+)` \| `([^`]+)` \| yes \|$")
+
+
+def _prior_aliases(manifest_path: Path = _PRIOR_MANIFEST) -> dict[str, str]:
+    """Alias name -> prior id, read from the manifest's ``## Aliases`` table.
+
+    Only rows marked byte-identical (``yes``) are aliases.
+
+    Raises:
+        FileNotFoundError: If the manifest does not exist.
+    """
+    aliases: dict[str, str] = {}
+    section = ""
+    for line in Path(manifest_path).read_text().splitlines():
+        if line.startswith("## "):
+            section = line[3:].strip()
+        elif section == "Aliases" and (m := _MANIFEST_ALIAS_ROW.match(line)):
+            aliases[m.group(1)] = m.group(2)
+    return aliases
+
+
+def _prior_id(path, aliases: dict[str, str]):
+    """The manifest id a prior checkpoint path names (None stays None)."""
+    if path is None:
+        return None
+    name = Path(str(path).rstrip("/")).name
+    return aliases.get(name, name)
+
 
 def _check_graft_source_config(graft_path: str, cfg_dict: dict) -> None:
     """Fail loud if the graft source was trained under a different function.
 
     Reads the source's saved ``config`` item and compares `_GRAFT_CONFIG_KEYS`.
+    ``transfer.prior_checkpoint_path`` is compared by prior id (`_prior_id`),
+    so a relocated or aliased copy of the same prior matches; ``cfg_dict`` is
+    the resolved config, i.e. after ``${oc.env:...}`` interpolation.
 
     Raises:
         ValueError: if the source's ``config`` item cannot be read (the check
@@ -378,7 +423,15 @@ def _check_graft_source_config(graft_path: str, cfg_dict: dict) -> None:
         tgt_v = (cfg_dict.get(section) or {}).get(key, default)
         if isinstance(default, float):
             src_v, tgt_v = float(src_v), float(tgt_v)
-        if _norm(src_v) != _norm(tgt_v):
+        if (section, key) == ("transfer", "prior_checkpoint_path"):
+            aliases = _prior_aliases()
+            src_id, tgt_id = _prior_id(src_v, aliases), _prior_id(tgt_v, aliases)
+            if src_id != tgt_id:
+                bad.append(
+                    f"{section}.{key}: source={src_v!r} (prior id {src_id!r}) "
+                    f"this config={tgt_v!r} (prior id {tgt_id!r})"
+                )
+        elif _norm(src_v) != _norm(tgt_v):
             bad.append(f"{section}.{key}: source={src_v!r} this config={tgt_v!r}")
     if bad:
         raise ValueError(

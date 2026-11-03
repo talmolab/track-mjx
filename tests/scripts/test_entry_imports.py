@@ -210,3 +210,111 @@ def test_imitation_obs_sizes_accept_either_reference_key(
 def test_imitation_obs_sizes_without_a_reference_raise(imitation_entry):
     with pytest.raises(KeyError, match="no reference entry"):
         imitation_entry["_reference_and_proprio_sizes"]({"proprioception": 277})
+
+
+# --- kl-anchor entry: the graft source's prior, by identity --------------------
+
+_SOURCE_CONFIG = {
+    "network_config": {"critic_use_proprio": True},
+    "train_config": {"vmin": 0.0, "vmax": 20.0},
+}
+
+
+def _graft_check_with_priors(entry, tmp_path, monkeypatch, source_prior, target_prior):
+    """Run the graft check with only the prior path differing between sides.
+
+    The target goes through ``OmegaConf.to_container(resolve=True)`` as in
+    ``main()``, so ``${oc.env:DMPO_PRIOR_ROOT}`` is interpolated first.
+    """
+    monkeypatch.setenv("DMPO_PRIOR_ROOT", str(tmp_path / "priors"))
+    step_dir = tmp_path / "DMPONetwork_0"
+    source = {
+        **_SOURCE_CONFIG,
+        "transfer": {
+            "prior_checkpoint_path": source_prior,
+            "prior_checkpoint_step": 24,
+        },
+    }
+    _write_source_config(step_dir, source)
+    target = OmegaConf.create(
+        {
+            **_SOURCE_CONFIG,
+            "transfer": {
+                "prior_checkpoint_path": target_prior,
+                "prior_checkpoint_step": 24,
+            },
+        }
+    )
+    entry["_check_graft_source_config"](
+        str(step_dir), OmegaConf.to_container(target, resolve=True)
+    )
+
+
+def test_graft_prior_relocated_to_the_prior_root_is_the_same_prior(
+    kl_anchor_entry, tmp_path, monkeypatch
+):
+    _graft_check_with_priors(
+        kl_anchor_entry,
+        tmp_path,
+        monkeypatch,
+        "/old/root/SCAMPER/model_checkpoints/260827_153154_576196",
+        "${oc.env:DMPO_PRIOR_ROOT}/260827_153154_576196",
+    )
+
+
+def test_graft_prior_alias_is_the_same_prior(kl_anchor_entry, tmp_path, monkeypatch):
+    _graft_check_with_priors(
+        kl_anchor_entry,
+        tmp_path,
+        monkeypatch,
+        "/old/root/data/prior/combined_jump/",
+        "${oc.env:DMPO_PRIOR_ROOT}/260407_183223_056788",
+    )
+
+
+def test_graft_prior_with_a_different_id_is_refused(
+    kl_anchor_entry, tmp_path, monkeypatch
+):
+    with pytest.raises(ValueError) as err:
+        _graft_check_with_priors(
+            kl_anchor_entry,
+            tmp_path,
+            monkeypatch,
+            "/old/root/data/prior/combined_clips_gen0",
+            "${oc.env:DMPO_PRIOR_ROOT}/260407_183223_056788",
+        )
+    message = str(err.value)
+    assert "transfer.prior_checkpoint_path" in message
+    assert "260414_072827_774853" in message  # the source's id (via its alias)
+    assert "260407_183223_056788" in message  # this config's id
+
+
+def test_graft_prior_step_is_still_compared(kl_anchor_entry, tmp_path):
+    step_dir = tmp_path / "DMPONetwork_0"
+    prior = {"prior_checkpoint_path": "/a/260827_153154_576196"}
+    _write_source_config(
+        step_dir,
+        {**_SOURCE_CONFIG, "transfer": {**prior, "prior_checkpoint_step": 24}},
+    )
+    target = {**_SOURCE_CONFIG, "transfer": {**prior, "prior_checkpoint_step": 12}}
+    with pytest.raises(ValueError, match=r"transfer\.prior_checkpoint_step"):
+        kl_anchor_entry["_check_graft_source_config"](str(step_dir), target)
+
+
+def test_prior_aliases_are_read_from_the_manifest(kl_anchor_entry, monkeypatch):
+    """The entry's alias map is the MANIFEST's, as the manifest tool parses it."""
+    import importlib.util
+
+    tool = SCRIPTS_DIR.parent / "tools" / "make_prior_manifest.py"
+    spec = importlib.util.spec_from_file_location("_manifest_tool", tool)
+    manifest_tool = importlib.util.module_from_spec(spec)
+    # The tool's dataclasses resolve their module through sys.modules.
+    monkeypatch.setitem(sys.modules, spec.name, manifest_tool)
+    spec.loader.exec_module(manifest_tool)
+    manifest = manifest_tool.DEFAULT_MANIFEST
+
+    aliases = kl_anchor_entry["_prior_aliases"](manifest)
+    assert aliases == dict(manifest_tool.parse(manifest.read_text()).aliases)
+    assert aliases["combined_jump"] == "260407_183223_056788"
+    assert aliases["combined_clips_gen0"] == "260414_072827_774853"
+    assert kl_anchor_entry["_prior_aliases"]() == aliases  # the default path

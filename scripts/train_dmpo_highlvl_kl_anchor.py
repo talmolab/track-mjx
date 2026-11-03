@@ -127,8 +127,9 @@ def _wrapper_settings(cfg, env_info_keys=None):
 
     Args:
         cfg: The hydra config.
-        env_info_keys: The keys of the env's ``state.info`` after a reset. When
-            given, every ``info_reset_keys`` entry must be one of them.
+        env_info_keys: The keys of the inner (not yet brax-wrapped) env's
+            ``state.info`` after a reset. When given, every ``info_reset_keys``
+            entry must be one of them.
 
     Returns:
         ``(full_reset, info_reset_on_done, info_reset_keys)``; the keys tuple is
@@ -136,8 +137,10 @@ def _wrapper_settings(cfg, env_info_keys=None):
 
     Raises:
         ValueError: If ``env_info_keys`` is given and an ``info_reset_keys``
-            entry is not among them. A misspelt key is never reset, so the
-            ratchet it was listed to stop would keep running.
+            entry is not among them. ``InfoResetOnDoneWrapper`` would also
+            reject such a key, with a KeyError at the first reset; this is an
+            earlier error, raised before the env is wrapped, that names the
+            keys the inner env does hold.
     """
     wrap_cfg = cfg.get("wrappers", None)
     if not wrap_cfg:
@@ -150,7 +153,7 @@ def _wrapper_settings(cfg, env_info_keys=None):
             raise ValueError(
                 f"wrappers.info_reset_keys names {unknown}, which the env's "
                 f"state.info does not hold (it holds {sorted(env_info_keys)}). "
-                "Fix the key names; an unknown key would never be reset."
+                "InfoResetOnDoneWrapper would reject them at the first reset."
             )
     return (
         bool(wrap_cfg.get("full_reset", False)),
@@ -503,21 +506,23 @@ def _graft_invariance_probe(
 
 
 # ---- Spout-maze eval (SPOUT_EVAL) ------------------------------------------
-# run_eval_rollout_envzero carries only `rewards/*`, `terminations/*` and
-# `anchor/*` env metrics into its all-env `allenv` return; the spout-maze env's
-# `spout/*` trial events exist there for env 0 only (the `rollout` list), an
-# n=1 estimator. vnl_playground.tasks.rodent.spout_eval therefore wraps the
-# EVAL env (never the training env) so every `spout/<name>` is mirrored under
-# an `anchor/` key; the mirrored keys are stripped from the generic eval
-# metrics before logging. Those helpers are imported only for a spout-maze env.
+# vnl_playground.tasks.rodent.spout_eval computes the spout-maze trial
+# statistics from the all-env `allenv` eval arrays. Its summary reads each
+# `spout/<name>` through the mirror its SpoutEvalMetricAlias writes under
+# `SPOUT_ALIAS + <name>` (an `anchor/` key), so the EVAL env (never the
+# training env) is wrapped in it; the mirrored keys are stripped from the
+# generic eval metrics before logging. spout_eval is imported only for a
+# spout-maze env.
 _SPOUT_MAZE_MODULE = "vnl_playground.tasks.rodent.spout_maze"
 
 
 def _is_spout_maze_env(env) -> bool:
     """Whether the innermost env of a wrapper stack is a ``RodentSpoutMazeVision``.
 
-    Looked up through ``sys.modules`` so that no spout module is imported for
-    any other env: an instance of the class implies its module is loaded.
+    The class is looked up through ``sys.modules``, so this check imports
+    nothing itself: an instance of the class implies its module is loaded.
+    (The entry's own ``from vnl_playground import tasks`` already imports the
+    spout-maze env modules; only ``spout_eval`` is gated on this check.)
     """
     raw_env = env
     while hasattr(raw_env, "env"):
@@ -1711,8 +1716,10 @@ def main(hydra_cfg: DictConfig):
             )
             # Rebuild the reward the replay buffer actually stored. lambda comes
             # from state.steps via the SAME expression the fused training step
-            # uses (train_dmpo_step.py:98-99) -- the host env_steps int is a
-            # different quantity and would drift from the buffer.
+            # uses (`reward_anneal_lambda(env_steps_estimate(state.steps, cfg,
+            # K), cfg)` in train_dmpo_step.make_fused_train_step) -- the host
+            # env_steps int is a different quantity and would drift from the
+            # buffer.
             remix_key = getattr(cfg, "reward_anneal_sparse_key", None)
             remix_lambda = (
                 float(
@@ -1746,10 +1753,11 @@ def main(hydra_cfg: DictConfig):
                     compute_batch_rollout_metrics(allenv, remix_key, remix_lambda)
                 )
                 if spout_eval is not None:
-                    # Drop the shim's mirrored keys (anchor/_spout_eval/* and
-                    # their batch/ / _mean/_sum/... derivatives); SPOUT_EVAL
-                    # reports them properly.
-                    rm = {k: v for k, v in rm.items() if "/_spout_eval/" not in k}
+                    # Drop the mirrored keys (SPOUT_ALIAS + <name> and their
+                    # batch/ and _mean/_sum/... derivatives, which all keep the
+                    # full prefix); SPOUT_EVAL reports them properly.
+                    alias = spout_eval.SPOUT_ALIAS
+                    rm = {k: v for k, v in rm.items() if alias not in k}
                 # Mirror eval metrics to stdout, so the run log alone answers
                 # questions like "did it ever cross a gap?" without parsing
                 # wandb's binary log.
@@ -1774,7 +1782,8 @@ def main(hydra_cfg: DictConfig):
             if recurrent and rollout and "vision" in rollout[0].obs:
                 # Recurrent-only (FF kl-anchor arms never logged this key, so
                 # adding it unguarded would break FF log-identity). Mirrors the
-                # train_highlvl_dmpo.py probe, with the recurrent apply.
+                # vision-sensitivity probe in scripts/train_dmpo_highlvl.py, with
+                # the recurrent apply.
                 mid = len(rollout) // 2
                 sens = compute_vision_sensitivity(
                     nets.policy.apply,

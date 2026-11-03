@@ -188,7 +188,8 @@ def main(hydra_cfg: DictConfig) -> None:
     # domain_randomization_maker returns (model, rng) -> (model, in_axes), but
     # wrap_for_brax_training's BraxDomainRandomizationVmapWrapper calls
     # randomization_fn(model) with a single argument. Bind a fresh rng split
-    # so the function signature matches (mirrors PPO's ppo.py:548 pattern).
+    # so the function signature matches (the same binding
+    # track_mjx.agent.ff_ppo.ppo.train makes for its randomization_fn).
     v_randomization_fn = None
     if hydra_cfg.env_config.domain_randomization.use_domain_randomization:
         rng, dr_rng = jax.random.split(rng)

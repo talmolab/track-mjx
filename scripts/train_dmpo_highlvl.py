@@ -395,8 +395,10 @@ def main(hydra_cfg: DictConfig):
                 num_envs=cfg.num_envs,
             )
             # lambda from state.steps via the SAME expression the fused training
-            # step uses (train_dmpo_step.py:98-99) -- the host env_steps int is a
-            # different quantity and would drift from the buffer.
+            # step uses (`reward_anneal_lambda(env_steps_estimate(state.steps,
+            # cfg, K), cfg)` in train_dmpo_step.make_fused_train_step) -- the
+            # host env_steps int is a different quantity and would drift from
+            # the buffer.
             remix_key = getattr(cfg, "reward_anneal_sparse_key", None)
             remix_lambda = (
                 float(

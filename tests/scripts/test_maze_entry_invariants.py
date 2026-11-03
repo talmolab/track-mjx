@@ -130,8 +130,11 @@ def test_shipped_maze_arm_enables_per_episode_resets(kl_anchor_entry, arm):
     if arm is None:
         pytest.skip(f"no maze arm configs under {MAZE_CONFIG_DIR}")
     cfg = _compose_arm(arm)
-    if cfg.get("agent") != "dmpo" or cfg.get("env_name") != ENV_NAME:
-        pytest.skip(f"{arm.name} is not a DMPO {ENV_NAME} arm")
+    if cfg.get("env_name") != ENV_NAME:
+        pytest.skip(f"{arm.name} is not a {ENV_NAME} arm")
+    # Every maze arm under config/dmpo must be a DMPO arm. One that is not
+    # (e.g. it lost its `base` default) fails here instead of being skipped.
+    assert cfg.get("agent") == "dmpo", f"{arm.name} must compose to agent: dmpo"
 
     full_reset, _, _ = kl_anchor_entry["_wrapper_settings"](cfg)
     assert full_reset is True, f"{arm.name} must set wrappers.full_reset: true"

@@ -14,7 +14,7 @@ mocap_hz: 50
 ctrl_dt: 0.02
 mujoco_impl: warp
 seed: 0
-checkpoint_dir: ./checkpoints/dmpo_imitation
+checkpoint_dir: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/dmpo_imitation
 
 env_config:
   # Environment name for registry lookup

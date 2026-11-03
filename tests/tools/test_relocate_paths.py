@@ -60,6 +60,40 @@ def test_archived_graft_source_maps_back_to_run_and_step(kind):
     )
 
 
+def test_interpolated_home_value_is_relocated_when_given_as_a_literal_root():
+    root = "${oc.env:HOME}/work"
+    assert (
+        rp.relocate_value("checkpoint_dir", f"{root}/runs/run_x", [root], ALIASES)
+        == f"{CKPT}/run_x"
+    )
+
+
+@pytest.mark.parametrize("value", ["${oc.env:HOME}/work/run_x", "~/work/run_x"])
+def test_home_relative_value_under_no_old_root_is_an_error(value):
+    with pytest.raises(rp.RelocationError, match="none of"):
+        _relocate("checkpoint_dir", value)
+
+
+def test_quoted_values_are_relocated_and_keep_their_quotes():
+    text = (
+        f'checkpoint_dir: "{OLD}/c/run1"  # run\n'
+        f"prior_checkpoint_path: '{OLD}/p/combined_jump'\n"
+        f'graft_ff_checkpoint: "{CKPT}/run_a/DMPONetwork_1"\n'
+    )
+    new, changed = rp.relocate_text(text, [OLD], ALIASES)
+    assert changed == 2
+    assert new == (
+        f'checkpoint_dir: "{CKPT}/run1"  # run\n'
+        f"prior_checkpoint_path: '{PRIOR}/260407_183223_056788'\n"
+        f'graft_ff_checkpoint: "{CKPT}/run_a/DMPONetwork_1"\n'
+    )
+
+
+def test_quoted_absolute_value_under_no_old_root_is_an_error():
+    with pytest.raises(rp.RelocationError, match="none of"):
+        rp.relocate_text('checkpoint_dir: "/elsewhere/run"\n', [OLD], ALIASES)
+
+
 def test_relative_and_already_relocated_values_are_untouched():
     for value in ("./checkpoints/dmpo", f"{CKPT}/run", f"{PRIOR}/x", "null"):
         assert _relocate("checkpoint_dir", value) == value

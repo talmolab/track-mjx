@@ -19,9 +19,22 @@ of two environment variables:
   ``${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/<last component>``.
 
 Only values that start with one of the ``--old-root`` prefixes are rewritten.
-There is no built-in root: the old roots are always CLI arguments. A value of
-one of the keys above that is absolute but under no old root is an error, so a
-path that was missed cannot slip through.
+There is no built-in root: the old roots are always CLI arguments. A root is
+matched as a literal string prefix, so an interpolated root such as
+``'${oc.env:HOME}/work'`` can be passed to relocate values written that way.
+
+Every value of the keys above is either relocated, left alone, or an error:
+
+* a value that already starts with one of the two environment roots is left
+  alone;
+* a relative value (``./runs/x``) and ``null`` name no machine and are left
+  alone;
+* a value that starts with ``/``, ``~`` or ``${`` (any other interpolation) and
+  is under no old root is an error. Single or double quotes around a value are
+  accepted and kept.
+
+A value of one of these keys that is written in a form this tool does not see
+(for example on a continuation line, or under a different key) is not checked.
 
 Usage::
 
@@ -58,7 +71,7 @@ _ALIAS_ROW = re.compile(r"^\|\s*`(?P<alias>[^`]+)`\s*\|\s*`(?P<id>[^`]+)`\s*\|")
 _LINE = re.compile(
     r"^(?P<head>\s*(?P<key>"
     + "|".join(PRIOR_KEYS + GRAFT_KEYS + OUTPUT_KEYS)
-    + r"):\s*)(?P<value>[^\s#]+)(?P<tail>.*)$"
+    + r"):\s*)(?P<value>\"[^\"]*\"|'[^']*'|[^\s#]+)(?P<tail>.*)$"
 )
 
 
@@ -106,13 +119,16 @@ def relocate_value(
         aliases: Prior directory aliases (see ``load_aliases``).
 
     Returns:
-        The relocated value, or ``value`` unchanged if it is not absolute and
-        not under an old root, or already relocated (starts with ``${``).
+        The relocated value, or ``value`` unchanged if it is relative, null or
+        already under an environment root.
 
     Raises:
-        RelocationError: The value is absolute but under no old root.
+        RelocationError: The value starts with ``/``, ``~`` or ``${`` and is
+            under no old root.
     """
-    if value.startswith("${") or not value.startswith("/"):
+    if value.startswith((f"{PRIOR_ROOT}/", f"{CKPT_ROOT}/")):
+        return value
+    if not value.startswith(("/", "~", "${")):
         return value
     rel = _strip_root(value, old_roots)
     if rel is None:
@@ -146,7 +162,8 @@ def relocate_text(
         The new text and the number of values that changed.
 
     Raises:
-        RelocationError: A path value is absolute but under no old root.
+        RelocationError: A path value cannot be relocated (see
+            ``relocate_value``).
     """
     changed = 0
     out = []
@@ -155,10 +172,13 @@ def relocate_text(
         newline = line[len(stripped) :]
         match = _LINE.match(stripped)
         if match:
-            new = relocate_value(match["key"], match["value"], old_roots, aliases)
-            if new != match["value"]:
+            value = match["value"]
+            quote = value[0] if value[0] in "\"'" else ""
+            inner = value[1:-1] if quote else value
+            new = relocate_value(match["key"], inner, old_roots, aliases)
+            if new != inner:
                 changed += 1
-                stripped = f"{match['head']}{new}{match['tail']}"
+                stripped = f"{match['head']}{quote}{new}{quote}{match['tail']}"
         out.append(stripped + newline)
     return "".join(out), changed
 

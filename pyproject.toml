@@ -94,7 +94,7 @@ track_mjx = [
 markers = [
     "gpu: needs a CUDA GPU (warp backend or renderer)",
     "slow: > 30 s",
-    "artifact: needs DMPO_PRIOR_ROOT or DMPO_CHECKPOINT_ROOT",
+    "artifact: needs DMPO_PRIOR_ROOT or DMPO_CKPT_ROOT",
 ]
 
 [tool.ruff]

@@ -330,24 +330,24 @@ def test_behavior_mix_without_frozen_params_raises_at_build_time():
 # ---------------------------------------------------------------------------
 
 # This checkpoint is a local artifact, not something the repo ships or CI can
-# provision -- point DMPO_CHECKPOINT_ROOT at a directory containing
+# provision -- point DMPO_CKPT_ROOT at a directory containing
 # arm_i1_nstep100_proprio/DMPONetwork_297676800 to exercise these two tests.
 # Unset (the default everywhere but the machine that produced the checkpoint)
 # means they skip visibly rather than silently passing or hard-failing.
-_DMPO_CHECKPOINT_ROOT = os.environ.get("DMPO_CHECKPOINT_ROOT")
+_DMPO_CKPT_ROOT = os.environ.get("DMPO_CKPT_ROOT")
 _I1_CKPT = (
     os.path.join(
-        _DMPO_CHECKPOINT_ROOT,
+        _DMPO_CKPT_ROOT,
         "arm_i1_nstep100_proprio/DMPONetwork_297676800",
     )
-    if _DMPO_CHECKPOINT_ROOT
+    if _DMPO_CKPT_ROOT
     else None
 )
 _SKIP_NO_DENSE_CKPT = (
     _I1_CKPT is None or not __import__("pathlib").Path(_I1_CKPT).is_dir()
 )
 _SKIP_REASON = (
-    "dense reference checkpoint not available: set DMPO_CHECKPOINT_ROOT to a "
+    "dense reference checkpoint not available: set DMPO_CKPT_ROOT to a "
     "directory containing arm_i1_nstep100_proprio/DMPONetwork_297676800"
 )
 

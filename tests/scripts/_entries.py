@@ -25,6 +25,7 @@ ENTRIES = {
         "train_dmpo_highlvl_kl_anchor.py",
         ("vnl_playground.naccdmax_patch", "vnl_playground.tasks.wrappers_kl_anchor"),
     ),
+    "highlvl": ("train_dmpo_highlvl.py", ("vnl_playground.naccdmax_patch",)),
 }
 
 # Variables the entries set with os.environ.setdefault at import time. They

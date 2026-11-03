@@ -1,12 +1,12 @@
 # @package _global_
 # Degraded-vision ladder: vision_noise_std=0.5, 1B steps, eval every 50M, warm-
 # started from the final policy of the fast-anneal arm with otherwise the same
-# recipe. Clean eye-image spatial contrast is 0.3192, so SNR = 0.64. Noise
-# exceeds signal. The dense->sparse anneal is on (forward_velocity 0.25, lambda
-# 1->0 over 20M, behavior_mix 1.0/10M/20M, critic_warmup 5000): each rung is a
-# re-bootstrap on top of the grafted policy, so expect a deep trough after the
-# handover. The ladder is single-factor in sigma; read it against the sigma=0
-# rung.
+# recipe. Clean eye-image spatial contrast is 0.3192, so SNR = 0.64.
+# Functionally blind; noise exceeds signal and the clip saturates the image. The
+# dense->sparse anneal is on (forward_velocity 0.25, lambda 1->0 over 20M,
+# behavior_mix 1.0/10M/20M, critic_warmup 5000): each rung is a re-bootstrap on
+# top of the grafted policy, so expect a deep trough after the handover. The
+# ladder is single-factor in sigma; read it against the sigma=0 rung.
 #
 # DMPO variant B (kl_anchor_b_aggressive) on the corridor gap-jump task with a
 # frozen imitation prior and decoder: only the policy head (binocular CNN
@@ -96,7 +96,7 @@ env_config:
     # Dense shaping term, ANNEALED to zero by train_config.reward_anneal_*:
     # the rollout stores  sparse + lambda(t) * (total - sparse), so this term
     # contributes lambda(t) * 0.25 * clip(v/0.8, 0, 1) per step and is GONE
-    # from the stored reward after 150M env steps. weight 0.25 (not 1.0)
+    # from the stored reward after 20M env steps. weight 0.25 (not 1.0)
     # bounds the dense value at gamma=0.995 to <= 0.25 * 200 = 50 so the
     # critic support below can bracket it without starving sparse resolution.
     forward_velocity:
@@ -199,10 +199,12 @@ train_config:
   max_replay_size: 2_355_200
   sequence_length: 101  # n_step + 1: bootstrap comes from observation[:, 100]
   samples_per_insert: 2.0
-  # Replay reuse matched to the reference implementation. Under sparse reward
-  # this is load-bearing rather than a tuning knob: at the frozen prior's initial
-  # crossing rate the replay holds only a handful of rewarding transitions, and K
-  # is how many times each one is revisited before eviction.
+  # sgd_steps_per_rollout (K) is how many times each transition is revisited
+  # before eviction. Under sparse reward this is load-bearing rather than a tuning
+  # knob: at the frozen prior's initial crossing rate the replay holds only a
+  # handful of rewarding transitions. K=324 matches the reference implementation's
+  # replay reuse (realized samples-per-insert 3.24); K=50 is the feedforward
+  # learner clock.
   sgd_steps_per_rollout: 50
   # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
   # per rollout; x iters_per_chunk. K=200 (batch=256) is severely off-policy.
@@ -229,7 +231,7 @@ train_config:
   # ---- Compressed replay (see DMPOConfig) --------------------------------
   # next_observation dropped (observation[:, n] bootstraps; needs seq=n+1)
   # and vision stored uint8 (renderer unpacks 8-bit channels; error <=1/510).
-  # 3.75 KB/transition (was 19.04) => 5.08x. Sized for ~90% of the 32,607 MiB
+  # 3.75 KB/transition (19.04 KB uncompressed) => 5.08x. Sized for ~90% of the 32,607 MiB
   # card: non-buffer ~20.2 GB + buffer 8.2 GB. 2,355,200 = 1150*2048 exactly.
   # Depth lever if more wanted: num_envs 1024 -> 2300 steps/env at ~half sps.
   store_next_observation: false
@@ -237,17 +239,17 @@ train_config:
   # ---- Warm-start transition machinery (see DMPOConfig for semantics) ----
   # Policy+target+normalizer are grafted from the dense reference checkpoint
   # (transfer.warm_start_dmpo_checkpoint below); critic and duals are FRESH.
-  # Critic-only stage (first ~10M env steps): 5000 SGD updates at K=50 fit the
-  # fresh critic on frozen-dense-policy data scored under the mixed reward before
-  # the policy is allowed to move.
+  # Critic-only stage (first ~10M env steps): 5000 SGD updates at
+  # K=50 fit the fresh critic on frozen-policy data scored under the
+  # mixed reward before the policy is allowed to move.
   critic_warmup_sgd_steps: 5000
-  # Dense component weight lambda(t): 1 at 0, linearly to 0 at 150M, 0 after.
-  # The back half of the 300M budget is pure sparse -- the retention test.
+  # Dense component weight lambda(t): 1 at 0, linearly to 0 at 20M, 0 after.
+  # The rest of the 1000M budget is pure sparse -- the retention test.
   reward_anneal_sparse_key: "rewards/gap_crossing_bonus"
   reward_anneal_env_steps: 20000000
   # Behavior mixing: all envs act with the frozen dense policy until 10M
   # (buffer prefill under the new reward), then the frozen share decays
-  # linearly to 0 at 150M, in lockstep with the reward anneal.
+  # linearly to 0 at 20M, in lockstep with the reward anneal.
   behavior_mix_init: 1.0
   behavior_mix_hold_env_steps: 10000000
   behavior_mix_end_env_steps: 20000000
@@ -316,7 +318,7 @@ logging_config:
   project_name: dmpo-rodent
   exp_name: arm_e3_noise050
   group_name: RodentRunGapBinocularVision-frozen-prior
-  notes: "Degraded-vision ladder: vision_noise_std=0.5, 1B steps, eval every 50M, warm-started from the final policy of the fast-anneal arm with otherwise the same recipe. Clean eye-image spatial contrast is 0.3192, so SNR = 0.64. Noise exceeds signal. The dense->sparse anneal is on (forward_velocity 0.25, lambda 1->0 over 20M, behavior_mix 1.0/10M/20M, critic_warmup 5000): each rung is a re-bootstrap on top of the grafted policy, so expect a deep trough after the handover. The ladder is single-factor in sigma; read it against the sigma=0 rung."
+  notes: "Degraded-vision ladder: vision_noise_std=0.5, 1B steps, eval every 50M, warm-started from the final policy of the fast-anneal arm with otherwise the same recipe. Clean eye-image spatial contrast is 0.3192, so SNR = 0.64. Functionally blind; noise exceeds signal and the clip saturates the image. The dense->sparse anneal is on (forward_velocity 0.25, lambda 1->0 over 20M, behavior_mix 1.0/10M/20M, critic_warmup 5000): each rung is a re-bootstrap on top of the grafted policy, so expect a deep trough after the handover. The ladder is single-factor in sigma; read it against the sigma=0 rung."
 
 # Anchored at DMPO_CKPT_ROOT (default ./dmpo_checkpoints). Set DMPO_CKPT_ROOT to
 # an absolute path: a relative path resolves against the launch directory, so a

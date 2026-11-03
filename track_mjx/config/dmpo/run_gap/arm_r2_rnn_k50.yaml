@@ -191,20 +191,19 @@ train_config:
   # baselines all live inside 300M.
   num_timesteps: 300_000_000
   unroll_length: 50
-  # batch_size 1024 -> 256. With the [B, L] loss points folded into the batch,
-  # every learner intermediate scales with B*L: at B=1024 that is 20,480 loss
-  # points -- 20x the FF path's batch -- and smoke runs OOMed (8.96 then 7.19 GiB
-  # allocations; the sequential-map fix for the E-step/bootstrap cuts forward
-  # peaks but cannot cut BACKWARD storage for the critic-loss grad and the BPTT
-  # unroll). B=256 divides all of it by 4: B*L = 5,120 loss points/update, and
-  # K=10 x 256 x L=20 = 51,200 loss-state visits per rollout = EXACTLY the FF
-  # baseline's K=50 x 1024 revisit rate.
+  # batch_size 512 (the first recurrent variant used 256 with K=10). With the
+  # [B, L] loss points folded into the batch, every learner intermediate
+  # scales with B*L: at B=512 and L=20 that is 10,240 loss points per update,
+  # 10x the FF path's batch. B=1024 (20,480 loss points) ran out of memory in
+  # smoke runs (8.96 then 7.19 GiB allocations; the sequential-map fix for the
+  # E-step/bootstrap cuts forward peaks but cannot cut BACKWARD storage for
+  # the critic-loss grad and the BPTT unroll).
   batch_size: 512
   min_replay_size: 50_000
   # Replay depth under the fatter transition. The f16 GRU-256 hidden adds 512 B:
   # 3.75 -> 4.25 KB/transition (+13.3%; verify against the startup "Replay
   # transition size" line). 2,355,200 = 1150 steps/env x 2048 envs = 23.0
-  # rollouts (~51 s) of history, the same time-depth as the feedforward baseline's
+  # rollouts of history, the same time-depth as the feedforward baseline's
   # replay, at 4.25 KB/transition => 10.0 GB. Valid window starts per env:
   # 1150 - 120 + 1 = 1031. Usable memory is bounded by buffer + full-leaf
   # transients: 30 rollouts (3,072,000) fails XLA autotuning on rb.add's per-leaf
@@ -216,13 +215,15 @@ train_config:
   # window plus the bootstrap state (and its stored hidden) at observation[:, t + n].
   sequence_length: 120
   samples_per_insert: 2.0
-  # K 50 -> 10. Each recurrent update costs ~L x the FF E-step
-  # (num_samples=20 critic-CNN applies PER loss point: 20 x 1024 x 20 ~ 410k
-  # critic forwards/update at L=20). K=10 holds per-rollout loss-point
-  # visits to 10 x 1024 x 20 = 204,800 = 4x the FF baseline's 51,200 at ~4x
-  # the SGD FLOPs -- reuse per rare rewarding transition goes UP while
-  # wall-clock stays bounded. Reserve lever (not used here): split the critic
-  # into encode(obs)/head(emb, a) so the 20 samples share one CNN embedding.
+  # K = 50, the feedforward learner clock (K costs no memory: lax.scan over
+  # K). The MPO temperature/dual/target clocks tick per SGD step, so K sets
+  # how fast training takes off in env steps. Each recurrent update costs ~L x
+  # the FF E-step (num_samples=20 critic-CNN applies PER loss point: 20 x 512
+  # x 20 ~ 205k critic forwards/update at B=512, L=20), so K=50 gives 50 x 512
+  # x 20 = 512,000 loss-state visits per rollout, 10x the FF baseline's
+  # 51,200. The first recurrent variant ran K=10 at batch 256. Reserve lever
+  # (not used here): split the critic into encode(obs)/head(emb, a) so the 20
+  # samples share one CNN embedding.
   sgd_steps_per_rollout: 50
   # BPTT unroll depth L = the MEMORY horizon (~200 ms at 100 Hz), not the reward
   # horizon (n_step stays 100). >0 switches the learner to the R2D2-style

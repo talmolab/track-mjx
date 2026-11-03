@@ -177,10 +177,12 @@ train_config:
   max_replay_size: 400_000
   sequence_length: 100
   samples_per_insert: 2.0
-  # Replay reuse matched to the reference implementation. Under sparse reward
-  # this is load-bearing rather than a tuning knob: at the frozen prior's initial
-  # crossing rate the replay holds only a handful of rewarding transitions, and K
-  # is how many times each one is revisited before eviction.
+  # sgd_steps_per_rollout (K) is how many times each transition is revisited
+  # before eviction. Under sparse reward this is load-bearing rather than a tuning
+  # knob: at the frozen prior's initial crossing rate the replay holds only a
+  # handful of rewarding transitions. K=324 matches the reference implementation's
+  # replay reuse (realized samples-per-insert 3.24); K=50 is the feedforward
+  # learner clock.
   sgd_steps_per_rollout: 324
   # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
   # per rollout; x iters_per_chunk. K=200 (batch=256) is severely off-policy.

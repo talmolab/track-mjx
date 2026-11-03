@@ -13,8 +13,9 @@
 # obs['state'] alone and drops privileged_state. DMPO parameters are those of
 # the pure-sparse cold-start gap recipe, unchanged: K=50,
 # min_log_temperature=-7.0, n_step=100, gamma=0.995, C51 [0,20]x101,
-# num_envs=2048, max_replay_size=400k, action_penalization off,
-# epsilon_stddev=1e-3. That recipe is used rather than the warm-start one
+# num_envs=2048, action_penalization off, epsilon_stddev=1e-3; only the replay
+# differs: the compressed 2,355,200-transition buffer (1150 steps/env) instead
+# of the gap recipe's 400k. That recipe is used rather than the warm-start one
 # because warm start, reward anneal and behavior mixing all need a dense
 # reference checkpoint FOR THIS TASK, and none exists. C51 [0, 20] needs no
 # rescaling: n_treats=20 at weight 1.0 makes the undiscounted return literally
@@ -338,12 +339,13 @@ train_config:
   # is the deepest depth known to fit; going deeper needs the insert-path
   # transient measured, not the steady footprint.
   #
-  # THIS IS AN ALGORITHM CHANGE, not just a memory one. A buffer 9.8x deeper at
-  # fixed sgd_steps_per_rollout=50 revisits each transition ~10x fewer times
-  # before eviction and the average sample is ~10x staler. Under sparse reward
-  # that cuts both ways: rare rewarding transitions survive far longer, but the
-  # critic trains on older policy data. If learning slows, this is the first
-  # suspect, and sgd_steps_per_rollout is the knob that compensates.
+  # THIS IS AN ALGORITHM CHANGE, not just a memory one. A buffer 5.9x deeper
+  # (1150 vs 195 steps/env) at fixed sgd_steps_per_rollout=50 revisits each
+  # transition ~6x fewer times before eviction and the average sample is ~6x
+  # staler. Under sparse reward that cuts both ways: rare rewarding transitions
+  # survive far longer, but the critic trains on older policy data. If learning
+  # slows, this is the first suspect, and sgd_steps_per_rollout is the knob that
+  # compensates.
   max_replay_size: 2_355_200
   # 101 = n_step + 1, REQUIRED by store_next_observation: false below --
   # the bootstrap state is read from observation[:, 100] instead of from a
@@ -351,9 +353,9 @@ train_config:
   sequence_length: 101
   # ---- Compressed replay -------------------------------------------------------
   # NOT optional here, unlike on the gap task: at 2048 envs the buffer is
-  # [num_envs, max_size, obs] = [2048, 195, 2048] per observation field, and
-  # storing next_observation as well at fp32 makes that 6.5 GB of vision
-  # alone. Without compression the replay scatter dies with
+  # [num_envs, max_size, obs] = [2048, 195, 2048] per observation field at the
+  # 400K gap-task depth, and storing next_observation as well at fp32 makes that
+  # 6.5 GB of vision alone. Without compression the replay scatter dies with
   #   INTERNAL: Autotuning failed for HLO %loop_transpose_fusion
   #   f32[2048,195,2048] ... NOT_FOUND: No valid config found!
   # which is an out-of-memory in autotuner clothing. Dropping
@@ -367,10 +369,12 @@ train_config:
   store_next_observation: false
   vision_uint8_storage: true
   samples_per_insert: 2.0
-  # Replay reuse matched to the reference implementation. Under sparse reward
-  # this is load-bearing rather than a tuning knob: at the frozen prior's initial
-  # crossing rate the replay holds only a handful of rewarding transitions, and K
-  # is how many times each one is revisited before eviction.
+  # sgd_steps_per_rollout (K) is how many times each transition is revisited
+  # before eviction. Under sparse reward this is load-bearing rather than a tuning
+  # knob: at the frozen prior's initial crossing rate the replay holds only a
+  # handful of rewarding transitions. K=324 matches the reference implementation's
+  # replay reuse (realized samples-per-insert 3.24); K=50 is the feedforward
+  # learner clock.
   sgd_steps_per_rollout: 50
   # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
   # per rollout; x iters_per_chunk. K=200 (batch=256) is severely off-policy.
@@ -461,9 +465,10 @@ logging_config:
 # steps, skips auto-resume and exits early.
 checkpoint_dir: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/maze_a2_posture_1b
 
-# KEEP EVERY CHECKPOINT. The default is the last 3, which at eval_every_steps
-# 25M is only the last 75M of a 1B run -- useless for probing how the policy
-# develops. 40 checkpoints x ~58 MB = ~2.3 GB, which is nothing. `null` = all.
+# KEEP EVERY CHECKPOINT: `null` retains every checkpoint (none is ever pruned),
+# so the policy's development can be probed at any step. At eval_every_steps 25M
+# that is 40 checkpoints x ~58 MB = ~2.3 GB over a 1B run, which is nothing. A
+# finite value would delete older step directories.
 checkpoint_max_to_keep: null
 
 # See the header: this is the one setting that silently voids the experiment if

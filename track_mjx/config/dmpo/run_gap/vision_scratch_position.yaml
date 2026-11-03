@@ -4,7 +4,11 @@
 # actuator mode, same observation modalities; differs only in algorithm (DMPO
 # instead of PPO) and network shape (no 16-D fusion bottleneck in this run).
 #
-# Entry point: python scripts/train_dmpo_highlvl.py --config-name=run_gap/<file name>
+# No ported entry point runs this arm as-is, so it is kept for the record:
+# scripts/train_dmpo_highlvl.py reads transfer.prior_checkpoint_path
+# unconditionally and this arm is from_scratch with no prior, and the from-
+# scratch path of scripts/train_dmpo_highlvl_kl_anchor.py requires a recurrent
+# policy head, which this feedforward arm does not have.
 defaults:
   - /base
   - _self_

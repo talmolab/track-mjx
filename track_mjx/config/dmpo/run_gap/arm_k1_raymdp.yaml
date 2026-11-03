@@ -72,16 +72,11 @@ env_config:
   randomize_gaps: true
   aesthetic: "outdoor_natural"
   use_mesh_platforms: true
-  # REWARD IS VELOCITY-ONLY, matching the PPO reference EXACTLY
-  # (env_args.reward_terms == {"forward_velocity": {weight: 1.0, target_speed:
-  # 0.8}}). velocity_only_kl_anchor.yaml additionally sets
-  # gap_crossing_bonus.weight=10. That term is DROPPED here: keeping it would make
-  # this a two-factor change (algorithm AND reward) against the PPO run, so no
-  # algorithm claim could be made from the comparison. It is also not needed to
-  # elicit gap-crossing -- the PPO reference crossed 13 gaps in its best episode
-  # on velocity alone, because crossing is instrumentally required to keep moving
-  # forward. `eval/total_gap_crossings` is logged regardless of whether the bonus
-  # is on. A gap-bonus arm is the natural follow-up, run one factor at a time.
+  # REWARD: the reference implementation's MDP, forward_velocity_upright =
+  # tent(xvel; 1.0) x upright(30 deg), replacing the PPO-matched
+  # forward_velocity term (target_speed 0.8) that the other arms of this
+  # family use. The termination below is likewise the reference's
+  # (end_effector_height only).
   reward_terms:
     forward_velocity_upright:
       weight: 1.0

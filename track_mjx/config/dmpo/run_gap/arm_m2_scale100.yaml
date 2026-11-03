@@ -72,11 +72,11 @@ env_config:
   randomize_gaps: true
   aesthetic: "outdoor_natural"
   use_mesh_platforms: true
-  # SPARSE REGIME. forward_velocity is removed; the only reward is a +1 the step
-  # the agent clears a new gap. `weight: 1.0` is deliberate -- it makes the
-  # undiscounted episode return literally "gaps crossed", so
-  # `batch/mean_episode_reward` and `batch/gap_crossings_per_episode` are the same
-  # quantity and disagree only if something is miswired.
+  # SPARSE REGIME. forward_velocity is removed; the only reward is a bonus the
+  # step the agent clears a new gap. This arm sets `weight: 100.0` (the C51
+  # support is scaled to match, see below). At weight 1.0 the undiscounted
+  # episode return would be literally "gaps crossed"; here
+  # `batch/mean_episode_reward` is 100 x `batch/gap_crossings_per_episode`.
   #
   # The bonus cannot be farmed: run_gap.py keeps a high-water mark
   # (`gaps_crossed = max(new, old)`), so rocking backward and forward over one
@@ -177,10 +177,12 @@ train_config:
   max_replay_size: 400_000
   sequence_length: 100
   samples_per_insert: 2.0
-  # Replay reuse matched to the reference implementation. Under sparse reward
-  # this is load-bearing rather than a tuning knob: at the frozen prior's initial
-  # crossing rate the replay holds only a handful of rewarding transitions, and K
-  # is how many times each one is revisited before eviction.
+  # sgd_steps_per_rollout (K) is how many times each transition is revisited
+  # before eviction. Under sparse reward this is load-bearing rather than a tuning
+  # knob: at the frozen prior's initial crossing rate the replay holds only a
+  # handful of rewarding transitions. K=324 matches the reference implementation's
+  # replay reuse (realized samples-per-insert 3.24); K=50 is the feedforward
+  # learner clock.
   sgd_steps_per_rollout: 324
   # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
   # per rollout; x iters_per_chunk. K=200 (batch=256) is severely off-policy.
@@ -244,6 +246,8 @@ train_config:
   # matters less than it looks -- the learner feeds `dist.mean()` to the
   # E-step, and the categorical mean is continuous in the target regardless of
   # spacing -- so 101 is chosen for distribution shape, not for the mean.
+  # This arm: reward weight 100 and vmax 2000 (support [0, 2000]x101), so a
+  # crossing lands on the same atom as with weight 1 and [0, 20].
   vmin: 0.0
   vmax: 2000.0
   num_atoms: 101

@@ -1,0 +1,172 @@
+# @package _global_
+# Vision-guided sparse maze foraging (RodentMazeForageVision): legacy PPO high-
+# level-transfer template, not a DMPO arm. A rat is dropped into a FIXED box-
+# walled maze and must find n_treats treats using only its egocentric camera:
+# task_obs carries no treat vector, so the CNN is the only channel that can say
+# where a treat is. Spawn cell + heading and every treat cell are resampled each
+# reset(); the maze layout is fixed for the whole run.
+
+env_config:
+  env_name: RodentMazeForageVision
+  task_name: maze_forage_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  # Only vision_width / vision_height / grayscale / binocular are forwarded
+  # into the env's config_overrides (train_highlvl.py); the rest of the keys in
+  # this block are read straight off env_config by VisionRenderWrapper.
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  use_textures: true    # the maze walls are a checker texture; keep this on
+  use_shadows: true
+  env_args:
+    # Every key here must already exist in maze_forage_vision.default_config():
+    # MjxEnv.__init__ LOCKS the ConfigDict, so an unknown key raises.
+    episode_length: 1000
+    naconmax: 20480       # 20 * num_envs (1024)
+    njmax: 400
+    torque_actuators: true
+    rescale_factor: 0.9
+    # -- Maze (fixed for the whole run; regenerated only if maze_seed changes)
+    # The arena is maze_extent x maze_extent metres for EVERY maze_cells:
+    # cell_size is DERIVED as maze_extent / (2*maze_cells + 1), so turning
+    # maze_cells up narrows the corridors instead of growing the arena.
+    # env.maze_extent re-derives the realised footprint off the geometry and
+    # __init__ raises if it does not match this number.
+    maze_extent: 6.46       # m, outer extent of the maze footprint (square)
+    maze_cells: 10          # -> 21 x 21 character grid, cell_size = 6.46/21
+    # Corridor width is 2*cell_size - wall_thickness (env.corridor_width),
+    # NOT cell_size. At maze_cells=10 that is 0.465 m against a rat measured
+    # 0.308 m long x 0.080 m wide x 0.092 m tall (AABB over the rodent geoms
+    # at rescale_factor 0.9), so a corridor clears the body length and the rat
+    # can turn around without relying on spine flexion. Alternatives in the
+    # same 6.46 m arena: maze_cells 8 -> 0.610 m / 127 cells,
+    # 12 -> 0.367 m / 287 cells (above body length, but only just).
+    # NOTE corridor segments flanked by a multi-cell wall rectangle are not
+    # thinned on that axis; the narrowest one in the shipped maze is 0.386 m
+    # -- see test_corridor_width_*.
+    # Leave cell_size unset (null) unless you also set a matching maze_extent.
+    cell_size: null
+    wall_height: 0.3        # m; occludes and cannot be climbed
+    wall_thickness: 0.15    # m
+    maze_seed: 0
+    maze_loop_fraction: 0.0
+    # -- Treats (resampled without replacement every reset)
+    n_treats: 20
+    treat_radius: 0.05
+    treat_height: 0.125
+    treat_reach_threshold: 0.1
+    park_depth: 1.0         # collected treats slide this far underground
+    # -- Spawn
+    spawn_height: 0.005
+    # -- Observation. `origin` is the world origin in the torso frame, i.e. an
+    #    exact allocentric position + heading fix in a FIXED maze -- global
+    #    self-localisation for free. That defeats the vision-only premise and
+    #    confounds any "the CNN learned to localise" claim, so it is OFF.
+    #    Set it true only to recover go_to_target_vision's task_obs contract
+    #    as an explicit ablation.
+    include_origin: false
+    # -- Reward: SPARSE, +1 per treat on first reach. Nothing else. Adding a
+    #    dense shaping term here would defeat the point of the task.
+    reward_terms:
+      treat_collected:
+        weight: 1.0
+    # -- Termination. NOTE: the `timeout` termination is registered by the env
+    #    but deliberately left out. Truncation is EpisodeWrapper's job
+    #    (train_config.episode_length below); a second, env-side step budget
+    #    would only be a way to get the two out of sync. It is also the one
+    #    termination that hard-depends on info["step_count"] being cleared at
+    #    every episode boundary -- true only because of `wrappers.full_reset`
+    #    at the bottom of this file.
+    termination_criteria:
+      fallen:
+        min_torso_z: 0.01
+        max_torso_angle: 70
+      all_treats_collected: {}
+      nan_termination: {}
+
+network_config:
+  arch_name: shared_vision_task_obs
+  vision_latent_size: 16
+  vision_feature_size: 32
+  decoder_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256]
+
+transfer:
+  # Graft the frozen imitation decoder (from a track-mjx imitation run): the
+  # high-level policy emits an intention latent, the frozen decoder turns it into
+  # joint torques. mode defaults to "decoder_only", which is the mimic_* path.
+  # Point mimic_checkpoint_dir / mimic_run_id at a real imitation run before
+  # launching: the directory below is a placeholder and the run id is not shipped.
+  mimic_run_id: "260212_123718_492372"
+  mimic_checkpoint_dir: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/model_checkpoints
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 10_000_000
+  train_config:
+    episode_length: 1000
+    num_envs: 1024
+    num_timesteps: 1_000_000_000
+    # Constraint (track_mjx ff_ppo/ppo.py): batch_size * num_minibatches must
+    # be divisible by num_envs. 512 * 16 = 8192 = 8 * 1024. batch_size is half
+    # go_to_target's 1024 to offset the 4x rollout-buffer growth from
+    # unroll_length=40: the buffer holds
+    # (batch_size * num_minibatches) x unroll_length transitions and each
+    # transition carries the 32x32 image twice (observation + next_observation).
+    batch_size: 512
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.99
+    entropy_cost: 1e-3
+    action_repeat: 1
+    # SPARSE reward with a LONG credit path (find a treat several corridors
+    # away, get +1 once). unroll_length caps how far a reward can propagate
+    # back within one rollout segment: with unroll_length=10 the sparse credit
+    # was truncated outright in gap-jump training -- the advantage was
+    # bit-exactly 0 at the decision states and the sparse-bonus arm collapsed.
+    # 40 gives a 0.8 s horizon at ctrl_dt=0.02. Do not lower it without
+    # re-checking that the sparse term still produces non-zero advantages.
+    unroll_length: 40
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
+
+logging_config:
+  project_name: vnl-playground
+  group_name: maze-forage-vision
+  model_path: checkpoints_maze_forage_vision
+  notes: "Vision-guided sparse maze foraging (RodentMazeForageVision): legacy PPO high-level-transfer template, not a DMPO arm. A rat is dropped into a FIXED box-walled maze and must find n_treats treats using only its egocentric camera: task_obs carries no treat vector, so the CNN is the only channel that can say where a treat is. Spawn cell + heading and every treat cell are resampled each reset(); the maze layout is fixed for the whole run."
+  exp_name: maze_forage_v1
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640
+
+# MANDATORY for this task. With the historical full_reset=False,
+# BraxAutoResetWrapper restores data/obs from the FIRST reset and never clears
+# state.info, so:
+#   * env.reset() runs exactly ONCE per env index for the whole run -- each of
+#     the 1024 workers replays one frozen (spawn, heading, treat layout)
+#     forever, which voids the design's central premise, and
+#   * the `collected` bitmask ratchets, so after a worker first clears its maze
+#     it emits done=1 / reward=0 one-step episodes forever (the shape that
+#     silently invalidates DMPO gap-jump runs).
+# Both were reproduced on the real stack; full_reset=True fixes both (verified:
+# layout and `collected` both refresh across the done boundary) for ~7%
+# throughput at batch 64. train_highlvl.py raises unless this block is present,
+# because MazeForageVision sets requires_per_episode_reset=True.
+wrappers:
+  full_reset: true

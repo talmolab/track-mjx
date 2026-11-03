@@ -1,0 +1,346 @@
+# @package _global_
+# The composite warm-start recipe with (a) a FAST anneal -- dense weight and
+# frozen-behavior share both 1 -> 0 over 20M env steps (not 150M), pure sparse
+# from 20M on; and (b) a COMPRESSED 5.08x replay (next_observation dropped,
+# vision uint8) so 2,355,200 transitions fit: 1150 steps/env = 23 rollouts = ~52
+# s of experience (versus 4 rollouts / 9 s). The warm start source is unchanged.
+#
+# DMPO variant B (kl_anchor_b_aggressive) on the corridor gap-jump task with a
+# frozen imitation prior and decoder: only the policy head (binocular CNN
+# encoder and head), the critic, the MPO duals and the normalizer train unless
+# the arm says otherwise. The prior and decoder live INSIDE the policy network,
+# so MPO's KL constraints, tanh bind and action penalty act on the 38-D motor
+# action -- the range the imitation policy was trained in -- while the trainable
+# head emits a latent residual; gradients reach the head THROUGH the frozen
+# decoder. (The plain prior_decoder mode would instead make the 16-D latent
+# residual the agent's action space, where every action-space-dependent MPO
+# hyperparameter of the base config, pinned to 38-D motor-space values, is
+# wrong, and the action penalty -||a|| literally optimises for "reproduce the
+# prior".) Freezing is prior_lr_mult = decoder_lr_mult = 0.0: adam(0.0) emits
+# updates of exactly -0.0, so those subtrees are bit-identical for the whole run
+# and no code change is needed.
+#
+# Entry point: python scripts/train_dmpo_highlvl_kl_anchor.py --config-name=run_gap/<file name>
+defaults:
+  - /base
+  - _self_
+
+env_name: RodentRunGapBinocularVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentRunGapBinocularVision
+  task_name: run_gap_binocular_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  flatten_obs: false
+  episode_length: 1000
+  action_repeat: 1
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  # naconmax bumped 32768 -> 65536 (32 contacts/env at 2048 envs). A 32768 cap
+  # overflowed the broadphase at ~61740 contacts (~31/env) once behaviour
+  # diversified; contact truncation in mid-air / takeoff phases silently breaks
+  # physics and would prevent learning ballistic moves.
+  naconmax: 65536
+  njmax: 400
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  torque_actuators: true
+  rescale_factor: 0.9
+  corridor_length: 4.0
+  corridor_width: 2.0
+  platform_length_range: [0.3, 0.6]
+  gap_length_range: [0.03, 0.2]
+  n_platforms: 20
+  spawn_x: 0.5
+  randomize_gaps: true
+  aesthetic: "outdoor_natural"
+  use_mesh_platforms: true
+  # SPARSE REGIME. forward_velocity is removed; the only reward is a +1 the step
+  # the agent clears a new gap. `weight: 1.0` is deliberate -- it makes the
+  # undiscounted episode return literally "gaps crossed", so
+  # `batch/mean_episode_reward` and `batch/gap_crossings_per_episode` are the same
+  # quantity and disagree only if something is miswired.
+  #
+  # The bonus cannot be farmed: run_gap.py keeps a high-water mark
+  # (`gaps_crossed = max(new, old)`), so rocking backward and forward over one
+  # boundary pays once. It does not fire spuriously at spawn either: counting the
+  # platforms already behind spawn_x=0.5 would give >= 1.0 crossings per episode
+  # from step 1, while the early crossing rate is ~0.04.
+  reward_terms:
+    gap_crossing_bonus:
+      weight: 1.0
+    # Dense shaping term, ANNEALED to zero by train_config.reward_anneal_*:
+    # the rollout stores  sparse + lambda(t) * (total - sparse), so this term
+    # contributes lambda(t) * 0.25 * clip(v/0.8, 0, 1) per step and is GONE
+    # from the stored reward after 150M env steps. weight 0.25 (not 1.0)
+    # bounds the dense value at gamma=0.995 to <= 0.25 * 200 = 50 so the
+    # critic support below can bracket it without starving sparse resolution.
+    forward_velocity:
+      weight: 0.25
+      target_speed: 0.8
+  termination_criteria:
+    fallen:
+      min_torso_z: 0.0325
+      max_torso_angle: 85
+    nan_termination: {}
+
+network_config:
+  arch_name: dmpo_kl_anchor_b_aggressive
+  binocular_mode: shared
+  critic_use_proprio: true
+  # ---- latent residual bound -------------------------------------------------
+  # The frozen decoder must only be evaluated inside its training domain, so the
+  # policy's displacement of the prior's latent is bounded rather than free. An
+  # unbounded residual drove z hundreds of sigma (Mahalanobis) off the prior
+  # manifold, with the decoder evaluated far outside its training domain.
+  #
+  # residual_mode:
+  #   "none"        unbounded residual -- kept only to reproduce that failure.
+  #   "tanh"        isotropic, scale in raw units (the PPO wrapper's behaviour).
+  #   "sigma_tanh"  z = prior_mean + residual_scale * sigma_prior(s) * tanh(raw).
+  #                 The imitation decoder was trained on z = mu(s) + sigma(s)*eps,
+  #                 eps ~ N(0,I), and the prior's logvar is fit by KL to that same
+  #                 encoder posterior, so `residual_scale * tanh(raw)` IS eps
+  #                 restricted to (-k, k): in-distribution by construction and
+  #                 correctly anisotropic, unlike a fixed +-1 box (the latent's
+  #                 per-dim scale is ~0.83 sigma and varies 12x across dims).
+  #                 k=2 covers 95.4% of the noise the decoder saw.
+  #   "sigma_ball"  constrains the JOINT radius ||eps|| <= r instead of each dim,
+  #                 which stops the policy exploiting the corners of the per-dim
+  #                 box (per-dim |eps| sits on the ceiling while ||eps|| exceeds
+  #                 the training radius). r is read off chi^2_16: 4.00 = median
+  #                 training radius, 5.13 = 95th percentile, 5.66 = 99th.
+  residual_mode: sigma_ball
+  residual_scale: 5.0
+  vision_feature_size: 32
+  vision_channels: [4, 8, 16, 32]
+  policy_head_layer_sizes: [256, 256, 256]
+  value_hidden_layer_sizes: [512, 512, 512, 512]
+  # prior_layer_sizes / decoder_layer_sizes / intention_size are NOT set here --
+  # train_dmpo_highlvl_kl_anchor.py reads them from the prior checkpoint's own
+  # config, so the spliced param tree always matches.
+  # For 260407_183223_056788 those are:
+  #   intention_size=16  prior=[1536,1024,512]  decoder=[512,512,512,256,256]
+  #   action_size=38     obs={imitation_target:640, proprioception:277}
+
+transfer:
+  mode: kl_anchor_b_aggressive
+  # The "combined" prior (checkpoint metadata name `prior_combined_gap_v1`),
+  # distilled over clip_set=all of the reference clips. Resolved under
+  # DMPO_PRIOR_ROOT.
+  prior_checkpoint_path: ${oc.env:DMPO_PRIOR_ROOT}/260407_183223_056788
+  # DMPO warm start: policy_params + target_policy_params + normalizer_params are
+  # grafted from this checkpoint (the dense reference: 13.21 crossings/ep at
+  # ep_len 972 after 297.7M steps). It also becomes the frozen behavior policy
+  # for behavior_mix_*. The critic is NOT loaded (the support differs).
+  warm_start_dmpo_checkpoint: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/arm_i1_nstep100_proprio/DMPONetwork_297676800
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+kl_anchor:
+  # alpha_anchor 1.0 -> ~0: effectively DISABLE the KL-in-loss anchor.
+  # The anchor exists to stop a TRAINABLE prior+decoder from drifting off the
+  # imitation manifold. Freezing them achieves that structurally. With both
+  # frozen, pi_imit is the same network with residual=0, so
+  # KL(pi_theta || pi_imit) is a pure function of the residual and the anchor
+  # term degenerates into a penalty on the one thing being trained.
+  # NOT exactly 0.0: the learner gates the whole anchor branch on
+  # `if cfg.kl_anchor_alpha != 0.0`, a trace-time Python branch, so alpha=0
+  # leaves anchor_kl_mean / anchor_reward_mean pinned at 0 for the entire run and
+  # loses the ONLY continuous measure of how far z has drifted from the frozen
+  # prior. 1e-6 against a policy loss of ~5 is 7 orders down, so the gradient
+  # contribution is negligible while the diagnostic stays alive.
+  # Caveat when reading it: the wrapper recomputes pi_imit under its own
+  # normalizer, so anchor_kl also charges for DMPO normalizer drift -- read it
+  # as "policy moved OR normalizer moved", not as a pure residual measure.
+  alpha_anchor: 1.0e-6
+  w_anchor: 0.5
+  w_anchor_floor: 0.0
+  decay_sgd_steps: 0
+  # CHANGED 0.1 -> 0.0 : freeze the combined prior.
+  prior_lr_mult: 0.0
+  # CHANGED 1.0 -> 0.0 : freeze the decoder.
+  decoder_lr_mult: 0.0
+  # The only trainable block (includes the binocular CNN encoder).
+  policy_head_lr_mult: 1.0
+
+train_config:
+  num_envs: 2048
+  num_timesteps: 300_000_000
+  unroll_length: 50
+  batch_size: 1024
+  min_replay_size: 50_000
+  max_replay_size: 2_355_200
+  sequence_length: 101  # n_step + 1: bootstrap comes from observation[:, 100]
+  samples_per_insert: 2.0
+  # Replay reuse matched to the reference implementation. Under sparse reward
+  # this is load-bearing rather than a tuning knob: at the frozen prior's initial
+  # crossing rate the replay holds only a handful of rewarding transitions, and K
+  # is how many times each one is revisited before eviction.
+  sgd_steps_per_rollout: 50
+  # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
+  # per rollout; x iters_per_chunk. K=200 (batch=256) is severely off-policy.
+  iters_per_chunk: 8
+  log_every_steps: 1_000_000
+  eval_every_steps: 10_000_000
+
+  # ---- MPO overrides of the base config -------------------------------------
+  # The MO-MPO action penalty is `-||a||` over ALL action magnitudes, not just
+  # the out-of-bound part as in Acme. Its normalized weights are ADDED to the MPO
+  # weights, so ~half the cross-entropy weight mass pushes actions toward zero --
+  # directly anti-correlated with the large-amplitude torques a gap jump needs.
+  use_n_step: true
+  # n_step stays 100 -- NOT raised to match gamma's 200-step horizon. n_step is
+  # how far value propagates per update; gamma is how far it looks. They need
+  # not be equal, and raising it here would be actively harmful: sequence_length
+  # must be >= n_step, and max_size = max(sequence_length+1, max_replay_size /
+  # num_envs) = max(201, 195) = 201 at seq=200, leaving 201-200+1 = 2 valid
+  # sampling start positions per env against 96 at seq=100. Restoring 96 would need
+  # max_replay_size ~604k, i.e. +51% replay memory on a run already at 28.4 GB
+  # of 32.6 GB. Cheap in principle, OOM in practice.
+  n_step: 100
+  min_log_temperature: -7.0
+  # ---- Compressed replay (see DMPOConfig) --------------------------------
+  # next_observation dropped (observation[:, n] bootstraps; needs seq=n+1)
+  # and vision stored uint8 (renderer unpacks 8-bit channels; error <=1/510).
+  # 3.75 KB/transition (was 19.04) => 5.08x. Sized for ~90% of the 32,607 MiB
+  # card: non-buffer ~20.2 GB + buffer 8.2 GB. 2,355,200 = 1150*2048 exactly.
+  # Depth lever if more wanted: num_envs 1024 -> 2300 steps/env at ~half sps.
+  store_next_observation: false
+  vision_uint8_storage: true
+  # ---- Warm-start transition machinery (see DMPOConfig for semantics) ----
+  # Policy+target+normalizer are grafted from the dense reference checkpoint
+  # (transfer.warm_start_dmpo_checkpoint below); critic and duals are FRESH.
+  # Critic-only stage (first ~10M env steps): 5000 SGD updates at K=50 fit the
+  # fresh critic on frozen-dense-policy data scored under the mixed reward before
+  # the policy is allowed to move.
+  critic_warmup_sgd_steps: 5000
+  # Dense component weight lambda(t): 1 at 0, linearly to 0 at 150M, 0 after.
+  # The back half of the 300M budget is pure sparse -- the retention test.
+  reward_anneal_sparse_key: "rewards/gap_crossing_bonus"
+  reward_anneal_env_steps: 20000000
+  # Behavior mixing: all envs act with the frozen dense policy until 10M
+  # (buffer prefill under the new reward), then the frozen share decays
+  # linearly to 0 at 150M, in lockstep with the reward anneal.
+  behavior_mix_init: 1.0
+  behavior_mix_hold_env_steps: 10000000
+  behavior_mix_end_env_steps: 20000000
+  # Duals are frozen alongside the policy during critic warmup, so the
+  # temperature descent starts at ~10M. init +1.0 (not +10.0) puts it a few
+  # M steps from the healthy dense-regime band (~-0.5) instead of
+  # ~20M away; at +1.0 the E-step is still near-uniform (safe) against the
+  # freshly-warmed critic.
+  init_log_temperature: 1.0
+
+  # ---- gamma: 0.97 -> 0.995 --------------------------------------------------
+  # gamma IS a speed prior, which is exactly what the sparse regime removes. It
+  # discounts a later crossing relative to an earlier one, so a small gamma
+  # smuggles "hurry up" back into a reward that no longer says it.
+  #
+  # Numerically, at the dense reference's measured pace of one crossing per 73.6
+  # steps:
+  #     gamma   horizon   Q(crosses forever)   Q(crosses once, then falls)
+  #     0.97     0.33 s        1.119                    1.0
+  #     0.99     1.00 s        1.913                    1.0
+  #     0.995    2.00 s        3.242                    1.0
+  # At 0.97 the critic can barely separate a rat that runs the whole corridor
+  # from one that clears a single gap and dies -- 12% of value. At 0.995 it is
+  # 224%. Q is MPO's ENTIRE policy-improvement signal, so that separation is the
+  # experiment.
+  #
+  # KNOWN BIAS, accepted: the rollout stores discount = 1 - done, and brax's
+  # EpisodeWrapper folds the 1000-step time limit into `done`, so truncation is
+  # bootstrapped as if terminal. At gamma=0.97 that touches the last ~33 steps
+  # (3%); at 0.995 the last ~200 (20%). It is tolerable because the bias is
+  # ~state-additive and MPO's E-step is a softmax over actions AT THE SAME STATE,
+  # where an additive term cancels. It still costs critic fit quality. The proper
+  # fix is to bootstrap on truncation; note that a naive fix breaks the n-step
+  # mask -- `_alive = cumprod(discount)` is what stops post-autoreset rewards
+  # leaking into R_n -- so it needs two separate masks, and the true terminal obs
+  # is already overwritten by BraxAutoReset.
+  discount: 0.995
+
+  # ---- C51 support: [-150,150]x51 -> [0,20]x101 -----------------------------
+  # The dense support was calibrated for ~1 reward/step over ~1000 steps. The
+  # sparse return maxes out at 20 (n_platforms=20) and is never negative (the
+  # only reward term is a non-negative bonus), so [0, 20] are HARD bounds, not
+  # estimates, and no atom is wasted.
+  #
+  # Leaving it alone would have been fatal, not merely suboptimal: 300/50 = 6.0
+  # per atom, so the entire realistic value range (0 to ~3.2) would live inside
+  # ONE atom of a 51-atom head. 101 atoms over [0,20] gives 0.2. Atom count
+  # matters less than it looks -- the learner feeds `dist.mean()` to the
+  # E-step, and the categorical mean is continuous in the target regardless of
+  # spacing -- so 101 is chosen for distribution shape, not for the mean.
+  # Support brackets the MIXED return: dense (<=50 at gamma=0.995, weight
+  # 0.25) + sparse (<=~4 discounted crossings). 201 atoms -> delta=0.25,
+  # comparable to the sparse-only resolution (0.2); 201 atoms are known to fit in
+  # memory and 501 atoms are not. No negative reward terms exist, so vmin stays 0.
+  vmin: 0.0
+  vmax: 50.0
+  num_atoms: 201
+  action_penalization: false
+  # softplus(1000) ~= 1000 makes the stddev-KL Lagrange multiplier enormous at
+  # init, so the policy cannot widen. Start it small instead.
+  init_log_alpha_stddev: 1.0
+  # 1e-7 freezes the stddev update budget outright.
+  epsilon_stddev: 1.0e-3
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: arm_w2_fastanneal_bigbuffer
+  group_name: RodentRunGapBinocularVision-frozen-prior
+  notes: "The composite warm-start recipe with (a) a FAST anneal -- dense weight and frozen-behavior share both 1 -> 0 over 20M env steps (not 150M), pure sparse from 20M on; and (b) a COMPRESSED 5.08x replay (next_observation dropped, vision uint8) so 2,355,200 transitions fit: 1150 steps/env = 23 rollouts = ~52 s of experience (versus 4 rollouts / 9 s). The warm start source is unchanged."
+
+# Anchored at DMPO_CKPT_ROOT (default ./dmpo_checkpoints). Set DMPO_CKPT_ROOT to
+# an absolute path: a relative path resolves against the launch directory, so a
+# launch from the wrong directory writes to an empty dir, finds 0 checkpoint
+# steps, skips auto-resume and exits early.
+wrappers:
+  info_reset_on_done: true
+
+checkpoint_dir: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/arm_w2_fastanneal_bigbuffer
+
+eval_render_config:
+  # 50 fps against a 100 Hz control rate (ctrl_dt: 0.01) = deliberate HALF-SPEED
+  # playback (real time would be 100), so take-off and touchdown around a gap are
+  # easy to inspect: at real time a jump is over in a handful of frames and is
+  # easy to misread as a stumble. Every frame is still rendered -- this changes
+  # only the container's playback rate, not what is simulated or recorded.
+  fps: 50
+  height: 480
+  width: 640
+  camera: close_profile-rodent
+  episode_length: 1000
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_gap_crossing: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_distance_to_gap: true
+    show_lateral_deviation: true
+    show_action_magnitude: true
+    gap_flash_duration: 1.5

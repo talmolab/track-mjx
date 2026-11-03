@@ -76,6 +76,11 @@ def _manifest_ids() -> set[str]:
     return set(rows)
 
 
+def test_the_expected_arm_groups_are_present():
+    counts = {g: len(list((CONFIG_DIR / g).glob("*.yaml"))) for g in ARM_GROUPS}
+    assert all(counts.values()), counts
+
+
 @pytest.mark.parametrize("arm", ARMS, ids=ARM_NAMES)
 def test_every_arm_composes(arm):
     cfg = _compose(_name(arm))
@@ -150,6 +155,13 @@ def test_paths_hang_off_the_environment_roots(arm):
         assert raw["checkpoint_dir"].startswith(f"{CKPT_ROOT}/")
 
 
+@pytest.mark.parametrize("name", TOP_LEVEL)
+def test_top_level_checkpoint_dir_hangs_off_the_checkpoint_root(name):
+    """Configs that do not set their own run directory inherit a rooted one."""
+    raw = OmegaConf.to_container(_compose(name), resolve=False)
+    assert raw["checkpoint_dir"].startswith(f"{CKPT_ROOT}/")
+
+
 @pytest.mark.parametrize("arm", ARMS, ids=ARM_NAMES)
 def test_prior_ids_are_in_the_manifest(arm):
     ids = _manifest_ids()
@@ -157,6 +169,32 @@ def test_prior_ids_are_in_the_manifest(arm):
         if key_path[-1] == "prior_checkpoint_path" and value is not None:
             prior_id = value.removeprefix(f"{PRIOR_ROOT}/")
             assert prior_id in ids, f"{_name(arm)}: {prior_id} not in the manifest"
+
+
+def _warm_start_arm() -> str:
+    """A run_gap arm that grafts a warm-start checkpoint."""
+    for arm in ARMS:
+        if arm.parent.name == "run_gap" and "warm_start_dmpo_checkpoint: ${" in (
+            arm.read_text()
+        ):
+            return _name(arm)
+    raise AssertionError("no run_gap arm sets warm_start_dmpo_checkpoint")
+
+
+def test_resolved_paths_use_the_dummy_roots():
+    name = _warm_start_arm()
+    cfg = OmegaConf.to_container(_compose(name), resolve=True)
+    assert cfg["checkpoint_dir"] == f"/dummy/checkpoints/{name.split('/')[1]}"
+    assert cfg["transfer"]["prior_checkpoint_path"].startswith("/dummy/priors/")
+    warm_start = cfg["transfer"]["warm_start_dmpo_checkpoint"]
+    assert warm_start.startswith("/dummy/checkpoints/")
+
+
+def test_checkpoint_root_defaults_to_a_relative_directory(monkeypatch):
+    monkeypatch.delenv("DMPO_CKPT_ROOT")
+    name = _warm_start_arm()
+    cfg = OmegaConf.to_container(_compose(name), resolve=True)
+    assert cfg["checkpoint_dir"] == f"dmpo_checkpoints/{name.split('/')[1]}"
 
 
 # --- imitation configs ----------------------------------------------------------

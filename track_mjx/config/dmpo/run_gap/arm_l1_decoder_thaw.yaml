@@ -1,0 +1,234 @@
+# @package _global_
+# decoder_lr_mult 0 -> 1: the decoder trains too. The reference implementation's
+# froze_decoder only froze the TARGET decoder; its online decoder trained. Needs
+# a fresh checkpoint_dir because the optimizer-state shape changes.
+#
+# DMPO variant B (kl_anchor_b_aggressive) on the corridor gap-jump task with a
+# frozen imitation prior and decoder: only the policy head (binocular CNN
+# encoder and head), the critic, the MPO duals and the normalizer train unless
+# the arm says otherwise. The prior and decoder live INSIDE the policy network,
+# so MPO's KL constraints, tanh bind and action penalty act on the 38-D motor
+# action -- the range the imitation policy was trained in -- while the trainable
+# head emits a latent residual; gradients reach the head THROUGH the frozen
+# decoder. (The plain prior_decoder mode would instead make the 16-D latent
+# residual the agent's action space, where every action-space-dependent MPO
+# hyperparameter of the base config, pinned to 38-D motor-space values, is
+# wrong, and the action penalty -||a|| literally optimises for "reproduce the
+# prior".) Freezing is prior_lr_mult = decoder_lr_mult = 0.0: adam(0.0) emits
+# updates of exactly -0.0, so those subtrees are bit-identical for the whole run
+# and no code change is needed.
+#
+# Entry point: python scripts/train_dmpo_highlvl_kl_anchor.py --config-name=run_gap/<file name>
+defaults:
+  - /base
+  - _self_
+
+env_name: RodentRunGapBinocularVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentRunGapBinocularVision
+  task_name: run_gap_binocular_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  flatten_obs: false
+  episode_length: 1000
+  action_repeat: 1
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  # naconmax bumped 32768 -> 65536 (32 contacts/env at 2048 envs). A 32768 cap
+  # overflowed the broadphase at ~61740 contacts (~31/env) once behaviour
+  # diversified; contact truncation in mid-air / takeoff phases silently breaks
+  # physics and would prevent learning ballistic moves.
+  naconmax: 65536
+  njmax: 400
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  torque_actuators: true
+  rescale_factor: 0.9
+  corridor_length: 4.0
+  corridor_width: 2.0
+  platform_length_range: [0.3, 0.6]
+  gap_length_range: [0.03, 0.2]
+  n_platforms: 20
+  spawn_x: 0.5
+  randomize_gaps: true
+  aesthetic: "outdoor_natural"
+  use_mesh_platforms: true
+  # REWARD IS VELOCITY-ONLY, matching the PPO reference EXACTLY
+  # (env_args.reward_terms == {"forward_velocity": {weight: 1.0, target_speed:
+  # 0.8}}). velocity_only_kl_anchor.yaml additionally sets
+  # gap_crossing_bonus.weight=10. That term is DROPPED here: keeping it would make
+  # this a two-factor change (algorithm AND reward) against the PPO run, so no
+  # algorithm claim could be made from the comparison. It is also not needed to
+  # elicit gap-crossing -- the PPO reference crossed 13 gaps in its best episode
+  # on velocity alone, because crossing is instrumentally required to keep moving
+  # forward. `eval/total_gap_crossings` is logged regardless of whether the bonus
+  # is on. A gap-bonus arm is the natural follow-up, run one factor at a time.
+  reward_terms:
+    forward_velocity:
+      weight: 1.0
+      # CHANGED 0.9 -> 0.8 to match the PPO reference.
+      target_speed: 0.8
+  termination_criteria:
+    fallen:
+      min_torso_z: 0.0325
+      max_torso_angle: 85
+    nan_termination: {}
+
+network_config:
+  arch_name: dmpo_kl_anchor_b_aggressive
+  binocular_mode: shared
+  # ---- latent residual bound -------------------------------------------------
+  # The frozen decoder must only be evaluated inside its training domain, so the
+  # policy's displacement of the prior's latent is bounded rather than free. An
+  # unbounded residual drove z hundreds of sigma (Mahalanobis) off the prior
+  # manifold, with the decoder evaluated far outside its training domain.
+  #
+  # residual_mode:
+  #   "none"        unbounded residual -- kept only to reproduce that failure.
+  #   "tanh"        isotropic, scale in raw units (the PPO wrapper's behaviour).
+  #   "sigma_tanh"  z = prior_mean + residual_scale * sigma_prior(s) * tanh(raw).
+  #                 The imitation decoder was trained on z = mu(s) + sigma(s)*eps,
+  #                 eps ~ N(0,I), and the prior's logvar is fit by KL to that same
+  #                 encoder posterior, so `residual_scale * tanh(raw)` IS eps
+  #                 restricted to (-k, k): in-distribution by construction and
+  #                 correctly anisotropic, unlike a fixed +-1 box (the latent's
+  #                 per-dim scale is ~0.83 sigma and varies 12x across dims).
+  #                 k=2 covers 95.4% of the noise the decoder saw.
+  #   "sigma_ball"  constrains the JOINT radius ||eps|| <= r instead of each dim,
+  #                 which stops the policy exploiting the corners of the per-dim
+  #                 box (per-dim |eps| sits on the ceiling while ||eps|| exceeds
+  #                 the training radius). r is read off chi^2_16: 4.00 = median
+  #                 training radius, 5.13 = 95th percentile, 5.66 = 99th.
+  residual_mode: sigma_ball
+  residual_scale: 5.0
+  vision_feature_size: 32
+  vision_channels: [4, 8, 16, 32]
+  policy_head_layer_sizes: [256, 256, 256]
+  value_hidden_layer_sizes: [512, 512, 512, 512]
+  # prior_layer_sizes / decoder_layer_sizes / intention_size are NOT set here --
+  # train_dmpo_highlvl_kl_anchor.py reads them from the prior checkpoint's own
+  # config, so the spliced param tree always matches.
+  # For 260407_183223_056788 those are:
+  #   intention_size=16  prior=[1536,1024,512]  decoder=[512,512,512,256,256]
+  #   action_size=38     obs={imitation_target:640, proprioception:277}
+
+transfer:
+  mode: kl_anchor_b_aggressive
+  # The "combined" prior (checkpoint metadata name `prior_combined_gap_v1`),
+  # distilled over clip_set=all of the reference clips. Resolved under
+  # DMPO_PRIOR_ROOT.
+  prior_checkpoint_path: ${oc.env:DMPO_PRIOR_ROOT}/260407_183223_056788
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+kl_anchor:
+  # alpha_anchor 1.0 -> ~0: effectively DISABLE the KL-in-loss anchor.
+  # The anchor exists to stop a TRAINABLE prior+decoder from drifting off the
+  # imitation manifold. Freezing them achieves that structurally. With both
+  # frozen, pi_imit is the same network with residual=0, so
+  # KL(pi_theta || pi_imit) is a pure function of the residual and the anchor
+  # term degenerates into a penalty on the one thing being trained.
+  # NOT exactly 0.0: the learner gates the whole anchor branch on
+  # `if cfg.kl_anchor_alpha != 0.0`, a trace-time Python branch, so alpha=0
+  # leaves anchor_kl_mean / anchor_reward_mean pinned at 0 for the entire run and
+  # loses the ONLY continuous measure of how far z has drifted from the frozen
+  # prior. 1e-6 against a policy loss of ~5 is 7 orders down, so the gradient
+  # contribution is negligible while the diagnostic stays alive.
+  # Caveat when reading it: the wrapper recomputes pi_imit under its own
+  # normalizer, so anchor_kl also charges for DMPO normalizer drift -- read it
+  # as "policy moved OR normalizer moved", not as a pure residual measure.
+  alpha_anchor: 1.0e-6
+  w_anchor: 0.5
+  w_anchor_floor: 0.0
+  decay_sgd_steps: 0
+  # CHANGED 0.1 -> 0.0 : freeze the combined prior.
+  prior_lr_mult: 0.0
+  # CHANGED 1.0 -> 0.0 : freeze the decoder.
+  decoder_lr_mult: 1.0
+  # The only trainable block (includes the binocular CNN encoder).
+  policy_head_lr_mult: 1.0
+
+train_config:
+  num_envs: 2048
+  num_timesteps: 300_000_000
+  unroll_length: 50
+  batch_size: 1024
+  min_replay_size: 50_000
+  max_replay_size: 400_000
+  sequence_length: 50
+  samples_per_insert: 2.0
+  # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
+  # per rollout; x iters_per_chunk. K=200 (batch=256) is severely off-policy.
+  iters_per_chunk: 8
+  log_every_steps: 1_000_000
+  eval_every_steps: 10_000_000
+
+  # ---- MPO overrides of the base config -------------------------------------
+  # The MO-MPO action penalty is `-||a||` over ALL action magnitudes, not just
+  # the out-of-bound part as in Acme. Its normalized weights are ADDED to the MPO
+  # weights, so ~half the cross-entropy weight mass pushes actions toward zero --
+  # directly anti-correlated with the large-amplitude torques a gap jump needs.
+  use_n_step: true
+  n_step: 50
+  action_penalization: false
+  # softplus(1000) ~= 1000 makes the stddev-KL Lagrange multiplier enormous at
+  # init, so the policy cannot widen. Start it small instead.
+  init_log_alpha_stddev: 1.0
+  # 1e-7 freezes the stddev update budget outright.
+  epsilon_stddev: 1.0e-3
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: arm_l1_decoder_thaw
+  group_name: RodentRunGapBinocularVision-frozen-prior
+  notes: "decoder_lr_mult 0 -> 1: the decoder trains too. The reference implementation's froze_decoder only froze the TARGET decoder; its online decoder trained. Needs a fresh checkpoint_dir because the optimizer-state shape changes."
+
+# Anchored at DMPO_CKPT_ROOT (default ./dmpo_checkpoints). Set DMPO_CKPT_ROOT to
+# an absolute path: a relative path resolves against the launch directory, so a
+# launch from the wrong directory writes to an empty dir, finds 0 checkpoint
+# steps, skips auto-resume and exits early.
+checkpoint_dir: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/arm_l1_decoder_thaw
+
+eval_render_config:
+  # 50 fps against a 100 Hz control rate (ctrl_dt: 0.01) = deliberate HALF-SPEED
+  # playback (real time would be 100), so take-off and touchdown around a gap are
+  # easy to inspect: at real time a jump is over in a handful of frames and is
+  # easy to misread as a stumble. Every frame is still rendered -- this changes
+  # only the container's playback rate, not what is simulated or recorded.
+  fps: 50
+  height: 480
+  width: 640
+  camera: close_profile-rodent
+  episode_length: 1000
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_gap_crossing: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_distance_to_gap: true
+    show_lateral_deviation: true
+    show_action_magnitude: true
+    gap_flash_duration: 1.5

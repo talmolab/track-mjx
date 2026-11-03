@@ -1,0 +1,199 @@
+# @package _global_
+# 3M-step smoke of the FF + privileged-critic spout-maze arm in the T MAZE with
+# the inter-trial HOLD behind a striped start gate. NOT an experiment arm.
+# Equals _smoke_t_ff_c3.yaml with these deltas: env_config.hold_enabled true,
+# hold_min_s 1.0, hold_max_s 3.0 (hold uniform over 100-300 control steps, mean
+# 2 s), gate_boundaries [1] (the gate on the start|seg1 boundary, y = -2.125);
+# gate_open_steps / gate_thickness / gate_bar_width stay at their defaults (20
+# steps = 0.2 s, 0.03 m, 0.05 m bars); checkpoint_dir / exp_name / notes.
+# trial_timeout_steps 1500 (15 s) is counted from the gate release, not from the
+# teleport. eval_render_config.episode_length 3000 (a full 30 s episode), as in
+# _smoke_t_ff_c3.
+#
+# Entry point: python scripts/train_dmpo_highlvl_kl_anchor.py --config-name=spout_maze/<file name>
+
+defaults:
+  - /base
+  - _self_
+
+env_name: RodentSpoutMazeVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentSpoutMazeVision
+  task_name: spout_maze
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  flatten_obs: false
+  episode_length: 3000
+  action_repeat: 1
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  naconmax: 65536
+  njmax: 400
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  torque_actuators: true
+  rescale_factor: 0.9
+  wall_height: 0.3
+  wall_thickness: 0.15
+  wall_texture: "style_03/gray_bright"
+  wall_lights: 4
+  wall_light_elevation: 0.35
+  key_light_diffuse: 0.30
+  wall_light_diffuse: 0.25
+  sky: true
+  # --- T maze : TMazeSpec defaults, listed for the record ---
+  maze_shape: "T"
+  t_corridor_width: 0.25
+  t_segment_length: 0.50
+  t_n_stem_segments: 5
+  t_arm_length: 0.6875
+  t_spout_offset: 0.10
+  t_wall_thickness: 0.05
+  t_entry_margin: 0.03
+  appear_distance: 0.70
+  # --- Trials: env defaults, listed for the record ---
+  n_arms: 2
+  pay_prob: 1.0
+  dwell_steps: 30
+  trial_timeout_steps: 1500  # 15 s for T runs (Y arms keep 800)
+  start_yaw_jitter_deg: 10.0
+  critic_priv_max_trials: 20
+  # --- Inter-trial hold + striped start gate ---
+  hold_enabled: true
+  hold_min_s: 1.0
+  hold_max_s: 3.0
+  gate_boundaries: [1]
+  # --- Keep the eaten treat rendered through the dwell until the teleport ---
+  treat_visible_until_teleport: true
+  n_treats: 2
+  treat_radius: 0.05
+  treat_height: 0.125
+  treat_reach_threshold: 0.1
+  park_depth: 1.0
+  spawn_height: 0.005
+  include_origin: false
+  reward_terms:
+    spout_treat:
+      weight: 1.0
+  termination_criteria:
+    belly_up:
+      max_tilt_angle: 140.0
+      fallen_tilt_angle: 90.0
+      fallen_max_torso_z: 0.10
+      patience: 50
+    torso_too_low: {min_torso_z: 0.0325, patience: 50}
+    nan_termination: {}
+
+network_config:
+  binocular_mode: shared
+  critic_use_proprio: true
+  # Set explicitly: the graft source (gen1-MLP) was trained with these, and the
+  # graft checks them against the source's saved config.
+  residual_mode: sigma_ball
+  residual_scale: 5.0
+  vision_feature_size: 64
+  vision_channels: [4, 8, 16, 32]
+  policy_head_layer_sizes: [256, 256, 256]
+  value_hidden_layer_sizes: [1024, 1024, 1024, 1024]
+  # Critic-only task state: env info["critic_priv"], f32[8].
+  critic_privileged_dim: 8
+
+transfer:
+  prior_checkpoint_path: ${oc.env:DMPO_PRIOR_ROOT}/260827_153154_576196
+  prior_checkpoint_step: 24
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+  graft_ff_checkpoint: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/maze_gen1_prior_mlp/DMPONetwork_482816000
+
+kl_anchor:
+  alpha_anchor: 0.0
+  w_anchor: 0.5
+  w_anchor_floor: 0.0
+  decay_sgd_steps: 0
+  prior_lr_mult: 0.0
+  decoder_lr_mult: 0.0
+  policy_head_lr_mult: 1.0
+
+train_config:
+  num_envs: 256
+  num_timesteps: 3_000_000
+  # Inert on this entry point (not a DMPOConfig field); the live horizon is
+  # env_config.episode_length. Kept so env and train agree on paper.
+  episode_length: 3000
+  unroll_length: 50
+  batch_size: 512
+  min_replay_size: 50_000
+  max_replay_size: 230_400
+  rnn_bptt_length: 0
+  sequence_length: 101
+  store_next_observation: false
+  vision_uint8_storage: true
+  samples_per_insert: 2.0
+  sgd_steps_per_rollout: 50
+  iters_per_chunk: 8
+  log_every_steps: 1_000_000
+  eval_every_steps: 1_000_000
+  use_n_step: true
+  n_step: 100
+  min_log_temperature: -7.0
+  discount: 0.995
+  vmin: 0.0
+  vmax: 20.0
+  num_atoms: 101
+  action_penalization: false
+  init_log_alpha_stddev: 1.0
+  epsilon_stddev: 1.0e-3
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: _smoke_t_hold_ff_c3
+  group_name: RodentSpoutMazeVision-smoke
+  notes: "3M-step smoke of the FF + privileged-critic spout-maze arm in the T MAZE with the inter-trial HOLD behind a striped start gate. NOT an experiment arm. Equals _smoke_t_ff_c3.yaml with these deltas: env_config.hold_enabled true, hold_min_s 1.0, hold_max_s 3.0 (hold uniform over 100-300 control steps, mean 2 s), gate_boundaries [1] (the gate on the start|seg1 boundary, y = -2.125); gate_open_steps / gate_thickness / gate_bar_width stay at their defaults (20 steps = 0.2 s, 0.03 m, 0.05 m bars); checkpoint_dir / exp_name / notes."
+
+checkpoint_dir: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/_smoke_t_hold_ff_c3
+checkpoint_max_to_keep: null
+
+wrappers:
+  full_reset: true
+
+eval_render_config:
+  fps: 50
+  height: 480
+  width: 640
+  camera: close_profile-rodent
+  cameras:
+    # The panels are TRACKING cameras (centred on the rat, not on the maze), fovy 45 deg, 640x480:
+    # the visible half-height is ~0.414 * distance. From the start pose the far (top) wall is
+    # 2.55 m up the image and from an arm end the back wall is 2.68 m down, so the whole
+    # 1.625 x 2.75 m T stays in frame only from distance ~6.5 up. 4.0 would frame it from the
+    # maze centre but cut the junction and arms off from the start pose.
+    - {label: "top",   elevation: -90, azimuth: 90, distance: 7.0}
+    - {label: "close", elevation: -70, azimuth: 90, distance: 0.6}
+  episode_length: 3000  # a full 30 s episode for T runs
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_action_magnitude: true

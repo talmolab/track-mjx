@@ -188,3 +188,25 @@ def test_wrap_for_brax_training_checks_info_reset_keys(kl_anchor_entry):
     )
     with pytest.raises(ValueError, match="colected"):
         kl_anchor_entry["_wrap_for_brax_training"](_InfoEnv(), cfg)
+
+
+# --- imitation entry: observation sizes ----------------------------------------
+
+
+@pytest.mark.parametrize("reference_key", ["task_obs", "imitation_target"])
+def test_imitation_obs_sizes_accept_either_reference_key(
+    imitation_entry, reference_key
+):
+    """get_dmpo_obs_sizes keeps the env's own name for the reference half."""
+    import jax.numpy as jnp
+
+    from track_mjx.agent.dmpo.obs_utils import get_dmpo_obs_sizes
+
+    obs = {"state": {"proprioception": jnp.zeros(277), reference_key: jnp.zeros(640)}}
+    sizes = imitation_entry["_reference_and_proprio_sizes"]
+    assert sizes(get_dmpo_obs_sizes(obs)) == (640, 277)
+
+
+def test_imitation_obs_sizes_without_a_reference_raise(imitation_entry):
+    with pytest.raises(KeyError, match="no reference entry"):
+        imitation_entry["_reference_and_proprio_sizes"]({"proprioception": 277})

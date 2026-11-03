@@ -26,6 +26,7 @@ ENTRIES = {
         ("vnl_playground.naccdmax_patch", "vnl_playground.tasks.wrappers_kl_anchor"),
     ),
     "highlvl": ("train_dmpo_highlvl.py", ("vnl_playground.naccdmax_patch",)),
+    "imitation": ("train_dmpo.py", ()),
 }
 
 # Variables the entries set with os.environ.setdefault at import time. They

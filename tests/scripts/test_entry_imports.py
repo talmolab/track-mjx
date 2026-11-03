@@ -128,3 +128,63 @@ def test_graft_keys_include_critic_and_support(kl_anchor_entry, tmp_path):
         "train_config.vmax",
     ):
         assert key in str(err.value)
+
+
+def test_graft_unreadable_source_config_raises(kl_anchor_entry, tmp_path):
+    """No readable `config` item means the consistency check cannot run."""
+    check = kl_anchor_entry["_check_graft_source_config"]
+    step_dir = tmp_path / "DMPONetwork_0"
+    (step_dir / "train_state").mkdir(parents=True)  # a graft source, minus config
+    with pytest.raises(ValueError, match="could not read"):
+        check(str(step_dir), {})
+
+
+# --- kl-anchor entry: info-reset keys ------------------------------------------
+
+
+def test_unknown_info_reset_key_raises(kl_anchor_entry):
+    settings = kl_anchor_entry["_wrapper_settings"]
+    info_keys = ("collected", "n_collected", "step_count")
+    cfg = OmegaConf.create(
+        {
+            "wrappers": {
+                "info_reset_on_done": True,
+                "info_reset_keys": ["collected", "n_colected"],
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="n_colected"):
+        settings(cfg, env_info_keys=info_keys)
+
+    cfg.wrappers.info_reset_keys = ["collected", "n_collected"]
+    assert settings(cfg, env_info_keys=info_keys) == (
+        False,
+        True,
+        ("collected", "n_collected"),
+    )
+    # Without the env's info keys there is nothing to check against.
+    cfg.wrappers.info_reset_keys = ["anything"]
+    assert settings(cfg) == (False, True, ("anything",))
+
+
+def test_wrap_for_brax_training_checks_info_reset_keys(kl_anchor_entry):
+    """The wrap helper reads the env's info keys from an abstract reset."""
+    import flax.struct
+    import jax.numpy as jnp
+
+    @flax.struct.dataclass
+    class _State:
+        info: dict
+
+    class _InfoEnv:
+        def reset(self, rng):
+            del rng
+            return _State(
+                info={"collected": jnp.zeros(3, bool), "step_count": jnp.int32(0)}
+            )
+
+    cfg = OmegaConf.create(
+        {"wrappers": {"info_reset_on_done": True, "info_reset_keys": ["colected"]}}
+    )
+    with pytest.raises(ValueError, match="colected"):
+        kl_anchor_entry["_wrap_for_brax_training"](_InfoEnv(), cfg)

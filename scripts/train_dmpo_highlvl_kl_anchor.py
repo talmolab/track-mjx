@@ -122,25 +122,51 @@ except ImportError:
 # frozen-layout half.
 
 
-def _wrapper_settings(cfg):
+def _wrapper_settings(cfg, env_info_keys=None):
     """Reads the optional top-level ``wrappers:`` block.
 
     Args:
         cfg: The hydra config.
+        env_info_keys: The keys of the env's ``state.info`` after a reset. When
+            given, every ``info_reset_keys`` entry must be one of them.
 
     Returns:
         ``(full_reset, info_reset_on_done, info_reset_keys)``; the keys tuple is
         ``None`` when the config does not name any.
+
+    Raises:
+        ValueError: If ``env_info_keys`` is given and an ``info_reset_keys``
+            entry is not among them. A misspelt key is never reset, so the
+            ratchet it was listed to stop would keep running.
     """
     wrap_cfg = cfg.get("wrappers", None)
     if not wrap_cfg:
         return False, False, None
     keys = wrap_cfg.get("info_reset_keys", None)
+    keys = tuple(keys) if keys else None
+    if keys is not None and env_info_keys is not None:
+        unknown = [k for k in keys if k not in set(env_info_keys)]
+        if unknown:
+            raise ValueError(
+                f"wrappers.info_reset_keys names {unknown}, which the env's "
+                f"state.info does not hold (it holds {sorted(env_info_keys)}). "
+                "Fix the key names; an unknown key would never be reset."
+            )
     return (
         bool(wrap_cfg.get("full_reset", False)),
         bool(wrap_cfg.get("info_reset_on_done", False)),
-        tuple(keys) if keys else None,
+        keys,
     )
+
+
+def _env_info_keys(environment) -> tuple[str, ...]:
+    """The keys of ``environment.reset(rng).info``, from an abstract trace.
+
+    ``jax.eval_shape`` traces the reset without running it, so no env step or
+    device computation happens.
+    """
+    state = jax.eval_shape(environment.reset, jax.random.PRNGKey(0))
+    return tuple(state.info)
 
 
 def _wrap_for_brax_training(
@@ -165,8 +191,18 @@ def _wrap_for_brax_training(
 
     Returns:
         The wrapped environment.
+
+    Raises:
+        ValueError: If ``wrappers.info_reset_keys`` names a key that
+            ``environment``'s ``state.info`` does not hold.
     """
-    full_reset, info_reset_on_done, info_reset_keys = _wrapper_settings(cfg)
+    wrap_cfg = cfg.get("wrappers", None) or {}
+    env_info_keys = (
+        _env_info_keys(environment) if wrap_cfg.get("info_reset_keys", None) else None
+    )
+    full_reset, info_reset_on_done, info_reset_keys = _wrapper_settings(
+        cfg, env_info_keys
+    )
     brax_env = mp_wrapper.wrap_for_brax_training(
         environment,
         episode_length=episode_length,
@@ -311,7 +347,9 @@ def _check_graft_source_config(graft_path: str, cfg_dict: dict) -> None:
     Reads the source's saved ``config`` item and compares `_GRAFT_CONFIG_KEYS`.
 
     Raises:
-        ValueError: listing every mismatching key.
+        ValueError: if the source's ``config`` item cannot be read (the check
+            cannot run, so the graft is refused), or listing every mismatching
+            key.
     """
     import orbax.checkpoint as ocp
 
@@ -319,13 +357,14 @@ def _check_graft_source_config(graft_path: str, cfg_dict: dict) -> None:
         src_cfg = ocp.Checkpointer(ocp.JsonCheckpointHandler()).restore(
             str(Path(graft_path) / "config")
         )
-    except Exception as exc:  # reported, not swallowed
-        log.warning(
-            "GRAFT: could not read the source checkpoint's config item (%s); "
-            "residual_mode/residual_scale/prior consistency is NOT checked.",
-            exc,
-        )
-        return
+    except Exception as exc:
+        raise ValueError(
+            f"transfer.graft_ff_checkpoint={graft_path}: could not read the "
+            f"source checkpoint's config item ({exc}). Without it the graft "
+            "cannot be checked against this config's "
+            + ", ".join(f"{s}.{k}" for s, k, _ in _GRAFT_CONFIG_KEYS)
+            + "; refusing to graft."
+        ) from exc
 
     def _norm(v):
         return str(v).rstrip("/") if isinstance(v, str) else v

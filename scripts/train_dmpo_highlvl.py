@@ -146,11 +146,12 @@ def _build_env(hydra_cfg: DictConfig, prior_fn, decoder_fn, latent_size):
         n_eye_actuators=n_eye_actuators,
     )
 
-    # Wrap for brax training, then add binocular vision rendering.
-    from mujoco_playground._src import wrapper as mp_wrapper
+    # Wrap for training (brax stack plus the truncation stash), then add
+    # binocular vision rendering.
     from vnl_playground.tasks.rodent.vision_jax import (
         BinocularVisionRenderWrapper,
     )
+    from vnl_playground.tasks.wrappers_truncation import wrap_for_dmpo_training
 
     episode_length = int(
         hydra_cfg.env_config.get(
@@ -158,7 +159,7 @@ def _build_env(hydra_cfg: DictConfig, prior_fn, decoder_fn, latent_size):
         )
     )
     action_repeat = int(hydra_cfg.env_config.get("action_repeat", 1))
-    base_env = mp_wrapper.wrap_for_brax_training(
+    base_env = wrap_for_dmpo_training(
         base_env,
         episode_length=episode_length,
         action_repeat=action_repeat,

@@ -31,10 +31,10 @@ import hydra
 import jax
 import jax.numpy as jnp
 import vnl_playground.naccdmax_patch  # noqa: F401
-from mujoco_playground._src import wrapper as mp_wrapper
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground import tasks
 from vnl_playground.tasks.wrappers_kl_anchor import KLAnchorPriorDecoderWrapper
+from vnl_playground.tasks.wrappers_truncation import wrap_for_dmpo_training
 
 from track_mjx.agent.dmpo.checkpoint import make_checkpointer
 from track_mjx.agent.dmpo.checkpoint import restore as restore_ckpt
@@ -181,10 +181,13 @@ def _wrap_for_brax_training(
     action_repeat: int = 1,
     randomization_fn=None,
 ):
-    """``mp_wrapper.wrap_for_brax_training`` honouring the ``wrappers:`` block.
+    """``wrap_for_dmpo_training`` honouring the ``wrappers:`` block.
 
-    ``InfoResetOnDoneWrapper`` is applied OUTSIDE the brax wrappers on purpose:
-    it has to see the post-swap ``done`` flag.
+    ``wrap_for_dmpo_training`` is the brax training stack plus a
+    ``TruncationStashWrapper``, which keeps the time-limit flag in
+    ``state.info["AutoResetWrapper_preserve_info"]["truncation"]`` through the
+    auto-reset. ``InfoResetOnDoneWrapper`` is applied OUTSIDE the brax wrappers
+    on purpose: it has to see the post-swap ``done`` flag.
 
     Args:
         environment: Env to wrap.
@@ -207,7 +210,7 @@ def _wrap_for_brax_training(
     full_reset, info_reset_on_done, info_reset_keys = _wrapper_settings(
         cfg, env_info_keys
     )
-    brax_env = mp_wrapper.wrap_for_brax_training(
+    brax_env = wrap_for_dmpo_training(
         environment,
         episode_length=episode_length,
         action_repeat=action_repeat,
@@ -621,8 +624,8 @@ def _build_env(
     from_scratch=False,
 ):
     """Load registry env, wrap in KLAnchorPriorDecoderWrapper (or
-    EndToEndWrapper on the from-scratch arm) + brax wrap_for_brax_training +
-    BinocularVisionRenderWrapper.
+    EndToEndWrapper on the from-scratch arm) + wrap_for_dmpo_training (the brax
+    training stack plus the truncation stash) + BinocularVisionRenderWrapper.
 
     `from_scratch=True` is the no-prior/no-decoder control: the policy emits
     joint actions directly, so there is no frozen pipeline to anchor against
@@ -683,9 +686,8 @@ def _build_env(
     )
     action_repeat = int(hydra_cfg.env_config.get("action_repeat", 1))
     # Optional per-episode resets, read from the top-level `wrappers:` block.
-    # With no such block this is exactly the historical
-    # mp_wrapper.wrap_for_brax_training(..., full_reset=False) with no info
-    # wrapper, so configs without the block stay bit-reproducible.
+    # With no such block this is the historical brax training stack with
+    # full_reset=False and no info wrapper, plus the truncation stash.
     base_env = _wrap_for_brax_training(
         base_env,
         hydra_cfg,

@@ -23,9 +23,19 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 ENTRIES = {
     "kl_anchor": (
         "train_dmpo_highlvl_kl_anchor.py",
-        ("vnl_playground.naccdmax_patch", "vnl_playground.tasks.wrappers_kl_anchor"),
+        (
+            "vnl_playground.naccdmax_patch",
+            "vnl_playground.tasks.wrappers_kl_anchor",
+            "vnl_playground.tasks.wrappers_truncation",
+        ),
     ),
-    "highlvl": ("train_dmpo_highlvl.py", ("vnl_playground.naccdmax_patch",)),
+    "highlvl": (
+        "train_dmpo_highlvl.py",
+        (
+            "vnl_playground.naccdmax_patch",
+            "vnl_playground.tasks.wrappers_truncation",
+        ),
+    ),
     "imitation": ("train_dmpo.py", ()),
 }
 

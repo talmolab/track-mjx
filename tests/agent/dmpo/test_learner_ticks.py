@@ -729,11 +729,18 @@ def test_tick_critic_target_matches_reference():
     visible in the loss: a bootstrap hidden read at idx (or forced) moves
     the loss by ~6e-5 / 8e-5 relative, against an exact match here.
 
-    The reference is the single mean-action target on the stored action, so
-    the step runs with that target mode (the sampled mixture target has its
-    own tests)."""
+    The reference is the single mean-action target on the stored raw action,
+    so the step runs with those two switches (the sampled mixture target and
+    the executed-action input have their own tests)."""
     k, L, n = 10, 4, 3
-    cfg = _cfg(L=L, n=n, k=k, priv=True, critic_target_mode="mean_action")
+    cfg = _cfg(
+        L=L,
+        n=n,
+        k=k,
+        priv=True,
+        critic_target_mode="mean_action",
+        critic_action_input="raw",
+    )
     nets = _slow_nets(cfg, k, priv_dim=PRIV)
     state = _state(nets, cfg)
     state = state._replace(

@@ -15,6 +15,7 @@ import optax
 from brax.training.acme import running_statistics, specs
 from tensorflow_probability.substrates import jax as tfp
 
+from track_mjx.agent.dmpo import action_utils
 from track_mjx.agent.dmpo.categorical import categorical_l2_project
 from track_mjx.agent.dmpo.config import DMPOConfig, validate_alignment
 from track_mjx.agent.dmpo.losses import MPO, MPOParams, clip_mpo_params
@@ -137,6 +138,19 @@ def init_training_state(
         steps=jnp.zeros((), jnp.int32),
         rng=rng,
     )
+
+
+def critic_action(a: jnp.ndarray, cfg: DMPOConfig) -> jnp.ndarray:
+    """The action a critic apply consumes (``cfg.critic_action_input``).
+
+    ``"executed"``: the action the env applies, ``action_utils.bind(a)``
+    (tanh, kept inside (-1, 1)), as acme's critic sees the clipped action.
+    ``"raw"``: the pre-tanh sample itself (the same object, no new op). The
+    MPO loss always works on the raw samples.
+    """
+    if cfg.critic_action_input == "raw":
+        return a
+    return action_utils.bind(a)
 
 
 def _normalize_obs(obs, normalizer_params):
@@ -442,7 +456,8 @@ def _rate_samples(
     use_map: bool,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Draw [N, B, A] actions from ``target_dist`` and the target critic's
-    logits [N, B, atoms] for each.
+    logits [N, B, atoms] for each (rated on ``critic_action`` of the sample;
+    the returned actions are the raw samples).
 
     ``use_map`` maps the N axis sequentially (one B-sized critic batch at a
     time) instead of vmapping it, which keeps a vision critic's activation
@@ -455,7 +470,7 @@ def _rate_samples(
 
     def _logits(actions_n):
         dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
-            target_critic_params, crit_obs, actions_n
+            target_critic_params, crit_obs, critic_action(actions_n, cfg)
         )
         return dist.logits_parameter()
 
@@ -536,12 +551,15 @@ def mixture_categorical_target(
 #     action ("mean_action").
 #   * bootstrap_on_truncation: n-step windows are cut at time-outs and
 #     bootstrap from the last stored state (see `window_returns`).
+#   * critic_action_input: every critic apply (critic loss, bootstrap, E-step
+#     Q-values) sees the executed, tanh-bound action ("executed", acme's
+#     clipped critic input) or the stored pre-tanh sample ("raw"). The MPO
+#     loss rates the raw samples either way (see `critic_action`).
 # Deviations from Acme worth flagging:
 #   * n-step windows come from uniformly sampled stored sequences (the window
 #     starting at t=0 of each), not from an n-step adder.
-#   * Critic input action: `batch["action"]` is the raw pre-tanh Gaussian
-#     sample stored by the rollout. The critic does NOT see the
-#     post-tanh bound action — the MPO loss likewise rates raw samples.
+#   * The policy is a Gaussian over pre-tanh actions, squashed to the env by
+#     tanh; acme's is an unsquashed Gaussian whose samples the env clips.
 #   * Hard target updates via `jax.lax.cond` rather than `optax.periodic_update`
 #     (the former is jit-friendly without bringing in optax's helper, which
 #     under the hood does the same thing).
@@ -562,7 +580,8 @@ def _critic_loss_fn(
       critic_params: online critic params.
       nets: DMPO networks.
       obs_t0: [B, obs_dim] observations at t=0.
-      action_t0: [B, action_dim] raw (pre-tanh) actions stored at t=0.
+      action_t0: [B, action_dim] actions at t=0, as the critic consumes them
+        (see ``critic_action``).
       target_probs: [B, num_atoms] projected Bellman target (stop-gradient'd).
       weights: optional nonnegative per-row weights, [B]. The mean over rows
         becomes ``sum(w * x) / max(sum(w), 1)``: a zero-weight row is excluded and
@@ -629,7 +648,7 @@ def _policy_loss_fn(
 
     def _q_mean_for_n(actions_n: jnp.ndarray) -> jnp.ndarray:
         dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
-            target_critic_params, critic_obs, actions_n
+            target_critic_params, critic_obs, critic_action(actions_n, cfg)
         )
         return dist.mean()
 
@@ -874,7 +893,7 @@ def sgd_step(
                 nets,
                 state.target_critic_params,
                 next_obs_t0_BT,  # [B, 1, ...] per leaf
-                next_action[:, None, :],  # [B, 1, act]
+                critic_action(next_action, cfg)[:, None, :],  # [B, 1, act]
                 rew_t0[:, None],  # [B, 1]
                 disc_t0[:, None],  # [B, 1]
                 cfg,
@@ -888,7 +907,7 @@ def sgd_step(
         state.critic_params,
         nets,
         crit_obs_t0,
-        act_t0,
+        critic_action(act_t0, cfg),
         target_probs,
         loss_w,
     )
@@ -1332,7 +1351,7 @@ def _policy_loss_fn_rnn(
 
     def _q_mean_for_n(actions_n: jnp.ndarray) -> jnp.ndarray:
         dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
-            target_critic_params, obs_flat, actions_n
+            target_critic_params, obs_flat, critic_action(actions_n, cfg)
         )
         return dist.mean()
 
@@ -1733,7 +1752,7 @@ def _sgd_step_rnn(
                 nets,
                 state.target_critic_params,
                 _critic_obs(next_obs, batch, priv_key, sel_boot),
-                next_action,
+                critic_action(next_action, cfg),
                 rew_bl,
                 disc_bl,
                 cfg,
@@ -1746,7 +1765,7 @@ def _sgd_step_rnn(
         state.critic_params,
         nets,
         obs_flat,
-        act_flat,
+        critic_action(act_flat, cfg),
         target_probs,
         loss_w,
     )

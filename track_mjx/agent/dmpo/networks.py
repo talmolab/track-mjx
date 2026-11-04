@@ -236,10 +236,10 @@ class _CriticNet(nn.Module):
     """MLP torso over concat([obs, action]) -> CategoricalCriticHead.
 
     Matches Acme's `critic_fn` in `make_control_networks`: action is appended
-    on the last axis and the joint vector is fed through the torso. We omit
-    Acme's `ClipToSpec` step because actions in track-mjx are already
-    normalized to [-1, 1] at the env boundary (see `action_utils.bind`); if
-    that invariant ever changes, add the clip here.
+    on the last axis and the joint vector is fed through the torso. Acme's
+    `ClipToSpec` step lives in the learner instead: with
+    `critic_action_input="executed"` every critic apply receives the
+    tanh-bound action the env executes (`learner.critic_action`).
     """
 
     layer_sizes: Sequence[int]

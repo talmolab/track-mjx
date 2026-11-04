@@ -362,22 +362,28 @@ def test_ff_sgd_step_with_privileged_jit():
     assert _priv_rows_delta(new_state0, state).max() == 0.0
 
 
+@pytest.mark.parametrize("policy_state", ["current", "next"])
 @pytest.mark.parametrize(
-    "schema,used_q,used_boot,unused",
+    "schema,used_boot,unused",
     [
-        # Compressed schema, n=3: critic loss + policy Q at t0, bootstrap
+        # Compressed schema, n=3: critic loss at t0, bootstrap
         # observation[:, 3].
-        ("compressed", 0, 3, (1, 2, 4, 5)),
+        ("compressed", 3, (1, 2, 4, 5)),
         # Legacy next_observation schema, single-step TD: bootstrap is
         # next_observation[:, 0] == the state at t=1.
-        ("next_obs", 0, 1, (2, 3, 4, 5)),
+        ("next_obs", 1, (2, 3, 4, 5)),
     ],
 )
-def test_ff_privileged_alignment(schema, used_q, used_boot, unused):
+def test_ff_privileged_alignment(schema, used_boot, unused, policy_state):
+    """The online critic loss reads the vector at t0 and the target reads it
+    at the bootstrap index. The policy loss's Q-values read it where the
+    policy loss is evaluated: t0 ("current") or the bootstrap state
+    ("next", where it shares the target's samples)."""
+    kw = {"policy_loss_state": policy_state}
     if schema == "compressed":
-        cfg = _ff_cfg()
+        cfg = _ff_cfg(**kw)
     else:
-        cfg = _ff_cfg(use_n_step=False, store_next_observation=True)
+        cfg = _ff_cfg(use_n_step=False, store_next_observation=True, **kw)
     nets = _ff_nets(cfg)
     state = init_training_state(jax.random.PRNGKey(0), nets, _env_spec(), cfg)
     step = _jit_step(nets, cfg)
@@ -387,15 +393,23 @@ def test_ff_privileged_alignment(schema, used_q, used_boot, unused):
     def run(t):
         return step(state, _perturb(batch, t))[1]
 
-    # t0: online critic loss AND the policy-loss Q (target critic at t0).
-    m = run(used_q)
+    q_keys = ("q_min", "q_max", "policy_loss")
+    # t0: the online critic loss; the policy-loss Q too when evaluated there.
+    m = run(0)
     assert float(m["critic_loss"]) != float(base["critic_loss"])
-    assert float(m["q_max"]) != float(base["q_max"])
-    # Bootstrap index: target only -- the policy-loss Q is untouched.
+    if policy_state == "current":
+        assert float(m["q_max"]) != float(base["q_max"])
+    else:
+        for k in q_keys:
+            assert float(m[k]) == float(base[k]), k
+    # Bootstrap index: the target; the policy-loss Q too under "next".
     m = run(used_boot)
     assert float(m["critic_loss"]) != float(base["critic_loss"])
-    for k in ("q_min", "q_max", "policy_loss"):
-        assert float(m[k]) == float(base[k]), k
+    if policy_state == "current":
+        for k in q_keys:
+            assert float(m[k]) == float(base[k]), k
+    else:
+        assert float(m["q_max"]) != float(base["q_max"])
     # Every other index is never read.
     for t in unused:
         m = run(t)

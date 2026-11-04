@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 from brax.training.acme import running_statistics, specs
 from tensorflow_probability.substrates import jax as tfp
@@ -519,6 +520,18 @@ def bootstrap_samples(
     )
 
 
+def _expected_value(logits: jnp.ndarray, cfg: DMPOConfig) -> jnp.ndarray:
+    """Mean of each categorical critic distribution, [..., atoms] -> [...].
+
+    The support is built as the critic head builds it (float64 linspace cast
+    to float32), so this equals the head's own ``dist.mean()``.
+    """
+    values = jnp.asarray(
+        np.linspace(cfg.vmin, cfg.vmax, num=cfg.num_atoms), dtype=logits.dtype
+    )
+    return jnp.sum(jax.nn.softmax(logits, axis=-1) * values, axis=-1)
+
+
 def mixture_categorical_target(
     logits: jnp.ndarray,
     rewards: jnp.ndarray,
@@ -555,11 +568,18 @@ def mixture_categorical_target(
 #     Q-values) sees the executed, tanh-bound action ("executed", acme's
 #     clipped critic input) or the stored pre-tanh sample ("raw"). The MPO
 #     loss rates the raw samples either way (see `critic_action`).
+#   * policy_loss_state: the policy loss is evaluated at the n-step arrival
+#     state, sharing its samples with the mixture target ("next", acme; the
+#     feed-forward learner only), or at the state the action was taken in
+#     ("current").
 # Deviations from Acme worth flagging:
 #   * n-step windows come from uniformly sampled stored sequences (the window
 #     starting at t=0 of each), not from an n-step adder.
 #   * The policy is a Gaussian over pre-tanh actions, squashed to the env by
 #     tanh; acme's is an unsquashed Gaussian whose samples the env clips.
+#   * A window whose episode ends inside it bootstraps (time-out) and
+#     evaluates the policy ("next") at s_k, the last stored state of that
+#     episode, not at the final state s_T, which the auto-reset never stores.
 #   * Hard target updates via `jax.lax.cond` rather than `optax.periodic_update`
 #     (the former is jit-friendly without bringing in optax's helper, which
 #     under the hood does the same thing).
@@ -617,6 +637,8 @@ def _policy_loss_fn(
     step: jnp.ndarray = jnp.int32(0),
     critic_obs_t0: Any = None,
     batch_weights: jnp.ndarray | None = None,
+    samples: jnp.ndarray | None = None,
+    sample_q: jnp.ndarray | None = None,
 ):
     """E-step + M-step + dual losses + optional kl-anchor loss term.
 
@@ -627,6 +649,11 @@ def _policy_loss_fn(
 
     ``batch_weights`` ([B], optional) weights the states in every MPO batch
     mean (see ``MPO.__call__``); None is the plain mean.
+
+    ``samples`` ([N, B, A]) and ``sample_q`` ([N, B]) supply the E-step's
+    target-policy samples and their Q-values precomputed (the bootstrap
+    sample set, shared when the loss runs at the bootstrap state). None
+    (default) draws them here with ``key``.
 
     When ``cfg.kl_anchor_alpha > 0`` AND ``anchor_mu_imit`` is provided,
     augments the loss with ``-alpha * mean(exp(-w * KL(pi_theta ‖ pi_imit)))``
@@ -643,17 +670,21 @@ def _policy_loss_fn(
     target_dist = jax.vmap(nets.policy.apply, in_axes=(None, 0))(
         target_policy_params, obs_t0
     )
-    sampled = target_dist.sample(sample_shape=(cfg.num_samples,), seed=key)
-    critic_obs = obs_t0 if critic_obs_t0 is None else critic_obs_t0
+    if samples is not None:
+        sampled = samples
+        q_values = jax.lax.stop_gradient(sample_q)
+    else:
+        sampled = target_dist.sample(sample_shape=(cfg.num_samples,), seed=key)
+        critic_obs = obs_t0 if critic_obs_t0 is None else critic_obs_t0
 
-    def _q_mean_for_n(actions_n: jnp.ndarray) -> jnp.ndarray:
-        dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
-            target_critic_params, critic_obs, critic_action(actions_n, cfg)
-        )
-        return dist.mean()
+        def _q_mean_for_n(actions_n: jnp.ndarray) -> jnp.ndarray:
+            dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
+                target_critic_params, critic_obs, critic_action(actions_n, cfg)
+            )
+            return dist.mean()
 
-    q_values = jax.vmap(_q_mean_for_n)(sampled)
-    q_values = jax.lax.stop_gradient(q_values)
+        q_values = jax.vmap(_q_mean_for_n)(sampled)
+        q_values = jax.lax.stop_gradient(q_values)
 
     loss_module = _build_loss(cfg)
     loss, stats = loss_module(
@@ -836,6 +867,23 @@ def sgd_step(
         boot_idx = n_steps
         loss_w = None
 
+    # Policy loss at the arrival state (policy_loss_state="next", acme): the
+    # online and target policies, the samples and the E-step Q-values are
+    # evaluated at s_p, p = min(boot_idx, first termination in the window).
+    # A window whose episode ends inside it uses s_k, the last stored state
+    # of that episode (s_T itself is never stored: the auto-reset swaps it
+    # out); one starting at its episode end uses s_0. The critic target
+    # bootstraps from the same s_p: wherever p < boot_idx a termination came
+    # first and the bootstrap coefficient is 0, so the target is unchanged.
+    policy_next = cfg.policy_loss_state == "next"
+    if policy_next:
+        is_term = batch["discount"][:, :n_steps] == 0
+        j_term = jnp.where(
+            jnp.any(is_term, axis=1), jnp.argmax(is_term, axis=1), n_steps
+        ).astype(jnp.int32)
+        boot_idx = jnp.minimum(boot_idx, j_term)
+        next_obs_t0 = _state_at(batch, boot_idx, _has_next)
+
     # NEW: normalize observations using the current normalizer state.
     # Normalizer is updated only in rollout (not here) to mirror Brax PPO.
     obs_t0 = _normalize_obs(obs_t0, state.normalizer_params)
@@ -861,19 +909,24 @@ def sgd_step(
     # 1) Critic target. The whole branch is wrapped in stop_gradient (no flow
     # through target nets).
     # ------------------------------------------------------------------
+    shared_samples = shared_q = None
     if use_mixture:
         # N target-policy samples at the bootstrap state, mixed in
-        # probability space.
-        _, boot_logits = bootstrap_samples(
+        # probability space. With the policy loss at that same state, one
+        # sample set and one critic evaluation serve both, as in acme.
+        boot_actions, boot_logits = bootstrap_samples(
             nets,
             state.target_policy_params,
             state.target_critic_params,
             next_obs_t0,
             crit_next_obs_t0,
             cfg,
-            k_tgt,
+            k_pol if policy_next else k_tgt,
             sample_eps,
         )
+        if policy_next:
+            shared_samples = boot_actions
+            shared_q = _expected_value(boot_logits, cfg)
         target_probs = jax.lax.stop_gradient(
             mixture_categorical_target(boot_logits, rew_t0, disc_t0, cfg)
         )
@@ -938,10 +991,26 @@ def sgd_step(
             "is passed to run_training_loop / make_fused_train_step / "
             "collect_rollout."
         )
-    if anchor_mu is not None:
-        anchor_mu = anchor_mu[:, 0, :]
-    if anchor_ls is not None:
-        anchor_ls = anchor_ls[:, 0, :]
+    if policy_next:
+        # The anchor pairs with the state the policy is evaluated at.
+        if anchor_mu is not None and n_steps >= _T:
+            raise ValueError(
+                "policy_loss_state='next' with the loss-side KL anchor needs "
+                f"the anchor at the arrival state t={n_steps}, but the batch "
+                f"only stores it for t < {_T}. Use sequence_length >= "
+                "n_step + 1, or policy_loss_state='current'."
+            )
+        if anchor_mu is not None:
+            anchor_mu = _gather_rows(anchor_mu, boot_idx)
+        if anchor_ls is not None:
+            anchor_ls = _gather_rows(anchor_ls, boot_idx)
+        pol_obs, pol_crit_obs = next_obs_t0, crit_next_obs_t0
+    else:
+        if anchor_mu is not None:
+            anchor_mu = anchor_mu[:, 0, :]
+        if anchor_ls is not None:
+            anchor_ls = anchor_ls[:, 0, :]
+        pol_obs, pol_crit_obs = obs_t0, crit_obs_t0
 
     (pol_loss, stats), pol_dual_grads = jax.value_and_grad(
         _policy_loss_fn,
@@ -951,7 +1020,7 @@ def sgd_step(
         state.policy_params,
         state.dual_params,
         nets,
-        obs_t0,
+        pol_obs,
         state.target_policy_params,
         state.target_critic_params,
         cfg,
@@ -959,9 +1028,11 @@ def sgd_step(
         anchor_mu,
         anchor_ls,
         state.steps,
-        # None when off: the loss reads obs_t0 for the critic, as before.
-        crit_obs_t0 if priv_key else None,
+        # None when off: the loss reads pol_obs for the critic, as before.
+        pol_crit_obs if priv_key else None,
         batch_weights=loss_w,
+        samples=shared_samples,
+        sample_q=shared_q,
     )
     pol_grads, dual_grads = pol_dual_grads
 

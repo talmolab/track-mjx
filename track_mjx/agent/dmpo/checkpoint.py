@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import logging
 import pathlib
+from collections.abc import Mapping
 from typing import Any
 
 import orbax.checkpoint as ocp
 
+from track_mjx.agent.dmpo.config import ALIGNMENT_FIELDS, LEGACY_ALIGNMENT, DMPOConfig
 from track_mjx.agent.dmpo.learner import TrainingState
 
 STEP_PREFIX = "DMPONetwork"
@@ -276,3 +278,207 @@ def load_config(
         args=ocp.args.Composite(config=ocp.args.JsonRestore()),
     )
     return restored["config"]
+
+
+# ---------------------------------------------------------------------------
+# Algorithm settings recorded with a checkpoint
+# ---------------------------------------------------------------------------
+
+
+def _train_section(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The train config inside a saved entry config.
+
+    The high-level entries keep it at ``train_config``; the imitation entry at
+    ``train_setup.train_config``. A config with neither gives ``{}``.
+    """
+    if isinstance(config.get("train_config"), Mapping):
+        return config["train_config"]
+    setup = config.get("train_setup")
+    if isinstance(setup, Mapping) and isinstance(setup.get("train_config"), Mapping):
+        return setup["train_config"]
+    return {}
+
+
+def record_alignment(config: dict[str, Any], cfg: DMPOConfig) -> dict[str, Any]:
+    """Write the alignment fields in effect into a config dict, in place.
+
+    The YAML a run is launched from usually leaves the fields at their
+    dataclass defaults, so the resolved hydra config alone would not say which
+    algorithm trained the run. ``saved_alignment`` reads what this writes.
+
+    Args:
+      config: the resolved entry config that is saved with every checkpoint.
+      cfg: the learner config the run trains with.
+
+    Returns:
+      ``config``, with each of ``ALIGNMENT_FIELDS`` set in its train section.
+    """
+    section = _train_section(config)
+    if not section:
+        section = config.setdefault("train_config", {})
+    for name in ALIGNMENT_FIELDS:
+        section[name] = getattr(cfg, name)
+    return config
+
+
+def saved_alignment(ckpt_step_dir: str | pathlib.Path) -> dict[str, Any]:
+    """The six alignment fields from a checkpoint's saved config.
+
+    A field the saved train config does not carry maps to its
+    ``LEGACY_ALIGNMENT`` value: a checkpoint saved before the fields existed
+    was trained by the pre-alignment learner. ``policy_loss_state`` is resolved
+    (``"auto"`` becomes ``"next"`` or ``"current"`` by the saved
+    ``rnn_bptt_length``), so the result compares directly with
+    ``current_alignment``.
+
+    Args:
+      ckpt_step_dir: one ``DMPONetwork_<step>`` directory.
+
+    Raises:
+      ValueError: if the checkpoint's ``config`` item cannot be read.
+    """
+    path = pathlib.Path(ckpt_step_dir) / "config"
+    try:
+        config = ocp.Checkpointer(ocp.JsonCheckpointHandler()).restore(str(path))
+    except Exception as exc:
+        raise ValueError(
+            f"could not read the saved config at {path} ({exc}); the "
+            "checkpoint's algorithm settings cannot be checked."
+        ) from exc
+    train = _train_section(config or {})
+    values = {
+        name: train.get(name, LEGACY_ALIGNMENT[name]) for name in ALIGNMENT_FIELDS
+    }
+    recurrent = int(train.get("rnn_bptt_length", 0) or 0) > 0
+    return _resolve(values, recurrent)
+
+
+def current_alignment(cfg: DMPOConfig) -> dict[str, Any]:
+    """The six alignment fields of ``cfg``, with ``policy_loss_state`` resolved."""
+    values = {name: getattr(cfg, name) for name in ALIGNMENT_FIELDS}
+    return _resolve(values, int(getattr(cfg, "rnn_bptt_length", 0) or 0) > 0)
+
+
+def _resolve(values: dict[str, Any], recurrent: bool) -> dict[str, Any]:
+    values = dict(values)
+    values["bootstrap_on_truncation"] = bool(values["bootstrap_on_truncation"])
+    if values["policy_loss_state"] == "auto":
+        values["policy_loss_state"] = "current" if recurrent else "next"
+    return values
+
+
+def alignment_differences(
+    saved: Mapping[str, Any], current: Mapping[str, Any]
+) -> list[str]:
+    """One ``field: checkpoint=... this config=...`` line per differing field."""
+    return [
+        f"{name}: checkpoint={saved[name]!r} this config={current[name]!r}"
+        for name in ALIGNMENT_FIELDS
+        if saved[name] != current[name]
+    ]
+
+
+def check_alignment(
+    saved: Mapping[str, Any],
+    cfg: DMPOConfig,
+    *,
+    source: str,
+    override_key: str,
+    allow: bool,
+) -> list[str]:
+    """Refuse to continue from a checkpoint trained by different settings.
+
+    Grafting or resuming across a change of any alignment field would switch
+    the learning algorithm silently partway through a run. A mismatch raises
+    unless the override is set, in which case it is logged as a WARNING.
+
+    Args:
+      saved: ``saved_alignment`` of the checkpoint.
+      cfg: the learner config of this run.
+      source: what the checkpoint is, for the message (e.g. ``"graft source
+        <path>"``).
+      override_key: the config key that allows the mismatch.
+      allow: the value of that key.
+
+    Returns:
+      The differing fields, one line each (empty when they all match).
+
+    Raises:
+      ValueError: on a mismatch without the override, listing every field.
+    """
+    diffs = alignment_differences(saved, current_alignment(cfg))
+    if not diffs:
+        return diffs
+    listing = "\n  ".join(f"train_config.{line}" for line in diffs)
+    if not allow:
+        raise ValueError(
+            f"{source} was trained with different algorithm settings than this "
+            f"config:\n  {listing}\nA field absent from a checkpoint's saved "
+            "config holds its pre-alignment value (config/dmpo/"
+            "legacy_pre_alignment). Match the settings (for example by adding "
+            "/legacy_pre_alignment to the defaults), or set "
+            f"{override_key}: true to continue under this config's settings."
+        )
+    log.warning(
+        "%s was trained with different algorithm settings; continuing under "
+        "this config's settings because %s is true:\n  %s",
+        source,
+        override_key,
+        listing,
+    )
+    return diffs
+
+
+def latest_step_dir(directory: str | pathlib.Path) -> pathlib.Path | None:
+    """The newest finished ``DMPONetwork_<step>`` directory under ``directory``.
+
+    Orbax stages a save in ``DMPONetwork_<step>.orbax-checkpoint-tmp-*``; only
+    a directory named by the bare step number is finished. ``None`` when the
+    directory holds no checkpoint (or does not exist).
+    """
+    root = pathlib.Path(directory)
+    if not root.is_dir():
+        return None
+    steps = []
+    for path in root.iterdir():
+        prefix, _, suffix = path.name.rpartition("_")
+        if path.is_dir() and prefix == STEP_PREFIX and suffix.isdigit():
+            steps.append((int(suffix), path))
+    return max(steps)[1] if steps else None
+
+
+def check_resume_alignment(
+    ckpt_dir: str | pathlib.Path,
+    cfg: DMPOConfig,
+    *,
+    override_key: str,
+    allow: bool,
+) -> dict[str, Any] | None:
+    """Check a run directory's newest checkpoint before resuming from it.
+
+    Call this before anything is restored: the policy optimizer state of the
+    kl-anchor entry has a different structure under each
+    ``policy_grad_clip_scope``, so a mismatch would otherwise surface as an
+    opaque restore error, or, where the structures agree, as a silent switch of
+    algorithm mid-run.
+
+    Returns:
+      ``saved_alignment`` of the newest checkpoint, or ``None`` when
+      ``ckpt_dir`` holds none (a fresh run).
+
+    Raises:
+      ValueError: on a mismatch without the override (see ``check_alignment``)
+        or when the checkpoint's config cannot be read.
+    """
+    step_dir = latest_step_dir(ckpt_dir)
+    if step_dir is None:
+        return None
+    saved = saved_alignment(step_dir)
+    check_alignment(
+        saved,
+        cfg,
+        source=f"the checkpoint to resume, {step_dir}",
+        override_key=override_key,
+        allow=allow,
+    )
+    return saved

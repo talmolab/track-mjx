@@ -57,6 +57,13 @@ ARMS = {
     ),
 }
 
+# Extra overrides per smoke. The spout arm's graft source was saved before the
+# alignment fields existed, so the entry refuses it under the aligned defaults
+# unless the mismatch is allowed explicitly.
+EXTRA_OVERRIDES = {
+    "mm_l0a_k10_c3": ("++transfer.graft_allow_algorithm_mismatch=true",),
+}
+
 
 @pytest.mark.parametrize("arm", list(ARMS))
 def test_kl_anchor_smoke(arm, tmp_path):
@@ -72,6 +79,7 @@ def test_kl_anchor_smoke(arm, tmp_path):
         [
             *_smoke.one_chunk_overrides("train_config", train_cfg),
             f"++checkpoint_dir={ckpt_dir}",
+            *EXTRA_OVERRIDES.get(arm, ()),
         ],
         tmp_path,
     )

@@ -32,6 +32,10 @@ from vnl_playground import registry
 from vnl_playground.tasks.wrappers_truncation import wrap_for_dmpo_training
 
 from track_mjx.agent import checkpointing, wandb_logging
+from track_mjx.agent.dmpo.checkpoint import (
+    check_resume_alignment,
+    record_alignment,
+)
 from track_mjx.agent.dmpo.checkpoint import restore as restore_ckpt
 from track_mjx.agent.dmpo.checkpoint import save as save_ckpt
 from track_mjx.agent.dmpo.config import DMPOConfig
@@ -137,6 +141,8 @@ def main(hydra_cfg: DictConfig) -> None:
         hydra_cfg.train_setup.train_config, resolve=True
     )
     dmpo_cfg = DMPOConfig(**_filter_dmpo_kwargs(raw_train_cfg))
+    # Every checkpoint records the alignment settings it was trained with.
+    record_alignment(cfg_dict, dmpo_cfg)
     iters_per_chunk = int(raw_train_cfg.get("iters_per_chunk", 8))
     seed = int(raw_train_cfg.get("seed", 0))
     rng = jax.random.PRNGKey(seed)
@@ -147,6 +153,13 @@ def main(hydra_cfg: DictConfig) -> None:
         hydra_cfg
     )
     Path(checkpoint_path).mkdir(parents=True, exist_ok=True)
+    # A resume must train with the settings the run started with.
+    check_resume_alignment(
+        checkpoint_path,
+        dmpo_cfg,
+        override_key="train_setup.train_config.allow_alignment_change_on_resume",
+        allow=bool(raw_train_cfg.get("allow_alignment_change_on_resume", False)),
+    )
     mgr_options = ocp.CheckpointManagerOptions(create=True, step_prefix="DMPONetwork")
     ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
 

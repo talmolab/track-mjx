@@ -28,7 +28,11 @@ from omegaconf import DictConfig, OmegaConf
 from vnl_playground import tasks
 from vnl_playground.tasks.wrappers import PriorHighLevelWrapper
 
-from track_mjx.agent.dmpo.checkpoint import make_checkpointer
+from track_mjx.agent.dmpo.checkpoint import (
+    check_resume_alignment,
+    make_checkpointer,
+    record_alignment,
+)
 from track_mjx.agent.dmpo.checkpoint import restore as restore_ckpt
 from track_mjx.agent.dmpo.checkpoint import save as save_ckpt
 from track_mjx.agent.dmpo.config import (
@@ -206,7 +210,8 @@ def main(hydra_cfg: DictConfig):
     raw_train_cfg = OmegaConf.to_container(hydra_cfg.train_config, resolve=True)
     cfg = DMPOConfig(**_filter_dmpo_kwargs(raw_train_cfg))
     iters_per_chunk = int(hydra_cfg.train_config.get("iters_per_chunk", 32))
-    cfg_dict = OmegaConf.to_container(hydra_cfg, resolve=True)
+    # Every checkpoint records the alignment settings it was trained with.
+    cfg_dict = record_alignment(OmegaConf.to_container(hydra_cfg, resolve=True), cfg)
     seed = int(hydra_cfg.get("seed", 0))
     rng = jax.random.PRNGKey(seed)
 
@@ -221,6 +226,15 @@ def main(hydra_cfg: DictConfig):
 
     ckpt_dir = str(hydra_cfg.get("checkpoint_dir", "./checkpoints/dmpo_highlvl"))
     Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+    # A resume must train with the settings the run started with.
+    check_resume_alignment(
+        ckpt_dir,
+        cfg,
+        override_key="train_config.allow_alignment_change_on_resume",
+        allow=bool(
+            hydra_cfg.train_config.get("allow_alignment_change_on_resume", False)
+        ),
+    )
     existing = load_dmpo_wandb_state(ckpt_dir)
     if _WANDB_IMPORTED:
         try:

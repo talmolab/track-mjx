@@ -36,7 +36,13 @@ from vnl_playground import tasks
 from vnl_playground.tasks.wrappers_kl_anchor import KLAnchorPriorDecoderWrapper
 from vnl_playground.tasks.wrappers_truncation import wrap_for_dmpo_training
 
-from track_mjx.agent.dmpo.checkpoint import make_checkpointer
+from track_mjx.agent.dmpo.checkpoint import (
+    check_alignment,
+    check_resume_alignment,
+    make_checkpointer,
+    record_alignment,
+    saved_alignment,
+)
 from track_mjx.agent.dmpo.checkpoint import restore as restore_ckpt
 from track_mjx.agent.dmpo.checkpoint import save as save_ckpt
 from track_mjx.agent.dmpo.config import (
@@ -444,6 +450,65 @@ def _check_graft_source_config(graft_path: str, cfg_dict: dict) -> None:
             + "\nThe graft copies param VALUES only; with these keys different "
             "the grafted policy is not the source policy at step 0."
         )
+
+
+GRAFT_OVERRIDE_KEY = "transfer.graft_allow_algorithm_mismatch"
+RESUME_OVERRIDE_KEY = "train_config.allow_alignment_change_on_resume"
+
+
+def _check_graft_alignment(graft_path: str, cfg: DMPOConfig, transfer_cfg) -> None:
+    """Refuse a graft source trained with different alignment settings.
+
+    The graft copies parameter values into a learner that then trains them
+    under this config's algorithm. A source saved without the fields was
+    trained by the pre-alignment learner. ``transfer.
+    graft_allow_algorithm_mismatch: true`` turns the refusal into a WARNING.
+
+    Raises:
+        ValueError: listing every differing field, without the override.
+    """
+    check_alignment(
+        saved_alignment(graft_path),
+        cfg,
+        source=f"transfer.graft_ff_checkpoint={graft_path}",
+        override_key=GRAFT_OVERRIDE_KEY,
+        allow=bool(transfer_cfg.get(GRAFT_OVERRIDE_KEY.split(".")[-1], False)),
+    )
+
+
+def _restore_for_resume(ckpt_mgr, state, cfg: DMPOConfig, saved, opt_kwargs):
+    """Restore the newest checkpoint, adapting across a clip-scope change.
+
+    ``saved`` is what ``check_resume_alignment`` returned (``None`` for a fresh
+    run). It can differ from ``cfg`` only when the resume override is set. The
+    policy optimizer state is a ``multi_transform`` of per-block clip+Adam
+    chains under ``policy_grad_clip_scope="per_block"`` and one trainable clip
+    before a ``multi_transform`` of Adams under ``"global"``, so a checkpoint
+    saved under the other scope is restored into a template of ITS structure
+    and the policy optimizer state is then re-initialized (Adam moments at
+    zero) for this config's optimizer. Every other item restores as saved.
+
+    Returns:
+        The restored ``TrainingState``, or ``None`` when there is none.
+    """
+    saved_scope = None if saved is None else saved["policy_grad_clip_scope"]
+    if saved_scope is None or saved_scope == cfg.policy_grad_clip_scope:
+        return restore_ckpt(ckpt_mgr, state_template=state)
+    saved_opt, _, _ = make_kl_anchor_optimizers(
+        dataclasses.replace(cfg, policy_grad_clip_scope=saved_scope), **opt_kwargs
+    )
+    template = state._replace(policy_opt_state=saved_opt.init(state.policy_params))
+    restored = restore_ckpt(ckpt_mgr, state_template=template)
+    if restored is None:
+        return None
+    pol_opt, _, _ = make_kl_anchor_optimizers(cfg, **opt_kwargs)
+    log.warning(
+        "policy_grad_clip_scope %r -> %r on resume: the policy optimizer state "
+        "is re-initialized (Adam moments at zero); every other item is restored.",
+        saved_scope,
+        cfg.policy_grad_clip_scope,
+    )
+    return restored._replace(policy_opt_state=pol_opt.init(restored.policy_params))
 
 
 def _fmt_paths(paths) -> str:
@@ -1039,10 +1104,12 @@ def main(hydra_cfg: DictConfig):
         _check_graft_source_config(
             str(graft_path), OmegaConf.to_container(hydra_cfg, resolve=True)
         )
+        _check_graft_alignment(str(graft_path), cfg, _transfer_cfg)
     # -----------------------------------------------------------------------
 
     iters_per_chunk = int(hydra_cfg.train_config.get("iters_per_chunk", 32))
-    cfg_dict = OmegaConf.to_container(hydra_cfg, resolve=True)
+    # Every checkpoint records the alignment settings it was trained with.
+    cfg_dict = record_alignment(OmegaConf.to_container(hydra_cfg, resolve=True), cfg)
     seed = int(hydra_cfg.get("seed", 0))
     rng = jax.random.PRNGKey(seed)
 
@@ -1055,6 +1122,16 @@ def main(hydra_cfg: DictConfig):
 
     ckpt_dir = str(hydra_cfg.get("checkpoint_dir", "./checkpoints/dmpo_kl_anchor"))
     Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+    # A resume must train with the settings the run started with. Checked
+    # before the env is built and before any state is restored.
+    resume_alignment = check_resume_alignment(
+        ckpt_dir,
+        cfg,
+        override_key=RESUME_OVERRIDE_KEY,
+        allow=bool(
+            hydra_cfg.train_config.get(RESUME_OVERRIDE_KEY.split(".")[-1], False)
+        ),
+    )
     existing = load_dmpo_wandb_state(ckpt_dir)
     if _WANDB_IMPORTED:
         try:
@@ -1306,12 +1383,14 @@ def main(hydra_cfg: DictConfig):
         )
 
     # --- 4. Asymmetric optimizers ---
-    optimizers = make_kl_anchor_optimizers(
-        cfg,
-        prior_lr_mult=float(hydra_cfg.kl_anchor.get("prior_lr_mult", 0.1)),
-        decoder_lr_mult=float(hydra_cfg.kl_anchor.get("decoder_lr_mult", 1.0)),
-        policy_head_lr_mult=float(hydra_cfg.kl_anchor.get("policy_head_lr_mult", 1.0)),
-    )
+    opt_kwargs = {
+        "prior_lr_mult": float(hydra_cfg.kl_anchor.get("prior_lr_mult", 0.1)),
+        "decoder_lr_mult": float(hydra_cfg.kl_anchor.get("decoder_lr_mult", 1.0)),
+        "policy_head_lr_mult": float(
+            hydra_cfg.kl_anchor.get("policy_head_lr_mult", 1.0)
+        ),
+    }
+    optimizers = make_kl_anchor_optimizers(cfg, **opt_kwargs)
 
     # --- 5. State + replay ---
     env_spec = {
@@ -1497,7 +1576,9 @@ def main(hydra_cfg: DictConfig):
         else f"last {int(max_to_keep)}",
     )
     try:
-        restored = restore_ckpt(ckpt_mgr, state_template=state)
+        restored = _restore_for_resume(
+            ckpt_mgr, state, cfg, resume_alignment, opt_kwargs
+        )
     except Exception as exc:
         if recurrent:
             # The most likely cause: checkpoint_dir points at an FF run's

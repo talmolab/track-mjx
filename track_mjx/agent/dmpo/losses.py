@@ -621,7 +621,7 @@ def clip_mpo_params(
         loss = t * (epsilon + Q/t + log N - log N) = t * epsilon + Q
 
     whose derivative is ``epsilon > 0`` for every t, so the temperature decays
-    without bound and pins here. Measured on arm_m1_sparse_gaponly:
+    without bound and pins here. Measured on a sparse gap-crossing run:
     log_temperature -4.06 @10.1M -> -9.31 @20.8M -> -18.00 @31.4M, with kl_q_rel
     (realized KL(q||pi)/epsilon) falling 0.966 -> 0.441 -> 0.00002 and gap
     crossings/episode collapsing 0.221 -> 0.260 -> 0.030. With genuinely spread Q
@@ -630,8 +630,8 @@ def clip_mpo_params(
 
     A HIGHER floor is the conservative choice: it keeps the E-step weights
     near-uniform (a no-op update) instead of letting 1/t amplify critic noise into
-    a hard argmax over the sampled actions. For reference the healthy dense arm
-    arm_i1_nstep100_proprio sits at log_temperature -0.54 at 297.7M.
+    a hard argmax over the sampled actions. For reference a healthy dense-reward run
+    sits at log_temperature -0.54 after ~300M steps.
 
     NOTE this bounds the FAILURE, it does not fix the CAUSE. If Q is flat because
     the critic has stopped depending on the action, a higher floor stops the

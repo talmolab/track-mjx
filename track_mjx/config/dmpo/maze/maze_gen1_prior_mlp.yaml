@@ -242,27 +242,10 @@ network_config:
   # hardcoded strides=(1,1,2,2) that has no yaml key, so a 5-entry list SILENTLY
   # drops the 5th conv layer. There is no guard anywhere.
   vision_channels: [4, 8, 16, 32]
-  # Recurrent policy head. CNN + task_obs + proprio ->
-  # Dense(512)+LayerNorm+silu -> GRU(512) -> zero-init residual Dense. The
-  # zero-init is what preserves the warm-start graft: residual == 0 for ANY
-  # hidden state and ANY upstream width, so the step-0 policy is still exactly
-  # the frozen prior->decoder pipeline. `anchor_invariant_probe r_anchor=1.0000
-  # action_mse=0.0000` at startup is the gate on that and must read 1.0000 here.
-  #
-  # 512 rather than 256 because the head is one of the two places widening
-  # is nearly free: per loss point the whole MLP+GRU+critic widening costs ~49 KB
-  # of retained activation against the CNN's 421 KB.
-  #
-  # store_dtype is the REPLAY dtype for the per-step hidden; the live hidden runs
-  # f32 end to end. The replay leaf auto-sizes from hidden_sizes, so 512 units
-  # cost exactly 512*2 = 1024 B/transition -- no constant to keep in sync.
-  # MLP VARIANT: the GRU-512 block is removed so the feedforward else-branch
-  # takes over. policy_head_layer_sizes below is ALREADY [256,256,256] in this
-  # config -- it was carried as the unread else-branch on the RNN arm, so the
-  # FF head here is the one that arm documented, not a new choice.
-  # UNREAD ON THIS ARM -- consumed only in the feedforward else-branch. Kept so
-  # the diff against the feedforward arm stays readable; tuning it here has no
-  # effect.
+  # Feedforward policy head: CNN + task_obs + proprio -> [256,256,256] MLP. No
+  # recurrent state is carried or stored in replay. (The recurrent counterpart,
+  # maze_gen1_prior_rnn, replaces this with a GRU(512) block and leaves this
+  # key unread.)
   policy_head_layer_sizes: [256, 256, 256]
   # Wider critic, [512]x4 -> [1024]x4. Same reasoning as the head --
   # ~10% of the CNN's per-loss-point activation cost. The critic carries MPO's
@@ -333,10 +316,11 @@ train_config:
   num_envs: 2048
   num_timesteps: 500_000_000
   unroll_length: 50
-  # BATCH IS THE MEMORY KNOB, 1024 -> 512 (matching the K=50 recurrent gap arm).
-  # Everything that scales with B*L -- the BPTT unroll, the critic loss over
-  # [B*L, ...], the E-step map, the Bellman target -- halves with it. K is NOT
-  # traded for it: see sgd_steps_per_rollout below.
+  # batch_size 1024 -> 512, matching the recurrent counterpart
+  # (maze_gen1_prior_rnn) so the policy head is the only difference. Everything
+  # that scales with the batch -- the critic loss, the E-step map, the Bellman
+  # target -- halves with it. K is NOT traded for it: see
+  # sgd_steps_per_rollout below.
   batch_size: 512
   min_replay_size: 50_000
   # Replay sizing. max_size per env = max(sequence_length + 1,
@@ -365,14 +349,16 @@ train_config:
   # slows, this is the first suspect, and sgd_steps_per_rollout is the knob that
   # compensates.
   #
-  # Replay depth for the recurrent head, set by smoke tests: 1,843,200 = 900
-  # steps/env = 18.0 rollouts at num_envs 2048, down from 2,355,200 (1150
-  # steps/env, 23.0 rollouts) for the feedforward maze arm; that reduction is the
-  # real cost of this recipe and cuts against the argument above that depth is
-  # load-bearing for sparse reward. Budget: the transition is 4,544 B here (vision
-  # 2048 + imitation_target 204 + proprioception 1108 + action 152 + reward 4 +
-  # discount 4 + policy_hidden 1024 + anchor extras 0, dropped by the
-  # alpha_anchor=0 gate), and the maze env/rollout floor is ~18.3 GiB at 2048
+  # Replay depth, inherited from the recurrent counterpart's smoke tests:
+  # 1,843,200 = 900 steps/env = 18.0 rollouts at num_envs 2048, down from
+  # 2,355,200 (1150 steps/env, 23.0 rollouts) for the plain feedforward maze
+  # config; that reduction is the real cost of this recipe and cuts against the
+  # argument above that depth is load-bearing for sparse reward. Budget: the
+  # recurrent transition is 4,544 B (vision 2048 + imitation_target 204 +
+  # proprioception 1108 + action 152 + reward 4 + discount 4 + policy_hidden
+  # 1024 + anchor extras 0, dropped by the alpha_anchor=0 gate); this
+  # feedforward config stores no hidden, so its transition is 1,024 B smaller and
+  # the same depth is conservative. The maze env/rollout floor is ~18.3 GiB at 2048
   # envs, ~2.8 GiB heavier than the run_gap env, so run_gap's sizing does not
   # transfer. The smoke must measure PEAK, not steady footprint: a failing
   # allocation can be warp's (outside JAX's pool), so an XLA-only budget will not
@@ -388,11 +374,9 @@ train_config:
   # 101 = n_step + 1, REQUIRED by store_next_observation: false below --
   # the bootstrap state is read from observation[:, 100] instead of from a
   # stored next_observation, and DMPOConfig raises if the two disagree.
-  # For the recurrent head, sequence_length == rnn_bptt_length + n_step is
-  # enforced fail-loud by the recurrent learner. n_step stays 100 (the return
-  # horizon), so seq = 120. L=20 is the MEMORY horizon: 200 ms at ctrl_dt 0.01.
-  # NOTE rnn_bptt_length=1 would also satisfy the guard while training the GRU on
-  # a one-step BPTT -- passing the check is not evidence the horizon is right.
+  # With a recurrent head, sequence_length == rnn_bptt_length + n_step is
+  # enforced fail-loud by the recurrent learner; with rnn_bptt_length 0 it is
+  # n_step + 1. n_step stays 100 (the return horizon).
   rnn_bptt_length: 0   # 0 = feedforward learner path (no R2D2 stored state)
   sequence_length: 101  # n_step + 1 once BPTT is off
   # ---- Compressed replay -------------------------------------------------------
@@ -442,12 +426,11 @@ train_config:
   use_n_step: true
   # n_step stays 100 -- NOT raised to match gamma's 200-step horizon. n_step is
   # how far value propagates per update; gamma is how far it looks. They need
-  # not be equal, and raising it here would be actively harmful: sequence_length
-  # must be >= n_step, and max_size = max(sequence_length+1, max_replay_size /
-  # num_envs) = max(201, 195) = 201 at seq=200, leaving 201-200+1 = 2 valid
-  # sampling start positions per env against 96 at seq=100. Restoring 96 would need
-  # max_replay_size ~604k, i.e. +51% replay memory on a run already at 28.4 GB
-  # of 32.6 GB. Cheap in principle, OOM in practice.
+  # not be equal, and raising n_step costs replay depth: sequence_length must
+  # grow with it (n_step + 1 for a feedforward head), and max_size =
+  # max(sequence_length+1, max_replay_size / num_envs), so a longer n_step leaves
+  # fewer valid sampling start positions per env unless max_replay_size (and
+  # with it replay memory) grows too.
   n_step: 100
   min_log_temperature: -7.0
 
@@ -467,16 +450,15 @@ train_config:
   # 224%. Q is MPO's ENTIRE policy-improvement signal, so that separation is the
   # experiment.
   #
-  # KNOWN BIAS, accepted: the rollout stores discount = 1 - done, and brax's
-  # EpisodeWrapper folds the 1000-step time limit into `done`, so truncation is
-  # bootstrapped as if terminal. At gamma=0.97 that touches the last ~33 steps
-  # (3%); at 0.995 the last ~200 (20%). It is tolerable because the bias is
-  # ~state-additive and MPO's E-step is a softmax over actions AT THE SAME STATE,
-  # where an additive term cancels. It still costs critic fit quality. The proper
-  # fix is to bootstrap on truncation; note that a naive fix breaks the n-step
-  # mask -- `_alive = cumprod(discount)` is what stops post-autoreset rewards
-  # leaking into R_n -- so it needs two separate masks, and the true terminal obs
-  # is already overwritten by BraxAutoReset.
+  # Time limits: the rollout stores discount = 1 - done, and brax's
+  # EpisodeWrapper folds the 1000-step time limit into `done`. The legacy preset
+  # (/legacy_pre_alignment, bootstrap_on_truncation: false) therefore bootstrapped
+  # a time-out as if it were terminal, which at gamma=0.97 biases the last ~33
+  # steps (3%) and at 0.995 the last ~200 (20%). The aligned default
+  # (bootstrap_on_truncation: true) bootstraps through time limits: the learner
+  # reads the truncation flag stored with each step, cuts the n-step window at
+  # the time-out and keeps the bootstrap term there, while real terminations
+  # stay terminal.
   discount: 0.995
 
   # ---- C51 support: [-150,150]x51 -> [0,20]x101 -----------------------------

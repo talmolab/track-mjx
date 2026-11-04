@@ -1,7 +1,7 @@
 """KL utilities for the DMPO kl-anchor mode.
 
 `pretanh_gaussian_kl` is a closed-form KL between two diagonal Gaussians
-parameterized by (mu, log_std). After the 2026-05-06 KL-in-loss port,
+parameterized by (mu, log_std). In the KL-in-loss formulation,
 this is consumed by ``_policy_loss_fn`` to add the anchor term
 ``-alpha * mean(exp(-w * KL))`` to the policy loss. Returns PER-SAMPLE
 KL (shape ``(...,)``); callers aggregate (e.g., ``mean``) downstream.

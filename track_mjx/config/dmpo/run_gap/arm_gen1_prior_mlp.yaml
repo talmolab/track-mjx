@@ -132,15 +132,9 @@ network_config:
   residual_scale: 5.0
   vision_feature_size: 32
   vision_channels: [4, 8, 16, 32]
-  # Recurrent policy head. REPLACES policy_head_layer_sizes [256,256,256] (which
-  # is unread on the RNN path, so it is absent here). The head is CNN + task_obs
-  # + proprio -> Dense(256)+LayerNorm+silu (mlp_layers) -> GRU(256)
-  # (hidden_sizes) -> zero-init residual Dense; the zero-init keeps the step-0
-  # warm-start invariant (anchor_invariant_probe r_anchor=1.0000) for ANY hidden
-  # state. store_dtype float16 is the REPLAY dtype for the stored per-step hidden
-  # (512 B/transition); the live hidden runs f32 end to end.
-  # MLP variant: a feedforward policy head ([256,256,256]) replaces the
-  # policy_head_rnn GRU block of the recurrent arm.
+  # Feedforward policy head: CNN + task_obs + proprio -> [256,256,256] MLP. No
+  # recurrent state is carried or stored in replay. (The recurrent counterpart
+  # of this config replaces this key with a policy_head_rnn GRU block.)
   policy_head_layer_sizes: [256, 256, 256]
   value_hidden_layer_sizes: [512, 512, 512, 512]
   # prior_layer_sizes / decoder_layer_sizes / intention_size are NOT set here --
@@ -178,7 +172,7 @@ kl_anchor:
   w_anchor_floor: 0.0
   decay_sgd_steps: 0
   # Freeze the combined prior and the decoder; the trainable block is the
-  # recurrent policy head (includes the binocular CNN encoder + GRU).
+  # policy head (includes the binocular CNN encoder).
   prior_lr_mult: 0.0
   decoder_lr_mult: 0.0
   policy_head_lr_mult: 1.0
@@ -197,34 +191,25 @@ train_config:
   # free variable (see the header).
   batch_size: 512
   min_replay_size: 50_000
-  # Replay depth under the fatter transition. The f16 GRU-256 hidden adds 512 B:
-  # 3.75 -> 4.25 KB/transition (+13.3%; verify against the startup "Replay
+  # Replay depth: 3.75 KB/transition (verify against the startup "Replay
   # transition size" line). 2,355,200 = 1150 steps/env x 2048 envs = 23.0
-  # rollouts of history, the same time-depth as the feedforward baseline's
-  # replay, at 4.25 KB/transition => 10.0 GB. Valid window starts per env:
-  # 1150 - 120 + 1 = 1031. Usable memory is bounded by buffer + full-leaf
+  # rollouts of history => ~8.2 GiB. Valid window starts per env:
+  # 1150 - 101 + 1 = 1050. Usable memory is bounded by buffer + full-leaf
   # transients: 30 rollouts (3,072,000) fails XLA autotuning on rb.add's per-leaf
   # transpose transient (f32[2048,1500,277] = 3.4 GB scratch), so ~85% of device
   # memory is the practical ceiling.
   max_replay_size: 2_355_200
-  # L + n = 20 + 100. The entry point RAISES unless sequence_length ==
-  # rnn_bptt_length + n_step: every loss point t < L needs a full n-step reward
-  # window plus the bootstrap state (and its stored hidden) at observation[:, t + n].
-  # 120 -> 101: sequence_length == rnn_bptt_length + n_step, and with
-  # rnn_bptt_length=0 that is n_step + 1 = 101.
+  # sequence_length == rnn_bptt_length + n_step, and with rnn_bptt_length=0 that
+  # is n_step + 1 = 101: the bootstrap state is read from observation[:, n]
+  # since next_observation is not stored.
   sequence_length: 101
   samples_per_insert: 2.0
   # sgd_steps_per_rollout pinned to 50 (the feedforward learner clock; K costs
   # no memory: lax.scan over K).
   sgd_steps_per_rollout: 50
-  # BPTT unroll depth L = the MEMORY horizon (~200 ms at 100 Hz), not the reward
-  # horizon (n_step stays 100). >0 switches the learner to the R2D2-style
-  # stored-state + short-BPTT path; requires the recurrent head (policy_head_rnn
-  # above), use_n_step=true and the compressed schema -- the entry point raises on
-  # any mismatch.
-  # 0 disables the R2D2 stored-state/short-BPTT learner path. >0 REQUIRES
-  # the recurrent head, so this must be 0 for the FF head above --
-  # the entry point raises on any mismatch.
+  # 0 selects the feedforward learner path (no stored recurrent state, no
+  # BPTT). >0 would require a recurrent policy head (policy_head_rnn), so it must
+  # be 0 for the FF head above -- the entry point raises on any mismatch.
   rnn_bptt_length: 0
   iters_per_chunk: 8
   log_every_steps: 1_000_000
@@ -236,15 +221,13 @@ train_config:
   # weights, so ~half the cross-entropy weight mass pushes actions toward zero --
   # directly anti-correlated with the large-amplitude torques a gap jump needs.
   use_n_step: true
-  # n_step stays 100 -- the reward horizon is untouched by the RNN package
-  # (see rnn_bptt_length above for why the two horizons are different knobs).
+  # n_step stays 100 (the return horizon).
   n_step: 100
   min_log_temperature: -7.0
   # ---- Compressed replay (see DMPOConfig) --------------------------------
-  # next_observation dropped (observation[:, t+n] bootstraps -- with the
-  # recurrent learner this is REQUIRED, not optional) and vision stored uint8
-  # (renderer unpacks 8-bit channels; error <=1/510). Sizing under the +512 B
-  # hidden: see max_replay_size above.
+  # next_observation dropped (observation[:, t+n] bootstraps) and vision stored
+  # uint8 (renderer unpacks 8-bit channels; error <=1/510). Sizing: see
+  # max_replay_size above.
   store_next_observation: false
   vision_uint8_storage: true
   # No warm-start machinery: cold critic, no critic-only gate.
@@ -253,8 +236,7 @@ train_config:
   # IS the sparse bonus: no anneal, stored == env reward.
   reward_anneal_sparse_key: null
   reward_anneal_env_steps: 0
-  # No behavior mixing -- and additionally unsupported with a recurrent
-  # policy (v1); the entry point raises if > 0 with policy_head_rnn.
+  # No behavior mixing.
   behavior_mix_init: 0.0
   behavior_mix_hold_env_steps: 0
   behavior_mix_end_env_steps: 0
@@ -278,14 +260,14 @@ train_config:
   # 224%. Q is MPO's ENTIRE policy-improvement signal, so that separation is the
   # experiment.
   #
-  # KNOWN BIAS, accepted: the rollout stores discount = 1 - done, and brax's
-  # EpisodeWrapper folds the 1000-step time limit into `done`, so truncation is
-  # bootstrapped as if terminal. At gamma=0.995 that touches the last ~200 steps
-  # (20%). Tolerable because the bias is ~state-additive and MPO's E-step is a
-  # softmax over actions AT THE SAME STATE, where an additive term cancels. It
-  # still costs critic fit quality. The proper fix is to bootstrap on truncation,
-  # but note `_alive = cumprod(discount)` is what stops post-autoreset rewards
-  # leaking into R_n, so it needs two masks.
+  # Time limits: the rollout stores discount = 1 - done, and brax's
+  # EpisodeWrapper folds the 1000-step time limit into `done`. The legacy preset
+  # (/legacy_pre_alignment, bootstrap_on_truncation: false) therefore bootstrapped
+  # a time-out as if it were terminal, which at gamma=0.995 biases the last ~200
+  # steps (20%). The aligned default (bootstrap_on_truncation: true) bootstraps
+  # through time limits: the learner reads the truncation flag stored with each
+  # step, cuts the n-step window at the time-out and keeps the bootstrap term
+  # there, while real terminations stay terminal.
   discount: 0.995
 
   # ---- C51 support: [0,50]x201 (kept at the warm-start recipes' values) ------
@@ -317,16 +299,14 @@ wrappers:
 # an absolute path: a relative path resolves against the launch directory, so a
 # launch from the wrong directory writes to an empty dir, finds 0 checkpoint
 # steps, skips auto-resume and exits early.
-# Must also be a fresh dir for a recurrent head: restoring an FF run's
-# checkpoints into the recurrent param tree fails (the entry point wraps that
-# failure in a pointed error).
+# Must also be a fresh dir: restoring checkpoints saved with a different
+# policy-head architecture fails (the entry point wraps that failure in a
+# pointed error).
 checkpoint_dir: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/arm_gen1_prior_mlp
 
 eval_render_config:
   # 50 fps against a 100 Hz control rate (ctrl_dt: 0.01) = deliberate HALF-SPEED
-  # playback. With policy_head_rnn the eval rollout threads the hidden
-  # through run_eval_rollout_envzero (zeros-init at eval start, zeroed where
-  # done), so this block is live from the first eval.
+  # playback. This block is live from the first eval.
   fps: 50
   height: 480
   width: 640

@@ -204,7 +204,7 @@ logging_config:
   project_name: dmpo-rodent
   exp_name: arm_h3_nstep100
   group_name: RodentRunGapBinocularVision-frozen-prior
-  notes: "n_step 50 -> 100 (sequence_length 100). The reference implementation's ctrl_dt is 0.02 s, so its n=50 is a 1.00 s horizon; at ctrl_dt 0.01 the exact match is n=100. unroll_length is deliberately unchanged."
+  notes: "n_step 50 -> 100 (sequence_length 101 = n_step + 1 on the compressed replay layout). The reference implementation's ctrl_dt is 0.02 s, so its n=50 is a 1.00 s horizon; at ctrl_dt 0.01 the exact match is n=100. unroll_length is deliberately unchanged."
 
 # Anchored at DMPO_CKPT_ROOT (default ./dmpo_checkpoints). Set DMPO_CKPT_ROOT to
 # an absolute path: a relative path resolves against the launch directory, so a

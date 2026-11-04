@@ -454,12 +454,11 @@ train_config:
   use_n_step: true
   # n_step stays 100 -- NOT raised to match gamma's 200-step horizon. n_step is
   # how far value propagates per update; gamma is how far it looks. They need
-  # not be equal, and raising it here would be actively harmful: sequence_length
-  # must be >= n_step, and max_size = max(sequence_length+1, max_replay_size /
-  # num_envs) = max(201, 195) = 201 at seq=200, leaving 201-200+1 = 2 valid
-  # sampling start positions per env against 96 at seq=100. Restoring 96 would need
-  # max_replay_size ~604k, i.e. +51% replay memory on a run already at 28.4 GB
-  # of 32.6 GB. Cheap in principle, OOM in practice.
+  # not be equal, and raising n_step costs replay depth: sequence_length must
+  # grow with it (n_step + 1 for a feedforward head), and max_size =
+  # max(sequence_length+1, max_replay_size / num_envs), so a longer n_step leaves
+  # fewer valid sampling start positions per env unless max_replay_size (and
+  # with it replay memory) grows too.
   n_step: 100
   min_log_temperature: -7.0
 
@@ -479,16 +478,15 @@ train_config:
   # 224%. Q is MPO's ENTIRE policy-improvement signal, so that separation is the
   # experiment.
   #
-  # KNOWN BIAS, accepted: the rollout stores discount = 1 - done, and brax's
-  # EpisodeWrapper folds the 1000-step time limit into `done`, so truncation is
-  # bootstrapped as if terminal. At gamma=0.97 that touches the last ~33 steps
-  # (3%); at 0.995 the last ~200 (20%). It is tolerable because the bias is
-  # ~state-additive and MPO's E-step is a softmax over actions AT THE SAME STATE,
-  # where an additive term cancels. It still costs critic fit quality. The proper
-  # fix is to bootstrap on truncation; note that a naive fix breaks the n-step
-  # mask -- `_alive = cumprod(discount)` is what stops post-autoreset rewards
-  # leaking into R_n -- so it needs two separate masks, and the true terminal obs
-  # is already overwritten by BraxAutoReset.
+  # Time limits: the rollout stores discount = 1 - done, and brax's
+  # EpisodeWrapper folds the 1000-step time limit into `done`. The legacy preset
+  # (/legacy_pre_alignment, bootstrap_on_truncation: false) therefore bootstrapped
+  # a time-out as if it were terminal, which at gamma=0.97 biases the last ~33
+  # steps (3%) and at 0.995 the last ~200 (20%). The aligned default
+  # (bootstrap_on_truncation: true) bootstraps through time limits: the learner
+  # reads the truncation flag stored with each step, cuts the n-step window at
+  # the time-out and keeps the bootstrap term there, while real terminations
+  # stay terminal.
   discount: 0.995
 
   # ---- C51 support: [-150,150]x51 -> [0,20]x101 -----------------------------

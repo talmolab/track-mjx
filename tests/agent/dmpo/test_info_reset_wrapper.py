@@ -9,7 +9,7 @@ fires on ``info["just_crossed_gap"]``, which compares against the
 pays when an env exceeds its all-time-best position, i.e. the sparse reward is
 a cross-episode RATCHET whose inflow decays to zero as records saturate. Eval
 rollouts call a real reset and never see this, which is why eval crossings
-looked healthy on arms whose training reward had dried up (arm_m1..m8).
+looked healthy even when the training reward had dried up.
 
 ``InfoResetOnDoneWrapper`` restores the listed info keys to their reset-time
 values wherever done fires. These tests pin:
@@ -144,7 +144,7 @@ def test_the_ratchet_is_real_without_the_fix():
     assert ep1 == pytest.approx(12.0)  # 4 crossings x 3 envs
     assert ep2 == pytest.approx(0.0), (
         "episode 2 paid a bonus -- the ratchet premise of this whole fix is "
-        "wrong; re-examine BraxAutoResetWrapper before trusting arm_m9/w1"
+        "wrong; re-examine BraxAutoResetWrapper before trusting the info-reset configs"
     )
     # and the mark itself persisted
     assert int(state.info["gaps_crossed"][0]) == 4

@@ -1,7 +1,7 @@
 # @package _global_
 # use_n_step false -> true with n_step=50 (n = min(n_step, sequence_length - 1)
 # = 50). With use_n_step off the learner does single-step TD on the t=0 slice and
-# discards the other 49 timesteps of every sampled sequence. This is the
+# discards the other 50 timesteps of every sampled sequence. This is the
 # structural asymmetry against PPO, whose advantage comes from realized returns
 # via GAE (unroll 10, lambda 0.95) and directly encodes 'this action made you
 # fall 40 steps later', while DMPO's Q is its ENTIRE improvement signal and was
@@ -209,7 +209,7 @@ logging_config:
   project_name: dmpo-rodent
   exp_name: arm_h1_nstep50
   group_name: RodentRunGapBinocularVision-frozen-prior
-  notes: "use_n_step false -> true with n_step=50 (n = min(n_step, sequence_length) = 50). With use_n_step off the learner does single-step TD on the t=0 slice and discards the other 49 timesteps of every sampled sequence. This is the structural asymmetry against PPO, whose advantage comes from realized returns via GAE (unroll 10, lambda 0.95) and directly encodes 'this action made you fall 40 steps later', while DMPO's Q is its ENTIRE improvement signal and was a 1-step bootstrap through a critic that cannot see torso_z or world_zaxis."
+  notes: "use_n_step false -> true with n_step=50 (n = min(n_step, sequence_length - 1) = 50, sequence_length 51 on the compressed replay layout). With use_n_step off the learner does single-step TD on the t=0 slice and discards the other 50 timesteps of every sampled sequence. This is the structural asymmetry against PPO, whose advantage comes from realized returns via GAE (unroll 10, lambda 0.95) and directly encodes 'this action made you fall 40 steps later', while DMPO's Q is its ENTIRE improvement signal and was a 1-step bootstrap through a critic that cannot see torso_z or world_zaxis."
 
 # Anchored at DMPO_CKPT_ROOT (default ./dmpo_checkpoints). Set DMPO_CKPT_ROOT to
 # an absolute path: a relative path resolves against the launch directory, so a

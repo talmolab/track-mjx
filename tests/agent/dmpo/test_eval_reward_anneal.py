@@ -2,11 +2,10 @@
 
 The bug this locks out: `train_dmpo_eval` read `state.reward` / `allenv["reward"]`
 -- the raw env total -- while `rollout.py:200-207` stores
-`sparse + lambda(t) * (total - sparse)` in replay. On arm_w2's FINAL eval
-(297.7M env steps, lambda == 0 since 20M, i.e. the buffer held PURE gap bonus)
+`sparse + lambda(t) * (total - sparse)` in replay. With lambda == 0 (i.e. the buffer holding PURE gap bonus)
 that made `eval/batch/mean_episode_reward` read 223.22 when the learner's own
 episode return was 10.64 -- a ~21x overstatement, ~96% of it a `forward_velocity`
-term whose stored weight had been exactly zero for 278M steps. It also broke the
+term whose stored weight had been exactly zero for the whole anneal. It also broke the
 invariant that with `gap_crossing_bonus: weight 1.0` the undiscounted episode
 return IS the gap count (223.22 vs 11.33 crossings).
 """

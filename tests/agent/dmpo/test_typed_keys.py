@@ -8,7 +8,7 @@ things must hold:
      bit-identical to never having checkpointed at all.
   2. ``checkpoint.restore`` must accept a LEGACY checkpoint -- one whose
      ``rng`` leaf is a raw uint32 array (every DMPO checkpoint saved before
-     this migration, including the real ``arm_i1_nstep100_proprio`` archive
+     this migration, including the real dense-reference archive
      exercised in ``test_warm_start_machinery.py``) -- into a typed-key
      template, and hand back a genuinely typed key rather than silently
      passing the raw array through.

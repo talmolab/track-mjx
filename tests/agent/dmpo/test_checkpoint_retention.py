@@ -5,8 +5,8 @@ Project rule: training checkpoints are never pruned. ``make_checkpointer`` in
 for this reason -- a diverged run must not be able to silently overwrite the
 last healthy checkpoint before anyone notices. No existing test pinned that
 default before this file. Without it, a future edit that "tidies" the
-signature back to a small finite integer (the old, dangerous default that
-nearly cost the arm_gen1_prior run its best-ever checkpoint on 2026-08-28)
+signature back to a small finite integer (the old, dangerous default, under which a
+diverged run came within two saves of overwriting its best checkpoint)
 would pass silently.
 
 This test saves more checkpoints than any plausible old finite default (6)

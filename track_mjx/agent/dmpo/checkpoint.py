@@ -50,11 +50,10 @@ def make_checkpointer(
             ``None`` (the DEFAULT) means KEEP EVERY CHECKPOINT -- orbax prunes
             nothing. Do not set this to a small integer.
 
-            WHY: on 2026-08-28 arm_gen1_prior went NaN at ~162M env steps and
-            kept running. Checkpoints save every ~10.6M steps and the old
-            default retained THREE, so the last healthy weights (159.2M, the
-            arm's best-ever 16.5 crossings/ep) were ~2 saves from being pruned
-            by NaN checkpoints. A diverged run silently eats its own history:
+            WHY: a run that goes NaN keeps running unless something stops it.
+            With checkpoints every ~10M steps and a retention of THREE, the
+            last healthy weights are only ~2 saves from being pruned by NaN
+            checkpoints. A diverged run silently eats its own history:
             the longer it runs after diverging, the less of it survives.
             Checkpoints here are ~74 MB, so retention is cheap and the
             replicability it buys is not.
@@ -233,7 +232,7 @@ def load_train_state_items_numpy(
 
     Args:
       ckpt_step_dir: path to one step directory, e.g.
-        ``.../checkpoints/arm_i1_nstep100_proprio/DMPONetwork_297676800``.
+        ``.../checkpoints/<exp_name>/DMPONetwork_<env_steps>``.
       items: top-level ``train_state`` keys to return. Defaults to the
         warm-start graft set: online policy, its target, and the observation
         normalizer (the policy is useless without the running stats it was

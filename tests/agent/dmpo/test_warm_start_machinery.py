@@ -1,7 +1,7 @@
 """Warm-start transition machinery: schedules, reward remix, behavior mixing,
 critic-only warmup, and the cross-run checkpoint loader.
 
-Context. Dense->sparse reward handover for the gap task (2026-08-19): the
+Context. Dense->sparse reward handover for the gap task: the
 policy is warm-started from a dense-reward run's checkpoint, a FRESH critic
 fits the warm policy's replay before the policy may move
 (``critic_warmup_sgd_steps``), the dense reward component anneals to zero

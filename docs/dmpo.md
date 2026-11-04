@@ -158,7 +158,7 @@ These are kept on purpose.
   branch, kept local or private.
 - Merge it back once its CPU tests and the GPU smokes
   (`tests/scripts/test_train_dmpo_*_smoke.py`) pass.
-- Before every push of the integration branch, re-run the scan of added lines
-  for internal references.
+- Before every push of the integration branch, re-check the diff for internal
+  references.
 - Every working recipe that later work builds on gets a baseline note with
   its exact commits, config and checkpoints, so a run can fall back to it.

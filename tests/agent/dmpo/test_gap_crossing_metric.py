@@ -39,7 +39,7 @@ def test_absent_source_is_flagged_not_reported_as_zero():
 
 
 def test_info_flag_is_used_when_present():
-    """The task's own flag is read even though the reward term is disabled."""
+    """The environment's own flag is read even though the reward term is disabled."""
     jc = np.zeros((T, N), dtype=np.float32)
     jc[3, 0] = 1.0  # env 0 crosses once
     jc[5, 1] = 1.0  # env 1 crosses twice

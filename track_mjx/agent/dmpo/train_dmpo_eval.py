@@ -49,7 +49,7 @@ def compute_rollout_metrics(
     ``remix_key``/``remix_lambda`` make the reward keys report the TRAINING
     reward -- what ``rollout.py`` stored in replay after the dense->sparse
     anneal -- with the un-annealed env total kept under a ``_env`` suffix. See
-    ``remix_eval_reward``. Defaults of None reproduce the pre-2026-08-19
+    ``remix_eval_reward``. Defaults of None reproduce the un-remixed
     behaviour exactly.
     """
     total_reward = 0.0
@@ -141,7 +141,7 @@ def compute_rollout_metrics(
             sum(episode_lengths) / n_episodes if n_episodes > 0 else 0.0
         ),
         "total_gap_crossings": total_gap_crossings,
-        # Un-annealed env total: the pre-2026-08-19 meaning of the three reward
+        # Un-annealed env total: the original meaning of the three reward
         # keys above.
         "cumulative_reward_env": total_reward_env,
         "mean_reward_per_step_env": total_reward_env / n_steps,
@@ -326,17 +326,14 @@ def run_eval_rollout_envzero(
                     if isinstance(mk, str) and (
                         mk.startswith("rewards/")
                         or mk.startswith("terminations/")
-                        # `anchor/*` added 2026-08-18. These were previously
-                        # reported from the env-0 path ONLY, i.e. n=1. At h1's
-                        # 253.1M eval that produced an apparent regime shift --
-                        # r_task 0.847 -> 0.517, r_anchor 0.294 -> 0.505 -- which
-                        # fully reverted one eval later; the all-env
-                        # `reward_per_step` in the same log line barely moved. It
-                        # was one rat having a bad episode. `anchor/r_anchor` is
-                        # the only continuous readout of drift from the frozen
-                        # prior, so it cannot stay the least reliable number we
-                        # log -- it is the primary measurement for the decoder-thaw
-                        # arm.
+                        # `anchor/*` is aggregated over ALL envs. Taken from the
+                        # env-0 path alone (n=1), one rat's single bad episode
+                        # produced an apparent regime shift (the task term fell
+                        # 0.847 -> 0.517, the anchor term rose 0.294 -> 0.505)
+                        # that fully reverted one eval later while the all-env
+                        # `reward_per_step` barely moved. `anchor/r_anchor` is the only continuous readout
+                        # of drift from the frozen prior, so it must be the
+                        # all-env mean.
                         or mk.startswith("anchor/")
                         # Per-step scalars a task reports under its own
                         # `spout/` namespace.
@@ -498,7 +495,7 @@ def compute_batch_rollout_metrics(
     Reward keys report the TRAINING reward -- what `rollout.py` stored in replay
     after the dense->sparse anneal -- when `remix_key`/`remix_lambda` are given.
     The un-annealed env total stays available under a `_env` suffix. Defaults of
-    None reproduce the pre-2026-08-19 behaviour exactly, so one-arg calls (and
+    None reproduce the un-remixed behaviour exactly, so one-arg calls (and
     test_gap_crossing_metric.py) are unaffected.
 
     Per-term `episode_rewards/<term>` keys are deliberately NOT annealed -- they
@@ -511,7 +508,7 @@ def compute_batch_rollout_metrics(
     rew, reward_train_measured = remix_eval_reward(allenv, remix_key, remix_lambda)
     done = np.asarray(allenv["done"]) > 0.5  # [T, N]
     T, N = rew.shape
-    # Prefer the task's own crossing flag over the reward bonus. The bonus is
+    # Prefer the environment's own crossing flag over the reward bonus. The bonus is
     # absent whenever `gap_crossing_bonus` is not in env_config.reward_terms --
     # which is EVERY frozen-prior arm, by design, to keep the reward
     # velocity-only and matched to the PPO reference. Reading the bonus with a
@@ -559,8 +556,8 @@ def compute_batch_rollout_metrics(
             else 0.0
         ),
         "batch/mean_episode_reward": float(np.mean(comp_rew)) if comp_rew else 0.0,
-        # Un-annealed env total, i.e. the pre-2026-08-19 meaning of the keys
-        # above. Kept so runs that straddle the change stay comparable.
+        # Un-annealed env total, i.e. the original meaning of the keys
+        # above. Kept so logs from before and after the remix stay comparable.
         "batch/reward_per_step_env": float(rew_env.mean()),
         "batch/mean_episode_reward_env": (
             float(np.mean(comp_rew_env)) if comp_rew_env else 0.0

@@ -1123,7 +1123,8 @@ def main(hydra_cfg: DictConfig):
     ckpt_dir = str(hydra_cfg.get("checkpoint_dir", "./checkpoints/dmpo_kl_anchor"))
     Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
     # A resume must train with the settings the run started with. Checked
-    # before the env is built and before any state is restored.
+    # before the env is built and before any state is restored; keep this call
+    # above every restore.
     resume_alignment = check_resume_alignment(
         ckpt_dir,
         cfg,

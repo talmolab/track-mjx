@@ -1,6 +1,6 @@
 """The MPO temperature runs away when Q is flat, and the floor is now settable.
 
-Background, measured on arm_m1_sparse_gaponly (sparse gap-crossing reward):
+Background, measured on a sparse gap-crossing-reward run:
 
     step    log_temperature   kl_q_rel   critic_loss   crossings/ep
     10.1M      -4.06           0.966       0.191          0.221
@@ -9,7 +9,7 @@ Background, measured on arm_m1_sparse_gaponly (sparse gap-crossing reward):
 
 `kl_q_rel` is the realized KL(q||pi) over epsilon. Once it reaches ~0 the E-step
 returns the policy it was given, so the M-step regresses the policy onto itself
-and learning stops. The dense reference arm_i1_nstep100_proprio sits at
+and learning stops. A dense-reward reference run sits at
 log_temperature -0.54 with kl_q_rel ~1.0 for its whole 300M.
 
 These tests pin (1) WHY the runaway happens, so the mechanism cannot be quietly
@@ -86,7 +86,7 @@ def test_gradient_is_numerically_junk_near_the_floor_and_never_turns_negative():
     The sign is what matters: it never goes negative, so there is no numerical
     route back up once the temperature is pinned. That is why the floor has to
     be raised rather than waited out, and it is consistent with
-    arm_m1_sparse_gaponly sitting at exactly -18.000000 once it arrived.
+    the sparse run above sitting at exactly -18.000000 once it arrived.
     """
     q_flat = jnp.full((N_ACTIONS, BATCH), 3.0)
 

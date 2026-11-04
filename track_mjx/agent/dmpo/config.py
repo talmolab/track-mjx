@@ -129,20 +129,20 @@ class DMPOConfig:
     # N=20 sampled actions, and the temperature dual then has derivative
     # `epsilon` for EVERY temperature (see clip_mpo_params in losses.py), so it
     # decays without bound and pins at the floor. Measured on
-    # arm_m1_sparse_gaponly: log_temperature -4.06 @10.1M -> -9.31 @20.8M ->
+    # a sparse gap-crossing run: log_temperature -4.06 @10.1M -> -9.31 @20.8M ->
     # -18.00 @31.4M, with the realized E-step KL (kl_q_rel) falling
     # 0.966 -> 0.441 -> 0.00002 and gap crossings/episode collapsing
     # 0.221 -> 0.260 -> 0.030. At the floor 1/t is ~7e7, so any residual critic
     # noise becomes a hard argmax over the sampled actions.
     #
     # A higher floor is the conservative setting: near-uniform E-step weights are
-    # a no-op update, which is strictly better than chasing noise. The healthy
-    # DENSE reference arm_i1_nstep100_proprio sits at -0.54 at 297.7M.
+    # a no-op update, which is strictly better than chasing noise. A healthy
+    # dense-reward reference run sits at -0.54 after ~300M steps.
     #
     # NOTE also that this floor is in ABSOLUTE temperature while Q scales with
     # the reward weight, so scaling the reward up is equivalent to lowering this
     # floor. That is why "make the sparse reward bigger" is not the fix it looks
-    # like -- see arm_m2_scale100.
+    # like.
     min_log_temperature: float = -18.0
 
     # Use an n-step return for the critic target instead of single-step TD:
@@ -152,8 +152,8 @@ class DMPOConfig:
     use_n_step: bool = False
 
     # ------------------------------------------------------------------
-    # Warm-start transition machinery (2026-08-19). All defaults are "off"
-    # so every completed arm is bit-unchanged. Designed for dense->sparse
+    # Warm-start transition machinery. All defaults are "off"
+    # so existing configs are bit-unchanged. Designed for dense->sparse
     # reward handover: warm-start the policy from a dense-reward checkpoint,
     # let a fresh critic fit the warm policy's data before the policy moves,
     # anneal the dense reward component to zero, and keep a decaying fraction
@@ -198,7 +198,7 @@ class DMPOConfig:
     behavior_mix_end_env_steps: int = 0
 
     # ------------------------------------------------------------------
-    # Replay-buffer compression (2026-08-19). The buffer lives on-device
+    # Replay-buffer compression. The buffer lives on-device
     # inside the fused JIT, so its depth is bounded by GPU memory; at the
     # uncompressed ~19.5 KB/transition (two f32 copies of the 32x32x2 vision
     # obs) 400k transitions ~= 7.8 GB ~= only 4 rollouts of history. Both
@@ -222,7 +222,7 @@ class DMPOConfig:
     vision_uint8_storage: bool = False
 
     # ------------------------------------------------------------------
-    # Recurrent (GRU) policy head: short-BPTT learner (2026-08-20).
+    # Recurrent (GRU) policy head: short-BPTT learner.
     # ------------------------------------------------------------------
 
     # BPTT unroll depth L = the number of loss points per sampled sequence.
@@ -293,8 +293,11 @@ class DMPOConfig:
     critic_target_mode: str = "sample_mixture"
 
     # Treat a time-limit cut as a bootstrap point, not as a terminal: the
-    # discount stays 1 on a truncation step. False treats every episode end
-    # as terminal (the historical behaviour).
+    # n-step window is cut at the first time-out (read from the stored
+    # truncation flag) and the target still bootstraps from there, while a
+    # real termination keeps a zero bootstrap. False (the legacy preset)
+    # treats every episode end as terminal, which biases values near the time
+    # limit; True (the aligned default) bootstraps through time limits.
     bootstrap_on_truncation: bool = True
 
     # Which action the critic is evaluated on at the loss point.

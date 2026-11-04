@@ -853,8 +853,8 @@ def sgd_step(
         k_tgt = jax.random.fold_in(k_pol, 1)
 
     # The loss point is t=0 of each window; the rest of the window feeds the
-    # n-step return below. Use jax.tree.map so dict / pytree observations (vision pipeline) work
-    # alongside the flat-array path; for a flat array the map is a no-op
+    # n-step return below. Use jax.tree.map so dict / pytree observations
+    # (vision pipeline) work alongside the flat-array path; for a flat array the map is a no-op
     # except for the slice itself.
     obs_t0 = jax.tree.map(lambda x: x[:, 0], batch["observation"])
     act_t0 = batch["action"][:, 0, :]
@@ -1027,7 +1027,7 @@ def sgd_step(
     # rollout via extra_state_extras). Absent for non-kl-anchor entries.
     anchor_mu = batch.get("anchor_mu_imit") if isinstance(batch, dict) else None
     anchor_ls = batch.get("anchor_log_std_imit") if isinstance(batch, dict) else None
-    # Fail-loud guard: if the user opted into the KL-anchor (cfg.kl_anchor_alpha
+    # Fail-loud guard: if the config opts into the KL-anchor (cfg.kl_anchor_alpha
     # != 0) but the batch is missing the anchor keys, the policy would silently
     # fall back to MPO-only and the run would look like "anchor disabled" with
     # no warning. Catch this at trace time before training spends GPU on it.
@@ -1199,7 +1199,7 @@ def sgd_step(
 
 
 # ---------------------------------------------------------------------------
-# Recurrent (short-BPTT) learner path (2026-08-20).
+# Recurrent (short-BPTT) learner path.
 #
 # R2D2-style stored-state + short BPTT, reached from `sgd_step` when
 # cfg.rnn_bptt_length > 0. Each sampled sequence of T = L + n transitions
@@ -1478,9 +1478,9 @@ def _policy_loss_fn_rnn(
     # lax.map (sequential) over the N-sample axis, NOT vmap as in the FF
     # path: with the [B, L] loss points folded into the batch, a full vmap
     # materializes num_samples * B * L parallel vision-CNN activations
-    # (409,600 images at the goal arm's B=1024, L=20) and OOMs the 5090
-    # with a ~9 GiB conv buffer (measured, first smoke of
-    # arm_r1_rnn_puresparse). Mapping N sequentially caps the peak at
+    # (409,600 images at B=1024, L=20) and OOMs a 32 GB GPU
+    # with a ~9 GiB conv buffer (measured on the first smoke run of a
+    # recurrent vision config). Mapping N sequentially caps the peak at
     # B * L parallel forwards -- the FF path's own peak (N * B = 20 * 1024)
     # -- at identical FLOPs and identical values (the critic is per-sample;
     # map == vmap semantically).

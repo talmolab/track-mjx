@@ -194,9 +194,8 @@ class CategoricalCriticHead(nn.Module):
 # policy and critic in a `MPONetworks` dataclass with an unrollable `torso`
 # (for recurrent backbones) and separate `policy_head` / `critic_head`
 # `hk.Transformed`s sharing a torso embedding. We deliberately flatten this:
-# DMPO's first cut is feed-forward only, so we wire each head directly behind
-# its own torso. The recurrent torso plumbing can be reintroduced later as a
-# separate module if needed; the current shape mirrors vnl-ray's
+# the feed-forward networks wire each head directly behind its own torso.
+# Recurrent heads live in separate modules; the current shape mirrors vnl-ray's
 # `train_dmpo_ray.py` (separate policy and critic torsos).
 # ---------------------------------------------------------------------------
 

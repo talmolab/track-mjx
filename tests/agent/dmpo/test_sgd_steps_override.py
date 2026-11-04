@@ -118,7 +118,7 @@ def test_nonpositive_override_raises(bad):
     """0 must NOT silently mean 'never train'.
 
     0 is falsy, so a `if override:` guard would quietly fall back to the formula
-    and train normally -- hiding a config typo that the user believes disabled
+    and train normally -- hiding a config typo that the author believes disabled
     SGD. Raise instead; None (omit the key) is the documented way to fall back.
     """
     cfg = DMPOConfig(**{**PROD, "sgd_steps_per_rollout": bad})

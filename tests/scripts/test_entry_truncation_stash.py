@@ -21,7 +21,6 @@ import numpy as np
 import pytest
 from hydra import compose, initialize_config_dir
 from mujoco_playground._src import mjx_env
-from vnl_playground.tasks.wrappers_info_reset import DEFAULT_RUN_GAP_KEYS
 
 from tests.scripts._entries import ENTRIES, SCRIPTS_DIR
 from tests.scripts.test_configs_compose import CONFIG_DIR
@@ -30,6 +29,10 @@ pytest.importorskip(
     "vnl_playground.tasks.wrappers_truncation",
     reason="needs the truncation wrapper, which the pinned vnl-playground lacks",
 )
+DEFAULT_RUN_GAP_KEYS = pytest.importorskip(
+    "vnl_playground.tasks.wrappers_info_reset",
+    reason="needs the info-reset wrapper, which the pinned vnl-playground lacks",
+).DEFAULT_RUN_GAP_KEYS
 
 PRESERVE_KEY = "AutoResetWrapper_preserve_info"
 EPISODE_LENGTH = 3

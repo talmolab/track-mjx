@@ -338,6 +338,7 @@ def _critic_loss_fn(
     obs_t0: jnp.ndarray,
     action_t0: jnp.ndarray,
     target_probs: jnp.ndarray,
+    weights: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Cross-entropy critic loss: -Σ target_probs * log_softmax(online_logits).
 
@@ -347,6 +348,10 @@ def _critic_loss_fn(
       obs_t0: [B, obs_dim] observations at t=0.
       action_t0: [B, action_dim] raw (pre-tanh) actions stored at t=0.
       target_probs: [B, num_atoms] projected Bellman target (stop-gradient'd).
+      weights: optional nonnegative per-row weights, [B]. The mean over rows
+        becomes ``sum(w * x) / max(sum(w), 1)``: a zero-weight row is excluded and
+        an all-zero batch gives a finite 0 loss with zero gradient. ``None``
+        (default) is the plain mean, bit-identical to before.
     """
     dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
         critic_params, obs_t0, action_t0
@@ -355,7 +360,12 @@ def _critic_loss_fn(
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     # target_probs already stop-gradient'd by the caller. Sum over atoms,
     # mean over batch.
-    return -(target_probs * log_probs).sum(axis=-1).mean()
+    per_row = (target_probs * log_probs).sum(axis=-1)
+    if weights is None:
+        return -per_row.mean()
+    # Multiply by the reciprocal, as jnp.mean's lowering does (see
+    # losses._reciprocal_mass): all-ones weights then match the plain mean bitwise.
+    return -(jnp.sum(weights * per_row) * (1.0 / jnp.maximum(jnp.sum(weights), 1.0)))
 
 
 def _policy_loss_fn(

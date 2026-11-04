@@ -22,6 +22,9 @@ Modifications:
      `-norm(actions - clip(actions, -1, 1))` to vnl-ray's `-norm(actions)`,
      to match the algorithm vnl-ray trained with on downstream tasks.
      See `cost_out_of_bound` comment in __call__.
+  2. Optional per-state `batch_weights` in `MPO.__call__` (and the helpers it
+     calls): every mean over the batch becomes `sum(w*x)/max(sum(w), 1)`, so
+     states can be excluded. `None` keeps the unweighted mean exactly.
 
 The MPO loss uses MPOParams, which can be initialized using init_params,
 to track the temperature and the dual variables.
@@ -46,6 +49,56 @@ _MIN_LOG_ALPHA = -18.0
 
 Shape = tuple[int]
 DType = type(jnp.float32)  # _ScalarMeta, a private type.
+
+
+def _reciprocal_mass(weights: jnp.ndarray) -> jnp.ndarray:
+    """``1 / max(sum(w), 1)``, the factor of the weighted mean.
+
+    Applied as a multiplication rather than a division on purpose: XLA lowers
+    the divide-by-constant-batch-size inside ``jnp.mean`` to a multiplication by
+    the f32 reciprocal, which is not bitwise equal to a true division for some
+    inputs. Multiplying by the runtime reciprocal reproduces ``jnp.mean`` exactly
+    when every weight is 1.
+    """
+    return 1.0 / jnp.maximum(jnp.sum(weights), 1.0)
+
+
+def _batch_mean(x: jnp.ndarray, weights: jnp.ndarray | None) -> jnp.ndarray:
+    """Mean over the leading batch axis; weighted when ``weights`` is given.
+
+    ``weights`` is ``[B]`` and nonnegative. The weighted mean is
+    ``sum(w * x) / max(sum(w), 1)``: a 0/1 mask averages over the kept rows, and
+    a batch whose weights sum to zero gives exactly 0 (not NaN). ``None``
+    is the plain ``jnp.mean(x, axis=0)``, chosen in Python so the unweighted
+    path is op for op what it has always been; all-ones weights match it bitwise.
+    """
+    if weights is None:
+        return jnp.mean(x, axis=0)
+    w = weights.reshape((-1,) + (1,) * (x.ndim - 1))
+    return jnp.sum(w * x, axis=0) * _reciprocal_mass(weights)
+
+
+def _mean_over_samples_and_batch(
+    x: jnp.ndarray, weights: jnp.ndarray | None
+) -> jnp.ndarray:
+    """Mean of an ``[N, B]`` array over both axes, weighting the B axis."""
+    if weights is None:
+        return jnp.mean(x)
+    return jnp.sum(weights * x) * (
+        1.0 / (x.shape[0] * jnp.maximum(jnp.sum(weights), 1.0))
+    )
+
+
+def _scale_constant(c: float | jnp.ndarray, weights: jnp.ndarray) -> jnp.ndarray:
+    """The weighted batch mean of the constant ``c``: ``c * sum(w) / max(sum(w), 1)``.
+
+    Constants inside a batch mean (the epsilon and log N terms of the dual
+    losses) go through this so a fully excluded batch contributes nothing. When
+    the weights sum to at least 1 it is ``c`` itself, selected rather than
+    multiplied by 1, so a batch of ones leaves the arithmetic untouched.
+    """
+    total = jnp.sum(weights)
+    return jnp.where(total >= 1.0, c, total * c)
 
 
 class MPOParams(NamedTuple):
@@ -207,6 +260,7 @@ class MPO:
         target_action_distribution: tfd.MultivariateNormalDiag | tfd.Independent,
         actions: jnp.ndarray,  # Shape [N, B, D].
         q_values: jnp.ndarray,  # Shape [N, B].
+        batch_weights: jnp.ndarray | None = None,  # Shape [B].
     ) -> tuple[jnp.ndarray, MPOStats]:
         """Computes the decoupled MPO loss.
 
@@ -218,6 +272,11 @@ class MPO:
             policy network; expects same shapes as online distribution.
           actions: actions sampled from the target policy; expects shape [N, B, D].
           q_values: Q-values associated with each action; expects shape [N, B].
+          batch_weights: optional nonnegative per-state weights, shape [B]. Every
+            mean over the batch (losses and statistics alike) becomes
+            ``sum(w * x) / max(sum(w), 1)``, so a zero-weight state is excluded
+            and an all-zero batch gives a finite loss with zero gradient. ``None``
+            (default) is the plain unweighted mean, bit-identical to before.
 
         Returns:
           Loss, combining the policy loss, KL penalty, and dual losses required to
@@ -257,7 +316,7 @@ class MPO:
         # respect to the non-parametric policy; and the temperature loss, used to
         # adapt the tempering of Q-values.
         normalized_weights, loss_temperature = compute_weights_and_temperature_loss(
-            q_values, self._epsilon, temperature
+            q_values, self._epsilon, temperature, batch_weights
         )
 
         # Only needed for diagnostics: Compute estimated actualized KL between the
@@ -286,7 +345,10 @@ class MPO:
 
             penalty_normalized_weights, loss_penalty_temperature = (
                 compute_weights_and_temperature_loss(
-                    cost_out_of_bound, self._epsilon_penalty, penalty_temperature
+                    cost_out_of_bound,
+                    self._epsilon_penalty,
+                    penalty_temperature,
+                    batch_weights,
                 )
             )
 
@@ -312,10 +374,10 @@ class MPO:
 
         # Compute the decomposed policy losses.
         loss_policy_mean = compute_cross_entropy_loss(
-            actions, normalized_weights, fixed_stddev_distribution
+            actions, normalized_weights, fixed_stddev_distribution, batch_weights
         )
         loss_policy_stddev = compute_cross_entropy_loss(
-            actions, normalized_weights, fixed_mean_distribution
+            actions, normalized_weights, fixed_mean_distribution, batch_weights
         )
 
         # Compute the decomposed KL between the target and online policies.
@@ -336,10 +398,10 @@ class MPO:
 
         # Compute the alpha-weighted KL-penalty and dual losses to adapt the alphas.
         loss_kl_mean, loss_alpha_mean = compute_parametric_kl_penalty_and_dual_loss(
-            kl_mean, alpha_mean, self._epsilon_mean
+            kl_mean, alpha_mean, self._epsilon_mean, batch_weights
         )
         loss_kl_stddev, loss_alpha_stddev = compute_parametric_kl_penalty_and_dual_loss(
-            kl_stddev, alpha_stddev, self._epsilon_stddev
+            kl_stddev, alpha_stddev, self._epsilon_stddev, batch_weights
         )
 
         # Combine losses.
@@ -361,27 +423,31 @@ class MPO:
             loss_alpha=jnp.mean(loss_alpha_mean + loss_alpha_stddev),
             loss_temperature=jnp.mean(loss_temperature),
             # KL measurements.
-            kl_q_rel=jnp.mean(kl_nonparametric) / self._epsilon,
+            kl_q_rel=_batch_mean(kl_nonparametric, batch_weights) / self._epsilon,
             penalty_kl_q_rel=(
-                (jnp.mean(penalty_kl_nonparametric) / self._epsilon_penalty)
+                (
+                    _batch_mean(penalty_kl_nonparametric, batch_weights)
+                    / self._epsilon_penalty
+                )
                 if self._action_penalization
                 else None
             ),
-            kl_mean_rel=jnp.mean(kl_mean, axis=0) / self._epsilon_mean,
-            kl_stddev_rel=jnp.mean(kl_stddev, axis=0) / self._epsilon_stddev,
+            kl_mean_rel=_batch_mean(kl_mean, batch_weights) / self._epsilon_mean,
+            kl_stddev_rel=_batch_mean(kl_stddev, batch_weights) / self._epsilon_stddev,
             # Q measurements.
-            q_min=jnp.mean(jnp.min(q_values, axis=0)),
-            q_max=jnp.mean(jnp.max(q_values, axis=0)),
+            q_min=_batch_mean(jnp.min(q_values, axis=0), batch_weights),
+            q_max=_batch_mean(jnp.max(q_values, axis=0), batch_weights),
             # If the policy has stddev, log summary stats for this as well.
-            pi_stddev_min=jnp.mean(jnp.min(pi_stddev, axis=-1)),
-            pi_stddev_max=jnp.mean(jnp.max(pi_stddev, axis=-1)),
+            pi_stddev_min=_batch_mean(jnp.min(pi_stddev, axis=-1), batch_weights),
+            pi_stddev_max=_batch_mean(jnp.max(pi_stddev, axis=-1), batch_weights),
             # Condition number of the diagonal covariance (actually, stddev) matrix.
-            pi_stddev_cond=jnp.mean(
-                jnp.max(pi_stddev, axis=-1) / jnp.min(pi_stddev, axis=-1)
+            pi_stddev_cond=_batch_mean(
+                jnp.max(pi_stddev, axis=-1) / jnp.min(pi_stddev, axis=-1),
+                batch_weights,
             ),
             # Action-norm diagnostics (see MPOStats docstring).
-            mean_action_norm=jnp.mean(action_norms),
-            max_action_norm=jnp.mean(jnp.max(action_norms, axis=0)),
+            mean_action_norm=_mean_over_samples_and_batch(action_norms, batch_weights),
+            max_action_norm=_batch_mean(jnp.max(action_norms, axis=0), batch_weights),
         )
 
         return loss, stats
@@ -391,6 +457,7 @@ def compute_weights_and_temperature_loss(
     q_values: jnp.ndarray,
     epsilon: float,
     temperature: jnp.ndarray,
+    batch_weights: jnp.ndarray | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Computes normalized importance weights for the policy optimization.
 
@@ -403,6 +470,9 @@ def compute_weights_and_temperature_loss(
         importance weights from them. This is really the Lagrange dual variable in
         the constrained optimization problem, the solution of which is the
         non-parametric policy targeted by the policy loss.
+      batch_weights: optional nonnegative per-state weights, shape [B]. The
+        batch mean in the temperature loss is then weighted, including its
+        constant epsilon and log N terms, so an all-zero batch gives 0.
 
     Returns:
       Normalized importance weights, used for policy optimization.
@@ -420,7 +490,14 @@ def compute_weights_and_temperature_loss(
     # Compute the temperature loss (dual of the E-step optimization problem).
     q_logsumexp = jax.scipy.special.logsumexp(tempered_q_values, axis=0)
     log_num_actions = jnp.log(q_values.shape[0] / 1.0)
-    loss_temperature = epsilon + jnp.mean(q_logsumexp) - log_num_actions
+    if batch_weights is None:
+        loss_temperature = epsilon + jnp.mean(q_logsumexp) - log_num_actions
+    else:
+        loss_temperature = (
+            _scale_constant(epsilon, batch_weights)
+            + _batch_mean(q_logsumexp, batch_weights)
+            - _scale_constant(log_num_actions, batch_weights)
+        )
     loss_temperature = temperature * loss_temperature
 
     return normalized_weights, loss_temperature
@@ -443,6 +520,7 @@ def compute_cross_entropy_loss(
     sampled_actions: jnp.ndarray,
     normalized_weights: jnp.ndarray,
     online_action_distribution: tfd.Distribution,
+    batch_weights: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Compute cross-entropy online and the reweighted target policy.
 
@@ -453,6 +531,8 @@ def compute_cross_entropy_loss(
       normalized_weights: target policy multiplied by the exponentiated Q values
         and normalized; expected shape is [N, B].
       online_action_distribution: policy to be optimized.
+      batch_weights: optional nonnegative per-state weights, shape [B]; the
+        mean over states is weighted (see ``_batch_mean``).
 
     Returns:
       loss_policy_gradient: the cross-entropy loss that, when differentiated,
@@ -466,13 +546,14 @@ def compute_cross_entropy_loss(
     loss_policy_gradient = -jnp.sum(log_prob * normalized_weights, axis=0)
 
     # Return the mean loss over the batch of states.
-    return jnp.mean(loss_policy_gradient, axis=0)
+    return _batch_mean(loss_policy_gradient, batch_weights)
 
 
 def compute_parametric_kl_penalty_and_dual_loss(
     kl: jnp.ndarray,
     alpha: jnp.ndarray,
     epsilon: float,
+    batch_weights: jnp.ndarray | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Computes the KL cost to be added to the Lagragian and its dual loss.
 
@@ -485,6 +566,9 @@ def compute_parametric_kl_penalty_and_dual_loss(
       kl: KL divergence between the target and online policies.
       alpha: Lagrange multipliers (dual variables) for the KL constraints.
       epsilon: Desired value for the KL.
+      batch_weights: optional nonnegative per-state weights, shape [B]. The mean
+        KL over states is weighted, and the constant epsilon of the dual loss is
+        scaled by the same total weight, so an all-zero batch gives 0.
 
     Returns:
       loss_kl: alpha-weighted KL regularization to be added to the policy loss.
@@ -492,13 +576,19 @@ def compute_parametric_kl_penalty_and_dual_loss(
     """
 
     # Compute the mean KL over the batch.
-    mean_kl = jnp.mean(kl, axis=0)
+    mean_kl = _batch_mean(kl, batch_weights)
 
     # Compute the regularization.
     loss_kl = jnp.sum(jax.lax.stop_gradient(alpha) * mean_kl)
 
     # Compute the dual loss.
-    loss_alpha = jnp.sum(alpha * (epsilon - jax.lax.stop_gradient(mean_kl)))
+    if batch_weights is None:
+        loss_alpha = jnp.sum(alpha * (epsilon - jax.lax.stop_gradient(mean_kl)))
+    else:
+        loss_alpha = jnp.sum(
+            alpha
+            * (_scale_constant(epsilon, batch_weights) - jax.lax.stop_gradient(mean_kl))
+        )
 
     return loss_kl, loss_alpha
 

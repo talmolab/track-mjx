@@ -198,3 +198,66 @@ def test_frozen_block_nan_does_not_poison():
     np.testing.assert_array_equal(updates["params"]["prior"]["k"], 0.0)
     for block in ("decoder", "policy_head"):
         assert np.isfinite(np.asarray(updates["params"][block]["k"])).all(), block
+
+
+def _pre_alignment_policy_opt(cfg, lr_mults):
+    """The kl-anchor policy optimizer as it was built before the scope field
+    existed: one clip+Adam chain per block, ``set_to_zero`` for a frozen one."""
+
+    def _block(mult):
+        if mult == 0.0:
+            return optax.set_to_zero()
+        return optax.chain(
+            optax.clip_by_global_norm(cfg.grad_clip),
+            optax.adam(cfg.policy_lr * mult),
+        )
+
+    return optax.multi_transform(
+        {label: _block(m) for label, m in lr_mults.items()}, label_param_tree
+    )
+
+
+def test_legacy_per_block_matches_the_pre_alignment_optimizer():
+    """Under the legacy preset the kl-anchor policy optimizer reproduces the
+    pre-alignment one bit for bit: four blocks, two trainable at different
+    learning rates, one frozen, gradients above and below the clip norm."""
+    cfg = DMPOConfig(**LEGACY_ALIGNMENT, policy_lr=1e-2, grad_clip=40.0)
+    lr_mults = {"prior": 0.1, "decoder": 1.0, "policy_head": 0.0, "other": 1.0}
+    rng = np.random.default_rng(1)
+    shapes = {"prior": (3,), "decoder": (2, 2), "policy_head": (4,), "Dense_0": (5,)}
+
+    def _four_blocks(scale):
+        return {
+            "params": {
+                name: {"k": jnp.asarray(scale * rng.normal(size=s), jnp.float32)}
+                for name, s in shapes.items()
+            }
+        }
+
+    params = _four_blocks(1.0)
+    # Large draws push the prior and "other" blocks over the clip norm.
+    grads_seq = [_four_blocks(s) for s in (60.0, 5.0, 120.0, 0.5)]
+    new = make_kl_anchor_optimizers(
+        cfg,
+        prior_lr_mult=lr_mults["prior"],
+        decoder_lr_mult=lr_mults["decoder"],
+        policy_head_lr_mult=lr_mults["policy_head"],
+        other_lr_mult=lr_mults["other"],
+    )[0]
+    old = _pre_alignment_policy_opt(cfg, lr_mults)
+    s_new, s_old = new.init(params), old.init(params)
+    assert jax.tree_util.tree_structure(s_new) == jax.tree_util.tree_structure(s_old)
+    p_new = p_old = params
+    for grads in grads_seq:
+        u_new, s_new = new.update(grads, s_new, p_new)
+        u_old, s_old = old.update(grads, s_old, p_old)
+        for a, b in zip(
+            jax.tree.leaves((u_new, s_new)), jax.tree.leaves((u_old, s_old))
+        ):
+            np.testing.assert_array_equal(a, b)
+        p_new = optax.apply_updates(p_new, u_new)
+        p_old = optax.apply_updates(p_old, u_old)
+    np.testing.assert_array_equal(
+        np.asarray(p_new["params"]["policy_head"]["k"]),
+        np.asarray(params["params"]["policy_head"]["k"]),
+    )

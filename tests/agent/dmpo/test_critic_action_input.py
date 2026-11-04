@@ -34,6 +34,25 @@ from track_mjx.agent.dmpo.networks import (
 )
 
 OBS, ACT = 5, 2
+# Added to the target policy's mean, so the bootstrap action of the
+# mean-action target (the target policy's mode) lies outside [-1, 1] and only
+# the bind can bring it inside.
+TARGET_MEAN_SHIFT = 2.5
+
+
+def _shift_target_mean(state, loc_path):
+    """``state`` with ``TARGET_MEAN_SHIFT`` added to the target policy's loc
+    bias at ``loc_path`` (a tuple of keys under ``params``)."""
+
+    def _shift(params):
+        params = jax.tree.map(lambda x: x, params)  # copy the containers
+        node = params["params"]
+        for key in loc_path:
+            node = node[key]
+        node["bias"] = node["bias"] + TARGET_MEAN_SHIFT
+        return params
+
+    return state._replace(target_policy_params=_shift(state.target_policy_params))
 
 
 class _Recorder:
@@ -97,6 +116,7 @@ def _ff(mode, target_mode, recorder):
     state = init_training_state(
         jax.random.key(0), nets, {"obs_size": OBS, "action_size": ACT}, cfg
     )
+    state = _shift_target_mean(state, ("GaussianPolicyHead_0", "loc"))
     ks = jax.random.split(jax.random.key(1), 3)
     batch = {
         "observation": jax.random.normal(ks[0], (4, 3, OBS)),
@@ -123,7 +143,9 @@ def test_critic_action_helper():
 def test_executed_input_applies_bind_at_every_site(mode, target_mode):
     """Feed-forward step: the critic loss, the bootstrap target and the E-step
     Q-values all apply the critic; under "executed" every recorded action is
-    inside (-1, 1), under "raw" the stored +-3 actions reach the critic."""
+    inside (-1, 1), under "raw" the stored +-3 actions reach the critic. The
+    target policy's mean sits near +2.5, so the mean-action bootstrap action
+    is pinned too."""
     rec = _Recorder()
     cfg, nets, state, batch = _ff(mode, target_mode, rec)
     rec.clear()  # drop the init apply
@@ -137,11 +159,16 @@ def test_executed_input_applies_bind_at_every_site(mode, target_mode):
         assert rec.max_abs() > 1.5
 
 
+@pytest.mark.parametrize("target_mode", ["sample_mixture", "mean_action"])
 @pytest.mark.parametrize("mode", ["executed", "raw"])
-def test_executed_input_on_the_recurrent_path(mode):
+def test_executed_input_on_the_recurrent_path(mode, target_mode):
+    """As the feed-forward test, through ``_sgd_step_rnn``. The target
+    policy's mean is shifted to near +2.5 (the stored hidden comes from the
+    online policy, so the batch is unchanged)."""
     rec = _Recorder()
-    s = rnn_t._setup(critic_action_input=mode)
-    cfg, state = s["cfg"], s["state"]
+    s = rnn_t._setup(critic_action_input=mode, critic_target_mode=target_mode)
+    cfg = s["cfg"]
+    state = _shift_target_mean(s["state"], ("loc",))
     nets = DMPONetworks(
         policy=s["nets"].policy,
         critic=_SpyCritic(

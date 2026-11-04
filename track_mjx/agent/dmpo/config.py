@@ -1,5 +1,6 @@
 """DMPO configuration. Defaults mirror vnl-ray's train_dmpo_ray.py."""
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -274,6 +275,116 @@ class DMPOConfig:
     # critic must be built with a matching `critic_privileged_dim` (> 0).
     # "" (default) = off: no gather, no new ops -- every old path unchanged.
     critic_privileged_key: str = ""
+
+    # ------------------------------------------------------------------
+    # Acme-alignment switches. The defaults are the ALIGNED values (what
+    # DeepMind acme's DMPO does); `LEGACY_ALIGNMENT` below lists the
+    # historical value of each field, which reproduces the pre-alignment
+    # numerics exactly (pinned by test_legacy_equivalence). Each field takes
+    # effect behind its own switch; `validate_alignment` checks the values and
+    # resolves "auto". The legacy preset is `config/dmpo/legacy_pre_alignment`.
+    # ------------------------------------------------------------------
+
+    # How the critic's bootstrap value is formed.
+    #   "sample_mixture": average the target critic's distribution over
+    #                     several actions sampled from the target policy
+    #                     (acme).
+    #   "mean_action":    one evaluation at the target policy's mean action.
+    critic_target_mode: str = "sample_mixture"
+
+    # Treat a time-limit cut as a bootstrap point, not as a terminal: the
+    # discount stays 1 on a truncation step. False treats every episode end
+    # as terminal (the historical behaviour).
+    bootstrap_on_truncation: bool = True
+
+    # Which action the critic is evaluated on at the loss point.
+    #   "executed": the action that was applied to the env (the tanh-bound
+    #               policy sample).
+    #   "raw":      the stored pre-bound policy sample.
+    critic_action_input: str = "executed"
+
+    # Form of the out-of-bound action penalty in the MPO loss.
+    #   "acme":    -||a - clip(a, -1, 1)|| (only the out-of-bound part).
+    #   "vnl_ray": -||a|| (every action magnitude).
+    action_penalty_formula: str = "acme"
+
+    # Which state the policy (E/M-step) loss is evaluated on.
+    #   "auto":    "next" on a feed-forward learner, "current" on a recurrent
+    #              one (resolved by `validate_alignment`).
+    #   "next":    the state the n-step window arrives at (the bootstrap
+    #              state), feed-forward only; shares its action samples with
+    #              the critic target.
+    #   "current": the state the sampled action was taken in.
+    policy_loss_state: str = "auto"
+
+    # Scope of the policy gradient-norm clip.
+    #   "global":    one global-norm clip over all trainable policy parameters.
+    #   "per_block": each trainable parameter block is clipped on its own.
+    policy_grad_clip_scope: str = "global"
+
+
+# The six acme-alignment fields, in a fixed order.
+ALIGNMENT_FIELDS: tuple[str, ...] = (
+    "critic_target_mode",
+    "bootstrap_on_truncation",
+    "critic_action_input",
+    "action_penalty_formula",
+    "policy_loss_state",
+    "policy_grad_clip_scope",
+)
+
+# Historical value of every alignment field: the preset that reproduces the
+# pre-alignment learner bit for bit.
+LEGACY_ALIGNMENT: dict = {
+    "critic_target_mode": "mean_action",
+    "bootstrap_on_truncation": False,
+    "critic_action_input": "raw",
+    "action_penalty_formula": "vnl_ray",
+    "policy_loss_state": "current",
+    "policy_grad_clip_scope": "per_block",
+}
+
+# Accepted values of the string-valued fields (bools are checked by type).
+_ALIGNMENT_CHOICES: dict[str, tuple[str, ...]] = {
+    "critic_target_mode": ("sample_mixture", "mean_action"),
+    "critic_action_input": ("executed", "raw"),
+    "action_penalty_formula": ("acme", "vnl_ray"),
+    "policy_loss_state": ("auto", "next", "current"),
+    "policy_grad_clip_scope": ("global", "per_block"),
+}
+
+
+def validate_alignment(cfg: DMPOConfig, recurrent: bool) -> DMPOConfig:
+    """Check the alignment fields and resolve ``policy_loss_state="auto"``.
+
+    Returns a copy of ``cfg`` with ``policy_loss_state`` resolved to ``"next"``
+    (feed-forward learner) or ``"current"`` (``recurrent=True``). Raises
+    ``ValueError`` for an unknown value, naming the field and listing the valid
+    values, and for ``policy_loss_state="next"`` on a recurrent learner (the
+    recurrent learner has no next-state policy unroll). Runs at trace time, so
+    a bad config fails before any device time is spent.
+    """
+    for name, choices in _ALIGNMENT_CHOICES.items():
+        value = getattr(cfg, name)
+        if value not in choices:
+            raise ValueError(
+                f"unknown {name}={value!r}; valid values: "
+                + ", ".join(repr(c) for c in choices)
+            )
+    flag = cfg.bootstrap_on_truncation
+    if not isinstance(flag, bool):
+        raise ValueError(
+            f"unknown bootstrap_on_truncation={flag!r}; valid values: True, False"
+        )
+    state = cfg.policy_loss_state
+    if state == "next" and recurrent:
+        raise ValueError(
+            "policy_loss_state='next' is not supported by the recurrent "
+            "learner; use 'current' or 'auto' (which resolves to 'current')."
+        )
+    if state == "auto":
+        state = "current" if recurrent else "next"
+    return dataclasses.replace(cfg, policy_loss_state=state)
 
 
 def resolve_sgd_steps_per_rollout(cfg: DMPOConfig) -> int:

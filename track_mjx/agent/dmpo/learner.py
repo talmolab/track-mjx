@@ -16,7 +16,7 @@ from brax.training.acme import running_statistics, specs
 from tensorflow_probability.substrates import jax as tfp
 
 from track_mjx.agent.dmpo.categorical import categorical_l2_project
-from track_mjx.agent.dmpo.config import DMPOConfig
+from track_mjx.agent.dmpo.config import DMPOConfig, validate_alignment
 from track_mjx.agent.dmpo.losses import MPO, MPOParams, clip_mpo_params
 from track_mjx.agent.dmpo.networks import DMPONetworks
 from track_mjx.agent.dmpo.obs_utils import (
@@ -498,6 +498,10 @@ def sgd_step(
     # bit-identical for every existing arm (no retrace, no new ops).
     if getattr(cfg, "rnn_bptt_length", 0) > 0:
         return _sgd_step_rnn(state, batch, nets, optimizers, cfg)
+
+    # Check the alignment switches and resolve policy_loss_state="auto" (trace
+    # time; a bad value fails before any device time is spent).
+    cfg = validate_alignment(cfg, recurrent=False)
 
     pol_opt, crit_opt, dual_opt = optimizers
     rng, k_pol = jax.random.split(state.rng)
@@ -1154,6 +1158,7 @@ def _sgd_step_rnn(
         the first L ticks ``idx`` of the window [0, L*k), bootstrap idx + n,
         per-row gathers (``tick_indices``; see the section header).
     """
+    cfg = validate_alignment(cfg, recurrent=True)
     L = int(cfg.rnn_bptt_length)
     n = int(cfg.n_step)
     k = int(getattr(cfg, "rnn_tick_stride", 1))

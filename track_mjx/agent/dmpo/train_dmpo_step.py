@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 
+from track_mjx.agent.dmpo.config import validate_alignment
 from track_mjx.agent.dmpo.rollout import collect_rollout
 from track_mjx.agent.dmpo.schedules import (
     behavior_mix_frac,
@@ -83,6 +84,11 @@ def make_fused_train_step(
           is transient and never checkpointed) — that call shares the
           env-reset retrace, so resume still costs only one extra trace.
     """
+    # Alignment switches: validated and "auto" resolved once, at build time
+    # (the learner re-validates the resolved copy at trace time).
+    cfg = validate_alignment(
+        cfg, recurrent=getattr(nets, "recurrent_meta", None) is not None
+    )
     policy_apply = nets.policy.apply
     num_envs = int(cfg.num_envs)
     unroll = int(cfg.unroll_length)

@@ -18,10 +18,10 @@ Vendored from acme.jax.losses.mpo (Apache 2.0). See LICENSE-ACME for the
 original copyright notice.
 
 Modifications:
-  1. Action penalization formula switched from Acme's
-     `-norm(actions - clip(actions, -1, 1))` to vnl-ray's `-norm(actions)`,
-     to match the algorithm vnl-ray trained with on downstream tasks.
-     See `cost_out_of_bound` comment in __call__.
+  1. Selectable action-penalization formula (`action_penalty_formula`):
+     Acme's `-norm(actions - clip(actions, -1, 1))` ("acme", the default) or
+     vnl-ray's `-norm(actions)` ("vnl_ray", the algorithm vnl-ray trained
+     with on downstream tasks). See `cost_out_of_bound` in __call__.
   2. Optional per-state `batch_weights` in `MPO.__call__` (and the helpers it
      calls): every mean over the batch becomes `sum(w*x)/max(sum(w), 1)`, so
      states can be excluded. `None` keeps the unweighted mean exactly.
@@ -44,6 +44,7 @@ import tensorflow_probability.substrates.jax as tfp
 tfd = tfp.distributions
 
 _MPO_FLOAT_EPSILON = 1e-8
+_PENALTY_FORMULAS = ("acme", "vnl_ray")
 _MIN_LOG_TEMPERATURE = -18.0
 _MIN_LOG_ALPHA = -18.0
 
@@ -176,6 +177,7 @@ class MPO:
         per_dim_constraining: bool = True,
         action_penalization: bool = True,
         epsilon_penalty: float = 0.001,
+        action_penalty_formula: str = "acme",
     ):
         """Initialize and configure the MPO loss.
 
@@ -200,7 +202,16 @@ class MPO:
             via the MO-MPO algorithm.
           epsilon_penalty: KL constraint on the probability of violating the action
             constraint.
+          action_penalty_formula: the out-of-bound cost of a sampled action.
+            "acme": `-norm(a - clip(a, -1, 1))`, only the part outside [-1, 1]
+            (applied to the pre-tanh samples, it penalizes |a| > 1, i.e.
+            |tanh(a)| > 0.76). "vnl_ray": `-norm(a)`, every action magnitude.
         """
+        if action_penalty_formula not in _PENALTY_FORMULAS:
+            raise ValueError(
+                f"unknown action_penalty_formula={action_penalty_formula!r}; "
+                "valid values: " + ", ".join(repr(f) for f in _PENALTY_FORMULAS)
+            )
 
         # MPO constrain thresholds.
         self._epsilon = epsilon
@@ -216,6 +227,7 @@ class MPO:
         # constraint threshold.
         self._action_penalization = action_penalization
         self._epsilon_penalty = epsilon_penalty
+        self._action_penalty_formula = action_penalty_formula
 
         # Whether to ensure per-dimension KL constraint satisfication.
         self._per_dim_constraining = per_dim_constraining
@@ -332,16 +344,15 @@ class MPO:
             )
 
             # Compute action penalization cost.
-            # NOTE: Deliberate divergence from Acme's vendored implementation. We
-            # follow vnl-ray's formulation, which penalizes ALL action magnitudes
-            # rather than only the out-of-bound portion. This matches the algorithm
-            # that vnl-ray actually trained with on downstream tasks.
-            # See vnl-ray's vnl_ray/agents/losses_mpo.py:265-266 where the
-            # original Acme formulation is preserved as `# OLD` comments. Original
-            # Acme formula (preserved for reference / easy reversal):
-            #   diff_out_of_bound = actions - jnp.clip(actions, -1.0, 1.0)
-            #   cost_out_of_bound = -jnp.linalg.norm(diff_out_of_bound, axis=-1)
-            cost_out_of_bound = -jnp.linalg.norm(actions, axis=-1)
+            if self._action_penalty_formula == "acme":
+                # Acme: only the out-of-bound portion of each action.
+                diff_out_of_bound = actions - jnp.clip(actions, -1.0, 1.0)
+                cost_out_of_bound = -jnp.linalg.norm(diff_out_of_bound, axis=-1)
+            else:
+                # vnl-ray's formulation penalizes ALL action magnitudes, the
+                # algorithm vnl-ray trained with on downstream tasks (its
+                # vnl_ray/agents/losses_mpo.py keeps Acme's form as comments).
+                cost_out_of_bound = -jnp.linalg.norm(actions, axis=-1)
 
             penalty_normalized_weights, loss_penalty_temperature = (
                 compute_weights_and_temperature_loss(

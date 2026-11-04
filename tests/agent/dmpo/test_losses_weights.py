@@ -216,6 +216,8 @@ def test_vnl_ray_parity_unchanged():
         init_log_alpha_stddev=1000.0,
         per_dim_constraining=True,
         action_penalization=True,
+        # The reference is vnl-ray's loss, so its penalty formula.
+        action_penalty_formula="vnl_ray",
     )
     params = mpo.init_params(action_dim=actions.shape[-1], dtype=jnp.float32)
     batch = actions.shape[1]

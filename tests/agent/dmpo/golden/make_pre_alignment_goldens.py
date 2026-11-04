@@ -348,7 +348,9 @@ def _tick_group(overrides: dict) -> dict:
 
 
 def _mpo_group(overrides: dict) -> dict:
-    del overrides  # MPO takes no alignment field at this commit.
+    # The penalty formula is the one alignment field MPO itself takes; absent
+    # (a pre-alignment checkout) the constructor has no such argument.
+    formula = {k: overrides[k] for k in ("action_penalty_formula",) if k in overrides}
     N, B, D = 6, 5, 3
     ks = jax.random.split(jax.random.key(8), 6)
     online_loc = jax.random.normal(ks[0], (B, D))
@@ -371,6 +373,7 @@ def _mpo_group(overrides: dict) -> dict:
             init_log_alpha_stddev=3.0,
             per_dim_constraining=True,
             action_penalization=pen,
+            **formula,
         )
         params = mpo.init_params(D, jnp.float32)
 

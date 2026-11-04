@@ -104,6 +104,8 @@ def _run_jax_mpo(reference):
         init_log_alpha_stddev=1000.0,
         per_dim_constraining=True,
         action_penalization=True,
+        # The reference is vnl-ray's loss, so its penalty formula.
+        action_penalty_formula="vnl_ray",
     )
     A = jnp.array(inp["online_loc"]).shape[-1]
     params = loss_fn.init_params(action_dim=A, dtype=jnp.float32)
@@ -186,6 +188,8 @@ def test_mpo_init_params():
         init_log_alpha_stddev=1000.0,
         per_dim_constraining=True,
         action_penalization=True,
+        # The reference is vnl-ray's loss, so its penalty formula.
+        action_penalty_formula="vnl_ray",
     )
     params = loss_fn.init_params(action_dim=6, dtype=jnp.float32)
     assert isinstance(params, MPOParams)

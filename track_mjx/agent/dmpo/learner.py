@@ -49,7 +49,11 @@ def make_optimizers(cfg: DMPOConfig):
     """Return (policy_opt, critic_opt, dual_opt) optax transformations.
 
     Policy and critic get gradient-norm clipping at cfg.grad_clip; the dual
-    optimizer does not (Acme keeps it unclipped).
+    optimizer does not (Acme keeps it unclipped). The policy here is a single
+    parameter block, so its one clip is already global and
+    ``cfg.policy_grad_clip_scope`` makes no difference; the block-wise
+    optimizer (``optim_kl_anchor.make_kl_anchor_optimizers``) is where the
+    scope matters.
     """
     policy = optax.chain(
         optax.clip_by_global_norm(cfg.grad_clip),
@@ -75,6 +79,7 @@ def _build_loss(cfg: DMPOConfig) -> MPO:
         init_log_alpha_stddev=cfg.init_log_alpha_stddev,
         per_dim_constraining=cfg.per_dim_constraining,
         action_penalization=cfg.action_penalization,
+        action_penalty_formula=cfg.action_penalty_formula,
     )
 
 

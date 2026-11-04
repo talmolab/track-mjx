@@ -145,10 +145,10 @@ class DMPOConfig:
     # like -- see arm_m2_scale100.
     min_log_temperature: float = -18.0
 
-    # Use an n-step return (n = min(n_step, sequence_length)) for the critic
-    # target instead of single-step TD. `n_step` has been declared and unread
-    # since the port; False keeps the historical single-step behaviour
-    # bit-identical, so this is opt-in and does not disturb any existing arm.
+    # Use an n-step return for the critic target instead of single-step TD:
+    # n = min(n_step, sequence_length) with next_observation stored,
+    # min(n_step, sequence_length - 1) on the compressed replay layout. False
+    # (the default) is single-step TD.
     use_n_step: bool = False
 
     # ------------------------------------------------------------------

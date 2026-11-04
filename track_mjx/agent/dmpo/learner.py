@@ -817,8 +817,11 @@ def sgd_step(
     Args:
       state: current TrainingState.
       batch: dict with keys observation [B, T, obs], action [B, T, act],
-        reward [B, T], discount [B, T], next_observation [B, T, obs].
-        Only the t=0 slice is used for now (single-step TD).
+        reward [B, T], discount [B, T], truncation [B, T] (when
+        ``cfg.bootstrap_on_truncation``) and, unless the replay is compressed,
+        next_observation [B, T, obs]. Each row is one window starting at t=0:
+        the loss point is t=0 and the critic target is its n-step return
+        (``cfg.use_n_step``; one step otherwise).
       nets: DMPONetworks.
       optimizers: (policy_opt, critic_opt, dual_opt) — built ONCE outside
         and threaded through here. Re-creating optimizers inside would break
@@ -849,22 +852,16 @@ def sgd_step(
         # loss's own key stays what it was.
         k_tgt = jax.random.fold_in(k_pol, 1)
 
-    # First-cut: only use t=0 of each trajectory. Trajectory dimension is
-    # reserved for future n-step return computation.
-    # Use jax.tree.map so dict / pytree observations (vision pipeline) work
+    # The loss point is t=0 of each window; the rest of the window feeds the
+    # n-step return below. Use jax.tree.map so dict / pytree observations (vision pipeline) work
     # alongside the flat-array path; for a flat array the map is a no-op
     # except for the slice itself.
     obs_t0 = jax.tree.map(lambda x: x[:, 0], batch["observation"])
     act_t0 = batch["action"][:, 0, :]
 
     # ---- n-step return -------------------------------------------------------
-    # `cfg.n_step = 50` was declared in DMPOConfig from the start and NEVER read:
-    # this learner did single-step TD on the t=0 slice while discarding the other
-    # 49 timesteps of every sampled sequence. That is the structural asymmetry
-    # against the PPO reference, which gets its advantage from REALIZED returns
-    # via GAE -- returns that directly encode "this action made you fall 40 steps
-    # later". DMPO's Q is its ENTIRE policy-improvement signal and was a one-step
-    # bootstrap through a critic that cannot observe torso height or orientation.
+    # With cfg.use_n_step the critic target is the n-step return of the window
+    # (acme's n-step transitions); without it, single-step TD on t=0.
     #
     # With m_i = prod_{j<i} d_j (still-alive mask entering step i):
     #     R_n = sum_{i<n} gamma^i m_i r_i          bootstrap coeff = gamma^n m_n

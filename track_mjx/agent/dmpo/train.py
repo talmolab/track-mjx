@@ -13,7 +13,9 @@ Loop:
     4. Periodically log metrics to wandb (with print fallback).
 """
 
+import difflib
 import os
+from collections.abc import Collection
 
 # JAX/MuJoCo backend hints, mirroring track_mjx.train.
 os.environ.setdefault("MUJOCO_GL", "egl")
@@ -64,9 +66,67 @@ class _VnlPlaygroundEnvAdapter:
         return new_state, new_state.reward
 
 
-def _filter_dmpo_kwargs(d: dict) -> dict:
-    """Drop keys that aren't DMPOConfig fields (defensive against stray YAML keys)."""
+# Keys an entry script reads from ``train_config`` itself, not DMPOConfig fields.
+ENTRY_TRAIN_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "iters_per_chunk",  # SGD-chunk size of the training loop
+        "episode_length",  # carried by the spout arms; equals env_config's
+        "seed",  # imitation entry: PRNG seed
+        "action_repeat",  # imitation entry: env action repeat
+        "allow_alignment_change_on_resume",  # resume override of every entry
+    }
+)
+
+# The PPO hyperparameter block of rodent-full-clips, which the intention
+# imitation config inherits and merges its DMPO block into.
+INHERITED_PPO_TRAIN_KEYS: frozenset[str] = frozenset(
+    {
+        "num_minibatches",
+        "num_updates_per_batch",
+        "learning_rate",
+        "clipping_epsilon",
+        "discounting",
+        "entropy_cost",
+        "reward_scaling",
+        "normalize_observations",
+        "deterministic_eval",
+        "grad_clip_threshold",
+        "vf_loss_coefficient",
+        "get_activation",
+    }
+)
+
+
+def _filter_dmpo_kwargs(d: dict, ignore: Collection[str] = frozenset()) -> dict:
+    """The ``DMPOConfig`` keyword arguments of a ``train_config`` dict.
+
+    Keys in ``ENTRY_TRAIN_CONFIG_KEYS`` and ``ignore`` are read elsewhere and
+    left out. Any other key that is not a DMPOConfig field is refused: dropping
+    it would train on the default, so a misspelt alignment switch or
+    hyperparameter would go unnoticed.
+
+    Args:
+      d: the ``train_config`` mapping.
+      ignore: further keys the caller reads itself or knows to be inert.
+
+    Raises:
+      ValueError: naming every unknown key and its closest field names.
+    """
     valid = set(DMPOConfig.__dataclass_fields__.keys())
+    known_elsewhere = ENTRY_TRAIN_CONFIG_KEYS | set(ignore)
+    unknown = sorted(k for k in d if k not in valid and k not in known_elsewhere)
+    if unknown:
+        lines = []
+        for key in unknown:
+            close = difflib.get_close_matches(str(key), sorted(valid), n=3)
+            hint = f" (did you mean {', '.join(map(repr, close))}?)" if close else ""
+            lines.append(f"  {key!r}{hint}")
+        raise ValueError(
+            "train_config has keys that DMPOConfig does not take; a run would "
+            "train on the default for each:\n"
+            + "\n".join(lines)
+            + "\nCheck the spelling, or the installed track-mjx may predate the field."
+        )
     return {k: v for k, v in d.items() if k in valid}
 
 

@@ -311,10 +311,10 @@ def _validate_reset_requirements(cfg, env, env_name: str) -> None:
 def _replace_cfg_fields(cfg: DMPOConfig, **fields) -> DMPOConfig:
     """``dataclasses.replace`` that refuses a field the installed DMPOConfig lacks.
 
-    Use this, never ``_filter_dmpo_kwargs``, for a value the learner MUST see:
-    the filter silently drops unknown keys, so a slow-core arm launched against
-    a track-mjx without ``rnn_tick_stride`` would train the per-step learner on
-    a strided policy and look healthy.
+    Use this for a value the entry computes and the learner MUST see, one that
+    is not a ``train_config`` key: a slow-core arm launched against a track-mjx
+    without ``rnn_tick_stride`` would otherwise train the per-step learner on a
+    strided policy and look healthy.
 
     Raises:
         ValueError: naming every missing field.
@@ -1040,7 +1040,7 @@ def main(hydra_cfg: DictConfig):
                 "slow core is the kl-anchor (prior + decoder) head only."
             )
         # Fails loud on a track-mjx whose DMPOConfig has no rnn_tick_stride
-        # (never via _filter_dmpo_kwargs, which would drop it silently).
+        # (a missing field raises here rather than being skipped).
         cfg = _replace_cfg_fields(cfg, rnn_tick_stride=tick_stride)
     elif int(getattr(cfg, "rnn_bptt_length", 0)) > 0:
         raise ValueError(

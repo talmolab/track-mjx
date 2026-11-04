@@ -47,6 +47,7 @@ from track_mjx.agent.dmpo.networks_intention import (
 from track_mjx.agent.dmpo.obs_utils import get_dmpo_obs_sizes, normalize_dict_obs
 from track_mjx.agent.dmpo.replay import make_replay
 from track_mjx.agent.dmpo.train import (
+    INHERITED_PPO_TRAIN_KEYS,
     _filter_dmpo_kwargs,
     _VnlPlaygroundEnvAdapter,
 )
@@ -140,7 +141,9 @@ def main(hydra_cfg: DictConfig) -> None:
     raw_train_cfg = OmegaConf.to_container(
         hydra_cfg.train_setup.train_config, resolve=True
     )
-    dmpo_cfg = DMPOConfig(**_filter_dmpo_kwargs(raw_train_cfg))
+    dmpo_cfg = DMPOConfig(
+        **_filter_dmpo_kwargs(raw_train_cfg, ignore=INHERITED_PPO_TRAIN_KEYS)
+    )
     # Every checkpoint records the alignment settings it was trained with.
     record_alignment(cfg_dict, dmpo_cfg)
     iters_per_chunk = int(raw_train_cfg.get("iters_per_chunk", 8))

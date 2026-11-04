@@ -174,7 +174,11 @@ train_config:
   batch_size: 1024
   min_replay_size: 50_000
   max_replay_size: 400_000
-  sequence_length: 100
+  sequence_length: 101  # n_step + 1: bootstrap comes from observation[:, 100]
+  # Compressed replay: next_observation is not stored. The bootstrap state,
+  # and the KL anchor the policy loss reads there, come from the sequence
+  # itself, so it must reach one step past the n-step window.
+  store_next_observation: false
   samples_per_insert: 2.0
   # sgd_steps_per_rollout (K) is how many times each transition is revisited
   # before eviction. Under sparse reward this is load-bearing rather than a tuning
@@ -198,11 +202,10 @@ train_config:
   # n_step stays 100 -- NOT raised to match gamma's 200-step horizon. n_step is
   # how far value propagates per update; gamma is how far it looks. They need
   # not be equal, and raising it here would be actively harmful: sequence_length
-  # must be >= n_step, and max_size = max(sequence_length+1, max_replay_size /
-  # num_envs) = max(201, 195) = 201 at seq=200, leaving 201-200+1 = 2 valid
-  # sampling start positions per env against 96 at seq=100. Restoring 96 would need
-  # max_replay_size ~604k, i.e. +51% replay memory on a run already at 28.4 GB
-  # of 32.6 GB. Cheap in principle, OOM in practice.
+  # must be >= n_step + 1, and max_size = max(sequence_length+1, max_replay_size
+  # / num_envs) = max(202, 195) = 202 at seq=201, leaving 202-201+1 = 2 valid
+  # sampling start positions per env against 95 at seq=101. Restoring 95 would
+  # need max_replay_size ~604k, i.e. +51% replay memory.
   n_step: 100
 
   # ---- gamma: 0.97 -> 0.995 --------------------------------------------------

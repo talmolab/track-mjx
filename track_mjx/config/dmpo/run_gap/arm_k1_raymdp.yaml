@@ -169,7 +169,11 @@ train_config:
   batch_size: 1024
   min_replay_size: 50_000
   max_replay_size: 400_000
-  sequence_length: 50
+  sequence_length: 51  # n_step + 1: bootstrap comes from observation[:, 50]
+  # Compressed replay: next_observation is not stored. The bootstrap state,
+  # and the KL anchor the policy loss reads there, come from the sequence
+  # itself, so it must reach one step past the n-step window.
+  store_next_observation: false
   samples_per_insert: 2.0
   # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
   # per rollout; x iters_per_chunk. K=200 (batch=256) is severely off-policy.

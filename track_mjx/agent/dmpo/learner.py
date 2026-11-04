@@ -756,6 +756,53 @@ def _policy_loss_fn(
     return loss.squeeze(), stats
 
 
+def effective_n_step(
+    cfg: DMPOConfig, sequence_length: int, has_next_observation: bool
+) -> int:
+    """The n-step horizon the feed-forward learner uses for one replay layout.
+
+    With ``next_observation`` stored the bootstrap state of a full window is
+    ``next_observation[:, n-1]``, so n may reach ``sequence_length``. Without
+    it (the compressed layout) the bootstrap state is ``observation[:, n]``,
+    so n is capped at ``sequence_length - 1``. ``use_n_step=False`` is 1.
+    """
+    n_cap = sequence_length if has_next_observation else sequence_length - 1
+    if not getattr(cfg, "use_n_step", False):
+        return 1
+    return int(min(cfg.n_step, n_cap))
+
+
+def arrival_anchor_missing(
+    cfg: DMPOConfig,
+    sequence_length: int,
+    has_next_observation: bool,
+    anchor_in_batch: bool,
+) -> bool:
+    """True when the policy loss needs a KL anchor the replay cannot hold.
+
+    With ``policy_loss_state`` resolving to ``"next"`` (feed-forward learner)
+    the policy loss, and with it the loss-side KL anchor, is evaluated at the
+    n-step arrival state. The anchor is stored per step for
+    ``t < sequence_length`` only, so a full window whose arrival state is
+    ``t = sequence_length`` (the ``next_observation`` layout with
+    ``n_step >= sequence_length``) has no anchor to read. ``sgd_step`` refuses
+    such a batch at trace time; this is the same test on config values, for
+    callers that check a config before building anything.
+
+    Args:
+      cfg: the learner config (``policy_loss_state`` may still be ``"auto"``).
+      sequence_length: the replay's sequence length T.
+      has_next_observation: whether the replay stores ``next_observation``.
+      anchor_in_batch: whether the replay stores the KL-anchor arrays.
+    """
+    if not anchor_in_batch or getattr(cfg, "rnn_bptt_length", 0) > 0:
+        return False
+    if validate_alignment(cfg, recurrent=False).policy_loss_state != "next":
+        return False
+    n = effective_n_step(cfg, sequence_length, has_next_observation)
+    return n >= sequence_length
+
+
 def sgd_step(
     state: TrainingState,
     batch: dict[str, jnp.ndarray],
@@ -842,7 +889,7 @@ def sgd_step(
             f"sequence_length={_T} too short for the compressed schema: "
             "bootstrapping from observation[:, n] needs sequence_length >= 2."
         )
-    n_steps = int(min(cfg.n_step, _n_cap)) if getattr(cfg, "use_n_step", False) else 1
+    n_steps = effective_n_step(cfg, _T, _has_next)
     if cfg.bootstrap_on_truncation:
         # Windows cut one step early at a time-out (see `window_returns`): the
         # bootstrap state is per row, and a window starting at the time-out
@@ -998,7 +1045,7 @@ def sgd_step(
         )
     if policy_next:
         # The anchor pairs with the state the policy is evaluated at.
-        if anchor_mu is not None and n_steps >= _T:
+        if arrival_anchor_missing(cfg, _T, _has_next, anchor_mu is not None):
             raise ValueError(
                 "policy_loss_state='next' with the loss-side KL anchor needs "
                 f"the anchor at the arrival state t={n_steps}, but the batch "

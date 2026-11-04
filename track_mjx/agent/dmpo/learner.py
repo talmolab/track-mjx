@@ -372,9 +372,9 @@ def compute_categorical_target(
     branch). Deviations:
       * No `tx_pair` (input/output reward transform). vnl-ray doesn't use
         it; adding it post-hoc is mechanical.
-      * Single sample (no `N`-action averaging — Acme's `z_target` is a
-        mean over an `N`-axis of policy-sampled actions). Caller is
-        expected to pass a single `next_action` per (B, T).
+      * Single action per (B, T): this is the ``critic_target_mode=
+        "mean_action"`` target. The N-sample mixture acme uses is
+        ``bootstrap_samples`` + ``mixture_categorical_target``.
 
     Args:
       nets: DMPO networks (we use the critic for the target distribution).
@@ -417,6 +417,110 @@ def compute_categorical_target(
 
 
 # ---------------------------------------------------------------------------
+# N-sample mixture bootstrap target (critic_target_mode="sample_mixture").
+#
+# As acme's DMPO: draw num_samples actions from the target policy at the
+# bootstrap state, rate each with the target critic, and average the
+# categorical distributions in probability space before the Bellman shift and
+# projection. The projection is linear in the probabilities, so averaging
+# first equals averaging the per-sample projections.
+# ---------------------------------------------------------------------------
+
+
+def _has_vision(obs: Any) -> bool:
+    return isinstance(obs, Mapping) and "vision" in obs
+
+
+def _rate_samples(
+    nets: DMPONetworks,
+    target_critic_params: Any,
+    crit_obs: Any,
+    target_dist: Any,
+    cfg: DMPOConfig,
+    key: jax.Array,
+    sample_eps: jnp.ndarray | None,
+    use_map: bool,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Draw [N, B, A] actions from ``target_dist`` and the target critic's
+    logits [N, B, atoms] for each.
+
+    ``use_map`` maps the N axis sequentially (one B-sized critic batch at a
+    time) instead of vmapping it, which keeps a vision critic's activation
+    peak at B images; the values are the same.
+    """
+    if sample_eps is None:
+        actions = target_dist.sample(sample_shape=(cfg.num_samples,), seed=key)
+    else:
+        actions = target_dist.mean()[None] + target_dist.stddev()[None] * sample_eps
+
+    def _logits(actions_n):
+        dist = jax.vmap(nets.critic.apply, in_axes=(None, 0, 0))(
+            target_critic_params, crit_obs, actions_n
+        )
+        return dist.logits_parameter()
+
+    logits = jax.lax.map(_logits, actions) if use_map else jax.vmap(_logits)(actions)
+    return actions, logits
+
+
+def bootstrap_samples(
+    nets: DMPONetworks,
+    target_policy_params: Any,
+    target_critic_params: Any,
+    boot_obs: Any,
+    boot_crit_obs: Any,
+    cfg: DMPOConfig,
+    key: jax.Array,
+    sample_eps: jnp.ndarray | None = None,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Target-policy samples at the bootstrap state and their critic logits.
+
+    Args:
+      boot_obs: normalized bootstrap obs, leaves [B, ...] (the policy's view).
+      boot_crit_obs: the same state as the critic sees it (``boot_obs`` plus
+        the privileged input gathered at the bootstrap index, when that is
+        on).
+      key: sampling key.
+      sample_eps: optional [N, B, A] standard-normal draws; samples are then
+        ``mu + sigma * eps``. A test-only injection point: production passes
+        None and samples with ``key``.
+
+    Returns:
+      (actions [N, B, A], target_dist_logits [N, B, atoms]). The N axis is
+      mapped sequentially when the critic reads vision.
+    """
+    target_dist = jax.vmap(nets.policy.apply, in_axes=(None, 0))(
+        target_policy_params, boot_obs
+    )
+    return _rate_samples(
+        nets,
+        target_critic_params,
+        boot_crit_obs,
+        target_dist,
+        cfg,
+        key,
+        sample_eps,
+        use_map=_has_vision(boot_crit_obs),
+    )
+
+
+def mixture_categorical_target(
+    logits: jnp.ndarray,
+    rewards: jnp.ndarray,
+    discounts: jnp.ndarray,
+    cfg: DMPOConfig,
+) -> jnp.ndarray:
+    """Project r + gamma * disc * z under the mean of the N sampled
+    distributions: logits [N, B, atoms], rewards/discounts [B] -> [B, atoms].
+    """
+    probs = jnp.mean(jax.nn.softmax(logits, axis=-1), axis=0)
+    atoms = jnp.linspace(cfg.vmin, cfg.vmax, cfg.num_atoms)
+    bellman_atoms = rewards[:, None] + cfg.discount * discounts[:, None] * atoms
+    project = functools.partial(categorical_l2_project, z_q=atoms)
+    return jax.vmap(project)(bellman_atoms, probs)
+
+
+# ---------------------------------------------------------------------------
 # Single SGD step.
 #
 # Mirrors the orchestration in acme/agents/jax/mpo/learning.py (around
@@ -425,14 +529,16 @@ def compute_categorical_target(
 # (which jointly optimizes policy log-probs and the Lagrange dual variables),
 # then apply optimizer updates and (on schedule) hard-copy online -> target.
 #
+# The acme-alignment switches (DMPOConfig) select between acme's choice and
+# the historical one at trace time:
+#   * critic_target_mode: the bootstrap distribution is the N-sample mixture
+#     ("sample_mixture", acme) or one evaluation at the target policy's mean
+#     action ("mean_action").
+#   * bootstrap_on_truncation: n-step windows are cut at time-outs and
+#     bootstrap from the last stored state (see `window_returns`).
 # Deviations from Acme worth flagging:
-#   * Single-step TD target: we use only the t=0 transition of each batch
-#     trajectory (Acme builds an n-step return over the [T-1] sequence axis).
-#     Revisit when n-step bootstrapping is needed.
-#   * Deterministic next-action for the critic target: we use the target
-#     policy's mode (mean) instead of averaging Q over N samples. Acme's
-#     `_compute_targets` averages over an N-axis of policy-sampled actions;
-#     using the mean is lower-variance for now and avoids an extra sample-axis.
+#   * n-step windows come from uniformly sampled stored sequences (the window
+#     starting at t=0 of each), not from an n-step adder.
 #   * Critic input action: `batch["action"]` is the raw pre-tanh Gaussian
 #     sample stored by the rollout. The critic does NOT see the
 #     post-tanh bound action — the MPO loss likewise rates raw samples.
@@ -601,6 +707,8 @@ def sgd_step(
     nets: DMPONetworks,
     optimizers: tuple[optax.GradientTransformation, ...],
     cfg: DMPOConfig,
+    *,
+    sample_eps: jnp.ndarray | None = None,
 ) -> tuple[TrainingState, dict[str, jnp.ndarray]]:
     """One DMPO SGD step.
 
@@ -614,6 +722,9 @@ def sgd_step(
         and threaded through here. Re-creating optimizers inside would break
         jit caching.
       cfg: DMPOConfig.
+      sample_eps: test-only standard-normal draws for the bootstrap samples
+        of the mixture target ([N, B, A]; [N, B*L, A] on the recurrent path).
+        None (production) samples with the step's key.
 
     Returns:
       (new_state, metrics) where metrics is a flat dict of jnp scalars.
@@ -622,7 +733,7 @@ def sgd_step(
     # trace time, so with the default rnn_bptt_length=0 the FF body below is
     # bit-identical for every existing arm (no retrace, no new ops).
     if getattr(cfg, "rnn_bptt_length", 0) > 0:
-        return _sgd_step_rnn(state, batch, nets, optimizers, cfg)
+        return _sgd_step_rnn(state, batch, nets, optimizers, cfg, sample_eps=sample_eps)
 
     # Check the alignment switches and resolve policy_loss_state="auto" (trace
     # time; a bad value fails before any device time is spent).
@@ -630,6 +741,11 @@ def sgd_step(
 
     pol_opt, crit_opt, dual_opt = optimizers
     rng, k_pol = jax.random.split(state.rng)
+    use_mixture = cfg.critic_target_mode == "sample_mixture"
+    if use_mixture:
+        # A separate key for the bootstrap samples, derived so the policy
+        # loss's own key stays what it was.
+        k_tgt = jax.random.fold_in(k_pol, 1)
 
     # First-cut: only use t=0 of each trajectory. Trajectory dimension is
     # reserved for future n-step return computation.
@@ -723,29 +839,47 @@ def sgd_step(
     crit_next_obs_t0 = _critic_obs(next_obs_t0, batch, priv_key, boot_idx)
 
     # ------------------------------------------------------------------
-    # 1) Critic target: deterministic next-action via target policy mean.
-    # `compute_categorical_target` expects a [B, T, ...] layout, so we
-    # add a singleton T axis and squeeze it back out afterward. The whole
-    # branch is wrapped in stop_gradient (no flow through target nets).
+    # 1) Critic target. The whole branch is wrapped in stop_gradient (no flow
+    # through target nets).
     # ------------------------------------------------------------------
-    target_policy_dist_next = jax.vmap(nets.policy.apply, in_axes=(None, 0))(
-        state.target_policy_params, next_obs_t0
-    )
-    next_action = target_policy_dist_next.mode()
-    # Add a singleton T axis to every leaf so [B, ...] -> [B, 1, ...]. Works
-    # uniformly for flat arrays and dict / pytree observations.
-    next_obs_t0_BT = jax.tree.map(lambda x: x[:, None], crit_next_obs_t0)
-    target_probs = jax.lax.stop_gradient(
-        compute_categorical_target(
+    if use_mixture:
+        # N target-policy samples at the bootstrap state, mixed in
+        # probability space.
+        _, boot_logits = bootstrap_samples(
             nets,
+            state.target_policy_params,
             state.target_critic_params,
-            next_obs_t0_BT,  # [B, 1, ...] per leaf
-            next_action[:, None, :],  # [B, 1, act]
-            rew_t0[:, None],  # [B, 1]
-            disc_t0[:, None],  # [B, 1]
+            next_obs_t0,
+            crit_next_obs_t0,
             cfg,
-        ).squeeze(axis=1)  # back to [B, num_atoms]
-    )
+            k_tgt,
+            sample_eps,
+        )
+        target_probs = jax.lax.stop_gradient(
+            mixture_categorical_target(boot_logits, rew_t0, disc_t0, cfg)
+        )
+    else:
+        # Deterministic next-action via target policy mean.
+        # `compute_categorical_target` expects a [B, T, ...] layout, so we
+        # add a singleton T axis and squeeze it back out afterward.
+        target_policy_dist_next = jax.vmap(nets.policy.apply, in_axes=(None, 0))(
+            state.target_policy_params, next_obs_t0
+        )
+        next_action = target_policy_dist_next.mode()
+        # Add a singleton T axis to every leaf so [B, ...] -> [B, 1, ...].
+        # Works uniformly for flat arrays and dict / pytree observations.
+        next_obs_t0_BT = jax.tree.map(lambda x: x[:, None], crit_next_obs_t0)
+        target_probs = jax.lax.stop_gradient(
+            compute_categorical_target(
+                nets,
+                state.target_critic_params,
+                next_obs_t0_BT,  # [B, 1, ...] per leaf
+                next_action[:, None, :],  # [B, 1, act]
+                rew_t0[:, None],  # [B, 1]
+                disc_t0[:, None],  # [B, 1]
+                cfg,
+            ).squeeze(axis=1)  # back to [B, num_atoms]
+        )
 
     # ------------------------------------------------------------------
     # 2) Critic update.
@@ -1301,6 +1435,8 @@ def _sgd_step_rnn(
     nets: DMPONetworks,
     optimizers: tuple[optax.GradientTransformation, ...],
     cfg: DMPOConfig,
+    *,
+    sample_eps: jnp.ndarray | None = None,
 ) -> tuple[TrainingState, dict[str, jnp.ndarray]]:
     """One recurrent (short-BPTT) DMPO SGD step. See the section header above.
 
@@ -1386,6 +1522,9 @@ def _sgd_step_rnn(
 
     pol_opt, crit_opt, dual_opt = optimizers
     rng, k_pol = jax.random.split(state.rng)
+    use_mixture = cfg.critic_target_mode == "sample_mixture"
+    if use_mixture:
+        k_tgt = jax.random.fold_in(k_pol, 1)
     B = batch["reward"].shape[0]
 
     # (0) Window layout. `sel_loss` / `sel_boot` pick the loss-point and
@@ -1513,12 +1652,13 @@ def _sgd_step_rnn(
             rew_bl, disc_bl = _take_steps(rew_w, idx), _take_steps(disc_w, idx)
 
     # (7) Critic target: bootstrap from observation[:, n:n+L] (tick path:
-    # idx + n) paired with the STORED hidden at t + n -- a single-step target
-    # apply (no unroll needed: the stored hidden already encodes the history
-    # up to t + n).
-    # Deterministic next-action via mu (== mode for a diag Gaussian), the FF
-    # path's target_policy_dist_next.mode() analog. next_obs was normalized
-    # above in (1).
+    # idx + n; with time-out cuts, each point's own bootstrap step) paired
+    # with the STORED hidden there -- a single-step target apply (no unroll
+    # needed: the stored hidden already encodes the history up to that step).
+    # The target policy's action there is either N samples (the mixture
+    # target) or its mean mu (== mode for a diag Gaussian, the FF path's
+    # target_policy_dist_next.mode() analog). next_obs was normalized above
+    # in (1).
     # Sequential lax.map over the L axis (time-major), vmap over B inside:
     # a double vmap would run B * L = 20,480 parallel policy-CNN forwards
     # at the goal arm -- 20x the FF path's bootstrap peak and part of the
@@ -1527,33 +1667,78 @@ def _sgd_step_rnn(
     next_obs_tm = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), next_obs)
     h_boot_tm = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), h_boot)
 
-    def _boot_step(args):
-        o_t, h_t = args
-        mu_t, _, _ = jax.vmap(
-            lambda o, hh: nets.policy.apply(
-                state.target_policy_params, o, hh, method="raw"
-            )
-        )(o_t, h_t)
-        return mu_t
+    if use_mixture:
+        # N samples per bootstrap point from the target policy given the
+        # stored hidden there; the critic rates them N-sequentially on the
+        # flattened [B*L] points (the E-step's own memory layout).
+        def _boot_dist_step(args):
+            o_t, h_t = args
+            mu_t, scale_t, _ = jax.vmap(
+                lambda o, hh: nets.policy.apply(
+                    state.target_policy_params, o, hh, method="raw"
+                )
+            )(o_t, h_t)
+            return mu_t, scale_t
 
-    next_mu_tm = jax.lax.map(_boot_step, (next_obs_tm, h_boot_tm))  # [L, B, A]
-    next_action = jax.lax.stop_gradient(
-        jnp.swapaxes(next_mu_tm, 0, 1)  # [B, L, A]
-    )
-    # The target critic rates the bootstrap state t + n, so its privileged
-    # input is gathered at [:, n:n+L] / idx + n (the policy above read
-    # next_obs bare).
-    target_probs = jax.lax.stop_gradient(
-        compute_categorical_target(
+        boot_mu_tm, boot_scale_tm = jax.lax.map(
+            _boot_dist_step, (next_obs_tm, h_boot_tm)
+        )  # [L, B, A] each
+        action_dim = boot_mu_tm.shape[-1]
+
+        def _flat_bl(x_tm):
+            return jnp.swapaxes(x_tm, 0, 1).reshape(B * L, action_dim)
+
+        boot_dist = tfd.MultivariateNormalDiag(
+            loc=_flat_bl(boot_mu_tm), scale_diag=_flat_bl(boot_scale_tm)
+        )
+        boot_crit_flat = jax.tree.map(
+            lambda x: x.reshape((B * L, *x.shape[2:])),
+            _critic_obs(next_obs, batch, priv_key, sel_boot),
+        )
+        _, boot_logits = _rate_samples(
             nets,
             state.target_critic_params,
-            _critic_obs(next_obs, batch, priv_key, sel_boot),
-            next_action,
-            rew_bl,
-            disc_bl,
+            boot_crit_flat,
+            boot_dist,
             cfg,
+            k_tgt,
+            sample_eps,
+            use_map=True,
         )
-    ).reshape(B * L, cfg.num_atoms)
+        target_probs = jax.lax.stop_gradient(
+            mixture_categorical_target(
+                boot_logits, rew_bl.reshape(B * L), disc_bl.reshape(B * L), cfg
+            )
+        )
+    else:
+
+        def _boot_step(args):
+            o_t, h_t = args
+            mu_t, _, _ = jax.vmap(
+                lambda o, hh: nets.policy.apply(
+                    state.target_policy_params, o, hh, method="raw"
+                )
+            )(o_t, h_t)
+            return mu_t
+
+        next_mu_tm = jax.lax.map(_boot_step, (next_obs_tm, h_boot_tm))  # [L, B, A]
+        next_action = jax.lax.stop_gradient(
+            jnp.swapaxes(next_mu_tm, 0, 1)  # [B, L, A]
+        )
+        # The target critic rates the bootstrap state t + n, so its privileged
+        # input is gathered at [:, n:n+L] / idx + n (the policy above read
+        # next_obs bare).
+        target_probs = jax.lax.stop_gradient(
+            compute_categorical_target(
+                nets,
+                state.target_critic_params,
+                _critic_obs(next_obs, batch, priv_key, sel_boot),
+                next_action,
+                rew_bl,
+                disc_bl,
+                cfg,
+            )
+        ).reshape(B * L, cfg.num_atoms)
 
     # (8) Critic update on the flattened [B*L] loss points -- the same
     # `_critic_loss_fn` body as the FF path, just a bigger batch.

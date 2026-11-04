@@ -124,9 +124,12 @@ through a run, so the entries refuse:
 - a resume (`checkpoint_dir` already holds a checkpoint) unless
   `train_config.allow_alignment_change_on_resume: true`.
 
-Both overrides log a WARNING listing the differing fields. On a resume across
-a change of `policy_grad_clip_scope` the policy optimizer state is
-re-initialized, since its structure depends on that field.
+Both overrides log a WARNING listing the differing fields. A graft between a
+feed-forward and a recurrent learner (for example a feed-forward maze prior
+into a slow-core arm) does not compare `policy_loss_state`, which resolves to
+`next` on one and `current` on the other; the other five fields are still
+compared. On a resume across a change of `policy_grad_clip_scope` the policy
+optimizer state is re-initialized, since its structure depends on that field.
 `transfer.warm_start_dmpo_checkpoint` is not checked: it copies the policy
 into a fresh critic and fresh optimizers by design.
 

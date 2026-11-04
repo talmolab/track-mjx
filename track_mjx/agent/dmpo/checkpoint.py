@@ -320,7 +320,17 @@ def record_alignment(config: dict[str, Any], cfg: DMPOConfig) -> dict[str, Any]:
     return config
 
 
-def saved_alignment(ckpt_step_dir: str | pathlib.Path) -> dict[str, Any]:
+class SavedAlignment(dict):
+    """The alignment fields of a checkpoint, plus the learner path it used.
+
+    Compares as the plain field dict; ``recurrent`` is True when the saved
+    config trained a recurrent (``rnn_bptt_length > 0``) learner.
+    """
+
+    recurrent: bool = False
+
+
+def saved_alignment(ckpt_step_dir: str | pathlib.Path) -> SavedAlignment:
     """The six alignment fields from a checkpoint's saved config.
 
     A field the saved train config does not carry maps to its
@@ -349,7 +359,9 @@ def saved_alignment(ckpt_step_dir: str | pathlib.Path) -> dict[str, Any]:
         name: train.get(name, LEGACY_ALIGNMENT[name]) for name in ALIGNMENT_FIELDS
     }
     recurrent = int(train.get("rnn_bptt_length", 0) or 0) > 0
-    return _resolve(values, recurrent)
+    result = SavedAlignment(_resolve(values, recurrent))
+    result.recurrent = recurrent
+    return result
 
 
 def current_alignment(cfg: DMPOConfig) -> dict[str, Any]:
@@ -367,13 +379,18 @@ def _resolve(values: dict[str, Any], recurrent: bool) -> dict[str, Any]:
 
 
 def alignment_differences(
-    saved: Mapping[str, Any], current: Mapping[str, Any]
+    saved: Mapping[str, Any],
+    current: Mapping[str, Any],
+    skip: tuple[str, ...] = (),
 ) -> list[str]:
-    """One ``field: checkpoint=... this config=...`` line per differing field."""
+    """One ``field: checkpoint=... this config=...`` line per differing field.
+
+    ``skip`` names fields left out of the comparison.
+    """
     return [
         f"{name}: checkpoint={saved[name]!r} this config={current[name]!r}"
         for name in ALIGNMENT_FIELDS
-        if saved[name] != current[name]
+        if name not in skip and saved[name] != current[name]
     ]
 
 
@@ -384,6 +401,7 @@ def check_alignment(
     source: str,
     override_key: str,
     allow: bool,
+    allow_path_change: bool = False,
 ) -> list[str]:
     """Refuse to continue from a checkpoint trained by different settings.
 
@@ -398,6 +416,12 @@ def check_alignment(
         <path>"``).
       override_key: the config key that allows the mismatch.
       allow: the value of that key.
+      allow_path_change: for a graft, which copies values between learners of
+        either kind. ``policy_loss_state`` resolves from each side's own
+        learner (``"next"`` feed-forward, ``"current"`` recurrent), so it is
+        left out of the comparison when the two sides use different learner
+        paths; the other five fields are always compared. A resume is always
+        the same path and leaves this False.
 
     Returns:
       The differing fields, one line each (empty when they all match).
@@ -405,7 +429,12 @@ def check_alignment(
     Raises:
       ValueError: on a mismatch without the override, listing every field.
     """
-    diffs = alignment_differences(saved, current_alignment(cfg))
+    skip: tuple[str, ...] = ()
+    saved_recurrent = getattr(saved, "recurrent", None)
+    cfg_recurrent = int(getattr(cfg, "rnn_bptt_length", 0) or 0) > 0
+    if allow_path_change and saved_recurrent not in (None, cfg_recurrent):
+        skip = ("policy_loss_state",)
+    diffs = alignment_differences(saved, current_alignment(cfg), skip)
     if not diffs:
         return diffs
     listing = "\n  ".join(f"train_config.{line}" for line in diffs)

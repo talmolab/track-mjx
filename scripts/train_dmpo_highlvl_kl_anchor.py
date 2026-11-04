@@ -463,6 +463,10 @@ def _check_graft_alignment(graft_path: str, cfg: DMPOConfig, transfer_cfg) -> No
     under this config's algorithm. A source saved without the fields was
     trained by the pre-alignment learner. ``transfer.
     graft_allow_algorithm_mismatch: true`` turns the refusal into a WARNING.
+    ``policy_loss_state`` is compared only between a source and a target that
+    use the same learner path (both feed-forward, or both recurrent); it
+    resolves differently on the two paths, so across them it cannot differ by
+    choice. The other five fields are always compared.
 
     Raises:
         ValueError: listing every differing field, without the override.
@@ -473,6 +477,7 @@ def _check_graft_alignment(graft_path: str, cfg: DMPOConfig, transfer_cfg) -> No
         source=f"transfer.graft_ff_checkpoint={graft_path}",
         override_key=GRAFT_OVERRIDE_KEY,
         allow=bool(transfer_cfg.get(GRAFT_OVERRIDE_KEY.split(".")[-1], False)),
+        allow_path_change=True,
     )
 
 

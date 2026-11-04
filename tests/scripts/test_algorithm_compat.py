@@ -150,6 +150,60 @@ def test_graft_refuses_a_single_differing_field(kl_anchor_entry, tmp_path):
     assert not any(f"train_config.{n}:" in message for n in others)
 
 
+def test_graft_ff_source_to_slow_core_target_passes(kl_anchor_entry, tmp_path, caplog):
+    """policy_loss_state resolves per learner path, so it is not compared."""
+    source = _aligned_source(tmp_path, DMPOConfig())
+    cfg = DMPOConfig(rnn_bptt_length=40)
+    assert checkpoint.saved_alignment(source)["policy_loss_state"] == "next"
+    assert checkpoint.current_alignment(cfg)["policy_loss_state"] == "current"
+    with caplog.at_level(logging.WARNING):
+        kl_anchor_entry["_check_graft_alignment"](str(source), cfg, {})
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_graft_same_path_policy_loss_state_difference_refuses(
+    kl_anchor_entry, tmp_path
+):
+    source = _aligned_source(tmp_path, DMPOConfig(policy_loss_state="current"))
+    with pytest.raises(ValueError) as err:
+        kl_anchor_entry["_check_graft_alignment"](str(source), DMPOConfig(), {})
+    message = str(err.value)
+    assert "train_config.policy_loss_state:" in message
+    assert "checkpoint='current' this config='next'" in message
+
+
+def test_graft_slow_core_source_to_ff_target_passes(kl_anchor_entry, tmp_path):
+    cfg = DMPOConfig(rnn_bptt_length=40)
+    step_dir = tmp_path / "DMPONetwork_100"
+    config = checkpoint.record_alignment(
+        {"train_config": {"rnn_bptt_length": cfg.rnn_bptt_length}}, cfg
+    )
+    _write_config(step_dir, config)
+    assert checkpoint.saved_alignment(step_dir)["policy_loss_state"] == "current"
+    kl_anchor_entry["_check_graft_alignment"](str(step_dir), DMPOConfig(), {})
+
+
+def test_graft_pre_alignment_source_to_slow_core_target_refuses(
+    kl_anchor_entry, tmp_path
+):
+    source = _pre_alignment_source(tmp_path)
+    cfg = DMPOConfig(rnn_bptt_length=40)
+    with pytest.raises(ValueError) as err:
+        kl_anchor_entry["_check_graft_alignment"](str(source), cfg, {})
+    message = str(err.value)
+    for name in ALIGNMENT_FIELDS:
+        if name != "policy_loss_state":
+            assert f"train_config.{name}:" in message
+    assert "train_config.policy_loss_state:" not in message
+
+
+def test_graft_across_paths_still_refuses_a_differing_field(kl_anchor_entry, tmp_path):
+    source = _aligned_source(tmp_path, DMPOConfig())
+    cfg = DMPOConfig(rnn_bptt_length=40, critic_action_input="raw")
+    with pytest.raises(ValueError, match=r"train_config\.critic_action_input:"):
+        kl_anchor_entry["_check_graft_alignment"](str(source), cfg, {})
+
+
 # --- resume --------------------------------------------------------------------
 
 
@@ -182,6 +236,13 @@ def test_resume_reads_the_newest_checkpoint(kl_anchor_entry, tmp_path):
     _pre_alignment_source(tmp_path, "DMPONetwork_100")
     _aligned_source(tmp_path, DMPOConfig(), "DMPONetwork_200")
     assert _resume(kl_anchor_entry, tmp_path, DMPOConfig(), False) == (ALIGNED_RESOLVED)
+
+
+def test_resume_compares_policy_loss_state_across_paths(kl_anchor_entry, tmp_path):
+    """A resume is always the same path, so the field is always compared."""
+    _aligned_source(tmp_path, DMPOConfig())
+    with pytest.raises(ValueError, match=r"train_config\.policy_loss_state:"):
+        _resume(kl_anchor_entry, tmp_path, DMPOConfig(rnn_bptt_length=40), False)
 
 
 def test_fresh_run_dir_passes(kl_anchor_entry, tmp_path):

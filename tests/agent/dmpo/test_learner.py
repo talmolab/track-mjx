@@ -143,6 +143,7 @@ def test_sgd_step_runs_and_advances(rng, env_spec):
         "reward": jnp.zeros((B, T)),
         "discount": jnp.ones((B, T)),
         "next_observation": jnp.zeros((B, T, obs_dim)),
+        "truncation": jnp.zeros((B, T)),
     }
     new_state, metrics = sgd_step(state, batch, nets, optimizers, cfg)
 
@@ -171,6 +172,7 @@ def test_sgd_step_jittable(rng, env_spec):
         "reward": jnp.zeros((B, T)),
         "discount": jnp.ones((B, T)),
         "next_observation": jnp.zeros((B, T, obs_dim)),
+        "truncation": jnp.zeros((B, T)),
     }
     new_state, metrics = jitted(state, batch)
     assert jnp.isfinite(metrics["critic_loss"])
@@ -192,6 +194,7 @@ def test_sgd_step_target_update_schedule(rng, env_spec):
         "reward": jax.random.normal(rng, (B, T)),
         "discount": jnp.ones((B, T)),
         "next_observation": jax.random.normal(rng, (B, T, obs_dim)),
+        "truncation": jnp.zeros((B, T)),
     }
     initial_target_crit = state.target_critic_params
     # Run a few steps but fewer than the update period (107).

@@ -9,7 +9,8 @@ training env with ``wrap_for_dmpo_training``, which keeps the flag under
 The kl-anchor entry's ``_wrap_for_brax_training`` is exercised on CPU with a
 stub env, for a maze arm (``wrappers.full_reset: true``) and a run-gap arm
 (``wrappers.info_reset_on_done: true``, ``full_reset`` off). The high-level
-entry hard-codes its stack inline, so it is checked from its source.
+and imitation entries hard-code their stacks inline, so they are checked from
+their source, as is each entry's replay template.
 """
 
 import ast
@@ -25,10 +26,10 @@ from vnl_playground.tasks.wrappers_info_reset import DEFAULT_RUN_GAP_KEYS
 from tests.scripts._entries import ENTRIES, SCRIPTS_DIR
 from tests.scripts.test_configs_compose import CONFIG_DIR
 
-TruncationStashWrapper = pytest.importorskip(
+pytest.importorskip(
     "vnl_playground.tasks.wrappers_truncation",
     reason="needs the truncation wrapper, which the pinned vnl-playground lacks",
-).TruncationStashWrapper
+)
 
 PRESERVE_KEY = "AutoResetWrapper_preserve_info"
 EPISODE_LENGTH = 3
@@ -138,16 +139,25 @@ def _called_names(path):
     return names
 
 
-@pytest.mark.parametrize("entry", ["kl_anchor", "highlvl"])
+@pytest.mark.parametrize("entry", ["kl_anchor", "highlvl", "imitation"])
 def test_entry_does_not_build_training_env_without_stash(entry):
-    """Neither entry calls the plain brax training wrap any more."""
+    """No entry calls the plain brax training wrap any more."""
     called = _called_names(SCRIPTS_DIR / ENTRIES[entry][0])
     assert "wrap_for_dmpo_training" in called
     assert "wrap_for_brax_training" not in called
 
 
-def test_highlvl_entry_requests_the_stash_with_full_reset_off():
-    tree = ast.parse((SCRIPTS_DIR / ENTRIES["highlvl"][0]).read_text())
+@pytest.mark.parametrize("entry", ["kl_anchor", "highlvl", "imitation"])
+def test_entry_stores_truncation_under_the_switch(entry):
+    """The replay template gains the time-out flag when the learner reads it."""
+    source = (SCRIPTS_DIR / ENTRIES[entry][0]).read_text()
+    assert 'transition_template["truncation"]' in source
+    assert ".bootstrap_on_truncation:" in source
+
+
+@pytest.mark.parametrize("entry", ["highlvl", "imitation"])
+def test_entry_requests_the_stash_with_full_reset_off(entry):
+    tree = ast.parse((SCRIPTS_DIR / ENTRIES[entry][0]).read_text())
     calls = [
         n
         for n in ast.walk(tree)

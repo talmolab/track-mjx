@@ -176,18 +176,22 @@ def _matched_batches(B=8, n=3, obs_size=6, act_size=3, seed=0):
     a = rng.normal(size=(B, n + 1, act_size)).astype(np.float32)
     r = rng.normal(size=(B, n + 1)).astype(np.float32)
     d = (rng.uniform(size=(B, n + 1)) > 0.2).astype(np.float32)  # some dones
+    # About half of the dones are time-outs.
+    tr = ((d == 0) & (rng.uniform(size=(B, n + 1)) > 0.5)).astype(np.float32)
     full = {
         "observation": jnp.asarray(o[:, :n]),
         "action": jnp.asarray(a[:, :n]),
         "reward": jnp.asarray(r[:, :n]),
         "discount": jnp.asarray(d[:, :n]),
         "next_observation": jnp.asarray(o[:, 1 : n + 1]),
+        "truncation": jnp.asarray(tr[:, :n]),
     }
     compressed = {
         "observation": jnp.asarray(o),
         "action": jnp.asarray(a),
         "reward": jnp.asarray(r),
         "discount": jnp.asarray(d),
+        "truncation": jnp.asarray(tr),
     }
     return full, compressed
 

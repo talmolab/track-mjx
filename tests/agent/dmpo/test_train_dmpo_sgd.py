@@ -30,6 +30,7 @@ def test_scan_k_sgd_advances_state_steps_by_K(K):
         "reward": jnp.zeros((cfg.batch_size, cfg.sequence_length)),
         "discount": jnp.ones((cfg.batch_size, cfg.sequence_length)),
         "next_observation": jnp.zeros((cfg.batch_size, cfg.sequence_length, 6)),
+        "truncation": jnp.zeros((cfg.batch_size, cfg.sequence_length)),
     }
 
     # Stub buffer: sample always returns the same fake batch.
@@ -74,6 +75,7 @@ def test_scan_k_sgd_K1_matches_raw_sgd_step():
         "reward": jnp.zeros((cfg.batch_size, cfg.sequence_length)),
         "discount": jnp.ones((cfg.batch_size, cfg.sequence_length)),
         "next_observation": jnp.zeros((cfg.batch_size, cfg.sequence_length, 6)),
+        "truncation": jnp.zeros((cfg.batch_size, cfg.sequence_length)),
     }
 
     class _StubBuf:

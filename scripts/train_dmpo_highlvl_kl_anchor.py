@@ -1340,6 +1340,10 @@ def main(hydra_cfg: DictConfig):
         "reward": jnp.zeros((), dtype=jnp.float32),
         "discount": jnp.zeros((), dtype=jnp.float32),
     }
+    # Post-step time-out flag, stored when the learner bootstraps through time
+    # limits (the rollout writes it under the same switch).
+    if cfg.bootstrap_on_truncation:
+        transition_template["truncation"] = jnp.zeros((), dtype=jnp.float32)
     # Only reserved when the loss-side anchor is on -- see `anchor_in_loss`.
     for _k in anchor_extras:
         transition_template[_k] = jnp.zeros((action_size,), dtype=jnp.float32)

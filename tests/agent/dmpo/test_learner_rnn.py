@@ -175,6 +175,7 @@ def _make_batch(key, state, nets, T, done_at=((1, 1),)):
         "action": action,
         "reward": reward,
         "discount": discount,
+        "truncation": jnp.zeros((_B, T)),
     }
     batch["policy_hidden"] = _hand_rollout_hidden(state, nets, batch)
     return batch
@@ -262,7 +263,7 @@ def test_per_point_nstep_returns_matches_bruteforce():
     # Ensure at least one done inside a window regardless of the draw.
     discounts = discounts.at[0, 2].set(0.0)
 
-    R, D = _per_point_nstep_returns(rewards, discounts, gamma, L, n)
+    R, D, _, _ = _per_point_nstep_returns(rewards, discounts, gamma, L, n)
     assert R.shape == (B, L) and D.shape == (B, L)
 
     r, d = np.asarray(rewards), np.asarray(discounts)
@@ -285,7 +286,7 @@ def test_per_point_nstep_returns_length1_equals_ff_formula():
     B, n, gamma = 5, 6, 0.95
     rewards = jax.random.normal(k1, (B, n + 1))
     discounts = (jax.random.uniform(k2, (B, n + 1)) > 0.4).astype(jnp.float32)
-    R, D = _per_point_nstep_returns(rewards, discounts, gamma, 1, n)
+    R, D, _, _ = _per_point_nstep_returns(rewards, discounts, gamma, 1, n)
 
     # FF sgd_step expressions, copied verbatim from learner.py.
     _d = discounts[:, :n]
@@ -488,6 +489,7 @@ def _ff_smoke_metrics():
         "reward": jax.random.normal(k3, (_B, 6)),
         "discount": jnp.ones((_B, 6)),
         "next_observation": jax.random.normal(k4, (_B, 6, 7)),
+        "truncation": jnp.zeros((_B, 6)),
     }
     _, metrics = sgd_step(state, batch, nets, make_optimizers(cfg), cfg)
     return metrics

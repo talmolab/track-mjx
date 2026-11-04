@@ -318,6 +318,10 @@ def main(hydra_cfg: DictConfig):
         "discount": jnp.zeros((), dtype=jnp.float32),
         "next_observation": env_spec["obs_template"],
     }
+    # Post-step time-out flag, stored when the learner bootstraps through time
+    # limits (the rollout writes it under the same switch).
+    if cfg.bootstrap_on_truncation:
+        transition_template["truncation"] = jnp.zeros((), dtype=jnp.float32)
 
     rng, k_state = jax.random.split(rng)
     state = init_training_state(k_state, nets, env_spec, cfg)

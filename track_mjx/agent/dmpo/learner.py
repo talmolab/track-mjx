@@ -247,6 +247,116 @@ def _critic_obs(obs: Any, batch: dict[str, Any], key: str, idx: Any) -> Any:
     return {**obs, "privileged": gathered}
 
 
+# ---------------------------------------------------------------------------
+# Bootstrapping through time limits.
+#
+# A time-out ends the episode without making its last state terminal. The
+# auto-reset wrapper swaps the post-step observation for the next episode's
+# first one on the done step, so the true final state s_T is never stored. A
+# window that reaches the time-out step k therefore ends one step early: it
+# sums the rewards before k and bootstraps from s_k (stored and valid) with
+# the full coefficient gamma^k * alive. The window that starts at the time-out
+# itself, (s_k -> s_T), has no valid bootstrap state and gets loss weight 0.
+# The stored discount stays 1 - done, so real terminations, and every hidden
+# reset keyed on discount == 0, behave as before; only the window cut reads
+# the separate truncation flag.
+# ---------------------------------------------------------------------------
+
+
+def _require_truncation(batch: Mapping[str, Any]) -> jnp.ndarray:
+    """``batch["truncation"]``; fail loud when the replay schema lacks it."""
+    if "truncation" not in batch:
+        raise ValueError(
+            "cfg.bootstrap_on_truncation=True but the replay batch has no "
+            "'truncation' field. Add 'truncation': zeros((), float32) to the "
+            "transition template (the rollout stores it when the flag is on), "
+            "or set bootstrap_on_truncation=False to train on a replay schema "
+            "without it."
+        )
+    return batch["truncation"]
+
+
+def _cut_windows(
+    rewards: jnp.ndarray,
+    discounts: jnp.ndarray,
+    truncation: jnp.ndarray,
+    gamma: float,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """n-step returns over ``[..., n]`` windows, cut at the first time-out.
+
+    With m_i = prod_{j<i} d_j and k the first index with truncation 1 (n if
+    none): R = sum_{i<k} gamma^i m_i r_i, disc = gamma^(k-1) m_k (the target
+    applies one more gamma), boot = k, weight = (k > 0). Values past the cut
+    or past a termination are selected away with ``where``, so inf or NaN
+    stored there cannot leak into R.
+    """
+    n = rewards.shape[-1]
+    is_cut = truncation > 0.5
+    k = jnp.where(jnp.any(is_cut, axis=-1), jnp.argmax(is_cut, axis=-1), n)
+    k = k.astype(jnp.int32)
+    alive = jnp.cumprod(discounts, axis=-1)  # m_{i+1}
+    m_full = jnp.concatenate([jnp.ones_like(alive[..., :1]), alive], axis=-1)
+    m = m_full[..., :n]
+    g = gamma ** jnp.arange(n, dtype=rewards.dtype)
+    keep = (jnp.arange(n) < k[..., None]) & (m > 0)
+    returns = jnp.sum(jnp.where(keep, g * m * rewards, 0.0), axis=-1)
+    m_k = jnp.take_along_axis(m_full, k[..., None], axis=-1)[..., 0]
+    disc = (gamma ** (jnp.maximum(k, 1) - 1).astype(rewards.dtype)) * m_k
+    weight = (k > 0).astype(rewards.dtype)
+    return returns, disc, k, weight
+
+
+def window_returns(
+    rewards: jnp.ndarray,
+    discounts: jnp.ndarray,
+    truncation: jnp.ndarray,
+    gamma: float,
+    n: int,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """n-step return of the window starting at index 0 of each row.
+
+    Args:
+      rewards, discounts, truncation: [B, T] with T >= n. ``discounts`` is the
+        stored 1 - done; ``truncation`` is 1 on a time-out step.
+      gamma: discount factor.
+      n: window length.
+
+    Returns:
+      (R [B], disc [B], boot_idx int32 [B], weight [B]). With a time-out at
+      index k < n: R sums the rewards before k, the bootstrap state is s_k
+      (``boot_idx = k``) with coefficient ``gamma * disc = gamma^k * m_k``,
+      and the weight is 0 when k == 0 (no valid bootstrap state). Without
+      one: the plain n-step values, ``boot_idx = n``, weight 1.
+    """
+    return _cut_windows(rewards[:, :n], discounts[:, :n], truncation[:, :n], gamma)
+
+
+def _gather_rows(x: jnp.ndarray, idx: jnp.ndarray) -> jnp.ndarray:
+    """``x[b, idx[b]]`` for a [B, T, ...] array and an int [B] index."""
+    rows = idx.reshape((-1, 1) + (1,) * (x.ndim - 2))
+    return jnp.take_along_axis(x, rows, axis=1)[:, 0]
+
+
+def _state_at(batch: Mapping[str, Any], idx: jnp.ndarray, has_next: bool) -> Any:
+    """Raw state s_idx of every row, for an int [B] index in [0, n].
+
+    Compressed schema: ``observation[:, idx]``. With a stored
+    ``next_observation`` the same state is ``next_observation[:, idx - 1]``
+    (index n may lie past the stored observations), and ``observation[:, 0]``
+    where idx == 0.
+    """
+    if not has_next:
+        return jax.tree.map(lambda x: _gather_rows(x, idx), batch["observation"])
+    prev = jnp.maximum(idx - 1, 0)
+
+    def _pick(obs, next_obs):
+        later = _gather_rows(next_obs, prev)
+        first = (idx == 0).reshape((-1,) + (1,) * (later.ndim - 1))
+        return jnp.where(first, obs[:, 0], later)
+
+    return jax.tree.map(_pick, batch["observation"], batch["next_observation"])
+
+
 def compute_categorical_target(
     nets: DMPONetworks,
     target_critic_params: Any,
@@ -381,6 +491,7 @@ def _policy_loss_fn(
     anchor_log_std_imit: Any = None,
     step: jnp.ndarray = jnp.int32(0),
     critic_obs_t0: Any = None,
+    batch_weights: jnp.ndarray | None = None,
 ):
     """E-step + M-step + dual losses + optional kl-anchor loss term.
 
@@ -388,6 +499,9 @@ def _policy_loss_fn(
     on -- ``obs_t0`` plus the privileged key when that is on (see
     ``_critic_obs``). None (default) uses ``obs_t0`` itself, so the policy and
     the critic read the same pytree exactly as before.
+
+    ``batch_weights`` ([B], optional) weights the states in every MPO batch
+    mean (see ``MPO.__call__``); None is the plain mean.
 
     When ``cfg.kl_anchor_alpha > 0`` AND ``anchor_mu_imit`` is provided,
     augments the loss with ``-alpha * mean(exp(-w * KL(pi_theta ‖ pi_imit)))``
@@ -423,6 +537,7 @@ def _policy_loss_fn(
         target_action_distribution=target_dist,
         actions=sampled,
         q_values=q_values,
+        batch_weights=batch_weights,
     )
 
     # Optional kl-anchor loss term. We skip the entire branch (including
@@ -557,19 +672,34 @@ def sgd_step(
             "bootstrapping from observation[:, n] needs sequence_length >= 2."
         )
     n_steps = int(min(cfg.n_step, _n_cap)) if getattr(cfg, "use_n_step", False) else 1
-    _d = batch["discount"][:, :n_steps]  # [B, n]
-    _r = batch["reward"][:, :n_steps]  # [B, n]
-    _alive = jnp.cumprod(_d, axis=1)  # m_{i+1}
-    _m = jnp.concatenate([jnp.ones_like(_d[:, :1]), _alive[:, :-1]], axis=1)
-    _g = cfg.discount ** jnp.arange(n_steps, dtype=_r.dtype)
-    rew_t0 = jnp.sum(_g[None, :] * _m * _r, axis=1)  # R_n
-    disc_t0 = (cfg.discount ** (n_steps - 1)) * _alive[:, -1]  # gamma^(n-1) m_n
-    if _has_next:
-        next_obs_t0 = jax.tree.map(
-            lambda x: x[:, n_steps - 1], batch["next_observation"]
+    if cfg.bootstrap_on_truncation:
+        # Windows cut one step early at a time-out (see `window_returns`): the
+        # bootstrap state is per row, and a window starting at the time-out
+        # is excluded from both losses through `loss_w`.
+        rew_t0, disc_t0, boot_idx, loss_w = window_returns(
+            batch["reward"],
+            batch["discount"],
+            _require_truncation(batch),
+            cfg.discount,
+            n_steps,
         )
+        next_obs_t0 = _state_at(batch, boot_idx, _has_next)
     else:
-        next_obs_t0 = jax.tree.map(lambda x: x[:, n_steps], batch["observation"])
+        _d = batch["discount"][:, :n_steps]  # [B, n]
+        _r = batch["reward"][:, :n_steps]  # [B, n]
+        _alive = jnp.cumprod(_d, axis=1)  # m_{i+1}
+        _m = jnp.concatenate([jnp.ones_like(_d[:, :1]), _alive[:, :-1]], axis=1)
+        _g = cfg.discount ** jnp.arange(n_steps, dtype=_r.dtype)
+        rew_t0 = jnp.sum(_g[None, :] * _m * _r, axis=1)  # R_n
+        disc_t0 = (cfg.discount ** (n_steps - 1)) * _alive[:, -1]  # gamma^(n-1) m_n
+        if _has_next:
+            next_obs_t0 = jax.tree.map(
+                lambda x: x[:, n_steps - 1], batch["next_observation"]
+            )
+        else:
+            next_obs_t0 = jax.tree.map(lambda x: x[:, n_steps], batch["observation"])
+        boot_idx = n_steps
+        loss_w = None
 
     # NEW: normalize observations using the current normalizer state.
     # Normalizer is updated only in rollout (not here) to mirror Brax PPO.
@@ -590,7 +720,7 @@ def sgd_step(
             "copy exists). Use sequence_length >= n_step + 1."
         )
     crit_obs_t0 = _critic_obs(obs_t0, batch, priv_key, 0)
-    crit_next_obs_t0 = _critic_obs(next_obs_t0, batch, priv_key, n_steps)
+    crit_next_obs_t0 = _critic_obs(next_obs_t0, batch, priv_key, boot_idx)
 
     # ------------------------------------------------------------------
     # 1) Critic target: deterministic next-action via target policy mean.
@@ -626,6 +756,7 @@ def sgd_step(
         crit_obs_t0,
         act_t0,
         target_probs,
+        loss_w,
     )
     crit_updates, new_crit_opt_state = crit_opt.update(
         crit_grads,
@@ -677,6 +808,7 @@ def sgd_step(
         state.steps,
         # None when off: the loss reads obs_t0 for the critic, as before.
         crit_obs_t0 if priv_key else None,
+        batch_weights=loss_w,
     )
     pol_grads, dual_grads = pol_dual_grads
 
@@ -854,7 +986,8 @@ def _per_point_nstep_returns(
     gamma: float,
     length: int,
     n: int,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+    truncation: jnp.ndarray | None = None,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Vectorized per-loss-point n-step returns over a [B, T] window.
 
     For each start t < length over the gathered window idx[t, j] = t + j
@@ -870,10 +1003,20 @@ def _per_point_nstep_returns(
     coefficient. Windows crossing a done are handled by the alive mask: the
     reward sum stops accumulating and the bootstrap coefficient is zeroed.
 
+    With ``truncation`` ([B, T]) every window is instead cut at its first
+    time-out, exactly as ``window_returns`` cuts the window starting at 0:
+    point t equals ``window_returns`` applied to the window starting at t.
+
     Returns:
-      (R_n, disc), both [B, length].
+      (R_n, disc, boot_off, weight), each [B, length]. ``boot_off`` (int32) is
+      the bootstrap offset from the loss point, ``weight`` the loss weight.
+      Without ``truncation`` they are n and 1 everywhere.
     """
     idx = jnp.arange(length)[:, None] + jnp.arange(n)[None, :]  # [L, n]
+    if truncation is not None:
+        return _cut_windows(
+            rewards[:, idx], discounts[:, idx], truncation[:, idx], gamma
+        )
     d_win = discounts[:, idx]  # [B, L, n]
     r_win = rewards[:, idx]  # [B, L, n]
     alive = jnp.cumprod(d_win, axis=-1)  # m_{j+1}
@@ -881,7 +1024,8 @@ def _per_point_nstep_returns(
     g = gamma ** jnp.arange(n, dtype=r_win.dtype)
     returns = jnp.sum(g[None, None, :] * m * r_win, axis=-1)  # [B, L]
     disc = (gamma ** (n - 1)) * alive[..., -1]  # [B, L]
-    return returns, disc
+    boot_off = jnp.full(returns.shape, n, jnp.int32)
+    return returns, disc, boot_off, jnp.ones_like(returns)
 
 
 def tick_indices(phase_w: jnp.ndarray, L: int) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -1012,6 +1156,7 @@ def _policy_loss_fn_rnn(
     anchor_log_std_imit: Any = None,
     step: jnp.ndarray = jnp.int32(0),
     phase_leaf: int | None = None,
+    batch_weights: jnp.ndarray | None = None,
 ):
     """Recurrent counterpart of ``_policy_loss_fn``: BPTT unroll + MPO on [B*L].
 
@@ -1022,6 +1167,9 @@ def _policy_loss_fn_rnn(
     exactly as in the FF path. The [B, L] loss points are folded into the
     batch axis: dists with batch shape [B*L], samples [N, B*L, A]; the
     flattening order (b*L + t) matches ``obs_flat`` and the anchor slices.
+
+    ``batch_weights`` ([B*L], optional) weights the loss points in every MPO
+    batch mean; None is the plain mean.
 
     Aux is ``(stats, rnn_metrics)``: the staleness diagnostic must come from
     the online unroll's recomputed pre-step hiddens, which only exist here.
@@ -1073,6 +1221,7 @@ def _policy_loss_fn_rnn(
         target_action_distribution=target_dist,
         actions=sampled,
         q_values=q_values,
+        batch_weights=batch_weights,
     )
 
     # Optional kl-anchor loss term -- same math as the FF `_policy_loss_fn`,
@@ -1251,6 +1400,25 @@ def _sgd_step_rnn(
         phase_w = batch["policy_hidden"][phase_leaf][:, :W, 0]
         idx, tick_fill_frac = tick_indices(phase_w.astype(jnp.float32), L)
         sel_loss, sel_boot = idx, idx + n
+    # Time-out cut (see `window_returns`): each loss point bootstraps at its
+    # own offset, so the bootstrap steps become per-row [B, L] indices, and a
+    # point starting at a time-out gets weight 0 in both losses.
+    loss_w = None
+    if cfg.bootstrap_on_truncation:
+        trunc = _require_truncation(batch)
+        if idx is None:
+            rew_bl, disc_bl, boot_off, loss_w = _per_point_nstep_returns(
+                batch["reward"], batch["discount"], cfg.discount, L, n, trunc
+            )
+            sel_boot = jnp.arange(L, dtype=jnp.int32)[None, :] + boot_off
+        else:
+            rew_w, disc_w, off_w, w_w = _per_point_nstep_returns(
+                batch["reward"], batch["discount"], cfg.discount, W, n, trunc
+            )
+            rew_bl, disc_bl = _take_steps(rew_w, idx), _take_steps(disc_w, idx)
+            loss_w = _take_steps(w_w, idx)
+            sel_boot = idx + _take_steps(off_w, idx)
+        loss_w = loss_w.reshape(B * L)
 
     # (1) Normalize only the two windows that are ever consumed: the unroll
     # window [:, :L] and the bootstrap window [:, n:n+L] (2L of T steps;
@@ -1331,16 +1499,18 @@ def _sgd_step_rnn(
 
     # (6) Per-point n-step returns, [B, L] each. Tick path: the returns of
     # every start in [0, W) -- each sums the n rewards after its start, tick
-    # or not -- gathered at the ticks.
-    if idx is None:
-        rew_bl, disc_bl = _per_point_nstep_returns(
-            batch["reward"], batch["discount"], cfg.discount, L, n
-        )
-    else:
-        rew_w, disc_w = _per_point_nstep_returns(
-            batch["reward"], batch["discount"], cfg.discount, W, n
-        )
-        rew_bl, disc_bl = _take_steps(rew_w, idx), _take_steps(disc_w, idx)
+    # or not -- gathered at the ticks. (Already formed in (0) when windows
+    # are cut at time-outs.)
+    if not cfg.bootstrap_on_truncation:
+        if idx is None:
+            rew_bl, disc_bl, _, _ = _per_point_nstep_returns(
+                batch["reward"], batch["discount"], cfg.discount, L, n
+            )
+        else:
+            rew_w, disc_w, _, _ = _per_point_nstep_returns(
+                batch["reward"], batch["discount"], cfg.discount, W, n
+            )
+            rew_bl, disc_bl = _take_steps(rew_w, idx), _take_steps(disc_w, idx)
 
     # (7) Critic target: bootstrap from observation[:, n:n+L] (tick path:
     # idx + n) paired with the STORED hidden at t + n -- a single-step target
@@ -1393,6 +1563,7 @@ def _sgd_step_rnn(
         obs_flat,
         act_flat,
         target_probs,
+        loss_w,
     )
     crit_updates, new_crit_opt_state = crit_opt.update(
         crit_grads,
@@ -1441,6 +1612,7 @@ def _sgd_step_rnn(
         anchor_ls,
         state.steps,
         phase_leaf=phase_leaf,
+        batch_weights=loss_w,
     )
     pol_grads, dual_grads = pol_dual_grads
 

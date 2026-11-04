@@ -170,6 +170,7 @@ def _batch(cfg, seed=1, next_obs=False, recurrent=False, priv=True):
         "action": jax.random.uniform(k[1], (B, T, ACTION), minval=-0.9, maxval=0.9),
         "reward": jax.random.normal(k[2], (B, T)),
         "discount": jnp.ones((B, T)),
+        "truncation": jnp.zeros((B, T)),
     }
     if next_obs:
         batch["next_observation"] = _obs_batch(k[3], T)

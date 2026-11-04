@@ -166,6 +166,7 @@ def make_fused_train_step(
                 vision_uint8=bool(getattr(cfg, "vision_uint8_storage", False)),
                 recurrent_meta=recurrent_meta,
                 policy_hidden=policy_hidden,
+                store_truncation=bool(cfg.bootstrap_on_truncation),
             )
             state = state._replace(normalizer_params=new_normalizer_params)
             rb_state = rb.add(rb_state, traj)
@@ -215,6 +216,7 @@ def make_fused_train_step(
             reward_remix_lambda=remix_lambda,
             store_next_observation=bool(getattr(cfg, "store_next_observation", True)),
             vision_uint8=bool(getattr(cfg, "vision_uint8_storage", False)),
+            store_truncation=bool(cfg.bootstrap_on_truncation),
         )
         state = state._replace(normalizer_params=new_normalizer_params)
         rb_state = rb.add(rb_state, traj)

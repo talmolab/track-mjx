@@ -27,9 +27,9 @@ import jax
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
 import wandb
-from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
+from vnl_playground.tasks.wrappers_truncation import wrap_for_dmpo_training
 
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.dmpo.checkpoint import restore as restore_ckpt
@@ -185,8 +185,11 @@ def main(hydra_cfg: DictConfig) -> None:
     log.info("episode_length=%d", episode_length)
 
     # ---- 5. Wrap env for brax training (vmap + auto-reset + DR) ----
+    # wrap_for_dmpo_training is the brax training stack plus a stash that
+    # keeps the time-out flag across the auto-reset, which the learner needs
+    # to bootstrap through time limits.
     # domain_randomization_maker returns (model, rng) -> (model, in_axes), but
-    # wrap_for_brax_training's BraxDomainRandomizationVmapWrapper calls
+    # the training wrap's BraxDomainRandomizationVmapWrapper calls
     # randomization_fn(model) with a single argument. Bind a fresh rng split
     # so the function signature matches (the same binding
     # track_mjx.agent.ff_ppo.ppo.train makes for its randomization_fn).
@@ -204,7 +207,7 @@ def main(hydra_cfg: DictConfig) -> None:
         )
         dr_rng_split = jax.random.split(dr_rng, dmpo_cfg.num_envs)
         v_randomization_fn = functools.partial(dr_base_fn, rng=dr_rng_split)
-    wrapped_train_env = playground_wrappers.wrap_for_brax_training(
+    wrapped_train_env = wrap_for_dmpo_training(
         train_env,
         episode_length=episode_length,
         action_repeat=int(raw_train_cfg.get("action_repeat", 1)),
@@ -276,6 +279,10 @@ def main(hydra_cfg: DictConfig) -> None:
         "discount": jnp.zeros((), jnp.float32),
         "next_observation": env_spec["obs_template"],
     }
+    # Post-step time-out flag, stored when the learner bootstraps through time
+    # limits (the rollout writes it under the same switch).
+    if dmpo_cfg.bootstrap_on_truncation:
+        transition_template["truncation"] = jnp.zeros((), jnp.float32)
     rb = make_replay(
         max_size=max(
             dmpo_cfg.sequence_length + 1,

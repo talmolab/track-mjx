@@ -44,7 +44,7 @@ from tests.agent.dmpo.test_learner_rnn import (
 )
 from tests.agent.dmpo.test_learner_rnn import _make_batch as _make_legacy_batch
 from tests.agent.dmpo.test_learner_rnn import _setup as _setup_legacy
-from track_mjx.agent.dmpo.config import DMPOConfig
+from track_mjx.agent.dmpo.config import LEGACY_ALIGNMENT, DMPOConfig
 from track_mjx.agent.dmpo.learner import (
     _critic_loss_fn,
     _done_between_ticks,
@@ -232,6 +232,7 @@ def _make_batch(
         "action": jax.random.uniform(ks[3], (B, T, ACTION), minval=-0.9, maxval=0.9),
         "reward": jax.random.normal(ks[4], (B, T)),
         "discount": discount,
+        "truncation": jnp.zeros((B, T)),
     }
     if priv:
         # Nonzero everywhere (a zero input row has a zero kernel gradient).
@@ -356,14 +357,19 @@ class _StubPhasePolicy(_StubRecurrentPolicy):
         return mu, scale, (new_h, jnp.mod(phase + 1.0, 1.0))
 
 
-def test_stride1_bit_identical_to_old_path():
+@pytest.mark.parametrize("aligned", [False, True], ids=["legacy", "aligned"])
+def test_stride1_bit_identical_to_old_path(aligned):
     """Same batch, same params: the legacy net (no phase leaf -> the old
     slicing path) vs the same cell with a k=1 phase leaf (-> the tick path:
     tick_indices, gathers, forced phase, cumsum done_between, W-length returns
     gathered at idx). Every loss/metric and every updated param must be
     bit-identical; dones sit at a loss point, the last loss point, and in the
-    n-step tail."""
-    s = _setup_legacy()
+    n-step tail.
+
+    With the acme-aligned defaults the two paths compute the same values
+    through differently fused weighted means, so they agree to float32
+    rounding instead of bit for bit; two of the dones are time-outs there."""
+    s = _setup_legacy() if aligned else _setup_legacy(**LEGACY_ALIGNMENT)
     cfg, state = s["cfg"], s["state"]
     L, n = cfg.rnn_bptt_length, cfg.n_step
     assert cfg.rnn_tick_stride == 1
@@ -374,6 +380,12 @@ def test_stride1_bit_identical_to_old_path():
         T=L + n,
         done_at=((1, 1), (2, 0), (3, L - 1), (0, L + 1)),
     )
+    if aligned:
+        batch["truncation"] = (
+            batch["truncation"].at[1, 1].set(1.0).at[0, L + 1].set(1.0)
+        )
+    else:
+        del batch["truncation"]
     nets_phase = DMPONetworks(
         policy=_StubPhasePolicy(action_size=s["nets"].policy.action_size),
         critic=s["nets"].critic,
@@ -397,12 +409,13 @@ def test_stride1_bit_identical_to_old_path():
 
     assert set(new_m) == set(old_m) | {"rnn/tick_fill_frac"}
     assert float(new_m["rnn/tick_fill_frac"]) == 0.0
+    tol = {"rtol": 1e-5, "atol": 1e-6} if aligned else {"rtol": 0, "atol": 0}
     for key, v in old_m.items():
-        np.testing.assert_array_equal(
-            np.asarray(new_m[key]), np.asarray(v), err_msg=key
+        np.testing.assert_allclose(
+            np.asarray(new_m[key]), np.asarray(v), err_msg=key, **tol
         )
     for a, b in zip(jax.tree.leaves(old_state), jax.tree.leaves(new_state)):
-        np.testing.assert_array_equal(_leaf_bits(a), _leaf_bits(b))
+        np.testing.assert_allclose(_leaf_bits(a), _leaf_bits(b), **tol)
 
 
 def _leaf_bits(x):

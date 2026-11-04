@@ -36,7 +36,10 @@ ENTRIES = {
             "vnl_playground.tasks.wrappers_truncation",
         ),
     ),
-    "imitation": ("train_dmpo.py", ()),
+    "imitation": (
+        "train_dmpo.py",
+        ("vnl_playground.tasks.wrappers_truncation",),
+    ),
 }
 
 # Variables the entries set with os.environ.setdefault at import time. They

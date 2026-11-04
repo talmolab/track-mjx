@@ -45,6 +45,7 @@ from track_mjx.agent.dmpo.networks_kl_anchor_slow import (
 )
 from track_mjx.agent.dmpo.obs_utils import init_dict_normalizer
 from track_mjx.agent.dmpo.replay import make_replay
+from track_mjx.agent.dmpo.rollout import PRESERVE_INFO_KEY
 from track_mjx.agent.dmpo.train_dmpo_chunk import make_train_chunk
 from track_mjx.agent.dmpo.train_dmpo_step import make_fused_train_step
 from track_mjx.agent.dmpo.training_loop import run as train_loop_run
@@ -63,6 +64,8 @@ class _State:
     t: jax.Array
     done: jax.Array
     reward: jax.Array
+    # What a wrap_for_dmpo_training stack carries: the post-step time-out flag.
+    info: dict
 
 
 def _obs_at(t):
@@ -92,13 +95,23 @@ class _DictObsEnv:
     def reset(self, keys):
         n = keys.shape[0]
         t = jnp.zeros((n,), jnp.int32)
-        return _State(obs=_obs_at(t), t=t, done=jnp.zeros((n,)), reward=jnp.zeros((n,)))
+        return _State(
+            obs=_obs_at(t),
+            t=t,
+            done=jnp.zeros((n,)),
+            reward=jnp.zeros((n,)),
+            info={PRESERVE_INFO_KEY: {"truncation": jnp.zeros((n,))}},
+        )
 
     def step(self, st, action):
         t = st.t + 1
         reward = jnp.tanh(jnp.linalg.norm(action, axis=-1))
         return _State(
-            obs=_obs_at(t), t=t, done=jnp.zeros_like(st.done), reward=reward
+            obs=_obs_at(t),
+            t=t,
+            done=jnp.zeros_like(st.done),
+            reward=reward,
+            info=st.info,
         ), reward
 
 
@@ -211,6 +224,8 @@ def _build(cfg, env, nets, seed):
             nets.recurrent_meta.init_hidden(),
         ),
     }
+    if cfg.bootstrap_on_truncation:
+        transition_template["truncation"] = jnp.zeros((), jnp.float32)
     rb_state = rb.init(transition_template)
 
     return dict(

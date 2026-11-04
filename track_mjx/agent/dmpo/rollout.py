@@ -9,6 +9,8 @@ Output shape conforms to flashbax's TrajectoryBuffer.add expectation:
 [add_batch_size, T, ...] per leaf.
 """
 
+from collections.abc import Mapping
+
 import jax
 import jax.numpy as jnp
 from brax.training.acme import running_statistics
@@ -73,6 +75,33 @@ def _reset_hidden_where_done(hidden, done):
     return jax.tree.map(_reset, hidden)
 
 
+# The info subtree that brax's auto-reset wrapper carries across a reset.
+PRESERVE_INFO_KEY = "AutoResetWrapper_preserve_info"
+
+
+def read_truncation(state) -> jnp.ndarray:
+    """Post-step time-out flag of every env, ``[num_envs]`` float32.
+
+    Read from ``state.info["AutoResetWrapper_preserve_info"]["truncation"]``,
+    where vnl-playground's ``wrap_for_dmpo_training`` keeps brax's
+    ``info["truncation"]`` across the auto-reset (a full reset rebuilds
+    ``info`` on exactly the done step). Raises ``KeyError`` at trace time when
+    the env provides no such flag: silently storing zeros would turn every
+    time-out back into a terminal.
+    """
+    info = getattr(state, "info", None)
+    preserved = info.get(PRESERVE_INFO_KEY) if isinstance(info, Mapping) else None
+    if not isinstance(preserved, Mapping) or "truncation" not in preserved:
+        raise KeyError(
+            f"the env state has no info[{PRESERVE_INFO_KEY!r}]['truncation'], "
+            "which bootstrapping through time limits needs. Compose the "
+            "training env with vnl_playground.tasks.wrappers_truncation."
+            "wrap_for_dmpo_training (it keeps the time-out flag across the "
+            "auto-reset), or set bootstrap_on_truncation=False."
+        )
+    return jnp.asarray(preserved["truncation"]).astype(jnp.float32)
+
+
 def _maybe_flatten_obs(obs, normalizer_params):
     """Flatten nested dict obs to {'imitation_target': ..., 'proprioception': ...}.
 
@@ -109,6 +138,7 @@ def collect_rollout(
     vision_uint8: bool = False,
     recurrent_meta=None,
     policy_hidden=None,
+    store_truncation: bool = False,
 ):
     """Roll out num_envs parallel envs for num_steps timesteps.
 
@@ -180,6 +210,12 @@ def collect_rollout(
         ``recurrent_meta.init_hidden(num_envs)`` -- both on the reset path
         AND on resume, because hidden is transient (never checkpointed).
         Only valid together with ``recurrent_meta``.
+      store_truncation: when True, the transition gains a ``"truncation"``
+        entry: the post-step time-out flag (``read_truncation``; 1 when the
+        step hit the episode limit without terminating). The stored
+        ``discount`` stays ``1 - done`` either way; the learner reads the flag
+        to bootstrap through time-outs. Trace-time flag; False (default)
+        keeps the schema unchanged.
 
     Returns:
       trajectory: dict with keys observation/action/reward/discount/next_observation,
@@ -280,6 +316,8 @@ def collect_rollout(
             "reward": reward,
             "discount": (1.0 - new_state.done).astype(jnp.float32),
         }
+        if store_truncation:
+            transition["truncation"] = read_truncation(new_state)
         if store_next_observation:
             transition["next_observation"] = _maybe_store_obs(
                 new_state.obs, normalizer_params, vision_uint8

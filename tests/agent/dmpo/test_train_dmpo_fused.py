@@ -17,9 +17,14 @@ from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.learner import init_training_state, make_optimizers
 from track_mjx.agent.dmpo.networks import make_dmpo_networks
 from track_mjx.agent.dmpo.replay import make_replay
-from track_mjx.agent.dmpo.rollout import collect_rollout
+from track_mjx.agent.dmpo.rollout import PRESERVE_INFO_KEY, collect_rollout
 from track_mjx.agent.dmpo.train_dmpo_sgd import make_scan_k_sgd
 from track_mjx.agent.dmpo.train_dmpo_step import make_fused_train_step
+
+
+def _no_timeout() -> dict:
+    """The info subtree a ``wrap_for_dmpo_training`` stack carries: no time-out."""
+    return {PRESERVE_INFO_KEY: {"truncation": jnp.zeros((), dtype=jnp.float32)}}
 
 
 # Tiny deterministic env mirroring tests/agent/dmpo/test_rollout.py.
@@ -28,14 +33,15 @@ from track_mjx.agent.dmpo.train_dmpo_step import make_fused_train_step
 class _MockEnvState:
     obs: jnp.ndarray
     done: jnp.ndarray
+    info: dict = dataclasses.field(default_factory=_no_timeout)
 
     def tree_flatten(self):
-        return (self.obs, self.done), None
+        return (self.obs, self.done, self.info), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
-        obs, done = children
-        return cls(obs=obs, done=done)
+        obs, done, info = children
+        return cls(obs=obs, done=done, info=info)
 
 
 class _MockEnv:
@@ -55,7 +61,7 @@ class _MockEnv:
             state.obs
             + jnp.pad(action, (0, max(0, self.obs_size - action.size)))[: self.obs_size]
         )
-        new_state = _MockEnvState(obs=new_obs, done=state.done)
+        new_state = _MockEnvState(obs=new_obs, done=state.done, info=state.info)
         reward = jnp.linalg.norm(action).astype(jnp.float32)
         return new_state, reward
 
@@ -101,6 +107,8 @@ def _setup():
         "discount": jnp.zeros((), dtype=jnp.float32),
         "next_observation": jnp.zeros((env.obs_size,), dtype=jnp.float32),
     }
+    if cfg.bootstrap_on_truncation:
+        transition_template["truncation"] = jnp.zeros((), dtype=jnp.float32)
     rb_state = rb.init(transition_template)
 
     return dict(
@@ -139,6 +147,7 @@ def test_fused_step_matches_unfused():
         num_envs=cfg.num_envs,
         num_steps=cfg.unroll_length,
         init_state=None,
+        store_truncation=cfg.bootstrap_on_truncation,
     )
     # Mirror the fused step: thread the updated normalizer into state BEFORE SGD.
     a_state = a_state._replace(normalizer_params=a_new_norm)

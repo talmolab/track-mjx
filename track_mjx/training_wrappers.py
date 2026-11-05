@@ -32,9 +32,13 @@ class EpisodeWrapper(brax_training.EpisodeWrapper):
 
     def step(self, state, action: jax.Array):
         state = super().step(state, action)
-        # VNL's reference boundary is a time limit for PPO, just like the wrapper's.
+        # Reference exhaustion is a time limit only if no true failure also occurred.
+        reference_truncation = jnp.logical_and(
+            state.info.get("truncated", False),
+            jnp.logical_not(state.metrics.get("terminations/any", False)),
+        )
         state.info["truncation"] = jnp.maximum(
-            state.info["truncation"], state.info.get("truncated", 0)
+            state.info["truncation"], reference_truncation
         )
         preserved = state.info.get(_PRESERVE_INFO_KEY, {})
         if "truncation" in preserved:

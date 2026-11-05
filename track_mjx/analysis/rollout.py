@@ -19,6 +19,12 @@ from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
 from vnl_playground.tasks import wrappers as vnl_wrappers
 
+from track_mjx.imitation import (
+    get_imitation_episode_length,
+    get_rollout_reference_qpos,
+    get_rollout_reset_kwargs,
+)
+
 
 def create_environment(
     env_config: dict[str, Any] | DictConfig,
@@ -83,15 +89,14 @@ def create_environment(
         n_frames_per_clip=env_cfg_ml.clip_length,
         clip_indices=selected_clip_indices,
     )
-    return vnl_wrappers.TrackMjxObsWrapper(
-        registry.load(
-            env_name,
-            config=env_cfg_ml,
-            clips=reference_clips,
-            flatten_obs=False,
-            num_worlds=num_worlds,
-        )
+    env = registry.load(
+        env_name,
+        config=env_cfg_ml,
+        clips=reference_clips,
+        flatten_obs=False,
+        num_worlds=num_worlds,
     )
+    return vnl_wrappers.TrackMjxObsWrapper(env)
 
 
 def create_rollout_generator(
@@ -105,15 +110,18 @@ def create_rollout_generator(
     log_sensor_data: bool = False,
     init_hidden_fn: Callable[[int], Any] | None = None,
 ) -> Callable[[int | None, int], dict[str, Any]]:
-    """Legacy rollout generator matching the pre-VNL track-mjx logic.
+    """Generate dense clip playback or a full sparse imitation episode.
 
-    This keeps the old rollout semantics:
-    - reset at `start_frame=0`
+    Each rollout uses these conventions:
+    - reset at `start_frame=0` for dense tasks, or the default pose for sparse
     - build rollout states by prepending the initial state to scan outputs
-    - build reference qposes by repeating each mocap frame `steps_per_frame`
+    - export dense reward targets or sparse cyclic visualization poses
     - return a jitted rollout function
 
-    The implementation is adapted to the current VNL `mjx_env.State` structure.
+    Full-clip playback continues past task termination. Dense training episodes end
+    earlier when the future-reference window leaves the clip.
+    Sparse exports follow the renderer's cyclic clip range; elastic matching
+    does not have a single reference pose for each policy step.
     Recurrent behavior is inferred from `init_hidden_fn`; `model` is retained
     only for backward-compatible call sites.
 
@@ -134,13 +142,8 @@ def create_rollout_generator(
             f"model='{model}' requires init_hidden_fn, but none was provided."
         )
 
-    mocap_dt = 1.0 / cfg.env_config.mocap_hz
-    steps_per_frame = mocap_dt / cfg.env_config.ctrl_dt
-    num_steps = int(cfg.env_config.clip_length * steps_per_frame) - 1
-
-    unwrapped_env = env
-    while hasattr(unwrapped_env, "_env"):
-        unwrapped_env = unwrapped_env._env
+    num_steps = get_imitation_episode_length(env)
+    reset_kwargs = get_rollout_reset_kwargs(env)
 
     jit_inference_fn = jax.jit(inference_fn)
     jit_reset = jax.jit(env.reset)
@@ -150,7 +153,7 @@ def create_rollout_generator(
         rollout_key = jax.random.key(seed)
         rollout_key, reset_rng, act_rng = jax.random.split(rollout_key, 3)
 
-        init_state = jit_reset(reset_rng, clip_idx=clip_idx, start_frame=0)
+        init_state = jit_reset(reset_rng, clip_idx=clip_idx, **reset_kwargs)
 
         def _step_fn_mlp(carry, _):
             state, rng = carry
@@ -223,16 +226,9 @@ def create_rollout_generator(
 
         rollout_states = jax.tree.map(prepend, init_state, states)
 
-        ref_clip_idx = jnp.asarray(init_state.info["reference_clip"]).astype(int)
-        ref_qpos = unwrapped_env.reference_clips.qpos[ref_clip_idx]
-
-        start_frame = jnp.asarray(rollout_states.info["start_frame"])
-        times = jnp.asarray(rollout_states.data.time)
-        frame_indices = jnp.round(
-            times * float(env._config.mocap_hz) + start_frame
-        ).astype(jnp.int32)
-        ref_qpos = jnp.asarray(env.reference_clips.qpos[ref_clip_idx])
-        qposes_ref = ref_qpos[frame_indices]
+        qposes_ref = get_rollout_reference_qpos(
+            env, rollout_states.data, rollout_states.info
+        )
 
         result = {
             "qposes_ref": qposes_ref,

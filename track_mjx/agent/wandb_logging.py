@@ -16,6 +16,11 @@ import wandb
 from jax import numpy as jnp
 from omegaconf import DictConfig, OmegaConf
 
+from track_mjx.imitation import (
+    get_imitation_episode_length,
+    get_rollout_reset_kwargs,
+)
+
 
 def rollout_logging_fn(
     env: Any,
@@ -32,12 +37,12 @@ def rollout_logging_fn(
 ) -> None:
     """Log evaluation rollout metrics and video to Weights & Biases.
 
-    Runs a full episode using the current policy, logging latent space statistics
+    Runs a full dense clip or configured sparse episode, logging latent statistics
     (mean/std of VAE latents), per-step reward breakdowns, and optionally a
     rendered video of the rollout.
 
     Args:
-        env: VNL environment instance with render() and _config attributes.
+        env: VNL dense or sparse imitation environment.
         jit_reset: JIT-compiled environment reset function.
         jit_step: JIT-compiled environment step function.
         cfg: Full configuration containing env_config and render_config.
@@ -58,18 +63,11 @@ def rollout_logging_fn(
         The caller should call wandb.log() with commit=True afterward.
     """
     _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
-    state = jit_reset(reset_rng)
+    state = jit_reset(reset_rng, **get_rollout_reset_kwargs(env))
 
     rollout = [state]
     latent_means = []
     latent_logvars = []
-
-    # Calculate episode length from config
-    physics_steps_per_ctrl = env._config.ctrl_dt / env._config.sim_dt
-    steps_per_mocap_frame = (1 / env._config.mocap_hz) / (
-        env._config.sim_dt * physics_steps_per_ctrl
-    )
-    episode_length = int(env._clip_length() * steps_per_mocap_frame)
 
     # Check if using recurrent policy
     arch_name = cfg.network_config.get("arch_name", "intention")
@@ -83,7 +81,7 @@ def rollout_logging_fn(
             )
         hidden = ppo_network.policy_network.init_hidden(1)
 
-    for _ in range(episode_length):
+    for _ in range(get_imitation_episode_length(env)):
         _, act_rng = jax.random.split(act_rng)
 
         if is_recurrent:

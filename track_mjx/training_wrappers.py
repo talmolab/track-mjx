@@ -7,6 +7,10 @@ import jax.numpy as jnp
 from brax.envs.wrappers import training as brax_training
 from mujoco_playground import wrapper as playground_wrapper
 
+from track_mjx.imitation import is_sparse_imitation
+
+_PRESERVE_INFO_KEY = "AutoResetWrapper_preserve_info"
+
 
 class EpisodeWrapper(brax_training.EpisodeWrapper):
     """Tracks episode metrics using the environment state's batch shape."""
@@ -26,6 +30,24 @@ class EpisodeWrapper(brax_training.EpisodeWrapper):
         state.info["episode_metrics"] = episode_metrics
         return state
 
+    def step(self, state, action: jax.Array):
+        state = super().step(state, action)
+        # Reference exhaustion is a time limit only if no true failure also occurred.
+        reference_truncation = jnp.logical_and(
+            state.info.get("truncated", False),
+            jnp.logical_not(state.metrics.get("terminations/any", False)),
+        )
+        state.info["truncation"] = jnp.maximum(
+            state.info["truncation"], reference_truncation
+        )
+        preserved = state.info.get(_PRESERVE_INFO_KEY, {})
+        if "truncation" in preserved:
+            state.info[_PRESERVE_INFO_KEY] = {
+                **preserved,
+                "truncation": state.info["truncation"],
+            }
+        return state
+
 
 class AutoResetWrapper(playground_wrapper.BraxAutoResetWrapper):
     """Auto-reset wrapper with per-environment typed-key bookkeeping."""
@@ -40,6 +62,27 @@ class AutoResetWrapper(playground_wrapper.BraxAutoResetWrapper):
         state.info[f"{self._info_key}_done_count"] = jnp.zeros_like(
             state.done, dtype=int
         )
+        if self._full_reset:
+            # Upstream's preservation hook keeps terminal flags across info resets.
+            state.info[_PRESERVE_INFO_KEY] = {
+                **state.info.get(_PRESERVE_INFO_KEY, {}),
+                "truncation": state.info["truncation"],
+            }
+        return state
+
+    def step(self, state, action: jax.Array):
+        state = super().step(state, action)
+        if self._full_reset:
+            state.info["truncation"] = state.info[_PRESERVE_INFO_KEY]["truncation"]
+        elif "reference_step" in state.info:
+            # Cached auto-reset restores physics and observations but preserves info.
+            info = state.info.copy()
+            info["reference_step"] = jnp.where(
+                state.done,
+                jnp.zeros_like(info["reference_step"]),
+                info["reference_step"],
+            )
+            state = state.replace(info=info)
         return state
 
 
@@ -53,6 +96,8 @@ def wrap_for_brax_training(
     full_reset: bool = False,
 ):
     """Wrap an environment for Brax training using typed JAX keys."""
+    # Sparse DP history belongs to one episode and must reset with its physics.
+    full_reset = full_reset or is_sparse_imitation(env)
     if vision:
         env = playground_wrapper.MadronaWrapper(env, num_vision_envs, randomization_fn)
     elif randomization_fn is None:

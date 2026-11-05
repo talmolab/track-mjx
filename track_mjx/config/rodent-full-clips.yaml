@@ -27,7 +27,7 @@ env_config:
   iterations: 5           # Max solver iterations per step
   ls_iterations: 5        # Line search iterations for Newton solver
   contacts_per_world: 32      # Contact capacity allocated per environment
-  constraints_per_world: 128  # Constraint capacity allocated per environment
+  constraints_per_world: 256  # Constraint capacity allocated per environment
   noslip_iterations: 0    # No-slip solver iterations (0 = disabled)
 
   # -----------------------------------------------------------------------------

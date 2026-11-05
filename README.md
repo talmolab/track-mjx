@@ -167,7 +167,7 @@ The bundled configurations resolve these locations automatically:
 | Fruit fly | `data/fly/fly_reference_clip.h5` |
 | Mouse arm | `data/mouse_arm/` |
 | Stick insect | `data/stick/stick_mesh_reference.h5` |
-| Worm | `data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5` |
+| Worm | `data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d_scale-0.1.h5` |
 
 To download only the rodent reference clips, run
 `notebooks/rodent_demo.ipynb` or execute:

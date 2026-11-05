@@ -6,6 +6,7 @@ This module provides functions to serialize and deserialize JAX/NumPy pytrees
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
 import h5py
 import jax
@@ -18,6 +19,8 @@ def save_to_h5py(file_path: str | Path, data: Any, group_path: str = "/") -> Non
     Recursively traverses the data structure and saves each leaf node as an
     HDF5 dataset. Supports dicts, lists, tuples, NumPy arrays, JAX arrays,
     PyTorch tensors, and objects with __dict__.
+    Dictionary keys are URL-escaped on disk so metric names containing "/" remain
+    single keys when restored with load_from_h5py.
 
     Args:
         file_path: Path to the HDF5 file to create (overwrites if exists).
@@ -51,8 +54,9 @@ def _recursive_save(file: h5py.File, data: Any, group_path: str = "/") -> None:
         data = list(data)
 
     if isinstance(data, dict):
+        file.require_group(group_path).attrs["track_mjx_key_encoding"] = "url"
         for key, value in data.items():
-            _recursive_save(file, value, f"{group_path}/{key}")
+            _recursive_save(file, value, f"{group_path}/{quote(str(key), safe='')}")
 
     elif isinstance(data, list):
         for i, item in enumerate(data):
@@ -120,7 +124,11 @@ def _recursive_load(file: h5py.File, group_path: str = "/") -> Any:
 
     elif isinstance(group, h5py.Group):
         keys = list(group.keys())
-        if keys and all(k.isdigit() for k in keys):
+        if group.attrs.get("track_mjx_key_encoding") == "url":
+            return {
+                unquote(k): _recursive_load(file, f"{group_path}/{k}") for k in keys
+            }
+        elif keys and all(k.isdigit() for k in keys):
             # Numeric keys indicate this was originally a list
             return [
                 _recursive_load(file, f"{group_path}/{k}")

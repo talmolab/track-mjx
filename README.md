@@ -4,8 +4,8 @@ This is a package for training control policies through motion imitation using d
 
 ## Release compatibility
 
-Track-MJX v1.1.0 uses
-[VNL Playground v0.0.14](https://github.com/talmolab/vnl-playground/releases/tag/v0.0.14)
+Track-MJX uses
+[VNL Playground v0.0.15](https://github.com/talmolab/vnl-playground/releases/tag/v0.0.15)
 for environment and task logic. The tested simulation stack is Python 3.12,
 JAX/JAXlib 0.10.2, MuJoCo/MJX 3.11.0, and Warp 1.14.0.
 

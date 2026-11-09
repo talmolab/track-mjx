@@ -491,3 +491,125 @@ def test_allenv_metric_filter_keeps_spout_prefix():
     np.testing.assert_allclose(np.asarray(allenv["spout/hit"]), 1.0)
     assert "rewards/forward" in allenv  # existing prefixes still kept
     assert "other/ignored" not in allenv  # unknown prefixes still filtered
+
+
+def test_index_env_slices_only_env_batched_leaves():
+    """Only leaves with leading dim == num_envs are sliced; the rest pass through.
+
+    A batched mujoco_warp ``Data`` carries leaves that are not batched over the
+    envs: a shared contact pool, a ``(1,)`` counter, and solver scratch with a
+    leading dim of 0. ``x[0]`` on that last kind raises IndexError.
+    """
+    import numpy as np
+
+    from track_mjx.agent.dmpo.train_dmpo_eval import index_env
+
+    n = 3
+    tree = {
+        "qpos": jnp.arange(n * 5, dtype=jnp.float32).reshape(n, 5),
+        "pool": jnp.ones((7, 3)),
+        "count": jnp.array([4], dtype=jnp.int32),
+        "scratch": jnp.zeros((0, 0, 0)),
+        "scalar": jnp.float32(2.0),
+    }
+    with pytest.raises(IndexError):
+        tree["scratch"][0]
+    out = index_env(tree, n)
+    np.testing.assert_array_equal(np.asarray(out["qpos"]), np.arange(5))
+    np.testing.assert_array_equal(
+        np.asarray(index_env(tree, n, i=2)["qpos"]), np.arange(10, 15)
+    )
+    assert out["pool"].shape == (7, 3)
+    assert out["count"].shape == (1,)
+    assert out["scratch"].shape == (0, 0, 0)
+    assert out["scalar"].shape == ()
+
+
+def test_run_eval_rollout_envzero_handles_unbatched_and_empty_leaves():
+    """The eval rollout survives a state with zero-size and shared leaves.
+
+    Env 0's batched leaves are recorded per frame; the shared and empty leaves
+    keep their shapes and the reset-state value.
+    """
+    import flax.struct
+    import numpy as np
+
+    from track_mjx.agent.dmpo.train_dmpo_eval import run_eval_rollout_envzero
+
+    @flax.struct.dataclass
+    class _Impl:
+        contact_pool: jax.Array
+        nacon: jax.Array
+        cJ: jax.Array
+
+    @flax.struct.dataclass
+    class _Data:
+        qpos: jax.Array
+        impl: _Impl
+
+    @flax.struct.dataclass
+    class _State:
+        obs: dict
+        data: _Data
+        done: jax.Array
+        reward: jax.Array
+
+    num_envs, episode_length = 4, 5
+
+    class _StubEnv:
+        action_size = 3
+
+        def reset(self, keys):
+            n = keys.shape[0]
+            return _State(
+                obs={"proprioception": jnp.zeros((n, 4))},
+                data=_Data(
+                    # Env e starts at qpos 10*e; each step adds 1.
+                    qpos=jnp.tile(10.0 * jnp.arange(n, dtype=jnp.float32)[:, None], 2),
+                    impl=_Impl(
+                        contact_pool=jnp.zeros((9, 3)),
+                        nacon=jnp.zeros((1,), dtype=jnp.int32),
+                        cJ=jnp.zeros((0, 0, 0)),
+                    ),
+                ),
+                done=jnp.zeros((n,)),
+                reward=jnp.zeros((n,)),
+            )
+
+        def step(self, st, _action):
+            impl = st.data.impl
+            return st.replace(
+                data=st.data.replace(
+                    qpos=st.data.qpos + 1.0,
+                    impl=impl.replace(
+                        contact_pool=impl.contact_pool + 1.0, nacon=impl.nacon + 1
+                    ),
+                ),
+                reward=st.reward + 1.0,
+            )
+
+    def policy_apply(_params, obs):
+        class _D:
+            def mode(self):
+                return jnp.zeros((3,))
+
+        return _D()
+
+    rollout, _, _, allenv = run_eval_rollout_envzero(
+        env=_StubEnv(),
+        policy_apply=policy_apply,
+        params=None,
+        rng=jax.random.key(0),
+        episode_length=episode_length,
+        num_envs=num_envs,
+    )
+    assert len(rollout) == episode_length + 1
+    for t, st in enumerate(rollout):
+        np.testing.assert_allclose(np.asarray(st.data.qpos), [float(t)] * 2)
+        assert np.asarray(st.reward).shape == ()
+        assert st.data.impl.contact_pool.shape == (9, 3)
+        assert st.data.impl.nacon.shape == (1,)
+        assert st.data.impl.cJ.shape == (0, 0, 0)
+        # Shared leaves carry the reset state's value in every frame.
+        np.testing.assert_allclose(np.asarray(st.data.impl.contact_pool), 0.0)
+    assert allenv["reward"].shape == (episode_length, num_envs)

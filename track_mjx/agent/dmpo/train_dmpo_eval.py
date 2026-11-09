@@ -193,6 +193,46 @@ def compute_vision_sensitivity(
     return float(jnp.linalg.norm(act_real - act_blank))
 
 
+def is_env_batched(x: Any, num_envs: int) -> bool:
+    """Whether ``x``'s leading axis is the env batch axis.
+
+    The test is ``x.shape[0] == num_envs``. A leaf that is not batched over the
+    envs but happens to have ``num_envs`` rows would also pass it; nothing in
+    the state of a batched env is known to do that.
+    """
+    shape = getattr(x, "shape", None)
+    return shape is not None and len(shape) > 0 and shape[0] == num_envs
+
+
+def index_env(pytree: Any, num_envs: int, i: int = 0) -> Any:
+    """Env ``i`` of a batched env-state pytree.
+
+    Slices only the leaves whose leading axis is the env batch axis (leading
+    dim == ``num_envs``) and passes every other leaf through unchanged.
+
+    A batched env state is not batched on every leaf. The mujoco_warp ``Data``
+    behind ``data._impl`` holds the contact pool shared by all worlds
+    (``contact__*``, leading dim ``naconmax``), the counters ``nacon`` and
+    ``ncollision`` (shape ``(1,)``) and solver scratch that this model leaves
+    empty (``cJ``, ``cM``, ``cqLD``, ..., leading dim 0). Slicing every leaf
+    with ``ndim > 0`` raised ``IndexError`` on the empty ones, and silently
+    read contact 0 of the shared pool as if it were env 0's.
+    """
+    return jax.tree.map(lambda x: x[i] if is_env_batched(x, num_envs) else x, pytree)
+
+
+def _per_frame_leaf(x: Any, num_envs: int) -> bool:
+    """Whether the eval scan records leaf ``x`` once per frame.
+
+    Env-batched leaves (env 0's slice) and 0-d leaves are recorded per frame.
+    Any other leaf is not env 0's data, so every frame carries its value from
+    the reset state instead: stacking it would cost its full size per frame,
+    and the shared contact pool alone is about 10 MB per step at
+    ``naconmax=65536``, 20 GB over a 2000-step eval.
+    """
+    return is_env_batched(x, num_envs) or getattr(x, "ndim", 0) == 0
+
+
 def run_eval_rollout_envzero(
     env: Any,
     policy_apply: Callable,
@@ -215,7 +255,7 @@ def run_eval_rollout_envzero(
 
     The render wrapper is locked to ``nworld=num_envs``; rather than
     rebuild a separate single-env stack, we step the batched env inside
-    the scan and pull leaf[0] off each new state for rendering.
+    the scan and pull env 0 off each new state (``index_env``) for rendering.
     Reward / done from env 0 drive termination tracking.
 
     Args:
@@ -247,7 +287,8 @@ def run_eval_rollout_envzero(
     Returns:
         rollout: list of CPU-side State pytrees (env 0 only) of length
             ``episode_length + 1`` (initial reset state, then one per
-            scan step).
+            scan step). Leaves not batched over the envs (see
+            ``index_env``) hold their reset-state value in every frame.
         termination_events: list of ``(frame_idx, reason)`` tuples.
         batch_metrics: ``compute_batch_rollout_metrics(allenv)`` WITHOUT the
             reward remix -- reward keys are env totals.
@@ -266,13 +307,6 @@ def run_eval_rollout_envzero(
     rng, k_reset = jax.random.split(rng)
     keys = jax.random.split(k_reset, num_envs)
     state = env.reset(keys)
-
-    def _index_zero(pytree):
-        # Slice leading axis of every array leaf; pass scalars through.
-        return jax.tree.map(
-            lambda x: x[0] if hasattr(x, "shape") and getattr(x, "ndim", 0) > 0 else x,
-            pytree,
-        )
 
     @jax.jit
     def _scan_envzero(initial_state, k_scan):
@@ -307,7 +341,13 @@ def run_eval_rollout_envzero(
                 # obs on the terminal step itself, so the hidden consumed with
                 # that obs next step must be the fresh-episode zero state.
                 new_hidden = _reset_hidden_where_done(new_hidden, new_st.done)
-            env0 = _index_zero(new_st)
+            # Env 0's per-frame leaves only; see `_per_frame_leaf` for what is
+            # left out and why.
+            env0 = [
+                x[0] if is_env_batched(x, num_envs) else x
+                for x in jax.tree.leaves(new_st)
+                if _per_frame_leaf(x, num_envs)
+            ]
             # ALL-ENV statistics. The scan already steps every env; keeping only
             # env 0 threw away 2047/2048 of the sample and made
             # mean_episode_length == episode_length/n_episodes with n a small
@@ -377,22 +417,22 @@ def run_eval_rollout_envzero(
 
     rng, k_scan = jax.random.split(rng)
     traj, allenv = _scan_envzero(state, k_scan)
-    # ``traj`` has leading axis [episode_length] on every array leaf.
-    # Touch one leaf to materialise the scan; subsequent slicing is cheap.
-    jax.block_until_ready(jax.tree.leaves(traj)[0])
+    # ``traj`` is the list of env 0's per-frame leaves, each stacked by the scan
+    # to a leading [episode_length] axis. The scan carry keeps the state's
+    # structure and shapes fixed, so the per-frame mask computed on the reset
+    # state below lines up with the leaves the scan body emitted.
+    traj = jax.device_get(traj)
 
-    rollout: list = [jax.device_get(_index_zero(state))]
+    leaves0, treedef = jax.tree.flatten(index_env(state, num_envs))
+    leaves0 = jax.device_get(leaves0)
+    per_frame = [_per_frame_leaf(x, num_envs) for x in jax.tree.leaves(state)]
+    rollout: list = [jax.tree.unflatten(treedef, leaves0)]
     for t in range(episode_length):
+        frame = iter(traj)
         rollout.append(
-            jax.device_get(
-                jax.tree.map(
-                    lambda x: (
-                        x[t]  # noqa: B023 (jax.tree.map applies the lambda eagerly, within this same loop iteration)
-                        if hasattr(x, "shape") and getattr(x, "ndim", 0) > 0
-                        else x
-                    ),
-                    traj,
-                )
+            jax.tree.unflatten(
+                treedef,
+                [next(frame)[t] if pf else x0 for pf, x0 in zip(per_frame, leaves0)],
             )
         )
 

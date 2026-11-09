@@ -51,7 +51,7 @@ env_config:
   reference_stride: 1             # Stride between reference frames
   start_frame_range: [0, 50]      # Random episode start within [min, max] frames
   qvel_init: "zeros"              # Initial velocity: "zeros" or "reference"
-  keep_clips_idx: null            # Specific clip indices to use (null = all)
+  clip_indices: null              # Specific clip indices to use (null = all)
 
   # -----------------------------------------------------------------------------
   # Domain Randomization Settings

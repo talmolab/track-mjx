@@ -25,6 +25,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 import hydra
 import jax
 import jax.numpy as jnp
+import numpy as np
 import orbax.checkpoint as ocp
 import wandb
 from omegaconf import DictConfig, OmegaConf
@@ -89,6 +90,42 @@ def _reference_and_proprio_sizes(obs_sizes: dict) -> tuple[int, int]:
     raise KeyError(
         f"obs_sizes has no reference entry (one of {_REFERENCE_KEYS}): {obs_sizes}"
     )
+
+
+def _clip_indices(env_config: Any) -> np.ndarray | None:
+    """The source-clip indices to keep, from ``env_config.clip_indices``.
+
+    Raises:
+        ValueError: If the retired ``keep_clips_idx`` key is set; the loader
+            selects clips through ``clip_indices``.
+    """
+    if env_config.get("keep_clips_idx", None) is not None:
+        raise ValueError(
+            "env_config.keep_clips_idx is no longer read; set "
+            "env_config.clip_indices instead."
+        )
+    indices = env_config.get("clip_indices", None)
+    return None if indices is None else np.asarray(indices)
+
+
+def _load_train_clips(hydra_cfg: DictConfig, env_name: str, seed: int):
+    """Load the reference clips and split off the training share.
+
+    Returns:
+        ``(reference_clips, train_clips)``.
+    """
+    env_config = hydra_cfg.env_config
+    reference_clips = registry.load_reference_clips(
+        env_name,
+        data_path=env_config.reference_data_path,
+        n_frames_per_clip=env_config.clip_length,
+        clip_indices=_clip_indices(env_config),
+    )
+    train_clips, _test_clips = reference_clips.split(
+        train_ratio=hydra_cfg.train_setup.train_subset_ratio,
+        seed=seed,
+    )
+    return reference_clips, train_clips
 
 
 def _make_dmpo_logging_inference_fn(policy_module, normalizer_params):
@@ -168,19 +205,9 @@ def main(hydra_cfg: DictConfig) -> None:
 
     # ---- 4. Reference clips + train/test split ----
     log.info(f"Loading reference clips: {hydra_cfg.env_config.reference_data_path}")
-    reference_clips = registry.load_reference_clips(
-        env_name,
-        data_path=hydra_cfg.env_config.reference_data_path,
-        n_frames_per_clip=hydra_cfg.env_config.clip_length,
-        keep_clips_idx=hydra_cfg.env_config.get("keep_clips_idx", None),
-    )
-    key_split, _ = jax.random.split(jax.random.PRNGKey(seed))
     # Training sees only the train split. The held-out clips are not used by
     # this entry; the eval rollout env below is built with clips=None.
-    train_clips, _test_clips = reference_clips.split(
-        train_ratio=hydra_cfg.train_setup.train_subset_ratio,
-        seed=key_split,
-    )
+    reference_clips, train_clips = _load_train_clips(hydra_cfg, env_name, seed)
     train_env = registry.load(
         env_name, config=env_cfg_ml, clips=train_clips, flatten_obs=False
     )

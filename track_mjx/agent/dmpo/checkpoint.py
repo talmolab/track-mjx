@@ -13,23 +13,83 @@ runs use the same on-disk convention:
   Splitting ``policy`` from ``train_state`` lets analysis scripts load just
   the inference-side pytree without instantiating dual variables / optimizer
   state, matching ``track_mjx.agent.checkpointing.load_policy``.
+
+Orbax cannot write an array with no elements, and an observation key of width
+zero gives the running normalizer such arrays. A leaf of that kind is left out
+of the saved pytree and its shape and dtype are written to an ``empty_leaves``
+item instead; restore puts it back from the template (or, for
+``load_train_state_items_numpy``, from that item). A state with no such leaf
+is saved exactly as before and gets no ``empty_leaves`` item.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import pathlib
 from collections.abc import Mapping
 from typing import Any
 
+import jax
+import jax.numpy as jnp
+import numpy as np
 import orbax.checkpoint as ocp
 
 from track_mjx.agent.dmpo.config import ALIGNMENT_FIELDS, LEGACY_ALIGNMENT, DMPOConfig
 from track_mjx.agent.dmpo.learner import TrainingState
 
 STEP_PREFIX = "DMPONetwork"
+EMPTY_LEAVES_ITEM = "empty_leaves"
 
 log = logging.getLogger(__name__)
+
+
+def _is_empty_leaf(leaf: Any) -> bool:
+    shape = getattr(leaf, "shape", None)
+    return shape is not None and math.prod(shape) == 0
+
+
+def _key_name(key: Any) -> str:
+    for attr in ("key", "name", "idx"):
+        if hasattr(key, attr):
+            return str(getattr(key, attr))
+    return str(key)
+
+
+def _strip_empty(tree: Any) -> tuple[Any, dict[str, dict[str, Any]]]:
+    """Drop the zero-size leaves of ``tree``.
+
+    Returns:
+      ``(stripped, empties)``: ``tree`` with each zero-size leaf replaced by
+      ``None`` (no leaf, so orbax has nothing to refuse), and a record of each
+      one as ``"a/b/c" -> {"shape": [...], "dtype": "float32"}``. ``stripped``
+      is ``tree`` itself, and ``empties`` is ``{}``, when there is none.
+    """
+    paths_and_leaves, _ = jax.tree_util.tree_flatten_with_path(tree)
+    empties = {
+        "/".join(_key_name(k) for k in path): {
+            "shape": list(leaf.shape),
+            "dtype": str(leaf.dtype),
+        }
+        for path, leaf in paths_and_leaves
+        if _is_empty_leaf(leaf)
+    }
+    if not empties:
+        return tree, empties
+    return jax.tree.map(lambda x: None if _is_empty_leaf(x) else x, tree), empties
+
+
+def _restore_empty(restored: Any, template: Any) -> Any:
+    """Put the zero-size leaves of ``template`` back into ``restored``."""
+
+    def fill(value, like):
+        if value is not None:
+            return value
+        if _is_empty_leaf(like) and not isinstance(like, (jax.Array, np.ndarray)):
+            return jnp.zeros(like.shape, like.dtype)
+        return like
+
+    return jax.tree.map(fill, restored, template, is_leaf=lambda x: x is None)
 
 
 def make_checkpointer(
@@ -94,10 +154,16 @@ def save(
             Saved as JSON so analysis scripts can rebuild the network without
             the live hydra config. Optional only for legacy callers.
     """
+    policy, policy_empties = _strip_empty(state.policy_params)
+    train_state, train_empties = _strip_empty(state._asdict())
     items: dict[str, ocp.args.CheckpointArgs] = {
-        "policy": ocp.args.StandardSave(state.policy_params),
-        "train_state": ocp.args.StandardSave(state._asdict()),
+        "policy": ocp.args.StandardSave(policy),
+        "train_state": ocp.args.StandardSave(train_state),
     }
+    if policy_empties or train_empties:
+        items[EMPTY_LEAVES_ITEM] = ocp.args.JsonSave(
+            {"policy": policy_empties, "train_state": train_empties}
+        )
     if config is not None:
         items["config"] = ocp.args.JsonSave(config)
     mgr.save(int(step), args=ocp.args.Composite(**items))
@@ -166,11 +232,12 @@ def restore(
     target_step = step if step is not None else mgr.latest_step()
     if target_step is None:
         return None
+    template, empties = _strip_empty(state_template._asdict())
     try:
         restored = mgr.restore(
             target_step,
             args=ocp.args.Composite(
-                train_state=ocp.args.StandardRestore(state_template._asdict()),
+                train_state=ocp.args.StandardRestore(template),
             ),
         )
         train_state = restored["train_state"]
@@ -181,8 +248,10 @@ def restore(
         )
         train_state = mgr.restore(
             target_step,
-            args=ocp.args.StandardRestore(state_template._asdict()),
+            args=ocp.args.StandardRestore(template),
         )
+    if empties:
+        train_state = _restore_empty(train_state, state_template._asdict())
     # Outside the try/except so a coercion bug raises as itself instead of
     # being swallowed into the "Composite restore failed" fallback path
     # above -- applies to whichever branch produced train_state.
@@ -203,11 +272,13 @@ def load_policy(
     target_step = step if step is not None else mgr.latest_step()
     if target_step is None:
         raise FileNotFoundError("No DMPO checkpoint found in manager")
+    template, empties = _strip_empty(policy_template)
     restored = mgr.restore(
         target_step,
-        args=ocp.args.Composite(policy=ocp.args.StandardRestore(policy_template)),
+        args=ocp.args.Composite(policy=ocp.args.StandardRestore(template)),
     )
-    return restored["policy"]
+    policy = restored["policy"]
+    return _restore_empty(policy, policy_template) if empties else policy
 
 
 def load_train_state_items_numpy(
@@ -258,7 +329,30 @@ def load_train_state_items_numpy(
         lambda m: ocp.RestoreArgs(restore_type=np.ndarray), meta_tree
     )
     restored = ptc.restore(str(path), restore_args=restore_args)
-    return {k: restored[k] for k in items}
+    out = {k: restored[k] for k in items}
+    _add_saved_empty_leaves(out, pathlib.Path(ckpt_step_dir))
+    return out
+
+
+def _add_saved_empty_leaves(out: dict, ckpt_step_dir: pathlib.Path) -> None:
+    """Put back the zero-size ``train_state`` leaves recorded with a checkpoint."""
+    record_dir = ckpt_step_dir / EMPTY_LEAVES_ITEM
+    if not record_dir.is_dir():
+        return
+    record = ocp.Checkpointer(ocp.JsonCheckpointHandler()).restore(str(record_dir))
+    for path, info in record.get("train_state", {}).items():
+        keys = path.split("/")
+        if keys[0] not in out:
+            continue
+        node = out
+        for key in keys[:-1]:
+            if not isinstance(node, Mapping) or key not in node:
+                raise ValueError(
+                    f"cannot place the empty leaf {path!r} recorded in "
+                    f"{ckpt_step_dir}: {key!r} is not in the restored tree"
+                )
+            node = node[key]
+        node[keys[-1]] = np.zeros(info["shape"], np.dtype(info["dtype"]))
 
 
 def load_config(

@@ -22,6 +22,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import Any, NamedTuple
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
@@ -800,12 +801,70 @@ def _build_env(
     return env_adapter, base_env, mj_model, mjx_model, vision_shape
 
 
-@hydra.main(
-    config_path="../track_mjx/config/dmpo",
-    config_name="run_gap/velocity_only_kl_anchor",
-    version_base=None,
-)
-def main(hydra_cfg: DictConfig):
+# ---------------------------------------------------------------------------
+# Build stages shared with scripts/eval_dmpo_checkpoints.py
+# ---------------------------------------------------------------------------
+# main() runs these in order. The post-hoc checkpoint evaluator calls the same
+# functions, so the env, the networks and the eval it builds are the ones a
+# training run builds.
+
+
+class _RunSetup(NamedTuple):
+    """The learner config and policy-head choice resolved from the hydra config.
+
+    ``recurrent`` is true for either recurrent head (the GRU head or the slow
+    core); ``gru_head`` and ``slow_core`` tell them apart. The ``slow_*`` and
+    ``tick_stride`` fields are None unless ``slow_core``.
+    """
+
+    cfg: DMPOConfig
+    anchor_extras: tuple
+    from_scratch: bool
+    recurrent: bool
+    gru_head: bool
+    slow_core: bool
+    rnn_head_cfg: dict | None
+    slow_hidden_size: int | None
+    tick_stride: int | None
+    slow_store_dtype: str | None
+    critic_privileged_dim: int
+    priv_extras: tuple
+    graft_path: str | None
+
+
+class _FrozenPrior(NamedTuple):
+    """The frozen prior + decoder of a grafted arm (all None/empty from scratch)."""
+
+    prior_params: Any
+    decoder_params: Any
+    normalizer_params: Any
+    prior_fn: Any
+    decoder_logits_fn: Any
+    latent_size: int
+    prior_layer_sizes: tuple
+    decoder_layer_sizes: tuple
+
+
+class _EnvBuild(NamedTuple):
+    """The training env stack and the observation/action sizes read off it."""
+
+    env: Any
+    base_env_wrapped: Any
+    mj_model: Any
+    mjx_model: Any
+    vision_shape: tuple
+    proprio_size: int
+    task_obs_size: int
+    action_size: int
+
+
+def _resolve_run_setup(hydra_cfg) -> _RunSetup:
+    """Learner config + policy-head choice, with every fail-loud config guard.
+
+    Runs before anything is built, so a miswired arm dies in seconds.
+    """
+    slow_hidden_size = tick_stride = slow_store_dtype = None
+
     raw_train_cfg = OmegaConf.to_container(hydra_cfg.train_config, resolve=True)
     cfg = DMPOConfig(**_filter_dmpo_kwargs(raw_train_cfg))
     # Populate the loss-side KL-anchor coefficients on cfg so _policy_loss_fn
@@ -1111,63 +1170,25 @@ def main(hydra_cfg: DictConfig):
         )
         _check_graft_alignment(str(graft_path), cfg, _transfer_cfg)
     # -----------------------------------------------------------------------
-
-    iters_per_chunk = int(hydra_cfg.train_config.get("iters_per_chunk", 32))
-    # Every checkpoint records the alignment settings it was trained with.
-    cfg_dict = record_alignment(OmegaConf.to_container(hydra_cfg, resolve=True), cfg)
-    seed = int(hydra_cfg.get("seed", 0))
-    rng = jax.random.PRNGKey(seed)
-
-    config_name = str(
-        hydra_cfg.get("logging_config", {}).get("exp_name", "dmpo-kl-anchor")
+    return _RunSetup(
+        cfg=cfg,
+        anchor_extras=anchor_extras,
+        from_scratch=from_scratch,
+        recurrent=recurrent,
+        gru_head=gru_head,
+        slow_core=slow_core,
+        rnn_head_cfg=rnn_head_cfg,
+        slow_hidden_size=slow_hidden_size,
+        tick_stride=tick_stride,
+        slow_store_dtype=slow_store_dtype,
+        critic_privileged_dim=critic_privileged_dim,
+        priv_extras=priv_extras,
+        graft_path=graft_path,
     )
-    git_sha = detect_git_sha(Path(__file__).resolve().parents[1])
-    run_id = make_run_id(config_name, seed, git_sha)
-    log.info("wandb run_id=%s", run_id)
 
-    ckpt_dir = str(hydra_cfg.get("checkpoint_dir", "./checkpoints/dmpo_kl_anchor"))
-    Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
-    # A resume must train with the settings the run started with. Checked
-    # before the env is built and before any state is restored; keep this call
-    # above every restore.
-    resume_alignment = check_resume_alignment(
-        ckpt_dir,
-        cfg,
-        override_key=RESUME_OVERRIDE_KEY,
-        allow=bool(
-            hydra_cfg.train_config.get(RESUME_OVERRIDE_KEY.split(".")[-1], False)
-        ),
-    )
-    existing = load_dmpo_wandb_state(ckpt_dir)
-    if _WANDB_IMPORTED:
-        try:
-            wandb.init(
-                project=str(
-                    hydra_cfg.get("logging_config", {}).get(
-                        "project_name", "dmpo-rodent"
-                    )
-                ),
-                config=cfg_dict,
-                mode=os.environ.get("WANDB_MODE", "online"),
-                # id keeps the sha-bearing run_id: it is the resume key and the
-                # provenance record (the config commit is embedded in it).
-                # name is the human-facing label and is just exp_name, so a
-                # config called `sweep_noise_sig_0.1_sparse_seed_0` shows up in
-                # wandb under exactly that, not with a `_seed0_g1234567` tail.
-                id=existing["wandb_run_id"] if existing else run_id,
-                name=config_name,
-                resume="must" if existing else "allow",
-                group=str(
-                    hydra_cfg.get("logging_config", {}).get("group_name", "kl-anchor")
-                ),
-                notes=str(hydra_cfg.get("logging_config", {}).get("notes", "")),
-                reinit=True,
-            )
-            save_dmpo_wandb_state(
-                ckpt_dir, run_id if not existing else existing["wandb_run_id"]
-            )
-        except Exception as e:
-            log.warning("wandb.init failed (%s); continuing without wandb.", e)
+
+def _load_frozen_prior(hydra_cfg, from_scratch: bool) -> _FrozenPrior:
+    """Loads the frozen prior + decoder a grafted arm anchors to."""
 
     # --- 1. Load frozen prior + decoder (grafted arms only) ---
     if from_scratch:
@@ -1201,6 +1222,22 @@ def main(hydra_cfg: DictConfig):
         decoder_logits_fn = make_decoder_logits_fn(
             decoder_params, normalizer_params, prior_cfg
         )
+    return _FrozenPrior(
+        prior_params=prior_params,
+        decoder_params=decoder_params,
+        normalizer_params=normalizer_params,
+        prior_fn=prior_fn,
+        decoder_logits_fn=decoder_logits_fn,
+        latent_size=latent_size,
+        prior_layer_sizes=prior_layer_sizes,
+        decoder_layer_sizes=decoder_layer_sizes,
+    )
+
+
+def _make_env(hydra_cfg, prior: _FrozenPrior, from_scratch: bool) -> _EnvBuild:
+    """Builds the training env stack (``_build_env``) and reads its sizes off it."""
+    prior_fn, decoder_logits_fn = prior.prior_fn, prior.decoder_logits_fn
+    latent_size = prior.latent_size
 
     # --- 2. Build env ---
     base_env_for_size = tasks.load(str(hydra_cfg.env_name), flatten_obs=False)
@@ -1225,8 +1262,49 @@ def main(hydra_cfg: DictConfig):
         vision_shape,
         "n/a(from_scratch)" if from_scratch else latent_size,
     )
+    return _EnvBuild(
+        env=env,
+        base_env_wrapped=base_env_wrapped,
+        mj_model=mj_model,
+        mjx_model=mjx_model,
+        vision_shape=vision_shape,
+        proprio_size=proprio_size,
+        task_obs_size=task_obs_size,
+        action_size=action_size,
+    )
 
-    # --- 3. Build B-aggressive networks (warm-started) ---
+
+def _env_spec(built: _EnvBuild) -> dict:
+    """The unbatched observation template and action size the learner inits from."""
+    return {
+        "obs_template": {
+            "vision": jnp.zeros(tuple(built.vision_shape), dtype=jnp.float32),
+            "imitation_target": jnp.zeros((built.task_obs_size,), dtype=jnp.float32),
+            "proprioception": jnp.zeros((built.proprio_size,), dtype=jnp.float32),
+        },
+        "action_size": built.action_size,
+    }
+
+
+def _make_networks(hydra_cfg, setup: _RunSetup, prior: _FrozenPrior, built: _EnvBuild):
+    """Builds the DMPO networks for the configured policy head.
+
+    A recurrent head's ``policy.init`` is wrapped to default to a zero hidden,
+    so ``init_training_state``'s feed-forward call signature works for it.
+    """
+    cfg = setup.cfg
+    from_scratch, recurrent = setup.from_scratch, setup.recurrent
+    slow_core, rnn_head_cfg = setup.slow_core, setup.rnn_head_cfg
+    slow_hidden_size, tick_stride = setup.slow_hidden_size, setup.tick_stride
+    slow_store_dtype = setup.slow_store_dtype
+    critic_privileged_dim = setup.critic_privileged_dim
+    prior_params, decoder_params = prior.prior_params, prior.decoder_params
+    latent_size = prior.latent_size
+    prior_layer_sizes = prior.prior_layer_sizes
+    decoder_layer_sizes = prior.decoder_layer_sizes
+    proprio_size, task_obs_size = built.proprio_size, built.task_obs_size
+    action_size, vision_shape = built.action_size, built.vision_shape
+
     # FF and recurrent factories share every size source; the recurrent one
     # swaps policy_head_layer_sizes for the policy_head_rnn block (pre-RNN
     # mixing MLP + stacked GRU cells + replay dtype for the stored hidden).
@@ -1387,6 +1465,262 @@ def main(hydra_cfg: DictConfig):
             float(hydra_cfg.network_config.get("residual_scale", 2.0)),
             bool(hydra_cfg.network_config.get("critic_use_proprio", False)),
         )
+    return nets
+
+
+class _EvalResult(NamedTuple):
+    """What one eval of the training entry computed (see ``_run_entry_eval``).
+
+    ``metrics`` holds the keys the eval logs as ``eval/<key>`` (None when the
+    rollout came back empty), ``spout`` the ``spout/<key>`` summary (None off the
+    spout maze, or when that summary failed) and ``vision_sensitivity`` the
+    ``eval/vision_sensitivity`` of a recurrent head (None otherwise). The other
+    fields are what the eval video is rendered from.
+    """
+
+    metrics: dict | None
+    spout: dict | None
+    vision_sensitivity: float | None
+    rollout: list
+    term_events: list
+    erc: dict
+    remix_key: str | None
+    remix_lambda: float | None
+
+
+def _run_entry_eval(
+    hydra_cfg,
+    cfg: DMPOConfig,
+    K: int,
+    nets,
+    recurrent: bool,
+    eval_env,
+    spout_eval,
+    state,
+    env_steps: int,
+    k_eval: jax.Array,
+) -> _EvalResult:
+    """One eval of ``state``: the eval rollout, its metrics and their log lines.
+
+    The training run's eval callback calls this at every eval and then renders
+    the eval video from the result. ``scripts/eval_dmpo_checkpoints.py`` calls
+    it on saved checkpoints, so a post-hoc eval runs the same rollout and
+    reports the same keys. Metrics go to stdout, and to wandb when a wandb run
+    is active.
+
+    Args:
+        hydra_cfg: The entry's hydra config (``eval_render_config`` is read).
+        cfg: The resolved learner config (``_resolve_run_setup``).
+        K: SGD updates per rollout, for the reward-anneal lambda.
+        nets: The DMPO networks (``_make_networks``).
+        recurrent: Whether the policy head is recurrent.
+        eval_env: The eval env (``_make_eval_env``).
+        spout_eval: The spout eval module, or None (``_make_eval_env``).
+        state: A ``TrainingState``; ``policy_params``, ``normalizer_params``
+            and ``steps`` are read.
+        env_steps: The env step the eval is reported at.
+        k_eval: PRNG key of the eval rollout.
+    """
+    sp = rm = sens = None
+
+    erc_raw = hydra_cfg.get("eval_render_config", {})
+    erc = OmegaConf.to_container(erc_raw, resolve=True) if erc_raw else {}
+    eval_episode_length = int(erc.get("episode_length", 1000))
+    rollout, term_events, _batch_rm_unmixed, allenv = run_eval_rollout_envzero(
+        env=eval_env,
+        policy_apply=nets.policy.apply,
+        params=state.policy_params,
+        rng=k_eval,
+        episode_length=eval_episode_length,
+        num_envs=cfg.num_envs,
+        normalizer_params=state.normalizer_params,
+        # None on every FF arm (DMPONetworks default) => byte-identical
+        # eval; a RecurrentPolicyMeta switches the eval scan to the
+        # threaded-hidden recurrent apply.
+        recurrent_meta=nets.recurrent_meta,
+    )
+    # Rebuild the reward the replay buffer actually stored. lambda comes
+    # from state.steps via the SAME expression the fused training step
+    # uses (`reward_anneal_lambda(env_steps_estimate(state.steps, cfg,
+    # K), cfg)` in train_dmpo_step.make_fused_train_step) -- the host
+    # env_steps int is a different quantity and would drift from the
+    # buffer.
+    remix_key = getattr(cfg, "reward_anneal_sparse_key", None)
+    remix_lambda = (
+        float(reward_anneal_lambda(env_steps_estimate(state.steps, cfg, K), cfg))
+        if remix_key is not None
+        else None
+    )
+    if spout_eval is not None:
+        # Own handler: a failure here must not take the video with it,
+        # and its absence from the log must be explained.
+        try:
+            sp = spout_eval.spout_eval_summary(allenv)
+            log.info("%s", spout_eval.spout_eval_log_line(env_steps, sp))
+            if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+                wandb.log(
+                    {f"spout/{k}": v for k, v in sp.items()}
+                    | {"env_steps": int(env_steps)},
+                    step=int(env_steps),
+                    commit=False,
+                )
+        except Exception as exc:  # logged loudly
+            log.warning("SPOUT_EVAL failed: %s", exc, exc_info=True)
+    if rollout:
+        rm = compute_rollout_metrics(rollout, remix_key, remix_lambda)
+        # All-env estimator. `rm` starts as the legacy env-0 statistic,
+        # kept so runs stay comparable to older logs; the `batch/` keys
+        # are the ones to judge arms on (env 0 alone is a very noisy
+        # n=1 estimate -- see compute_batch_rollout_metrics).
+        rm.update(compute_batch_rollout_metrics(allenv, remix_key, remix_lambda))
+        if spout_eval is not None:
+            # Drop the mirrored keys (SPOUT_ALIAS + <name> and their
+            # batch/ and _mean/_sum/... derivatives, which all keep the
+            # full prefix); SPOUT_EVAL reports them properly.
+            alias = spout_eval.SPOUT_ALIAS
+            rm = {k: v for k, v in rm.items() if alias not in k}
+        # Mirror eval metrics to stdout, so the run log alone answers
+        # questions like "did it ever cross a gap?" without parsing
+        # wandb's binary log.
+        log.info(
+            "eval env_steps=%d %s",
+            int(env_steps),
+            " ".join(
+                f"{k}={v:.6g}" if isinstance(v, (int, float)) else f"{k}={v}"
+                for k, v in sorted(rm.items())
+            ),
+        )
+        if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+            wandb.log(
+                {f"eval/{k}": v for k, v in rm.items()}
+                | {
+                    "env_steps": int(env_steps),
+                    "num_steps_thousands": float(env_steps) / 1000.0,
+                },
+                step=int(env_steps),
+                commit=False,
+            )
+    if recurrent and rollout and "vision" in rollout[0].obs:
+        # Recurrent-only (FF kl-anchor arms never logged this key, so
+        # adding it unguarded would break FF log-identity). Mirrors the
+        # vision-sensitivity probe in scripts/train_dmpo_highlvl.py, with
+        # the recurrent apply.
+        mid = len(rollout) // 2
+        sens = compute_vision_sensitivity(
+            nets.policy.apply,
+            state.policy_params,
+            rollout[mid].obs,
+            k_eval,
+            # Zeros hidden: a step-0 approximation under recurrence (the mid-rollout hidden is not retained by the env-0 slice).
+            hidden=nets.recurrent_meta.init_hidden(),
+        )
+        log.info(
+            "eval env_steps=%d vision_sensitivity=%.6g",
+            int(env_steps),
+            sens,
+        )
+        if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+            wandb.log(
+                {"eval/vision_sensitivity": sens, "env_steps": int(env_steps)},
+                step=int(env_steps),
+                commit=False,
+            )
+    return _EvalResult(
+        metrics=rm,
+        spout=sp,
+        vision_sensitivity=sens,
+        rollout=rollout,
+        term_events=term_events,
+        erc=erc,
+        remix_key=remix_key,
+        remix_lambda=remix_lambda,
+    )
+
+
+@hydra.main(
+    config_path="../track_mjx/config/dmpo",
+    config_name="run_gap/velocity_only_kl_anchor",
+    version_base=None,
+)
+def main(hydra_cfg: DictConfig):
+    setup = _resolve_run_setup(hydra_cfg)
+    cfg = setup.cfg
+    anchor_extras = setup.anchor_extras
+    from_scratch = setup.from_scratch
+    recurrent = setup.recurrent
+    slow_core = setup.slow_core
+    critic_privileged_dim = setup.critic_privileged_dim
+    priv_extras = setup.priv_extras
+    graft_path = setup.graft_path
+
+    iters_per_chunk = int(hydra_cfg.train_config.get("iters_per_chunk", 32))
+    # Every checkpoint records the alignment settings it was trained with.
+    cfg_dict = record_alignment(OmegaConf.to_container(hydra_cfg, resolve=True), cfg)
+    seed = int(hydra_cfg.get("seed", 0))
+    rng = jax.random.PRNGKey(seed)
+
+    config_name = str(
+        hydra_cfg.get("logging_config", {}).get("exp_name", "dmpo-kl-anchor")
+    )
+    git_sha = detect_git_sha(Path(__file__).resolve().parents[1])
+    run_id = make_run_id(config_name, seed, git_sha)
+    log.info("wandb run_id=%s", run_id)
+
+    ckpt_dir = str(hydra_cfg.get("checkpoint_dir", "./checkpoints/dmpo_kl_anchor"))
+    Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+    # A resume must train with the settings the run started with. Checked
+    # before the env is built and before any state is restored; keep this call
+    # above every restore.
+    resume_alignment = check_resume_alignment(
+        ckpt_dir,
+        cfg,
+        override_key=RESUME_OVERRIDE_KEY,
+        allow=bool(
+            hydra_cfg.train_config.get(RESUME_OVERRIDE_KEY.split(".")[-1], False)
+        ),
+    )
+    existing = load_dmpo_wandb_state(ckpt_dir)
+    if _WANDB_IMPORTED:
+        try:
+            wandb.init(
+                project=str(
+                    hydra_cfg.get("logging_config", {}).get(
+                        "project_name", "dmpo-rodent"
+                    )
+                ),
+                config=cfg_dict,
+                mode=os.environ.get("WANDB_MODE", "online"),
+                # id keeps the sha-bearing run_id: it is the resume key and the
+                # provenance record (the config commit is embedded in it).
+                # name is the human-facing label and is just exp_name, so a
+                # config called `sweep_noise_sig_0.1_sparse_seed_0` shows up in
+                # wandb under exactly that, not with a `_seed0_g1234567` tail.
+                id=existing["wandb_run_id"] if existing else run_id,
+                name=config_name,
+                resume="must" if existing else "allow",
+                group=str(
+                    hydra_cfg.get("logging_config", {}).get("group_name", "kl-anchor")
+                ),
+                notes=str(hydra_cfg.get("logging_config", {}).get("notes", "")),
+                reinit=True,
+            )
+            save_dmpo_wandb_state(
+                ckpt_dir, run_id if not existing else existing["wandb_run_id"]
+            )
+        except Exception as e:
+            log.warning("wandb.init failed (%s); continuing without wandb.", e)
+
+    # --- 1. Load frozen prior + decoder (grafted arms only) ---
+    prior = _load_frozen_prior(hydra_cfg, from_scratch)
+    normalizer_params = prior.normalizer_params
+
+    # --- 2. Build env ---
+    built = _make_env(hydra_cfg, prior, from_scratch)
+    env, base_env_wrapped = built.env, built.base_env_wrapped
+    mj_model, action_size = built.mj_model, built.action_size
+
+    # --- 3. Build B-aggressive networks (warm-started) ---
+    nets = _make_networks(hydra_cfg, setup, prior, built)
 
     # --- 4. Asymmetric optimizers ---
     opt_kwargs = {
@@ -1399,14 +1733,7 @@ def main(hydra_cfg: DictConfig):
     optimizers = make_kl_anchor_optimizers(cfg, **opt_kwargs)
 
     # --- 5. State + replay ---
-    env_spec = {
-        "obs_template": {
-            "vision": jnp.zeros(tuple(vision_shape), dtype=jnp.float32),
-            "imitation_target": jnp.zeros((task_obs_size,), dtype=jnp.float32),
-            "proprioception": jnp.zeros((proprio_size,), dtype=jnp.float32),
-        },
-        "action_size": action_size,
-    }
+    env_spec = _env_spec(built)
     # Replay schema, shaped by the compression flags (see DMPOConfig).
     obs_template = env_spec["obs_template"]
     if bool(getattr(cfg, "vision_uint8_storage", False)):
@@ -1844,112 +2171,20 @@ def main(hydra_cfg: DictConfig):
         if not erc_enable:
             return
         try:
-            erc_raw = hydra_cfg.get("eval_render_config", {})
-            erc = OmegaConf.to_container(erc_raw, resolve=True) if erc_raw else {}
-            eval_episode_length = int(erc.get("episode_length", 1000))
-            rollout, term_events, _batch_rm_unmixed, allenv = run_eval_rollout_envzero(
-                env=eval_env,
-                policy_apply=nets.policy.apply,
-                params=state.policy_params,
-                rng=k_eval,
-                episode_length=eval_episode_length,
-                num_envs=cfg.num_envs,
-                normalizer_params=state.normalizer_params,
-                # None on every FF arm (DMPONetworks default) => byte-identical
-                # eval; a RecurrentPolicyMeta switches the eval scan to the
-                # threaded-hidden recurrent apply.
-                recurrent_meta=nets.recurrent_meta,
+            ev = _run_entry_eval(
+                hydra_cfg,
+                cfg,
+                K,
+                nets,
+                recurrent,
+                eval_env,
+                spout_eval,
+                state,
+                env_steps,
+                k_eval,
             )
-            # Rebuild the reward the replay buffer actually stored. lambda comes
-            # from state.steps via the SAME expression the fused training step
-            # uses (`reward_anneal_lambda(env_steps_estimate(state.steps, cfg,
-            # K), cfg)` in train_dmpo_step.make_fused_train_step) -- the host
-            # env_steps int is a different quantity and would drift from the
-            # buffer.
-            remix_key = getattr(cfg, "reward_anneal_sparse_key", None)
-            remix_lambda = (
-                float(
-                    reward_anneal_lambda(env_steps_estimate(state.steps, cfg, K), cfg)
-                )
-                if remix_key is not None
-                else None
-            )
-            if spout_eval is not None:
-                # Own handler: a failure here must not take the video with it,
-                # and its absence from the log must be explained.
-                try:
-                    sp = spout_eval.spout_eval_summary(allenv)
-                    log.info("%s", spout_eval.spout_eval_log_line(env_steps, sp))
-                    if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
-                        wandb.log(
-                            {f"spout/{k}": v for k, v in sp.items()}
-                            | {"env_steps": int(env_steps)},
-                            step=int(env_steps),
-                            commit=False,
-                        )
-                except Exception as exc:  # logged loudly
-                    log.warning("SPOUT_EVAL failed: %s", exc, exc_info=True)
-            if rollout:
-                rm = compute_rollout_metrics(rollout, remix_key, remix_lambda)
-                # All-env estimator. `rm` starts as the legacy env-0 statistic,
-                # kept so runs stay comparable to older logs; the `batch/` keys
-                # are the ones to judge arms on (env 0 alone is a very noisy
-                # n=1 estimate -- see compute_batch_rollout_metrics).
-                rm.update(
-                    compute_batch_rollout_metrics(allenv, remix_key, remix_lambda)
-                )
-                if spout_eval is not None:
-                    # Drop the mirrored keys (SPOUT_ALIAS + <name> and their
-                    # batch/ and _mean/_sum/... derivatives, which all keep the
-                    # full prefix); SPOUT_EVAL reports them properly.
-                    alias = spout_eval.SPOUT_ALIAS
-                    rm = {k: v for k, v in rm.items() if alias not in k}
-                # Mirror eval metrics to stdout, so the run log alone answers
-                # questions like "did it ever cross a gap?" without parsing
-                # wandb's binary log.
-                log.info(
-                    "eval env_steps=%d %s",
-                    int(env_steps),
-                    " ".join(
-                        f"{k}={v:.6g}" if isinstance(v, (int, float)) else f"{k}={v}"
-                        for k, v in sorted(rm.items())
-                    ),
-                )
-                if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
-                    wandb.log(
-                        {f"eval/{k}": v for k, v in rm.items()}
-                        | {
-                            "env_steps": int(env_steps),
-                            "num_steps_thousands": float(env_steps) / 1000.0,
-                        },
-                        step=int(env_steps),
-                        commit=False,
-                    )
-            if recurrent and rollout and "vision" in rollout[0].obs:
-                # Recurrent-only (FF kl-anchor arms never logged this key, so
-                # adding it unguarded would break FF log-identity). Mirrors the
-                # vision-sensitivity probe in scripts/train_dmpo_highlvl.py, with
-                # the recurrent apply.
-                mid = len(rollout) // 2
-                sens = compute_vision_sensitivity(
-                    nets.policy.apply,
-                    state.policy_params,
-                    rollout[mid].obs,
-                    k_eval,
-                    # Zeros hidden: a step-0 approximation under recurrence (the mid-rollout hidden is not retained by the env-0 slice).
-                    hidden=nets.recurrent_meta.init_hidden(),
-                )
-                log.info(
-                    "eval env_steps=%d vision_sensitivity=%.6g",
-                    int(env_steps),
-                    sens,
-                )
-                if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
-                    wandb.log(
-                        {"eval/vision_sensitivity": sens, "env_steps": int(env_steps)},
-                        step=int(env_steps),
-                        commit=False,
-                    )
+            rollout, term_events, erc = ev.rollout, ev.term_events, ev.erc
+            remix_key, remix_lambda = ev.remix_key, ev.remix_lambda
             if mj_model is not None and rollout:
                 video_path = Path(ckpt_dir) / f"eval_{int(env_steps)}.mp4"
                 hud_cfg = erc.get("hud") if isinstance(erc, dict) else None

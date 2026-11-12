@@ -27,17 +27,10 @@ import jax
 import jax.numpy as jp
 import pytest
 from mujoco_playground._src import wrapper as mp_wrapper
-
-# track-mjx pins vnl-playground at v0.0.14 (see pyproject.toml), and that tag
-# predates this module; on a fresh install (and in CI) it's a hard
-# ImportError. Skip visibly instead of aborting collection for the whole
-# suite -- this auto-enables the moment the pin bumps to >= v0.0.15.
-wrappers_info_reset = pytest.importorskip(
-    "vnl_playground.tasks.wrappers_info_reset",
-    reason="needs vnl-playground >= v0.0.15 (not yet released)",
+from vnl_playground.tasks.wrappers_info_reset import (
+    DEFAULT_RUN_GAP_KEYS,
+    InfoResetOnDoneWrapper,
 )
-DEFAULT_RUN_GAP_KEYS = wrappers_info_reset.DEFAULT_RUN_GAP_KEYS
-InfoResetOnDoneWrapper = wrappers_info_reset.InfoResetOnDoneWrapper
 
 
 class _FakeGapEnv:

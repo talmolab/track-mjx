@@ -150,7 +150,7 @@ def test_restore_eval_state_refuses_other_networks(evaluator, tmp_path, kwargs, 
         evaluator["restore_eval_state"](other, tmp_path / "DMPONetwork_100")
 
 
-def _fake_entry(cfg, nets, calls):
+def _fake_entry(cfg, nets, calls, recurrent=False):
     def run_entry_eval(
         hydra_cfg, cfg_, K, nets_, recurrent, eval_env, spout_eval, state, step, key
     ):
@@ -175,7 +175,7 @@ def _fake_entry(cfg, nets, calls):
 
     return {
         "_resolve_run_setup": lambda h: SimpleNamespace(
-            cfg=cfg, from_scratch=False, recurrent=False
+            cfg=cfg, from_scratch=False, recurrent=recurrent
         ),
         "_load_frozen_prior": lambda h, from_scratch: "prior",
         "_make_env": lambda h, prior, from_scratch: SimpleNamespace(
@@ -257,6 +257,20 @@ def test_evaluate_keeps_the_records_of_each_run_apart(evaluator, tmp_path):
             == []
         )
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("recurrent", [False, True])
+def test_evaluate_passes_the_run_setup_recurrent_flag(evaluator, tmp_path, recurrent):
+    cfg, nets, template = _template(dict_normalizer=False)
+    _save_steps(tmp_path / "ckpt", template, [100])
+    calls: list[dict] = []
+    evaluator["evaluate"](
+        _fake_entry(cfg, nets, calls, recurrent=recurrent),
+        OmegaConf.create({}),
+        tmp_path / "ckpt",
+        tmp_path / "o.jsonl",
+    )
+    assert calls[0]["recurrent"] is recurrent
 
 
 def test_evaluate_refuses_a_step_without_a_finished_checkpoint(evaluator, tmp_path):
@@ -425,15 +439,22 @@ class _StubEnv:
     """Batched env whose state has a shared leaf and an empty leaf.
 
     Env e earns reward 1 per step and ends its episode every ``e + 2`` steps;
-    each env crosses a gap on the step its episode ends.
+    each env crosses a gap on the step its episode ends. ``vision`` adds a
+    vision observation.
     """
 
     action_size = 3
 
+    def __init__(self, vision=False):
+        self.vision = vision
+
     def reset(self, keys):
         n = keys.shape[0]
+        obs = {"proprioception": jnp.zeros((n, 4))}
+        if self.vision:
+            obs["vision"] = jnp.zeros((n, 2))
         return _State(
-            obs={"proprioception": jnp.zeros((n, 4))},
+            obs=obs,
             data={
                 "t": jnp.zeros((n,)),
                 "pool": jnp.zeros((9, 3)),
@@ -527,6 +548,58 @@ def test_entry_eval_reports_the_gate_keys(kl_anchor_entry):
     assert m["batch/gap_crossings_per_episode"] == 1.0
     # First episode of each env, censored at 6 steps: 1 treat per step.
     assert m["episode_rewards/treat_collected"] == pytest.approx((2 + 3 + 4 + 5) / 4)
+
+
+def test_entry_eval_logs_the_keys_the_posthoc_records(
+    kl_anchor_entry, evaluator, monkeypatch
+):
+    """The keys the in-run eval logs to wandb are the keys a post-hoc record
+    holds, under the same ``eval/``, ``spout/`` and ``eval/vision_sensitivity``
+    names."""
+    spout = SimpleNamespace(
+        SPOUT_ALIAS="spout_alias",
+        spout_eval_summary=lambda allenv: {"hit_rate": 0.5, "trials": 4},
+        spout_eval_log_line=lambda env_steps, sp: f"SPOUT_EVAL env_steps={env_steps}",
+    )
+    rollout = kl_anchor_entry["run_eval_rollout_envzero"]
+    wandb = _FakeWandb()
+    _patch_entry(
+        kl_anchor_entry,
+        monkeypatch,
+        wandb,
+        # The recurrent branch's vision probe, on the feed-forward stub rollout.
+        run_eval_rollout_envzero=lambda **kw: rollout(**{**kw, "recurrent_meta": None}),
+        compute_vision_sensitivity=lambda *args, **kwargs: 0.25,
+    )
+    ev = kl_anchor_entry["_run_entry_eval"](
+        *_eval_args(
+            env=_StubEnv(vision=True),
+            recurrent=True,
+            spout_eval=spout,
+            recurrent_meta=SimpleNamespace(init_hidden=lambda: None),
+        )
+    )
+    logged: dict = {}
+    for payload in wandb.logged:
+        logged.update(payload)
+    metric_keys = {f"eval/{k}" for k in ev.metrics}
+    assert "eval/batch/gap_crossings_per_episode" in metric_keys
+    assert {k for k in logged if k.startswith("eval/")} == metric_keys | {
+        "eval/vision_sensitivity"
+    }
+    assert {k for k in logged if k.startswith("spout/")} == {
+        "spout/hit_rate",
+        "spout/trials",
+    }
+    assert logged["eval/vision_sensitivity"] == 0.25
+
+    record = evaluator["eval_record"](ev, 1000, 0, {})
+    assert set(record) - {"env_steps", "eval_seed"} == set(logged) - {
+        "env_steps",
+        "num_steps_thousands",
+    }
+    for key in metric_keys | {"spout/hit_rate", "eval/vision_sensitivity"}:
+        assert record[key] == logged[key], key
 
 
 def _in_run_eval(entry, tmp_path, mj_model="mj_model"):

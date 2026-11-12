@@ -68,6 +68,17 @@ def test_clips_load_and_split(entry, tmp_path):
     assert train.qpos.shape[:2] == (N_CLIPS // 2, N_FRAMES)
 
 
+@pytest.mark.parametrize("seed", [0, 1, 7])
+def test_split_is_seeded_with_the_integer_run_seed(entry, tmp_path, seed):
+    """The split ``scripts/train.py`` makes: ``split(ratio, seed=<run seed>)``."""
+    path = tmp_path / "clips.h5"
+    _write_clips(path, n_clips=12)
+    reference, train = entry["_load_train_clips"](_cfg(path), ENV_NAME, seed=seed)
+    expected, _ = reference.split(train_ratio=0.5, seed=seed)
+    assert train.qpos.shape[0] == 6
+    np.testing.assert_array_equal(train.qpos, expected.qpos)
+
+
 def test_clip_indices_select_source_clips(entry, tmp_path):
     path = tmp_path / "clips.h5"
     _write_clips(path)

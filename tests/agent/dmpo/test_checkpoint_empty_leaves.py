@@ -100,6 +100,29 @@ def test_empty_normalizer_leaf_round_trips(tmp_path, rng, env_spec):
     assert _equal(state.policy_params, policy)
 
 
+def test_empty_policy_leaf_round_trips(tmp_path, rng, env_spec):
+    """A zero-size leaf in the policy parameters comes back through the policy
+    item (``load_policy``) as well as through the train state."""
+    state = _state(rng, env_spec, proprio_width=3)
+    params = state.policy_params
+    empty_head = {"bias": jnp.zeros((0,), jnp.float32)}
+    state = state._replace(
+        policy_params={**params, "params": {**params["params"], "empty": empty_head}}
+    )
+    mgr = make_checkpointer(str(tmp_path))
+    save(mgr, step=2, state=state)
+    mgr.wait_until_finished()
+
+    policy = load_policy(mgr, state.policy_params)
+    assert policy["params"]["empty"]["bias"].shape == (0,)
+    assert _equal(state.policy_params, policy)
+    assert _equal(state.policy_params, restore(mgr, state).policy_params)
+    loaded = load_train_state_items_numpy(
+        tmp_path / "DMPONetwork_2", items=("policy_params",)
+    )
+    assert loaded["policy_params"]["params"]["empty"]["bias"].shape == (0,)
+
+
 def test_empty_leaf_comes_back_from_a_shape_only_template(tmp_path, rng, env_spec):
     state = _state(rng, env_spec, proprio_width=0)
     mgr = make_checkpointer(str(tmp_path))

@@ -8,7 +8,9 @@
 * ``_check_maze_critic_priv_dim``: ``network_config.critic_privileged_dim``
   must be the width the full maze writes (0 when it writes none);
 * ``_make_eval_env`` on the full maze: the visited-cell mirror only when the
-  env carries the critic vector.
+  env carries the critic vector;
+* the ``train_config.replay_inplace_add`` depth check, which
+  ``_resolve_run_setup`` runs before the env is built.
 """
 
 import sys
@@ -241,3 +243,34 @@ def test_full_maze_eval_env_mirrors_visited_cells_only_with_the_critic_vector(
     assert kl_anchor_entry["_full_maze_env"](eval_env) is stack.env
     # The spout maze subclasses the full maze but is not one.
     assert kl_anchor_entry["_full_maze_env"](_Wrapper(spout_stub())) is None
+
+
+# --- train_config.replay_inplace_add --------------------------------------------
+
+
+def _replay_hydra_cfg(**train) -> OmegaConf:
+    return OmegaConf.create(
+        {
+            "train_config": {
+                "num_envs": 4,
+                "unroll_length": 10,
+                "n_step": 5,
+                "sequence_length": 6,
+                **train,
+            },
+            "kl_anchor": {"alpha_anchor": 0.0, "w_anchor": 0.5},
+            "network_config": {},
+        }
+    )
+
+
+def test_inplace_add_depth_is_checked_before_the_env_is_built(kl_anchor_entry):
+    resolve = kl_anchor_entry["_resolve_run_setup"]
+    # Per-env depth 400 // 4 = 100, a multiple of unroll_length 10.
+    setup = resolve(_replay_hydra_cfg(max_replay_size=400, replay_inplace_add=True))
+    assert kl_anchor_entry["_replay_depth"](setup.cfg) == 100
+    # Depth 420 // 4 = 105 is not.
+    with pytest.raises(ValueError, match="105 to be a multiple of unroll_length 10"):
+        resolve(_replay_hydra_cfg(max_replay_size=420, replay_inplace_add=True))
+    # The scatter add (the default) takes any depth.
+    resolve(_replay_hydra_cfg(max_replay_size=420))

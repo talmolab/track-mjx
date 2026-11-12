@@ -66,7 +66,7 @@ from track_mjx.agent.dmpo.prior_utils import (
     make_decoder_logits_fn,
     make_prior_inference_fn,
 )
-from track_mjx.agent.dmpo.replay import make_replay
+from track_mjx.agent.dmpo.replay import make_replay, replay_add_sequence_length
 from track_mjx.agent.dmpo.schedules import env_steps_estimate, reward_anneal_lambda
 from track_mjx.agent.dmpo.train import (
     _filter_dmpo_kwargs,
@@ -929,6 +929,11 @@ def _build_env(
 # training run builds.
 
 
+def _replay_depth(cfg: DMPOConfig) -> int:
+    """Per-env replay depth: ``max_replay_size // num_envs``, at least one window."""
+    return max(cfg.sequence_length + 1, cfg.max_replay_size // cfg.num_envs)
+
+
 def _parse_slow_core_cfg(slow_core_cfg: dict) -> dict:
     """Validates ``network_config.policy_head_slow_core`` and fills its defaults.
 
@@ -1344,6 +1349,9 @@ def _resolve_run_setup(hydra_cfg) -> _RunSetup:
         )
         _check_graft_alignment(str(graft_path), cfg, _transfer_cfg)
     # -----------------------------------------------------------------------
+    # train_config.replay_inplace_add needs the per-env replay depth to be a
+    # multiple of unroll_length; refuse it here, before the env is built.
+    replay_add_sequence_length(cfg, _replay_depth(cfg))
     return _RunSetup(
         cfg=cfg,
         anchor_extras=anchor_extras,
@@ -1719,13 +1727,17 @@ def _run_entry_eval(
     erc_raw = hydra_cfg.get("eval_render_config", {})
     erc = OmegaConf.to_container(erc_raw, resolve=True) if erc_raw else {}
     eval_episode_length = int(erc.get("episode_length", 1000))
+    # eval_render_config.num_envs (default: the training num_envs) lets a long
+    # eval run on fewer envs than training, whose per-step eval arrays would
+    # otherwise not fit beside the replay.
+    eval_num_envs = int(erc.get("num_envs", cfg.num_envs))
     rollout, term_events, _batch_rm_unmixed, allenv = run_eval_rollout_envzero(
         env=eval_env,
         policy_apply=nets.policy.apply,
         params=state.policy_params,
         rng=k_eval,
         episode_length=eval_episode_length,
-        num_envs=cfg.num_envs,
+        num_envs=eval_num_envs,
         normalizer_params=state.normalizer_params,
         # None on every FF arm (DMPONetworks default) => byte-identical
         # eval; a RecurrentPolicyMeta switches the eval scan to the
@@ -2471,13 +2483,26 @@ def main(hydra_cfg: DictConfig):
             )
     # ----------------------------------------------------------------------------
 
+    rb_max = _replay_depth(cfg)
+    # train_config.replay_inplace_add (default false: flashbax's scatter add).
+    # When on, every add of one unroll is an in-place slice; it needs the
+    # per-env depth to be a multiple of unroll_length (_resolve_run_setup
+    # already checked it).
+    add_sequence_length = replay_add_sequence_length(cfg, rb_max)
     rb = make_replay(
-        max_size=max(cfg.sequence_length + 1, cfg.max_replay_size // cfg.num_envs),
+        max_size=rb_max,
         min_size=max(cfg.sequence_length + 1, cfg.min_replay_size // cfg.num_envs),
         sequence_length=cfg.sequence_length,
         sample_batch_size=cfg.batch_size,
         add_batch_size=cfg.num_envs,
         period=1,
+        add_sequence_length=add_sequence_length,
+    )
+    log.info(
+        "Replay add: %s (per-env depth %d, unroll %d)",
+        "in-place slice" if add_sequence_length is not None else "flashbax scatter",
+        rb_max,
+        int(cfg.unroll_length),
     )
     rb_state = rb.init(transition_template)
 

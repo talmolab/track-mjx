@@ -603,6 +603,18 @@ def test_entry_eval_logs_the_keys_the_posthoc_records(
         assert record[key] == logged[key], key
 
 
+def test_entry_eval_runs_on_eval_render_num_envs(kl_anchor_entry):
+    """``eval_render_config.num_envs`` sizes the eval batch; it defaults to the
+    training ``num_envs``."""
+    args = list(_eval_args())
+    args[0] = OmegaConf.create(
+        {"eval_render_config": {"episode_length": EVAL_LENGTH, "num_envs": 2}}
+    )
+    ev = kl_anchor_entry["_run_entry_eval"](*args)
+    # Envs 0 and 1 have episodes of length 2 and 3: 3 + 2 complete in 6 steps.
+    assert ev.metrics["batch/n_complete_episodes"] == 5.0
+
+
 @pytest.fixture
 def maze_stub():
     """A full-maze env that skips building its model, with ``ctrl_dt`` 0.01."""

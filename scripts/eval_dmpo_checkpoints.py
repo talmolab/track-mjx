@@ -471,7 +471,7 @@ def evaluate(
         extra = {
             "checkpoint": str(step_dir),
             "learner_steps": int(np.asarray(state.steps)),
-            "eval_num_envs": int(cfg.num_envs),
+            "eval_num_envs": int(ev.erc.get("num_envs", cfg.num_envs)),
             "eval_episode_length": int(ev.erc.get("episode_length", 1000)),
             "eval_policy": "mode",
             "eval_wall_s": round(time.time() - t0, 1),

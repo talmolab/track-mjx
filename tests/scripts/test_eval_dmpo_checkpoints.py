@@ -20,8 +20,8 @@ import pytest
 from omegaconf import OmegaConf
 
 from tests.scripts._entries import SCRIPTS_DIR
-from track_mjx.agent.dmpo.checkpoint import make_checkpointer, save
-from track_mjx.agent.dmpo.config import DMPOConfig
+from track_mjx.agent.dmpo.checkpoint import make_checkpointer, record_alignment, save
+from track_mjx.agent.dmpo.config import LEGACY_ALIGNMENT, DMPOConfig
 from track_mjx.agent.dmpo.learner import init_training_state
 from track_mjx.agent.dmpo.networks import make_dmpo_networks
 from track_mjx.agent.dmpo.obs_utils import init_dict_normalizer
@@ -63,12 +63,21 @@ def _template(env_spec=ENV_SPEC, proprio_width=3, dict_normalizer=True):
     return cfg, nets, state._replace(normalizer_params=normalizer)
 
 
-def _save_steps(ckpt_dir, template, steps):
+def _run_config(hydra_cfg=None, cfg=None):
+    """The config a run launched with ``hydra_cfg`` saves with its checkpoints."""
+    hydra_cfg = {} if hydra_cfg is None else hydra_cfg
+    return record_alignment(json.loads(json.dumps(hydra_cfg)), cfg or DMPOConfig())
+
+
+def _save_steps(ckpt_dir, template, steps, config=None):
     """Save one checkpoint per step, each with distinguishable values.
 
     Every normalizer leaf is saved as an array, ``std_eps`` included, as it is
     after a jitted training step (the template's ``std_eps`` is a Python float).
+    ``config`` is the saved config item; by default the one a run launched with
+    an empty hydra config saves.
     """
+    config = _run_config() if config is None else config
     mgr = make_checkpointer(str(ckpt_dir))
     for step in steps:
         norm = template.normalizer_params
@@ -85,7 +94,7 @@ def _save_steps(ckpt_dir, template, steps):
             normalizer_params=jax.tree.map(jnp.asarray, norm),
             steps=jnp.asarray(step // 10, dtype=template.steps.dtype),
         )
-        save(mgr, step, state, config={})
+        save(mgr, step, state, config=config)
     mgr.wait_until_finished()
 
 
@@ -204,6 +213,7 @@ def test_evaluate_runs_the_entry_eval_on_each_saved_checkpoint(evaluator, tmp_pa
     assert lines[0]["eval_episode_length"] == 7
     assert lines[0]["eval_num_envs"] == 4
     assert lines[0]["config_name"] == "c"
+    assert lines[0]["config_diff"] == {}
 
     # Recorded (step, seed) pairs are not evaluated again; new seeds are.
     assert evaluator["evaluate"](entry, hydra_cfg, ckpt_dir, out) == []
@@ -225,6 +235,137 @@ def test_evaluate_refuses_a_step_without_a_finished_checkpoint(evaluator, tmp_pa
             tmp_path,
             tmp_path / "o.jsonl",
             steps=[100, 300],
+        )
+
+
+def _launch(evaluator, tmp_path, saved_hydra, eval_hydra, **kwargs):
+    """Save checkpoints of a run launched with ``saved_hydra``; evaluate them
+    under ``eval_hydra``. Returns ``(calls, records)``."""
+    cfg, nets, template = _template(dict_normalizer=False)
+    ckpt_dir = tmp_path / "ckpt"
+    _save_steps(ckpt_dir, template, [100, 200], config=_run_config(saved_hydra))
+    calls: list[dict] = []
+    records = evaluator["evaluate"](
+        _fake_entry(cfg, nets, calls),
+        OmegaConf.create(eval_hydra),
+        ckpt_dir,
+        tmp_path / "o.jsonl",
+        **kwargs,
+    )
+    return calls, records
+
+
+def test_evaluate_refuses_a_checkpoint_trained_under_another_config(
+    evaluator, tmp_path
+):
+    saved = {"env_config": {"gap_width": 0.1, "walls": True}}
+    run_under = {"env_config": {"gap_width": 0.2}}
+    with pytest.raises(ValueError) as err:
+        _launch(evaluator, tmp_path, saved, run_under)
+    message = str(err.value)
+    assert "env_config.gap_width: checkpoint=0.1 this config=0.2" in message
+    assert "env_config.walls: checkpoint=True this config=<absent>" in message
+    assert "[100, 200]" in message
+    assert "++posthoc.allow_config_diff=true" in message
+    assert not (tmp_path / "o.jsonl").exists()
+
+
+def test_evaluate_writes_the_allowed_config_diff_into_each_record(evaluator, tmp_path):
+    calls, records = _launch(
+        evaluator,
+        tmp_path,
+        {"env_config": {"gap_width": 0.1}},
+        {"env_config": {"gap_width": 0.2}},
+        allow_config_diff=True,
+    )
+    assert [c["step"] for c in calls] == [100, 200]
+    for record in records:
+        assert record["config_diff"] == {
+            "env_config.gap_width": {"checkpoint": 0.1, "config": 0.2}
+        }
+
+
+def test_evaluate_ignores_keys_that_differ_between_launch_and_eval(
+    evaluator, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DMPO_PRIOR_ROOT", "/eval/machine/priors")
+    monkeypatch.delenv("DMPO_CKPT_ROOT", raising=False)
+    saved = {
+        "checkpoint_dir": "/train/machine/ckpt/run",
+        "logging_config": {"exp_name": "run", "project_name": "p"},
+        "transfer": {
+            "prior_checkpoint_path": "/train/machine/priors/gen1",
+            "graft_ff_checkpoint": "/train/ckpts/src/DMPONetwork_5",
+        },
+    }
+    run_under = {
+        "checkpoint_dir": "/eval/machine/ckpt/run",
+        "logging_config": {"exp_name": "other"},
+        "posthoc": {"out": "o.jsonl", "seeds": [0]},
+        "transfer": {
+            "prior_checkpoint_path": "/eval/machine/priors/gen1",
+            # DMPO_CKPT_ROOT unset: the configs' default root.
+            "graft_ff_checkpoint": "dmpo_checkpoints/src/DMPONetwork_5",
+        },
+    }
+    _, records = _launch(evaluator, tmp_path, saved, run_under)
+    assert [r["config_diff"] for r in records] == [{}, {}]
+
+
+def test_config_diff_compares_root_paths_by_what_follows_the_root(
+    evaluator, monkeypatch
+):
+    monkeypatch.setenv("DMPO_PRIOR_ROOT", "/eval/priors/")
+    diff = evaluator["config_diff"]
+    saved = {"transfer": {"prior_checkpoint_path": "/train/priors/gen1"}}
+    assert (
+        diff(saved, {"transfer": {"prior_checkpoint_path": "/eval/priors/gen1"}}) == {}
+    )
+    assert diff(
+        saved, {"transfer": {"prior_checkpoint_path": "/eval/priors/gen2"}}
+    ) == {
+        "transfer.prior_checkpoint_path": {
+            "checkpoint": "/train/priors/gen1",
+            "config": "/eval/priors/gen2",
+        }
+    }
+    # A path outside every root is compared as it is.
+    assert diff({"x": "/a/gen1"}, {"x": "/b/gen1"}) == {
+        "x": {"checkpoint": "/a/gen1", "config": "/b/gen1"}
+    }
+
+
+def test_config_diff_reads_absent_alignment_fields_as_their_legacy_values(
+    evaluator, tmp_path
+):
+    """A checkpoint saved before the alignment fields existed was trained by
+    the legacy learner, as ``saved_alignment`` reads it."""
+    legacy = DMPOConfig(**LEGACY_ALIGNMENT)
+    cfg, nets, template = _template(dict_normalizer=False)
+    ckpt_dir = tmp_path / "ckpt"
+    _save_steps(ckpt_dir, template, [100], config={"train_config": {"n_step": 5}})
+    entry = _fake_entry(legacy, nets, [])
+    hydra_cfg = OmegaConf.create({"train_config": {"n_step": 5}})
+    (record,) = evaluator["evaluate"](entry, hydra_cfg, ckpt_dir, tmp_path / "a.jsonl")
+    assert record["config_diff"] == {}
+
+    entry = _fake_entry(DMPOConfig(), nets, [])
+    with pytest.raises(ValueError, match="bootstrap_on_truncation: checkpoint=False"):
+        evaluator["evaluate"](entry, hydra_cfg, ckpt_dir, tmp_path / "b.jsonl")
+
+
+def test_evaluate_refuses_a_checkpoint_without_a_config(evaluator, tmp_path):
+    cfg, nets, template = _template(dict_normalizer=False)
+    mgr = make_checkpointer(str(tmp_path))
+    save(mgr, 100, template)
+    mgr.wait_until_finished()
+    with pytest.raises(ValueError, match="could not read the saved config"):
+        evaluator["evaluate"](
+            _fake_entry(cfg, nets, []),
+            OmegaConf.create({}),
+            tmp_path,
+            tmp_path / "o.jsonl",
+            allow_config_diff=True,
         )
 
 

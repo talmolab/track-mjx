@@ -36,7 +36,7 @@ Three entry points, each a hydra app over `track_mjx/config/dmpo`:
 
 | Entry | Use | Config groups |
 |---|---|---|
-| `scripts/train_dmpo_highlvl_kl_anchor.py` | Frozen prior and decoder inside the policy, an optional KL anchor to the prior; feed-forward, GRU and slow-core heads; grafts | `run_gap/`, `maze/`, `spout_maze/` |
+| `scripts/train_dmpo_highlvl_kl_anchor.py` | Frozen prior and decoder inside the policy, an optional KL anchor to the prior; feed-forward, GRU and slow-core heads; grafts | `run_gap/`, `maze/`, `full_maze_memory/`, `spout_maze/` |
 | `scripts/train_dmpo_highlvl.py` | Prior and decoder transfer without the anchor | `run_gap/velocity_only` and similar |
 | `scripts/train_dmpo.py` | Motion-capture imitation | `rodent-imitation`, `rodent-imitation-intention` |
 
@@ -58,7 +58,8 @@ Read these log lines before committing a long run to the GPU:
 - `kl-anchor loss term: ON|OFF (alpha=..., beta_linear=...)`: whether the
   anchor arrays are stored in the replay.
 - `Compressed replay schema: ...` and `Replay transition size: ... GB`: the
-  replay layout and its memory.
+  replay layout and its memory; `Replay add: flashbax scatter|in-place slice`:
+  the replay write (`train_config.replay_inplace_add`).
 - `Seeded DMPO normalizer with imit proprio stats: ...`: the frozen prior
   sees normalized proprioception from step 0 (grafted arms).
 - `DMPO WARM START: ...`, `GRAFT ok ...` and `GRAFT invariance:
@@ -68,7 +69,9 @@ Read these log lines before committing a long run to the GPU:
 - `<label> r_anchor=... action_mse=...` (startup probe): the frozen prior and
   decoder are unchanged; `r_anchor` near 1.
 - `RECURRENT policy head ACTIVE: ...`, `PRIVILEGED critic input ACTIVE: ...`,
-  `FROM-SCRATCH arm ACTIVE: ...`: the head and critic inputs in use.
+  `FROM-SCRATCH arm ACTIVE: ...`: the head and critic inputs in use; with a
+  privileged critic, `critic_priv width verified: ...` gives the shape and
+  dtype the env writes.
 - `Checkpoint retention: ALL (keeping every step)`.
 - `Restored DMPO checkpoint: sgd_step=... env_steps=...` on a resume.
 - `replay warm-up complete at ... env steps`, then one
@@ -78,6 +81,13 @@ Read these log lines before committing a long run to the GPU:
 `train_config.log_every_steps` is accepted for compatibility and ignored: the
 loop logs once per chunk (`iters_per_chunk` rollout and update iterations) and
 evaluates every `eval_every_steps`.
+
+Each eval logs an `eval env_steps=...` line. On the spout maze it also logs a
+`SPOUT_EVAL env_steps=...` line, and on the full maze a `MAZE_EVAL
+env_steps=...` line: per-env first-episode treats, length, fall, all-treats
+and timeout fractions, and visited cells. The eval runs on the training
+`num_envs` unless `eval_render_config.num_envs` sets a smaller batch, which
+lets a long eval fit beside a large replay.
 
 ## Alignment with acme
 
@@ -133,6 +143,14 @@ optimizer state is re-initialized, since its structure depends on that field.
 `transfer.warm_start_dmpo_checkpoint` is not checked: it copies the policy
 into a fresh critic and fresh optimizers by design.
 
+### Checkpoints trained before the alignment
+
+Run such a checkpoint with the code and the environment it was trained with.
+The `legacy_pre_alignment` preset reproduces the old learner, but not the old
+rendering: the MJX renderer of MuJoCo 3.11 changed the vision observations,
+so a vision policy trained on an older stack does not transfer to this one.
+Graft or warm-start only from checkpoints trained on this code.
+
 ### Parity test
 
 `tests/agent/dmpo/test_acme_parity.py` replays four learner steps of acme's TF
@@ -140,6 +158,74 @@ into a fresh critic and fresh optimizers by design.
 through `sgd_step` on the default fields and matches every loss, MPO
 statistic and online, target and dual variable to `rtol=1e-4`. The
 reference's README describes how to regenerate it.
+
+## Optional features
+
+Every option below is off by default, and a config without it trains as
+before.
+
+### LSTM slow core
+
+`network_config.policy_head_slow_core` is a recurrent core that updates every
+`tick_stride` env steps beside the feed-forward head, so a feed-forward
+checkpoint grafts into it with zero-filled new rows:
+
+```yaml
+network_config:
+  policy_head_slow_core:
+    hidden_size: 512
+    tick_stride: 10
+    cell: lstm        # gru (default) or lstm
+    forget_bias: 1.0  # LSTM forget-gate bias; default 0, lstm only
+```
+
+The LSTM stores its cell and hidden state, `2 * hidden_size` wide, in the
+replay at `store_dtype` (float16 by default). The recurrent learner logs
+`rnn/lstm_c_absmax`, the largest absolute cell value in the sampled batch, to
+watch the float16 headroom.
+
+### In-place replay add
+
+`train_config.replay_inplace_add: true` writes each rollout of
+`unroll_length` steps into the replay as one in-place slice instead of
+flashbax's scatter, which saves a copy of every replay leaf on each add. The
+per-env depth, `max_replay_size // num_envs`, must be a multiple of
+`unroll_length`; the entry refuses other sizes at startup. The replay holds
+the same values, but the compiled training step differs, so a run is not
+bit-identical to one with the scatter add (agreement is at float32
+rounding).
+
+### Full-maze critic vector
+
+On `RodentMazeForageVision`, `env_config.maze_critic_priv: true` makes the
+env write `info["critic_priv"]` for the critic alone: the visited-cell map,
+the collected-treat mask, the treats' planar vectors in the torso's yaw frame,
+the torso position and heading, and the time in the episode. Its width is
+`n_free_cells + 3 * n_treats + 5`, 264 on the default maze. The arm must set
+`network_config.critic_privileged_dim` to that width. It must also set
+`env_config.episode_length`, since the time entry is normalised by the env's
+horizon, which must be the one the training wrapper truncates at. The entry
+refuses either mismatch. `env_config.maze_critic_priv_dtype:
+float16` halves the vector's replay storage. The env also reports
+`maze/visited_cells`, which the `MAZE_EVAL` line averages. The policy's
+observation is unchanged.
+
+### Contact termination
+
+`env_config.termination_criteria.contact_termination` ends a maze episode as
+soon as a walker geom outside `allowed_bodies` touches the floor, with no
+patience, as in dm_control:
+
+```yaml
+env_config:
+  termination_criteria:
+    contact_termination:
+      allowed_bodies: [foot_L, foot_R, hand_L, hand_R, vertebra_C1]  # default
+      margin: -0.002  # metres; default 0. Negative tolerates that much penetration
+```
+
+`contact_termination: {}` takes the defaults. The `MAZE_EVAL` fall fraction
+counts these episodes as falls.
 
 ## Known differences from acme
 

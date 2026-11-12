@@ -30,6 +30,7 @@ import orbax.checkpoint as ocp
 import wandb
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground import registry
+from vnl_playground.tasks.wrappers_info_reset import InfoResetOnDoneWrapper
 from vnl_playground.tasks.wrappers_truncation import wrap_for_dmpo_training
 
 from track_mjx.agent import checkpointing, wandb_logging
@@ -137,6 +138,88 @@ def _load_train_clips(hydra_cfg: DictConfig, env_name: str, seed: int):
     return reference_clips, train_clips
 
 
+# The info keys the imitation env writes at reset and then advances in step.
+# The training stack auto-resets with full_reset=False, which swaps the physics
+# and observation back to the cached first reset state on done but keeps
+# state.info. Without a reset of these keys the reference clock
+# (reference_step) would run on from the previous episode while the body starts
+# over. Tracking terminations, and the end-of-clip truncation once the clock
+# has passed the clip end, would then end an episode on every step. The
+# previous episode's last action would also reach the first step of the next
+# one, through prev_action in its observation and its control-diff cost. The
+# env never writes reference_clip or start_frame after reset, so those already
+# match the cached state.
+IMITATION_EPISODE_INFO_KEYS = ("reference_step", "truncated", "prev_action", "action")
+
+# Info key of the per-env done counter kept by the auto-reset wrapper.
+_DONE_COUNT_KEY = "AutoResetWrapper_done_count"
+
+
+def _wrap_train_env(
+    train_env: Any,
+    *,
+    episode_length: int,
+    action_repeat: int,
+    randomization_fn: Any = None,
+) -> _VnlPlaygroundEnvAdapter:
+    """The imitation training stack, ready for the DMPO training loop.
+
+    ``wrap_for_dmpo_training`` is the brax training stack plus a stash that
+    keeps the time-out flag across the auto-reset, which the learner needs to
+    bootstrap through time limits. ``InfoResetOnDoneWrapper`` sits outside it,
+    where it sees the post-swap ``done``, and restores
+    ``IMITATION_EPISODE_INFO_KEYS`` to their reset-time values on every done.
+
+    Args:
+        train_env: The unbatched imitation env.
+        episode_length: Step limit of one episode.
+        action_repeat: Env steps per policy step.
+        randomization_fn: Batched domain-randomization function, or ``None``.
+
+    Returns:
+        The batched env, adapted to the loop's ``step -> (state, reward)``.
+    """
+    wrapped = wrap_for_dmpo_training(
+        train_env,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        full_reset=False,
+        randomization_fn=randomization_fn,
+    )
+    wrapped = InfoResetOnDoneWrapper(wrapped, keys=IMITATION_EPISODE_INFO_KEYS)
+    return _VnlPlaygroundEnvAdapter(wrapped, pre_batched=True)
+
+
+def _training_episode_stats(env_state: Any, env_steps: int) -> dict:
+    """Episode statistics of the training envs, from the loop's final state.
+
+    Only the few leaves read here are copied to the host.
+
+    Args:
+        env_state: The batched env state the training loop returned.
+        env_steps: Env steps (summed over envs) taken since that state's reset.
+
+    Returns:
+        ``envs``, ``dones`` (episodes ended), ``env_steps_per_done`` (``inf``
+        when no episode ended), and ``reference_clock_mismatch``: the number of
+        envs whose reference clock is not at the step count of their current
+        episode (0 when done, as the next episode starts from the reset frame).
+    """
+    info = env_state.info
+    done = np.asarray(env_state.done) > 0.5
+    dones = int(np.asarray(info[_DONE_COUNT_KEY]).sum())
+    expected_clock = np.where(done, 0.0, np.asarray(info["steps"]))
+    mismatch = int(
+        np.sum(np.asarray(info["reference_step"]).astype(np.float64) != expected_clock)
+    )
+    return {
+        "envs": int(done.shape[0]),
+        "dones": dones,
+        "env_steps_per_done": env_steps / dones if dones else float("inf"),
+        "reference_clock_mismatch": mismatch,
+    }
+
+
 def _make_dmpo_logging_inference_fn(policy_module, normalizer_params):
     """Adapter: wrap DMPO policy.apply as PPO's (params, obs, key) -> (action, extras).
 
@@ -237,9 +320,6 @@ def main(hydra_cfg: DictConfig) -> None:
     log.info("episode_length=%d", episode_length)
 
     # ---- 5. Wrap env for brax training (vmap + auto-reset + DR) ----
-    # wrap_for_dmpo_training is the brax training stack plus a stash that
-    # keeps the time-out flag across the auto-reset, which the learner needs
-    # to bootstrap through time limits.
     # domain_randomization_maker returns (model, rng) -> (model, in_axes), but
     # the training wrap's BraxDomainRandomizationVmapWrapper calls
     # randomization_fn(model) with a single argument. Bind a fresh rng split
@@ -259,19 +339,17 @@ def main(hydra_cfg: DictConfig) -> None:
         )
         dr_rng_split = jax.random.split(dr_rng, dmpo_cfg.num_envs)
         v_randomization_fn = functools.partial(dr_base_fn, rng=dr_rng_split)
-    wrapped_train_env = wrap_for_dmpo_training(
+    dmpo_train_env = _wrap_train_env(
         train_env,
         episode_length=episode_length,
         action_repeat=int(raw_train_cfg.get("action_repeat", 1)),
-        full_reset=False,
         randomization_fn=v_randomization_fn,
     )
-    dmpo_train_env = _VnlPlaygroundEnvAdapter(wrapped_train_env, pre_batched=True)
 
     # ---- 6. Networks ----
     # observation_size on the raw env (with flatten_obs=False) may be a scalar
     # or a dict depending on the registry/env version. Read from the adapter
-    # (which proxies wrapped_train_env) and cast to a plain dict.
+    # (which proxies the wrapped training env) and cast to a plain dict.
     raw_obs_size = dmpo_train_env.observation_size
     if isinstance(raw_obs_size, dict):
         obs_sizes = dict(raw_obs_size)
@@ -393,8 +471,13 @@ def main(hydra_cfg: DictConfig) -> None:
         metrics = {k: v for k, v in payload.items() if k != "env_steps"}
         wandb_logging.wandb_progress(env_steps, metrics)
 
+    # The loop saves a checkpoint at its final env-step count, so the last
+    # save's step is where this session's training ended.
+    last_save = {"env_steps": start_env_steps}
+
     def ckpt_save_cb(state, env_steps: int) -> None:
         save_ckpt(ckpt_mgr, int(env_steps), state, config=cfg_dict)
+        last_save["env_steps"] = int(env_steps)
 
     def eval_render_cb(state, env_steps: int, k_eval: jax.Array) -> None:
         try:
@@ -448,6 +531,20 @@ def main(hydra_cfg: DictConfig) -> None:
         float(last_metrics.get("policy_loss", 0.0)),
         float(last_metrics.get("critic_loss", 0.0)),
     )
+    session_env_steps = last_save["env_steps"] - start_env_steps
+    if env_state is not None and session_env_steps > 0:
+        # Episodes that end on every step mean the per-episode env info is
+        # not being reset (see IMITATION_EPISODE_INFO_KEYS).
+        stats = _training_episode_stats(env_state, session_env_steps)
+        log.info(
+            "training episodes: envs=%d env_steps=%d dones=%d "
+            "env_steps_per_done=%.1f reference_clock_mismatch=%d",
+            stats["envs"],
+            session_env_steps,
+            stats["dones"],
+            stats["env_steps_per_done"],
+            stats["reference_clock_mismatch"],
+        )
 
     try:
         checkpointing.cleanup_run_state(hydra_cfg)

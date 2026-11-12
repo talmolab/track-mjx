@@ -38,7 +38,10 @@ ENTRIES = {
     ),
     "imitation": (
         "train_dmpo.py",
-        ("vnl_playground.tasks.wrappers_truncation",),
+        (
+            "vnl_playground.tasks.wrappers_info_reset",
+            "vnl_playground.tasks.wrappers_truncation",
+        ),
     ),
 }
 

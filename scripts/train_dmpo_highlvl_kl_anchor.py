@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import os
 import re
 import sys
@@ -809,6 +810,63 @@ def _build_env(
 # training run builds.
 
 
+def _parse_slow_core_cfg(slow_core_cfg: dict) -> dict:
+    """Validates ``network_config.policy_head_slow_core`` and fills its defaults.
+
+    Keys: ``hidden_size`` and ``tick_stride`` (required ints), ``store_dtype``
+    (str, default ``"float16"``), ``cell`` (``"gru"`` default, or ``"lstm"``)
+    and ``forget_bias`` (float, default ``0.0``: the LSTM forget-gate bias,
+    only valid with ``cell: lstm``). Every default is the slow-core factory's
+    own, so a config that omits the optional keys builds the same network.
+
+    Args:
+        slow_core_cfg: The ``policy_head_slow_core`` block as a plain dict.
+
+    Returns:
+        ``{hidden_size, tick_stride, store_dtype, cell, forget_bias}``.
+
+    Raises:
+        ValueError: On an unknown or missing key, a ``cell`` outside
+            ``("gru", "lstm")``, a non-finite ``forget_bias``, or a nonzero
+            ``forget_bias`` with ``cell="gru"``.
+    """
+    keys = {"hidden_size", "tick_stride", "store_dtype", "cell", "forget_bias"}
+    unknown = sorted(set(slow_core_cfg) - keys)
+    missing = sorted({"hidden_size", "tick_stride"} - set(slow_core_cfg))
+    if unknown or missing:
+        raise ValueError(
+            "network_config.policy_head_slow_core must be "
+            "{hidden_size: int, tick_stride: int[, store_dtype: str]"
+            "[, cell: 'gru'|'lstm'][, forget_bias: float]}; "
+            f"unknown keys {unknown}, missing keys {missing}."
+        )
+    cell = slow_core_cfg.get("cell", "gru")
+    if cell not in ("gru", "lstm"):
+        raise ValueError(
+            "network_config.policy_head_slow_core.cell must be 'gru' or "
+            f"'lstm', got {cell!r}."
+        )
+    forget_bias = float(slow_core_cfg.get("forget_bias", 0.0))
+    if not math.isfinite(forget_bias):
+        raise ValueError(
+            "network_config.policy_head_slow_core.forget_bias must be finite, "
+            f"got {forget_bias}."
+        )
+    if forget_bias != 0.0 and cell != "lstm":
+        raise ValueError(
+            f"network_config.policy_head_slow_core.forget_bias={forget_bias} "
+            f"only applies to cell='lstm' (got cell={cell!r}); drop it or set "
+            "cell: lstm."
+        )
+    return {
+        "hidden_size": int(slow_core_cfg["hidden_size"]),
+        "tick_stride": int(slow_core_cfg["tick_stride"]),
+        "store_dtype": str(slow_core_cfg.get("store_dtype", "float16")),
+        "cell": cell,
+        "forget_bias": forget_bias,
+    }
+
+
 class _RunSetup(NamedTuple):
     """The learner config and policy-head choice resolved from the hydra config.
 
@@ -827,6 +885,8 @@ class _RunSetup(NamedTuple):
     slow_hidden_size: int | None
     tick_stride: int | None
     slow_store_dtype: str | None
+    slow_cell: str | None
+    slow_forget_bias: float | None
     critic_privileged_dim: int
     priv_extras: tuple
     graft_path: str | None
@@ -864,6 +924,7 @@ def _resolve_run_setup(hydra_cfg) -> _RunSetup:
     Runs before anything is built, so a miswired arm dies in seconds.
     """
     slow_hidden_size = tick_stride = slow_store_dtype = None
+    slow_cell = slow_forget_bias = None
 
     raw_train_cfg = OmegaConf.to_container(hydra_cfg.train_config, resolve=True)
     cfg = DMPOConfig(**_filter_dmpo_kwargs(raw_train_cfg))
@@ -1041,18 +1102,12 @@ def _resolve_run_setup(hydra_cfg) -> _RunSetup:
                 "would need a second, per-policy hidden stream."
             )
     elif slow_core:
-        _sc_keys = {"hidden_size", "tick_stride", "store_dtype"}
-        _sc_unknown = sorted(set(slow_core_cfg) - _sc_keys)
-        _sc_missing = sorted({"hidden_size", "tick_stride"} - set(slow_core_cfg))
-        if _sc_unknown or _sc_missing:
-            raise ValueError(
-                "network_config.policy_head_slow_core must be "
-                "{hidden_size: int, tick_stride: int[, store_dtype: str]}; "
-                f"unknown keys {_sc_unknown}, missing keys {_sc_missing}."
-            )
-        slow_hidden_size = int(slow_core_cfg["hidden_size"])
-        tick_stride = int(slow_core_cfg["tick_stride"])
-        slow_store_dtype = str(slow_core_cfg.get("store_dtype", "float16"))
+        _sc = _parse_slow_core_cfg(slow_core_cfg)
+        slow_hidden_size = _sc["hidden_size"]
+        tick_stride = _sc["tick_stride"]
+        slow_store_dtype = _sc["store_dtype"]
+        slow_cell = _sc["cell"]
+        slow_forget_bias = _sc["forget_bias"]
         sc_L, sc_n = int(cfg.rnn_bptt_length), int(cfg.n_step)
         if sc_L <= 0:
             raise ValueError(
@@ -1181,6 +1236,8 @@ def _resolve_run_setup(hydra_cfg) -> _RunSetup:
         slow_hidden_size=slow_hidden_size,
         tick_stride=tick_stride,
         slow_store_dtype=slow_store_dtype,
+        slow_cell=slow_cell,
+        slow_forget_bias=slow_forget_bias,
         critic_privileged_dim=critic_privileged_dim,
         priv_extras=priv_extras,
         graft_path=graft_path,
@@ -1383,9 +1440,18 @@ def _make_networks(hydra_cfg, setup: _RunSetup, prior: _FrozenPrior, built: _Env
             ),
             slow_hidden_size=slow_hidden_size,
             tick_stride=tick_stride,
+            rnn_cell=setup.slow_cell,
+            lstm_forget_bias=setup.slow_forget_bias,
             rnn_store_dtype=slow_store_dtype,
             **_shared_net_kwargs,
         )
+        # The startup line below reports the cell the factory built; a factory
+        # that built another cell would train this arm under the wrong name.
+        if nets.recurrent_meta.cell_type != setup.slow_cell:
+            raise ValueError(
+                f"policy_head_slow_core.cell={setup.slow_cell!r} but the factory "
+                f"built cell_type={nets.recurrent_meta.cell_type!r}."
+            )
     elif recurrent:
         nets = make_dmpo_kl_anchor_rnn_networks(
             rnn_cell=str(rnn_head_cfg.get("cell", "gru")),
@@ -1422,10 +1488,11 @@ def _make_networks(hydra_cfg, setup: _RunSetup, prior: _FrozenPrior, built: _Env
         if slow_core:
             log.info(
                 "RECURRENT policy head ACTIVE: SLOW CORE cell=%s "
-                "hidden_size=%d tick_stride=%d store_dtype=%s "
+                "forget_bias=%g hidden_size=%d tick_stride=%d store_dtype=%s "
                 "policy_head_layer_sizes=%s | rnn_bptt_length=%d n_step=%d "
                 "sequence_length=%d (= L*k + n) cfg.rnn_tick_stride=%d",
                 nets.recurrent_meta.cell_type,
+                setup.slow_forget_bias,
                 nets.recurrent_meta.hidden_sizes[0],
                 nets.recurrent_meta.tick_stride,
                 nets.recurrent_meta.store_dtype,

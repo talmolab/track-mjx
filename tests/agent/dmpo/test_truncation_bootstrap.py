@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tests.agent.dmpo import _golden
 from tests.agent.dmpo import test_learner_rnn as rnn_t
 from tests.agent.dmpo import test_learner_ticks as tick_t
 from track_mjx.agent.dmpo.config import LEGACY_ALIGNMENT, DMPOConfig
@@ -542,7 +543,7 @@ def _load_golden_maker():
     return module
 
 
-@pytest.mark.skipif(jax.default_backend() != "cpu", reason="CPU-bitwise goldens")
+@pytest.mark.skipif(jax.default_backend() != "cpu", reason="CPU goldens")
 @pytest.mark.parametrize("group", ["ff", "rnn", "tick"])
 def test_legacy_ignores_truncation(group, monkeypatch):
     """Under LEGACY_ALIGNMENT every learner path matches the pre-alignment
@@ -562,5 +563,5 @@ def test_legacy_ignores_truncation(group, monkeypatch):
     with np.load(pathlib.Path(maker.GOLDEN_PATH)) as z:
         want = {k: z[k] for k in z.files if k.startswith(f"{group}/")}
     assert set(got) == set(want)
-    bad = [k for k in want if not np.array_equal(got[k], want[k])]
+    bad = _golden.mismatched(got, want)
     assert not bad, bad[:5]

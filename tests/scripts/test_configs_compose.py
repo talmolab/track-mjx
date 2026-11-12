@@ -1,6 +1,7 @@
 """The DMPO configs under ``track_mjx/config/dmpo`` compose and keep their rules.
 
-Arms live in ``maze/``, ``spout_maze/`` and ``run_gap/``; ``base.yaml`` and the
+Arms live in ``maze/``, ``full_maze_memory/``, ``spout_maze/`` and ``run_gap/``;
+``base.yaml`` and the
 two ``rodent-imitation*.yaml`` files are top-level configs. Paths are
 environment-relative: priors hang off ``DMPO_PRIOR_ROOT`` and checkpoint
 directories and graft sources off ``DMPO_CKPT_ROOT``, so no committed file
@@ -19,7 +20,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO / "track_mjx" / "config" / "dmpo"
 MANIFEST = CONFIG_DIR / "priors" / "MANIFEST.md"
 
-ARM_GROUPS = ("maze", "spout_maze", "run_gap")
+ARM_GROUPS = ("maze", "full_maze_memory", "spout_maze", "run_gap")
 ARMS = sorted(p for group in ARM_GROUPS for p in (CONFIG_DIR / group).glob("*.yaml"))
 TOP_LEVEL = ("base", "rodent-imitation", "rodent-imitation-intention")
 

@@ -30,14 +30,11 @@ MazeForageVision = maze_forage_vision.MazeForageVision
 default_config = maze_forage_vision.default_config
 
 ENV_NAME = "RodentMazeForageVision"
-MAZE_CONFIG_DIR = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "track_mjx"
-    / "config"
-    / "dmpo"
-    / "maze"
+CONFIG_DIR = (
+    pathlib.Path(__file__).resolve().parents[2] / "track_mjx" / "config" / "dmpo"
 )
-MAZE_ARMS = sorted(MAZE_CONFIG_DIR.glob("*.yaml"))
+MAZE_GROUPS = ("maze", "full_maze_memory")
+MAZE_ARMS = sorted(p for g in MAZE_GROUPS for p in (CONFIG_DIR / g).glob("*.yaml"))
 
 # env_config keys the entry reads itself (vision wrapper, episode wrapper,
 # eval HUD) or that are YAML-only metadata; every other key must be an env key.
@@ -117,18 +114,18 @@ def test_entry_refuses_a_frozen_layout_config(kl_anchor_entry):
 def _compose_arm(arm: pathlib.Path):
     from hydra import compose, initialize_config_dir
 
-    with initialize_config_dir(
-        config_dir=str(MAZE_CONFIG_DIR.parent), version_base=None
-    ):
-        return compose(config_name=f"maze/{arm.stem}")
+    with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base=None):
+        return compose(config_name=f"{arm.parent.name}/{arm.stem}")
 
 
 @pytest.mark.parametrize(
-    "arm", MAZE_ARMS or [None], ids=[a.stem for a in MAZE_ARMS] or ["no-maze-arms"]
+    "arm",
+    MAZE_ARMS or [None],
+    ids=[f"{a.parent.name}/{a.stem}" for a in MAZE_ARMS] or ["no-maze-arms"],
 )
 def test_shipped_maze_arm_enables_per_episode_resets(kl_anchor_entry, arm):
     if arm is None:
-        pytest.skip(f"no maze arm configs under {MAZE_CONFIG_DIR}")
+        pytest.skip(f"no maze arm configs under {CONFIG_DIR} {MAZE_GROUPS}")
     cfg = _compose_arm(arm)
     if cfg.get("env_name") != ENV_NAME:
         pytest.skip(f"{arm.name} is not a {ENV_NAME} arm")

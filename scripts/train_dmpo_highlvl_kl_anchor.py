@@ -379,6 +379,11 @@ _PRIOR_MANIFEST = (
 _MANIFEST_ALIAS_ROW = re.compile(r"^\| `([^`]+)` \| `([^`]+)` \| yes \|$")
 
 
+def _is_latent_action(hydra_cfg) -> bool:
+    """``transfer.mode: latent_action``: MPO acts on the latent residual (track_mjx.agent.dmpo.latent_action)."""
+    return str(hydra_cfg.get("transfer", {}).get("mode", "")) == "latent_action"
+
+
 def _prior_aliases(manifest_path: Path = _PRIOR_MANIFEST) -> dict[str, str]:
     """Alias name -> prior id, read from the manifest's ``## Aliases`` table.
 
@@ -747,6 +752,20 @@ def _build_env(
                 hydra_cfg.transfer.get("decoder_obs_key", "proprioception")
             ),
         )
+    elif _is_latent_action(hydra_cfg):
+        from track_mjx.agent.dmpo.latent_action import LatentActionWrapper
+
+        base_env = LatentActionWrapper(
+            base_env,
+            prior_fn=prior_fn,
+            decoder_logits_fn=decoder_logits_fn,
+            latent_size=latent_size,
+            scale=float(hydra_cfg.network_config.get("latent_action_scale", 1.0)),
+            highlvl_obs_key=str(hydra_cfg.transfer.get("highlvl_obs_key", "task_obs")),
+            lowlvl_obs_key=str(
+                hydra_cfg.transfer.get("decoder_obs_key", "proprioception")
+            ),
+        )
     else:
         base_env = KLAnchorPriorDecoderWrapper(
             base_env,
@@ -945,7 +964,7 @@ def _resolve_run_setup(hydra_cfg) -> _RunSetup:
     # config was written to avoid, and the logs would look normal.
     _GRAFTED_MODES = ("", "prior_decoder", "kl_anchor_b_aggressive", "decoder_only")
     transfer_mode = str(hydra_cfg.get("transfer", {}).get("mode", ""))
-    if transfer_mode not in (*_GRAFTED_MODES, "from_scratch"):
+    if transfer_mode not in (*_GRAFTED_MODES, "from_scratch", "latent_action"):
         raise ValueError(
             f"Unknown transfer.mode={transfer_mode!r}; expected 'from_scratch' "
             f"or one of the grafted-path values {_GRAFTED_MODES}. Refusing to "
@@ -982,6 +1001,33 @@ def _resolve_run_setup(hydra_cfg) -> _RunSetup:
     if rnn_head_cfg is not None:
         rnn_head_cfg = OmegaConf.to_container(rnn_head_cfg, resolve=True)
     recurrent = rnn_head_cfg is not None
+    if transfer_mode == "latent_action":
+        # Latent-action arm: MPO's action is the 16-D latent residual; the frozen
+        # prior + decoder run env-side (LatentActionWrapper). Feed-forward only, no
+        # anchor term, no graft / warm start (their param trees are motor-action).
+        _bad = []
+        if (
+            recurrent
+            or hydra_cfg.network_config.get("policy_head_slow_core", None) is not None
+        ):
+            _bad.append("a recurrent / slow-core policy head")
+        if cfg.kl_anchor_alpha != 0.0 or cfg.kl_anchor_beta_linear != 0.0:
+            _bad.append("a non-zero kl-anchor term")
+        if hydra_cfg.transfer.get(
+            "warm_start_dmpo_checkpoint", None
+        ) or hydra_cfg.transfer.get("graft_ff_checkpoint", None):
+            _bad.append("a warm start / graft")
+        if bool(hydra_cfg.get("dual_prior", {}).get("enabled", False)):
+            _bad.append("dual_prior")
+        if _bad:
+            raise ValueError(
+                f"transfer.mode=latent_action does not support {', '.join(_bad)}"
+            )
+        log.info(
+            "LATENT-ACTION arm ACTIVE: MPO samples the latent residual delta=tanh(raw) in [-1,1]^L; "
+            "z = mu_prior + %.3g * delta -> frozen decoder mean -> motor (env-side)",
+            float(hydra_cfg.network_config.get("latent_action_scale", 1.0)),
+        )
     # network_config.policy_head_slow_core: the slow-clock memory core
     # (networks_kl_anchor_slow). Absent/null => nothing below changes.
     slow_core_cfg = hydra_cfg.network_config.get("policy_head_slow_core", None)
@@ -1499,6 +1545,31 @@ def _make_networks(hydra_cfg, setup: _RunSetup, prior: _FrozenPrior, built: _Env
             rnn_store_dtype=str(rnn_head_cfg.get("store_dtype", "float16")),
             **_shared_net_kwargs,
         )
+    elif _is_latent_action(hydra_cfg):
+        from track_mjx.agent.dmpo.latent_action import make_dmpo_latent_action_networks
+
+        nets = make_dmpo_latent_action_networks(
+            latent_size=action_size,
+            vision_shape=tuple(vision_shape),
+            cfg=cfg,
+            policy_head_layer_sizes=tuple(
+                hydra_cfg.network_config.get("policy_head_layer_sizes", [256, 256, 256])
+            ),
+            cnn_feature_size=_shared_net_kwargs["cnn_feature_size"],
+            cnn_channels=_shared_net_kwargs["cnn_channels"],
+            mono_channels=_shared_net_kwargs["mono_channels"],
+            shared_weights=_shared_net_kwargs["shared_weights"],
+            value_hidden_layer_sizes=_shared_net_kwargs["value_hidden_layer_sizes"],
+            critic_use_proprio=bool(
+                hydra_cfg.network_config.get("critic_use_proprio", False)
+            ),
+            critic_privileged_dim=critic_privileged_dim,
+            init_std=float(hydra_cfg.network_config.get("latent_action_init_std", 0.7)),
+        )
+        if action_size != latent_size:
+            raise RuntimeError(
+                f"latent_action: env action_size {action_size} != prior latent size {latent_size}"
+            )
     else:
         nets = make_dmpo_kl_anchor_networks(
             policy_head_layer_sizes=tuple(
@@ -2242,7 +2313,12 @@ def main(hydra_cfg: DictConfig):
     # mode action equals tanh(mu_imit_pretanh) up to numerics). If r_anchor drops,
     # the prior/decoder warm-start splice (or the normalizer seeding) regressed.
     priv_probe_shape = None
-    if from_scratch:
+    if _is_latent_action(hydra_cfg):
+        log.info(
+            "anchor_invariant_probe SKIPPED (latent_action: the policy acts on the latent, "
+            "not on motor actions)"
+        )
+    elif from_scratch:
         # st0.info has no `anchor_mu_imit` -- EndToEndWrapper does not populate
         # it. Skipping explicitly beats letting the probe raise into its own
         # except handler and logging a warning that looks like a regression.

@@ -307,6 +307,14 @@ def run_eval_rollout_envzero(
     rng, k_reset = jax.random.split(rng)
     keys = jax.random.split(k_reset, num_envs)
     state = env.reset(keys)
+    # Env 0 is found by the leading dim (`index_env`). With a num_envs other
+    # than the env's batch no leaf would count as batched, and every frame
+    # would silently be the reset state.
+    if np.shape(state.reward) != (num_envs,):
+        raise ValueError(
+            f"num_envs={num_envs}, but the eval env's reset state has reward of "
+            f"shape {np.shape(state.reward)}; pass the env's batch size."
+        )
 
     @jax.jit
     def _scan_envzero(initial_state, k_scan):

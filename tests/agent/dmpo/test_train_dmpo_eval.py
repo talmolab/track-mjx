@@ -613,3 +613,42 @@ def test_run_eval_rollout_envzero_handles_unbatched_and_empty_leaves():
         # Shared leaves carry the reset state's value in every frame.
         np.testing.assert_allclose(np.asarray(st.data.impl.contact_pool), 0.0)
     assert allenv["reward"].shape == (episode_length, num_envs)
+
+
+def test_run_eval_rollout_envzero_refuses_a_num_envs_other_than_the_env_batch():
+    """Every leaf would count as unbatched, and env 0's frames would all be the
+    reset state, with no error."""
+    import flax.struct
+
+    from track_mjx.agent.dmpo.train_dmpo_eval import run_eval_rollout_envzero
+
+    @flax.struct.dataclass
+    class _State:
+        obs: dict
+        done: jax.Array
+        reward: jax.Array
+
+    class _FixedBatchEnv:
+        """Resets three envs, however many keys it is given."""
+
+        action_size = 3
+
+        def reset(self, keys):
+            return _State(
+                obs={"proprioception": jnp.zeros((3, 4))},
+                done=jnp.zeros((3,)),
+                reward=jnp.zeros((3,)),
+            )
+
+        def step(self, st, _action):
+            return st
+
+    with pytest.raises(ValueError, match=r"num_envs=4.*\(3,\)"):
+        run_eval_rollout_envzero(
+            env=_FixedBatchEnv(),
+            policy_apply=lambda params, obs: None,
+            params=None,
+            rng=jax.random.key(0),
+            episode_length=5,
+            num_envs=4,
+        )

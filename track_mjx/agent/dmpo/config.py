@@ -221,6 +221,19 @@ class DMPOConfig:
     # render directly and is unaffected. 4x on the dominant obs component.
     vision_uint8_storage: bool = False
 
+    # Write each replay add in place (``dynamic_update_slice``) instead of
+    # with flashbax's scatter ``experience.at[:, indices].set``. Same buffer
+    # contents at the same positions, but the scatter makes XLA transpose each
+    # whole replay leaf to time-major and back on every add, a transient the
+    # size of the largest leaf. Needs the per-env replay depth
+    # (max_replay_size // num_envs) to be a multiple of `unroll_length`, since
+    # every add is one unroll; `replay.replay_add_sequence_length` resolves it
+    # for `make_replay` and raises otherwise. The write itself is exact, but
+    # XLA compiles the surrounding fused step differently, so a run with the
+    # switch on agrees with one without it to float32 rounding, not bit for
+    # bit. False (default) keeps flashbax's add.
+    replay_inplace_add: bool = False
+
     # ------------------------------------------------------------------
     # Recurrent (GRU) policy head: short-BPTT learner.
     # ------------------------------------------------------------------

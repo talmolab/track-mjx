@@ -52,6 +52,14 @@ def test_known_fields_and_entry_keys_pass_through():
     assert set(raw) - {"n_step"} <= ENTRY_TRAIN_CONFIG_KEYS
 
 
+def test_replay_inplace_add_is_a_dmpo_field():
+    """The in-place replay switch reaches DMPOConfig (default off)."""
+    assert _filter_dmpo_kwargs({"replay_inplace_add": True}) == {
+        "replay_inplace_add": True
+    }
+    assert DMPOConfig().replay_inplace_add is False
+
+
 def test_entry_keys_are_not_dmpo_fields():
     assert not ENTRY_TRAIN_CONFIG_KEYS & set(DMPOConfig.__dataclass_fields__)
 

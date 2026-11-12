@@ -12,11 +12,12 @@ import dataclasses
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flashbax.buffers.trajectory_buffer import add as fbx_add
 
 from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.learner import init_training_state, make_optimizers
 from track_mjx.agent.dmpo.networks import make_dmpo_networks
-from track_mjx.agent.dmpo.replay import make_replay
+from track_mjx.agent.dmpo.replay import make_replay, replay_add_sequence_length
 from track_mjx.agent.dmpo.rollout import PRESERVE_INFO_KEY, collect_rollout
 from track_mjx.agent.dmpo.train_dmpo_sgd import make_scan_k_sgd
 from track_mjx.agent.dmpo.train_dmpo_step import make_fused_train_step
@@ -66,7 +67,7 @@ class _MockEnv:
         return new_state, reward
 
 
-def _setup():
+def _setup(**cfg_overrides):
     """Build a real DMPO state + networks + replay against the toy env.
 
     Returns dict so test cases can pull out only what they need.
@@ -84,6 +85,7 @@ def _setup():
         unroll_length=8,
         max_replay_size=128,
         min_replay_size=8,
+        **cfg_overrides,
     )
     env = _MockEnv()
     nets = make_dmpo_networks(env.obs_size, env.action_size, cfg)
@@ -92,13 +94,15 @@ def _setup():
     env_spec = {"obs_size": env.obs_size, "action_size": env.action_size}
     state = init_training_state(rng, nets, env_spec, cfg)
 
+    max_size = max(cfg.sequence_length + 1, cfg.max_replay_size // cfg.num_envs)
     rb = make_replay(
-        max_size=max(cfg.sequence_length + 1, cfg.max_replay_size // cfg.num_envs),
+        max_size=max_size,
         min_size=max(cfg.sequence_length + 1, cfg.min_replay_size // cfg.num_envs),
         sequence_length=cfg.sequence_length,
         sample_batch_size=cfg.batch_size,
         add_batch_size=cfg.num_envs,
         period=1,
+        add_sequence_length=replay_add_sequence_length(cfg, max_size),
     )
     transition_template = {
         "observation": jnp.zeros((env.obs_size,), dtype=jnp.float32),
@@ -209,3 +213,56 @@ def test_fused_step_advances_steps_by_K():
     assert int(new_state.steps) == int(s["state"].steps) + K
     # env_state must be a real pytree now (not None) so subsequent calls resume.
     assert env_state is not None
+
+
+def test_fused_step_with_inplace_replay_add_matches_scatter_add():
+    """replay_inplace_add=True inside the jitted, buffer-donating fused step.
+
+    The first add writes a bit-identical replay. Over enough steps to wrap
+    the replay (per-env depth 32, unroll 8), the replay, the metrics and the
+    policy params then agree with the default flashbax scatter add to float32
+    rounding: XLA compiles the surrounding program differently once the add
+    is a slice update, so the SGD numerics drift at the last-bit level, and
+    that drift reaches the later rollouts. A misplaced write would differ at
+    the scale of the data itself."""
+    K = 2
+    runs = []
+    for inplace in (False, True):
+        s = _setup(replay_inplace_add=inplace)
+        fused = make_fused_train_step(
+            s["env"], s["nets"], s["optimizers"], s["rb"], s["cfg"], K=K
+        )
+        state, env_state, rb_state = s["state"], None, s["rb_state"]
+        replays, history = [], []
+        for i in range(6):
+            state, env_state, rb_state, metrics = fused(
+                state, env_state, rb_state, jax.random.key(10 + i)
+            )
+            replays.append(jax.tree.map(np.asarray, rb_state))
+            history.append(jax.tree.map(np.asarray, metrics))
+        runs.append((s["rb"], state, replays, history))
+
+    (rb_ref, st_ref, r_ref, h_ref), (rb_new, st_new, r_new, h_new) = runs
+    # The switch did select the in-place add (flashbax's add is a partial).
+    assert rb_ref.add.func is fbx_add
+    assert getattr(rb_new.add, "func", None) is not fbx_add
+    assert not bool(r_new[2].is_full) and bool(r_new[-1].is_full)  # it wrapped
+    for a, b in zip(jax.tree.leaves(r_ref[0]), jax.tree.leaves(r_new[0])):
+        np.testing.assert_array_equal(a, b)
+    for step, (rs_ref, rs_new) in enumerate(zip(r_ref, r_new)):
+        assert int(rs_ref.current_index) == int(rs_new.current_index)
+        assert bool(rs_ref.is_full) == bool(rs_new.is_full)
+        for a, b in zip(
+            jax.tree.leaves(rs_ref.experience), jax.tree.leaves(rs_new.experience)
+        ):
+            np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-5, err_msg=str(step))
+    for m_ref, m_new in zip(h_ref, h_new):
+        assert set(m_ref) == set(m_new)
+        for k in m_ref:
+            np.testing.assert_allclose(
+                m_ref[k], m_new[k], rtol=1e-4, atol=1e-5, err_msg=k
+            )
+    for a, b in zip(
+        jax.tree.leaves(st_ref.policy_params), jax.tree.leaves(st_new.policy_params)
+    ):
+        np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=1e-4, atol=1e-5)

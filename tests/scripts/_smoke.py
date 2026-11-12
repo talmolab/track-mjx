@@ -3,7 +3,8 @@
 A smoke launches an entry in a subprocess, from the repository root, with
 ``PYTHONPATH`` pointing at that root so the checkout under test is the one
 imported (not an editable install of another). The run is sized to finish a
-replay warm-up and exactly one training chunk, writes its checkpoints under a
+replay warm-up and one training chunk (or a few, for a smoke that needs more
+env steps), writes its checkpoints under a
 pytest temp directory and runs with Weights & Biases disabled.
 ``forced_eval_overrides`` makes that chunk end in an eval, which
 ``assert_eval_ran`` checks in the log.
@@ -94,8 +95,15 @@ def composed_section(repo: Path, config_name: str, section: str) -> dict:
     return OmegaConf.to_container(OmegaConf.select(cfg, section), resolve=False)
 
 
-def one_chunk_sizes(train_cfg: dict) -> tuple[int, int]:
-    """Sizes a run to a replay warm-up plus exactly one chunk.
+def _warmup_iters(train_cfg: dict) -> int:
+    """Fused steps before the replay can be sampled (``min_replay_size`` 0)."""
+    unroll = int(train_cfg["unroll_length"])
+    sequence_length = int(train_cfg["sequence_length"])
+    return -(-(sequence_length + 1) // unroll)
+
+
+def run_sizes(train_cfg: dict, chunks: int = 1) -> tuple[int, int]:
+    """Sizes a run to a replay warm-up plus ``chunks`` chunks.
 
     Warm-up ends once the replay holds ``sequence_length + 1`` steps per env
     (``min_replay_size`` is overridden to 0, so that is the floor), and every
@@ -106,29 +114,43 @@ def one_chunk_sizes(train_cfg: dict) -> tuple[int, int]:
     Args:
         train_cfg: The arm's ``train_config`` (needs ``unroll_length`` and
             ``sequence_length``).
+        chunks: Training chunks after the warm-up.
 
     Returns:
         ``(num_timesteps, max_replay_size)``.
     """
     unroll = int(train_cfg["unroll_length"])
-    sequence_length = int(train_cfg["sequence_length"])
-    warmup_iters = -(-(sequence_length + 1) // unroll)
-    total_iters = warmup_iters + ITERS_PER_CHUNK
+    total_iters = _warmup_iters(train_cfg) + chunks * ITERS_PER_CHUNK
     return total_iters * NUM_ENVS * unroll, total_iters * unroll * NUM_ENVS
 
 
-def one_chunk_overrides(prefix: str, train_cfg: dict) -> list[str]:
+def one_chunk_sizes(train_cfg: dict) -> tuple[int, int]:
+    """``run_sizes`` for a replay warm-up plus exactly one chunk."""
+    return run_sizes(train_cfg, chunks=1)
+
+
+def chunks_spanning(train_cfg: dict, steps_per_env: int) -> int:
+    """The fewest chunks (at least one) after which every env has taken
+    ``steps_per_env`` steps, warm-up included."""
+    unroll = int(train_cfg["unroll_length"])
+    iters = -(-int(steps_per_env) // unroll) - _warmup_iters(train_cfg)
+    return max(1, -(-iters // ITERS_PER_CHUNK))
+
+
+def one_chunk_overrides(prefix: str, train_cfg: dict, chunks: int = 1) -> list[str]:
     """Hydra overrides that shrink a run to warm-up plus one chunk.
 
     Args:
         prefix: Dotted path of the train config in the composed config
             (``train_config`` or ``train_setup.train_config``).
         train_cfg: The arm's own ``train_config``.
+        chunks: Training chunks after the warm-up, for a smoke that needs a
+            longer run (see ``run_sizes``).
 
     Returns:
         ``++`` overrides for envs, batch, replay and budget.
     """
-    num_timesteps, max_replay_size = one_chunk_sizes(train_cfg)
+    num_timesteps, max_replay_size = run_sizes(train_cfg, chunks)
     values = {
         "num_envs": NUM_ENVS,
         "batch_size": NUM_ENVS,
@@ -309,6 +331,34 @@ def assert_finite_chunk_losses(log: str) -> None:
         assert math.isfinite(float(policy_loss)) and math.isfinite(
             float(critic_loss)
         ), f"non-finite loss at env_steps={env_steps}: {policy_loss} {critic_loss}"
+
+
+_EPISODES_LINE = re.compile(
+    r"training episodes: envs=(\d+) env_steps=(\d+) dones=(\d+) "
+    r"env_steps_per_done=(\S+) reference_clock_mismatch=(\d+)"
+)
+
+
+def assert_training_episodes_not_degenerate(
+    log: str, min_env_steps_per_done: float
+) -> None:
+    """The training envs' episodes were not cut to a step or two.
+
+    Reads the imitation entry's ``training episodes:`` line. Episodes must
+    average at least ``min_env_steps_per_done`` env steps, and every env's
+    reference clock must be at the step count of its current episode.
+    """
+    match = _EPISODES_LINE.search(log)
+    assert match, f"no 'training episodes:' line in the log\n{_tail(log)}"
+    envs, env_steps, dones, per_done, mismatch = match.groups()
+    summary = (
+        f"{dones} episodes ended in {env_steps} env steps over {envs} envs "
+        f"({per_done} steps per done), reference clock off on {mismatch} envs"
+    )
+    assert int(mismatch) == 0, summary
+    assert float(per_done) >= min_env_steps_per_done, (
+        f"{summary}; need at least {min_env_steps_per_done} steps per done"
+    )
 
 
 _EVAL_LINE = re.compile(r"eval env_steps=\d+ ")

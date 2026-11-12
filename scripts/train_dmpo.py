@@ -113,6 +113,9 @@ def _load_train_clips(hydra_cfg: DictConfig, env_name: str, seed: int):
 
     Returns:
         ``(reference_clips, train_clips)``.
+
+    Raises:
+        ValueError: If ``train_subset_ratio`` leaves no training clip.
     """
     env_config = hydra_cfg.env_config
     reference_clips = registry.load_reference_clips(
@@ -125,6 +128,12 @@ def _load_train_clips(hydra_cfg: DictConfig, env_name: str, seed: int):
         train_ratio=hydra_cfg.train_setup.train_subset_ratio,
         seed=seed,
     )
+    if int(train_clips.qpos.shape[0]) == 0:
+        raise ValueError(
+            f"train_subset_ratio={hydra_cfg.train_setup.train_subset_ratio} yields "
+            f"0 training clips of {int(reference_clips.qpos.shape[0])}. Increase "
+            "the ratio or add more clips."
+        )
     return reference_clips, train_clips
 
 

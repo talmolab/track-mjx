@@ -89,6 +89,15 @@ def test_clip_indices_select_source_clips(entry, tmp_path):
     assert train.qpos.shape[0] == 1
 
 
+def test_a_split_with_no_training_clips_is_refused(entry, tmp_path):
+    path = tmp_path / "clips.h5"
+    _write_clips(path)
+    cfg = _cfg(path)
+    cfg.train_setup.train_subset_ratio = 0.2  # int(4 * 0.2) == 0 clips
+    with pytest.raises(ValueError, match="0 training clips"):
+        entry["_load_train_clips"](cfg, ENV_NAME, seed=0)
+
+
 def test_retired_keep_clips_idx_is_refused(entry, tmp_path):
     path = tmp_path / "clips.h5"
     _write_clips(path)

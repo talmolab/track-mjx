@@ -51,6 +51,7 @@ def run(
     extra_state_extras: tuple = (),
     start_env_steps: int = 0,
     frozen_behavior_params: Any = None,
+    dual_prior: Any = None,
 ) -> tuple[Any, Any, Any, dict]:
     """Run the DMPO training loop until ``num_timesteps`` env steps.
 
@@ -77,6 +78,10 @@ def run(
       cfg_dict: snapshotted hydra config dict for checkpoint metadata.
       log_every_steps, eval_every_steps, num_timesteps: pulled from
         ``cfg`` if not provided. Argument form lets test override.
+      frozen_behavior_params: optional frozen policy params for behavior
+        mixing, passed to ``make_fused_train_step``.
+      dual_prior: optional ``dual_prior.DualPriorExplore`` for scheduled
+        behavior-prior exploration, passed to ``make_fused_train_step``.
 
     Returns:
       (final_state, final_env_state, final_rb_state, last_train_metrics)
@@ -104,6 +109,7 @@ def run(
         K=K,
         extra_state_extras=extra_state_extras,
         frozen_behavior_params=frozen_behavior_params,
+        dual_prior=dual_prior,
     )
     train_chunk = make_train_chunk(
         fused_step, n_iters=iters_per_chunk, recurrent=recurrent
@@ -229,6 +235,14 @@ def run(
             float(last_train_metrics.get("policy_loss", 0.0)),
             float(last_train_metrics.get("critic_loss", 0.0)),
         )
+        if "schedule/dual_prior_p" in last_train_metrics:
+            # Dual-prior arms only, so every other arm's log stays line-identical.
+            log.info(
+                "dual_prior env_steps=%d p=%.4f gate_frac=%.4f",
+                int(total_env_steps),
+                float(last_train_metrics["schedule/dual_prior_p"]),
+                float(last_train_metrics["schedule/dual_prior_gate_frac"]),
+            )
 
         # Eval cadence — emits training metrics to wandb, runs eval
         # rollout / render via callbacks, saves checkpoint.

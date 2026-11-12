@@ -16,6 +16,7 @@ import jax.numpy as jnp
 from brax.training.acme import running_statistics
 
 from track_mjx.agent.dmpo.action_utils import bind
+from track_mjx.agent.dmpo.dual_prior import init_gate, step_gate
 from track_mjx.agent.dmpo.obs_utils import (
     DictRunningStatisticsState,
     flatten_obs_dict,
@@ -139,6 +140,8 @@ def collect_rollout(
     recurrent_meta=None,
     policy_hidden=None,
     store_truncation: bool = False,
+    dual_prior=None,
+    dual_prior_p=None,
 ):
     """Roll out num_envs parallel envs for num_steps timesteps.
 
@@ -216,6 +219,18 @@ def collect_rollout(
         ``discount`` stays ``1 - done`` either way; the learner reads the flag
         to bootstrap through time-outs. Trace-time flag; False (default)
         keeps the schema unchanged.
+      dual_prior: optional ``dual_prior.DualPriorExplore`` (feed-forward
+        only). Each env carries a binary gate: gate = 1 executes the policy
+        sample, gate = 0 executes ``dual_prior.explore_fn`` (a behavior-prior
+        latent decoded by the policy's decoder). The gate is drawn from
+        Bernoulli(``dual_prior_p``) at the rollout start and then follows the
+        two-state chain of ``dual_prior.step_gate``. The stored action is the
+        EXECUTED one. Explore keys are derived with ``fold_in`` so the policy
+        sample keys are the same as without ``dual_prior`` (at p = 1 the
+        executed actions are bit-identical). ``None`` (default) keeps the
+        rollout byte-identical. Adds a 4th return value (see Returns).
+      dual_prior_p: traced f32 scalar, P(gate = 1) for this rollout; required
+        with ``dual_prior``.
 
     Returns:
       trajectory: dict with keys observation/action/reward/discount/next_observation,
@@ -227,6 +242,9 @@ def collect_rollout(
         the post-step, post-done-reset hidden after num_steps -- feed it
         back as ``policy_hidden`` together with ``init_state=final_state``
         to continue seamlessly.
+      dual_prior_stats: ONLY when ``dual_prior`` is given (4-tuple return):
+        ``{"gate_frac": mean gate over envs and steps}`` (f32 scalar), the
+        realized fraction of steps under motion-prior (policy) control.
     """
     pre_batched = bool(getattr(env, "pre_batched", False))
     extra_state_extras = tuple(extra_state_extras)
@@ -236,6 +254,18 @@ def collect_rollout(
         raise NotImplementedError(
             "behavior mixing with a recurrent policy is not supported (v1)"
         )
+    use_dual = dual_prior is not None
+    if use_dual and recurrent:
+        raise NotImplementedError(
+            "dual-prior exploration with a recurrent policy is not supported"
+        )
+    if use_dual and frozen_policy_params is not None:
+        raise ValueError(
+            "dual_prior and behavior mixing (frozen_policy_params) both replace "
+            "the executed action; enabling both is ambiguous"
+        )
+    if use_dual and dual_prior_p is None:
+        raise ValueError("dual_prior requires dual_prior_p (the gate probability)")
     if policy_hidden is not None and not recurrent:
         # Fail loud: silently dropping a supplied hidden would mask a
         # wiring bug in the caller (hidden threaded but meta not).
@@ -257,8 +287,12 @@ def collect_rollout(
         policy_hidden = recurrent_meta.init_hidden(num_envs)
 
     def step_fn(carry, _):
+        gate = None
         if recurrent:
             state, rng, hidden = carry
+        elif use_dual:
+            state, rng, gate = carry
+            hidden = None
         else:
             state, rng = carry
             hidden = None
@@ -294,6 +328,28 @@ def collect_rollout(
                 frozen_mask.reshape((num_envs,) + (1,) * (raw_action.ndim - 1)),
                 frozen_action,
                 raw_action,
+            )
+        if use_dual:
+            # Derived with fold_in so `keys` (the policy's) are untouched.
+            k_gate = jax.random.fold_in(k_act, 1)
+            k_explore = jax.random.fold_in(k_act, 2)
+            gate = step_gate(gate, dual_prior_p, dual_prior.bout_tau, k_gate)
+            explore_keys = jax.random.split(k_explore, num_envs)
+
+            def _explore(_):
+                return jax.vmap(
+                    lambda o, k: dual_prior.explore_fn(policy_params, o, k)
+                )(norm_obs, explore_keys)
+
+            # Skip the behavior-prior forward pass once every env is under
+            # motion-prior control (always the case after the ramp at p_end=1).
+            explore_action = jax.lax.cond(
+                jnp.any(gate < 0.5), _explore, jnp.zeros_like, raw_action
+            )
+            raw_action = jnp.where(
+                (gate > 0.5).reshape((num_envs,) + (1,) * (raw_action.ndim - 1)),
+                raw_action,
+                explore_action,
             )
         bound_action = bind(raw_action)
         if pre_batched:
@@ -336,9 +392,19 @@ def collect_rollout(
             transition[key] = state.info[key]
         if recurrent:
             return (new_state, rng, new_hidden), transition
+        if use_dual:
+            # Popped from the trajectory before it is returned (not stored).
+            transition["_dual_prior_gate"] = gate
+            return (new_state, rng, gate), transition
         return (new_state, rng), transition
 
-    carry0 = (state, rng, policy_hidden) if recurrent else (state, rng)
+    if recurrent:
+        carry0 = (state, rng, policy_hidden)
+    elif use_dual:
+        gate0 = init_gate(jax.random.fold_in(rng, 0x6A7E), dual_prior_p, num_envs)
+        carry0 = (state, rng, gate0)
+    else:
+        carry0 = (state, rng)
     final_carry, traj = jax.lax.scan(
         step_fn,
         carry0,
@@ -348,9 +414,13 @@ def collect_rollout(
     final_state = final_carry[0]
     # scan stacks along axis 0 (time); flashbax wants [B, T, ...].
     traj = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), traj)
+    dual_gates = traj.pop("_dual_prior_gate") if use_dual else None
 
     # Update normalizer from all observed obs (shape [N, T, ...]).
     new_normalizer_params = _update_normalizer(normalizer_params, traj["observation"])
     if recurrent:
         return traj, final_state, new_normalizer_params, final_carry[2]
+    if use_dual:
+        stats = {"gate_frac": jnp.mean(dual_gates).astype(jnp.float32)}
+        return traj, final_state, new_normalizer_params, stats
     return traj, final_state, new_normalizer_params

@@ -51,6 +51,10 @@ from track_mjx.agent.dmpo.config import (
     realized_ratios,
     resolve_sgd_steps_per_rollout,
 )
+from track_mjx.agent.dmpo.dual_prior import (
+    DualPriorExplore,
+    make_behavior_prior_explore_fn,
+)
 from track_mjx.agent.dmpo.learner import init_training_state
 from track_mjx.agent.dmpo.networks_kl_anchor import make_dmpo_kl_anchor_networks
 from track_mjx.agent.dmpo.networks_kl_anchor_rnn import make_dmpo_kl_anchor_rnn_networks
@@ -66,6 +70,10 @@ from track_mjx.agent.dmpo.prior_utils import (
     make_prior_inference_fn,
 )
 from track_mjx.agent.dmpo.replay import make_replay
+from track_mjx.agent.dmpo.scamper_main_prior import (
+    PRIOR_FORMATS,
+    load_scamper_main_checkpoint,
+)
 from track_mjx.agent.dmpo.schedules import env_steps_estimate, reward_anneal_lambda
 from track_mjx.agent.dmpo.train import (
     _filter_dmpo_kwargs,
@@ -352,6 +360,7 @@ _GRAFT_CONFIG_KEYS = (
     ("train_config", "vmax", 150.0),
     ("transfer", "prior_checkpoint_path", None),
     ("transfer", "prior_checkpoint_step", None),
+    ("transfer", "prior_format", "mlp_prior"),
 )
 
 # `transfer.prior_checkpoint_path` is compared by PRIOR IDENTITY, not by path:
@@ -843,6 +852,11 @@ class _FrozenPrior(NamedTuple):
     latent_size: int
     prior_layer_sizes: tuple
     decoder_layer_sizes: tuple
+    # SCAMPER-main checkpoints only (transfer.prior_format: scamper_main): the
+    # behavior prior, kept for scheduled exploration (dual_prior). The motion
+    # prior is the one in prior_params.
+    behavior_prior_params: Any = None
+    behavior_prior_layer_sizes: tuple = ()
 
 
 class _EnvBuild(NamedTuple):
@@ -1199,18 +1213,48 @@ def _load_frozen_prior(hydra_cfg, from_scratch: bool) -> _FrozenPrior:
         prior_fn = decoder_logits_fn = None
         latent_size = 0
         prior_layer_sizes = decoder_layer_sizes = ()
+        behavior_prior_params = None
+        behavior_prior_layer_sizes = ()
         log.info("From-scratch arm: skipping prior checkpoint load entirely.")
     else:
         prior_ckpt_path = str(hydra_cfg.transfer.prior_checkpoint_path)
         prior_ckpt_step = hydra_cfg.transfer.get("prior_checkpoint_step", None)
-        log.info("Loading prior checkpoint from: %s", prior_ckpt_path)
-        (
-            _enc_params,
-            prior_params,
-            decoder_params,
-            normalizer_params,
-            prior_cfg,
-        ) = load_prior_checkpoint(prior_ckpt_path, prior_ckpt_step)
+        prior_format = str(hydra_cfg.transfer.get("prior_format", "mlp_prior"))
+        if prior_format not in PRIOR_FORMATS:
+            raise ValueError(
+                f"transfer.prior_format={prior_format!r}; expected one of {PRIOR_FORMATS}"
+            )
+        log.info(
+            "Loading prior checkpoint (%s) from: %s", prior_format, prior_ckpt_path
+        )
+        if prior_format == "scamper_main":
+            # SCAMPER-main stage 3: the MOTION prior goes in the prior slot
+            # (residual control); the behavior prior is kept for exploration.
+            sm = load_scamper_main_checkpoint(prior_ckpt_path, prior_ckpt_step)
+            prior_params = sm.motion_prior_params
+            decoder_params = sm.decoder_params
+            normalizer_params = sm.normalizer_params
+            prior_cfg = sm.config
+            behavior_prior_params = sm.behavior_prior_params
+            behavior_prior_layer_sizes = tuple(
+                prior_cfg["network_config"]["rgm_layer_sizes"]
+            )
+            log.info(
+                "SCAMPER-main checkpoint step %d: motion prior %s, behavior prior %s",
+                sm.step,
+                tuple(prior_cfg["network_config"]["prior_layer_sizes"]),
+                behavior_prior_layer_sizes,
+            )
+        else:
+            (
+                _enc_params,
+                prior_params,
+                decoder_params,
+                normalizer_params,
+                prior_cfg,
+            ) = load_prior_checkpoint(prior_ckpt_path, prior_ckpt_step)
+            behavior_prior_params = None
+            behavior_prior_layer_sizes = ()
         latent_size = int(prior_cfg["network_config"]["intention_size"])
         prior_layer_sizes = tuple(
             prior_cfg["network_config"].get("prior_layer_sizes", [1024, 1024])
@@ -1231,7 +1275,68 @@ def _load_frozen_prior(hydra_cfg, from_scratch: bool) -> _FrozenPrior:
         latent_size=latent_size,
         prior_layer_sizes=prior_layer_sizes,
         decoder_layer_sizes=decoder_layer_sizes,
+        behavior_prior_params=behavior_prior_params,
+        behavior_prior_layer_sizes=behavior_prior_layer_sizes,
     )
+
+
+def _make_dual_prior(hydra_cfg, setup, prior: _FrozenPrior, action_size: int):
+    """The scheduled behavior-prior exploration of ``dual_prior:``, or None when off.
+
+    Config (all under the top-level ``dual_prior`` key; fractions are of
+    ``train_config.num_timesteps``)::
+
+        dual_prior:
+          enabled: true
+          p_start: 0.0        # P(motion-prior control) during warmup
+          p_end: 1.0          # ... after the ramp
+          warmup_frac: 0.05   # SCAMPER Table 10's working setting
+          ramp_frac: 0.25
+          ramp_shape: cosine
+          bout_tau: 25.0      # gate switching timescale, env steps
+          behavior_logvar: -2.25   # fixed latent noise (sigma 0.32); null = predicted
+    """
+    dp = hydra_cfg.get("dual_prior", None)
+    if dp is None or not bool(dp.get("enabled", False)):
+        return None
+    if prior.behavior_prior_params is None:
+        raise ValueError(
+            "dual_prior.enabled needs a behavior prior: set "
+            "transfer.prior_format: scamper_main (and not a from-scratch arm)"
+        )
+    if setup.recurrent or setup.slow_core:
+        raise NotImplementedError("dual_prior supports the feed-forward head only")
+    num_timesteps = float(hydra_cfg.train_config.num_timesteps)
+    logvar = dp.get("behavior_logvar", -2.25)
+    sched = DualPriorExplore(
+        explore_fn=make_behavior_prior_explore_fn(
+            behavior_prior_params=prior.behavior_prior_params,
+            behavior_prior_layer_sizes=prior.behavior_prior_layer_sizes,
+            decoder_layer_sizes=prior.decoder_layer_sizes,
+            latent_size=prior.latent_size,
+            action_size=action_size,
+            behavior_logvar=None if logvar is None else float(logvar),
+        ),
+        p_start=float(dp.get("p_start", 0.0)),
+        p_end=float(dp.get("p_end", 1.0)),
+        warmup_env_steps=float(dp.get("warmup_frac", 0.05)) * num_timesteps,
+        ramp_env_steps=float(dp.get("ramp_frac", 0.25)) * num_timesteps,
+        ramp_shape=str(dp.get("ramp_shape", "cosine")),
+        bout_tau=float(dp.get("bout_tau", 25.0)),
+    ).validate()
+    # Startup validation marker (the training README greps for it).
+    log.info(
+        "DUAL PRIOR exploration ACTIVE: p %.2f -> %.2f, warmup %.3g env steps, "
+        "ramp %.3g env steps (%s), bout_tau %.1f, behavior_logvar %s",
+        sched.p_start,
+        sched.p_end,
+        sched.warmup_env_steps,
+        sched.ramp_env_steps,
+        sched.ramp_shape,
+        sched.bout_tau,
+        logvar,
+    )
+    return sched
 
 
 def _make_env(hydra_cfg, prior: _FrozenPrior, from_scratch: bool) -> _EnvBuild:
@@ -1852,6 +1957,7 @@ def main(hydra_cfg: DictConfig):
 
     # --- 3. Build B-aggressive networks (warm-started) ---
     nets = _make_networks(hydra_cfg, setup, prior, built)
+    dual_prior = _make_dual_prior(hydra_cfg, setup, prior, action_size)
 
     # --- 4. Asymmetric optimizers ---
     opt_kwargs = {
@@ -2343,6 +2449,7 @@ def main(hydra_cfg: DictConfig):
         extra_state_extras=anchor_extras + priv_extras,
         start_env_steps=start_env_steps,
         frozen_behavior_params=frozen_behavior_params,
+        dual_prior=dual_prior,
     )
 
     ckpt_mgr.wait_until_finished()

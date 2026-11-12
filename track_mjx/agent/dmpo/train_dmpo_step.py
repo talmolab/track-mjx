@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 import jax
 
 from track_mjx.agent.dmpo.config import validate_alignment
+from track_mjx.agent.dmpo.dual_prior import gate_prob
 from track_mjx.agent.dmpo.rollout import collect_rollout
 from track_mjx.agent.dmpo.schedules import (
     behavior_mix_frac,
@@ -42,6 +43,7 @@ def make_fused_train_step(
     K: int,
     extra_state_extras: tuple = (),
     frozen_behavior_params: Any = None,
+    dual_prior: Any = None,
 ) -> Callable[[Any, Any, Any, jax.Array], tuple[Any, Any, Any, dict]]:
     """Build a single jitted ``(state, env_state, rb_state, rng) -> ...`` step.
 
@@ -61,6 +63,12 @@ def make_fused_train_step(
         fraction and the reward-anneal lambda are DERIVED inside the step
         from ``state.steps`` (see schedules.py), so they advance per rollout
         without host threading.
+      dual_prior: optional ``dual_prior.DualPriorExplore`` (feed-forward
+        only): scheduled behavior-prior exploration. P(gate = 1) is derived
+        inside the step from ``state.steps`` like the other schedules; the
+        step surfaces ``schedule/dual_prior_p`` and
+        ``schedule/dual_prior_gate_frac``. ``None`` (default) keeps the step
+        byte-identical. Closed over, like ``frozen_behavior_params``.
 
     Returns:
       Jitted callable. Inputs ``env_state`` and ``rb_state`` are donated
@@ -110,6 +118,19 @@ def make_fused_train_step(
         )
 
     recurrent_meta = getattr(nets, "recurrent_meta", None)
+    use_dual = dual_prior is not None
+    if use_dual:
+        if recurrent_meta is not None:
+            raise NotImplementedError(
+                "dual-prior exploration is implemented for the feed-forward "
+                "policy head only"
+            )
+        if use_behavior_mix:
+            raise ValueError(
+                "dual_prior and behavior mixing both replace the executed "
+                "action; enable at most one"
+            )
+        dual_prior.validate()
     if recurrent_meta is not None:
         # Fail-loud cross-check: recurrent nets dispatch the
         # rollout here but the LEARNER dispatches on cfg.rnn_bptt_length, so
@@ -198,7 +219,8 @@ def make_fused_train_step(
         t_env = env_steps_estimate(state.steps, cfg, K)
         mix_frac = behavior_mix_frac(t_env, cfg) if use_behavior_mix else None
         remix_lambda = reward_anneal_lambda(t_env, cfg) if use_reward_remix else None
-        traj, env_state, new_normalizer_params = collect_rollout(
+        dual_p = gate_prob(t_env, dual_prior) if use_dual else None
+        rollout_out = collect_rollout(
             env,
             policy_apply,
             state.policy_params,
@@ -217,7 +239,13 @@ def make_fused_train_step(
             store_next_observation=bool(getattr(cfg, "store_next_observation", True)),
             vision_uint8=bool(getattr(cfg, "vision_uint8_storage", False)),
             store_truncation=bool(cfg.bootstrap_on_truncation),
+            dual_prior=dual_prior,
+            dual_prior_p=dual_p,
         )
+        if use_dual:
+            traj, env_state, new_normalizer_params, dual_stats = rollout_out
+        else:
+            traj, env_state, new_normalizer_params = rollout_out
         state = state._replace(normalizer_params=new_normalizer_params)
         rb_state = rb.add(rb_state, traj)
         # Gate SGD on rb.can_sample. v4's loop did
@@ -237,7 +265,7 @@ def make_fused_train_step(
         # Metrics carry the would-be values regardless; eval-time logging
         # uses the most recent chunk's mean which is post-warmup anyway.
         metrics = sgd_metrics
-        if use_behavior_mix or use_reward_remix:
+        if use_behavior_mix or use_reward_remix or use_dual:
             # Surface the live schedule values. Metrics leaving the fused step
             # are SCALARS (scan_k already mean-reduces over K; the chunk then
             # means over iters), so these must be scalars too -- a [K]-shaped
@@ -248,6 +276,9 @@ def make_fused_train_step(
                 metrics["schedule/behavior_mix_frac"] = mix_frac
             if use_reward_remix:
                 metrics["schedule/reward_anneal_lambda"] = remix_lambda
+            if use_dual:
+                metrics["schedule/dual_prior_p"] = dual_p
+                metrics["schedule/dual_prior_gate_frac"] = dual_stats["gate_frac"]
         return new_state, env_state, rb_state, metrics
 
     return _step

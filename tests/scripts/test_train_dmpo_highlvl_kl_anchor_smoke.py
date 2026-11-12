@@ -1,7 +1,8 @@
 """One-chunk GPU smokes of ``scripts/train_dmpo_highlvl_kl_anchor.py``.
 
 One arm per head the entry supports, each run through a replay warm-up and one
-training chunk on 64 envs:
+training chunk on 64 envs. The chunk ends in an eval, which must log its
+metrics and write its video without a failure:
 
 * the feed-forward head on the maze task;
 * the GRU head on the run-gap task, whose startup probe must report the frozen
@@ -78,6 +79,7 @@ def test_kl_anchor_smoke(arm, tmp_path):
         config_name,
         [
             *_smoke.one_chunk_overrides("train_config", train_cfg),
+            *_smoke.forced_eval_overrides("train_config", train_cfg),
             f"++checkpoint_dir={ckpt_dir}",
             *EXTRA_OVERRIDES.get(arm, ()),
         ],
@@ -88,6 +90,8 @@ def test_kl_anchor_smoke(arm, tmp_path):
         assert marker in run.log, f"{marker!r} not in the log"
     _smoke.assert_finite_chunk_losses(run.log)
     _smoke.assert_checkpoint_written(ckpt_dir, run.log)
+    _smoke.assert_eval_ran(run.log)
+    assert list(ckpt_dir.glob("eval_*.mp4")), f"no eval video in {ckpt_dir}"
     if min_r_anchor is not None:
         r_anchor = [float(v) for v in re.findall(r"r_anchor=([0-9.]+)", run.log)]
         assert r_anchor, "no r_anchor value in the log"

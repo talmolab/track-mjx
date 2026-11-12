@@ -5,6 +5,8 @@ A smoke launches an entry in a subprocess, from the repository root, with
 imported (not an editable install of another). The run is sized to finish a
 replay warm-up and exactly one training chunk, writes its checkpoints under a
 pytest temp directory and runs with Weights & Biases disabled.
+``forced_eval_overrides`` makes that chunk end in an eval, which
+``assert_eval_ran`` checks in the log.
 
 The smokes need a CUDA device, so they refuse to run unless the caller opts in
 by exporting ``JAX_PLATFORMS`` with a GPU platform. ``tests/conftest.py``
@@ -38,6 +40,8 @@ CKPT_ROOT_VAR = "DMPO_CKPT_ROOT"
 # Smoke sizing. Both are overrides of the arm's own values.
 NUM_ENVS = 64
 ITERS_PER_CHUNK = 2
+# Episode length of a forced eval: short, so its rollout and video are cheap.
+EVAL_EPISODE_LENGTH = 50
 
 # Wall-clock ceiling for one entry: two XLA compiles of the fused step on top of
 # an env build with a warp backend dominate, minutes rather than seconds.
@@ -134,6 +138,31 @@ def one_chunk_overrides(prefix: str, train_cfg: dict) -> list[str]:
         "num_timesteps": num_timesteps,
     }
     return [f"++{prefix}.{key}={value}" for key, value in values.items()]
+
+
+def forced_eval_overrides(
+    prefix: str, train_cfg: dict, eval_render_prefix: str = "eval_render_config"
+) -> list[str]:
+    """Hydra overrides that make the smoke's one chunk end in an eval.
+
+    The training loop evaluates after a chunk once ``eval_every_steps`` env
+    steps have passed since the last eval (step 0 for a fresh run). One chunk's
+    worth of steps is reached after the first chunk, the only one a smoke runs.
+    The eval episode is shortened to ``EVAL_EPISODE_LENGTH``.
+
+    Args:
+        prefix: Dotted path of the train config in the composed config.
+        train_cfg: The arm's own ``train_config`` (needs ``unroll_length``).
+        eval_render_prefix: Dotted path of the entry's eval settings.
+
+    Returns:
+        ``++`` overrides for the eval cadence and the eval episode length.
+    """
+    chunk_steps = NUM_ENVS * int(train_cfg["unroll_length"]) * ITERS_PER_CHUNK
+    return [
+        f"++{prefix}.eval_every_steps={chunk_steps}",
+        f"++{eval_render_prefix}.episode_length={EVAL_EPISODE_LENGTH}",
+    ]
 
 
 def saved_steps(ckpt_root: Path) -> list[int]:
@@ -280,3 +309,16 @@ def assert_finite_chunk_losses(log: str) -> None:
         assert math.isfinite(float(policy_loss)) and math.isfinite(
             float(critic_loss)
         ), f"non-finite loss at env_steps={env_steps}: {policy_loss} {critic_loss}"
+
+
+_EVAL_LINE = re.compile(r"eval env_steps=\d+ ")
+
+# Log text of an eval that failed, or whose video or spout statistics did.
+EVAL_FAILURE_MARKERS = ("Eval render failed", "eval/failed", "SPOUT_EVAL failed")
+
+
+def assert_eval_ran(log: str) -> None:
+    """The run logged an eval, and no part of an eval failed."""
+    assert _EVAL_LINE.search(log), f"no 'eval env_steps=' line in the log\n{_tail(log)}"
+    for marker in EVAL_FAILURE_MARKERS:
+        assert marker not in log, f"{marker!r} in the log\n{_tail(log)}"

@@ -105,7 +105,7 @@ def _cfg(L=4, n=3, k=10, priv=False, **overrides):
     return DMPOConfig(**kw)
 
 
-def _slow_nets(cfg, k, priv_dim=0):
+def _slow_nets(cfg, k, priv_dim=0, cell="gru"):
     nets = make_dmpo_kl_anchor_slow_networks(
         proprio_size=PROPRIO,
         task_obs_size=TASK_OBS,
@@ -118,6 +118,7 @@ def _slow_nets(cfg, k, priv_dim=0):
         policy_head_layer_sizes=(8,),
         slow_hidden_size=SLOW_H,
         tick_stride=k,
+        rnn_cell=cell,
         rnn_store_dtype="float16",
         cnn_feature_size=4,
         cnn_channels=(2, 4, 8),
@@ -237,8 +238,10 @@ def _make_batch(
     if priv:
         # Nonzero everywhere (a zero input row has a zero kernel gradient).
         batch[KEY] = jax.random.normal(ks[5], (B, T, PRIV)) + 2.0
+    # Width of the packed slow_h leaf: H for a GRU, 2H ([c, h]) for an LSTM.
+    slow_w = nets.recurrent_meta.init_hidden()[0].shape[-1]
     h_init = (
-        slow0 * jax.random.normal(ks[6], (B, SLOW_H)),
+        slow0 * jax.random.normal(ks[6], (B, slow_w)),
         jnp.asarray(phase0, jnp.float32)[:, None],
     )
     batch["policy_hidden"], mu = _hand_rollout(
@@ -571,9 +574,9 @@ def test_done_between_ticks_resets():
 # ---------------------------------------------------------------------------
 
 
-def _slow_core_grads(L, k=10, n=3):
+def _slow_core_grads(L, k=10, n=3, cell="gru"):
     cfg = _cfg(L=L, n=n, k=k)
-    nets = _slow_nets(cfg, k)
+    nets = _slow_nets(cfg, k, cell=cell)
     state = _state(nets, cfg)
     # Fresh episode at phase 0 everywhere: tick 0 consumes slow_h == 0.
     batch = _make_batch(nets, state, cfg, phase0=(0, 0, 0, 0), slow0=0.0)
@@ -611,8 +614,13 @@ def _slow_core_grads(L, k=10, n=3):
 
     g = jax.grad(loss_of)(state.policy_params)
     core = g["params"]["policy_head"]["slow_core"]
-    rec = jnp.concatenate([core[c]["kernel"].ravel() for c in ("hr", "hz", "hn")])
-    inp = jnp.concatenate([core[c]["kernel"].ravel() for c in ("ir", "iz", "in")])
+    # Recurrent (h->h) and input (x->gates) kernel names per flax cell.
+    rec_names, inp_names = {
+        "gru": (("hr", "hz", "hn"), ("ir", "iz", "in")),
+        "lstm": (("hi", "hf", "hg", "ho"), ("ii", "if", "ig", "io")),
+    }[cell]
+    rec = jnp.concatenate([core[c]["kernel"].ravel() for c in rec_names])
+    inp = jnp.concatenate([core[c]["kernel"].ravel() for c in inp_names])
     return np.asarray(rec), np.asarray(inp)
 
 
@@ -921,3 +929,104 @@ def test_guard_sequence_length():
         run_legacy(rnn_tick_stride=2)
     with pytest.raises(ValueError, match="rnn_tick_stride must be >= 1"):
         run(_cfg(L=L, n=n, k=0, sequence_length=L * k + n))
+
+
+# ---------------------------------------------------------------------------
+# 9. LSTM slow core (rnn_cell="lstm"): the hidden is still (slow_h, phase) with
+# phase_leaf == 1; slow_h is [.., 2H] = concat([c, h]). The tick path is
+# leaf-shape-agnostic, so the same learner code must run unchanged. The cell
+# type is a network choice, independent of the acme-alignment fields: the
+# smoke step runs under both the aligned defaults and the legacy preset.
+# ---------------------------------------------------------------------------
+
+LSTM_W = 2 * SLOW_H
+
+
+def test_lstm_bptt_grad_reaches_slow_core_kernel_across_ticks():
+    """As the GRU test: the LSTM's recurrent (h->h) kernels get gradient only
+    through TIME -- exactly zero at L=1 from a zero state, nonzero at L=4."""
+    rec4, inp4 = _slow_core_grads(L=4, cell="lstm")
+    assert np.max(np.abs(rec4)) > 0.0
+    assert np.max(np.abs(inp4)) > 0.0
+
+    rec1, inp1 = _slow_core_grads(L=1, cell="lstm")
+    np.testing.assert_array_equal(rec1, 0.0)
+    assert np.max(np.abs(inp1)) > 0.0
+
+
+@pytest.mark.parametrize("aligned", [True, False], ids=["aligned", "legacy"])
+def test_lstm_sgd_step_ticks_smoke_jit(aligned):
+    """One strided learner step (k=10, L=4, n=3, privileged critic, dones
+    mid-window) with an LSTM core on tiny CPU nets: runs, finite losses and
+    metrics, rnn/tick_fill_frac == 0, the LSTM core is trained."""
+    k, L, n = 10, 4, 3
+    cfg = _cfg(L=L, n=n, k=k, priv=True, **({} if aligned else LEGACY_ALIGNMENT))
+    nets = _slow_nets(cfg, k, priv_dim=PRIV, cell="lstm")
+    assert nets.recurrent_meta.cell_type == "lstm"
+    assert nets.recurrent_meta.phase_leaf == PHASE
+    state = _state(nets, cfg)
+    batch = _make_batch(
+        nets,
+        state,
+        cfg,
+        phase0=(0, 3, 7, 9),
+        done_at=((1, 12), (2, 30)),
+        priv=True,
+    )
+
+    # Stored hidden: packed 2H slow leaf + 1-wide phase leaf, f16 in replay.
+    slow, phase = batch["policy_hidden"]
+    T = cfg.sequence_length
+    assert slow.shape == (B, T, LSTM_W) and phase.shape == (B, T, 1)
+    assert slow.dtype == jnp.float16 and phase.dtype == jnp.float16
+    # The hand rollout resets with the learner's `_reset_hidden` (the
+    # rollout's own `_reset_hidden_where_done` is covered in
+    # test_networks_kl_anchor_slow::test_lstm_reset_zeroes_whole_packed_leaf).
+    # It zeroes the WHOLE 2H leaf (c and h) after a done: the step after
+    # done_at (1, 12) / (2, 30) enters with an all-zero state and phase == 0.
+    for b, t in ((1, 12), (2, 30)):
+        np.testing.assert_array_equal(np.asarray(slow[b, t + 1]), 0.0)
+        assert float(phase[b, t + 1, 0]) == 0.0
+        assert np.any(np.asarray(slow[b, t]) != 0.0)  # the PRE-done step is live
+
+    step = jax.jit(lambda st, b: sgd_step(st, b, nets, make_optimizers(cfg), cfg))
+    new_state, metrics = step(state, batch)
+    for key, v in metrics.items():
+        assert np.isfinite(np.asarray(v)).all(), f"non-finite metric {key}"
+    assert float(metrics["rnn/tick_fill_frac"]) == 0.0
+    assert float(metrics["rnn/hidden_staleness"]) < 1e-4
+    assert float(metrics["rnn/hidden_abs_mean"]) > 0.0
+    assert int(new_state.steps) == 1
+    assert np.isfinite(float(metrics["policy_loss"]))
+    assert np.isfinite(float(metrics["critic_loss"]))
+
+    # Same metric keys as the GRU tick path.
+    s = _setup_legacy()
+    _, legacy_m = _sgd_step_rnn(
+        s["state"], s["batch"], s["nets"], s["optimizers"], s["cfg"]
+    )
+    assert set(metrics) == set(legacy_m) | {"rnn/tick_fill_frac"}
+
+    core_delta = jax.tree.map(
+        lambda a, b: float(jnp.max(jnp.abs(a - b))),
+        new_state.policy_params["params"]["policy_head"]["slow_core"],
+        state.policy_params["params"]["policy_head"]["slow_core"],
+    )
+    assert set(core_delta) == {"ii", "if", "ig", "io", "hi", "hf", "hg", "ho"}
+    assert max(jax.tree.leaves(core_delta)) > 0.0
+    assert (_priv_rows_delta(new_state, state).max(axis=1) > 0).all()
+
+
+def test_lstm_rnn_metrics_cover_the_whole_packed_leaf():
+    """The rnn/ diagnostics skip only the phase leaf; for an LSTM they cover
+    the whole 2H [c, h] leaf (a mean over c AND h)."""
+    k = 10
+    cfg = _cfg(L=4, n=3, k=k)
+    nets = _slow_nets(cfg, k, cell="lstm")
+    state = _state(nets, cfg)
+    batch = _make_batch(nets, state, cfg, phase0=(0, 3, 7, 9))
+    _, m = _sgd_step_rnn(state, batch, nets, make_optimizers(cfg), cfg)
+    w = _tick_window(state, batch, cfg)
+    assert w["h_stored_tm"][0].shape[-1] == LSTM_W
+    slow_abs = float(jnp.mean(jnp.abs(w["h_stored_tm"][0])))
+    np.testing.assert_allclose(float(m["rnn/hidden_abs_mean"]), slow_abs, rtol=1e-2)

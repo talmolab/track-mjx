@@ -1,7 +1,7 @@
 """Slow-clock memory core variant of the B-aggressive kl-anchor DMPO networks.
 
-The FF kl-anchor policy head (`_PolicyHeadModule`) plus a GRU "slow core"
-that updates only every `tick_stride` env steps and holds its state in
+The FF kl-anchor policy head (`_PolicyHeadModule`) plus a GRU or LSTM "slow
+core" that updates only every `tick_stride` env steps and holds its state in
 between. The slow state is appended LAST to the FF head's MLP input, so the
 head is the FF head with `hidden_0/kernel` widened by `slow_hidden_size`
 trailing rows and one extra subtree, `slow_core`:
@@ -11,13 +11,26 @@ trailing rows and one extra subtree, `slow_core`:
     hidden state -- slow_h only reaches the output through those rows.
     Param names therefore mirror `_PolicyHeadModule` exactly: auto-named
     `BinocularVisionEncoder_0`, `hidden_i` / `LayerNorm_i`, zero-init
-    `residual`. The GRU is named explicitly ("slow_core") so it cannot shift
-    an auto-name.
+    `residual`. The cell is named explicitly ("slow_core") so it cannot
+    shift an auto-name.
   * Clock: the hidden is the tuple `(slow_h, phase)`, phase a [1] float
     leaf. The core ticks when phase < 0.5 and phase advances mod
     tick_stride. The rollout zeroes every hidden leaf on done, so an episode
     reset restarts the clock with a tick on the new episode's first step.
-    tick_stride=1 ticks every step (a plain per-step GRU feeding the FF MLP).
+    tick_stride=1 ticks every step (a plain per-step cell feeding the FF MLP).
+  * Cell types (`rnn_cell`): the hidden is a 2-leaf tuple for BOTH, so the
+    rollout, replay, strided learner and eval need no change.
+      - "gru":  `slow_h` is [.., H].
+      - "lstm": `slow_h` is [.., 2H] = concat([c, h], -1), cell state FIRST,
+        output second. Both halves are held on non-tick steps. The MLP reads
+        only the H-wide output h (appended LAST), never c, so the head width
+        and the FF graft (zero-filled `hidden_0` rows) are identical to the
+        GRU's. `rnn_store_dtype` (float16 by default) is applied to the
+        whole `slow_h` leaf. Unlike the GRU's h (in [-1, 1]), c is not
+        squashed (only the emitted h = o * tanh(c) is), so at f16 it is
+        range-limited (|c| <= 65504) and rounded to ~3 decimal digits in
+        replay. The live rollout carry stays f32; only the replay copy is
+        rounded.
 
 Prior and Decoder are the modules from networks_kl_anchor (warm-start splice
 unchanged) and the head stays under `policy_head`, so
@@ -58,15 +71,22 @@ from track_mjx.agent.dmpo.vision_encoders import BinocularVisionEncoder
 
 tfd = tfp.distributions
 
+# Packed width of the slow_h leaf per cell, in units of the core width H:
+# a GRU carries h; an LSTM carries concat([c, h]).
+_STATE_WIDTH_MULT = {"gru": 1, "lstm": 2}
+
 
 class SlowCoreMeta(NamedTuple):
     """Static description of the slow-core hidden state `(slow_h, phase)`.
 
     Drop-in for `RecurrentPolicyMeta` (rollout / eval / training loop only
     use `init_hidden` and `store_dtype`; `cell_type` / `hidden_sizes` are
-    read for logging). `tick_stride` is the core's update period in env
-    steps; `phase_leaf` is the index of the phase leaf in the hidden tuple,
-    which the strided learner reads to find tick positions.
+    read for logging). `hidden_sizes[0]` is the core width H (the width of
+    the output the FF head reads); the stored `slow_h` leaf is
+    `state_size` wide: H for a GRU, 2H (`concat([c, h])`) for an LSTM.
+    `tick_stride` is the core's update period in env steps; `phase_leaf` is
+    the index of the phase leaf in the hidden tuple, which the strided
+    learner reads to find tick positions.
     """
 
     cell_type: str
@@ -75,22 +95,34 @@ class SlowCoreMeta(NamedTuple):
     tick_stride: int
     phase_leaf: int = 1
 
+    @property
+    def state_size(self) -> int:
+        """Width of the `slow_h` leaf: H (gru) or 2H (lstm, `[c, h]`)."""
+        return self.hidden_sizes[0] * _STATE_WIDTH_MULT[self.cell_type]
+
     def init_hidden(self, batch_size: int | None = None) -> tuple:
-        """Zero `(slow_h, phase)`: `([B, H], [B, 1])`, or `([H], [1])` unbatched."""
+        """Zero `(slow_h, phase)`: `([B, W], [B, 1])`, or `([W], [1])`
+        unbatched, with W = `state_size` (H for gru, 2H for lstm)."""
         lead = () if batch_size is None else (batch_size,)
         return (
-            jnp.zeros((*lead, self.hidden_sizes[0])),
+            jnp.zeros((*lead, self.state_size)),
             jnp.zeros((*lead, 1)),
         )
 
 
 class _SlowCorePolicyHeadModule(nn.Module):
-    """CNN + task_obs + proprio (+ held slow GRU state) -> residual.
+    """CNN + task_obs + proprio (+ held slow GRU/LSTM state) -> residual.
 
     Creation order fixes the param names: encoder (auto
-    `BinocularVisionEncoder_0`), GRU `slow_core`, `hidden_i` / `LayerNorm_i`,
+    `BinocularVisionEncoder_0`), cell `slow_core`, `hidden_i` / `LayerNorm_i`,
     zero-init `residual`. Shape-agnostic over leading dims (unbatched is the
     production path: the rollout and learner vmap over envs).
+
+    `cell_type="gru"`: `slow_h` is [.., H]. `cell_type="lstm"`: `slow_h` is
+    [.., 2H] = `concat([c, h], -1)`; the cell runs on the carry `(c, h)` and
+    BOTH halves are held on non-tick steps. In either case the MLP reads
+    `concat([x, h])` with the H-wide output h LAST (never c). `c` is not
+    squashed; the replay store dtype applies to the whole leaf.
     """
 
     layer_sizes: Sequence[int]
@@ -102,6 +134,7 @@ class _SlowCorePolicyHeadModule(nn.Module):
     cnn_channels: Sequence[int]
     mono_channels: int
     shared_weights: bool
+    cell_type: str = "gru"
 
     @nn.compact
     def __call__(self, vision, task_obs, proprio, hidden):
@@ -116,17 +149,36 @@ class _SlowCorePolicyHeadModule(nn.Module):
 
         # The core reads the tick frame only. It is evaluated every step and
         # selected by the tick mask (a cond would become a select under the
-        # per-env vmap anyway). kernel_init matches the repo's GRU heads
+        # per-env vmap anyway). kernel_init matches the repo's recurrent heads
         # (recurrent_ppo.get_rnn_cell), which cannot take an explicit name.
-        tick = phase[..., :1] < 0.5  # [..., 1]; broadcasts over H
-        g, _ = nn.GRUCell(
-            features=self.slow_hidden_size,
-            kernel_init=jax.nn.initializers.lecun_uniform(),
-            name="slow_core",
-        )(slow_h, x)
-        slow_h = jnp.where(tick, g, slow_h)
+        tick = phase[..., :1] < 0.5  # [..., 1]; broadcasts over the leaf width
+        H = self.slow_hidden_size
+        if self.cell_type == "gru":
+            g, _ = nn.GRUCell(
+                features=H,
+                kernel_init=jax.nn.initializers.lecun_uniform(),
+                name="slow_core",
+            )(slow_h, x)
+            slow_h = jnp.where(tick, g, slow_h)
+            out = slow_h
+        elif self.cell_type == "lstm":
+            # slow_h = concat([c, h]); one where() over the packed leaf holds
+            # BOTH c and h on non-tick steps.
+            carry = (slow_h[..., :H], slow_h[..., H:])
+            (new_c, new_h), _ = nn.LSTMCell(
+                features=H,
+                kernel_init=jax.nn.initializers.lecun_uniform(),
+                name="slow_core",
+            )(carry, x)
+            slow_h = jnp.where(tick, jnp.concatenate([new_c, new_h], axis=-1), slow_h)
+            out = slow_h[..., H:]  # the output h only -- never c
+        else:
+            raise ValueError(
+                f"unknown slow-core cell_type {self.cell_type!r}; "
+                "expected 'gru' or 'lstm'"
+            )
 
-        h = jnp.concatenate([x, slow_h], axis=-1)  # slow_h LAST -> graftable
+        h = jnp.concatenate([x, out], axis=-1)  # output LAST -> graftable
         for i, size in enumerate(self.layer_sizes):
             h = nn.Dense(size, name=f"hidden_{i}")(h)
             h = nn.LayerNorm(name=f"LayerNorm_{i}")(h)
@@ -164,6 +216,7 @@ class _BAggressiveSlowCorePolicyNet(nn.Module):
     shared_weights: bool
     residual_mode: str = "sigma_ball"
     residual_scale: float = 5.0
+    cell_type: str = "gru"
 
     def setup(self):
         self.prior = _PriorModule(
@@ -185,6 +238,7 @@ class _BAggressiveSlowCorePolicyNet(nn.Module):
             cnn_channels=tuple(self.cnn_channels),
             mono_channels=self.mono_channels,
             shared_weights=self.shared_weights,
+            cell_type=self.cell_type,
             name="policy_head",
         )
 
@@ -241,10 +295,14 @@ def make_dmpo_kl_anchor_slow_networks(
     Shares every kwarg of `make_dmpo_kl_anchor_rnn_networks` except the head
     block: `policy_head_layer_sizes` is the FF head's MLP (same meaning as in
     `make_dmpo_kl_anchor_networks`, so an FF checkpoint grafts in), plus
-    `slow_hidden_size` (GRU width H) and `tick_stride` (core update period
-    k in env steps). `rnn_cell` is "gru" only; `rnn_store_dtype` is the
-    replay dtype of the stored hidden, both leaves -- it must hold every
-    phase 0..k-1 exactly (float16: k <= 2049).
+    `slow_hidden_size` (core width H) and `tick_stride` (core update period
+    k in env steps). `rnn_cell` is "gru" or "lstm". The hidden is a 2-leaf
+    tuple `(slow_h, phase)` either way: `slow_h` is [H] for a GRU and
+    [2H] = `concat([c, h])` for an LSTM (the FF head reads only h; see the
+    module docstring). `rnn_store_dtype` is the replay dtype of the stored
+    hidden, both leaves -- it must hold every phase value 0..k-1 exactly
+    (float16: k <= 2049); for an LSTM it also stores the cell state c,
+    which float16 limits to |c| <= 65504 at ~3 digits.
 
     Like the recurrent factory, `policy.init(rng, obs, hidden)` takes a
     hidden (use `recurrent_meta.init_hidden()`), and the warm-start
@@ -255,10 +313,9 @@ def make_dmpo_kl_anchor_slow_networks(
     """
     del proprio_size, task_obs_size  # unused directly; consumed via obs dict.
 
-    if rnn_cell != "gru":
+    if rnn_cell not in _STATE_WIDTH_MULT:
         raise ValueError(
-            f"slow core cell {rnn_cell!r} is not supported; only 'gru' (the "
-            "(slow_h, phase) hidden has no room for LSTM (c, h) pairs)."
+            f"slow core cell {rnn_cell!r} is not supported; expected 'gru' or 'lstm'."
         )
     tick_stride = int(tick_stride)
     if tick_stride < 1:
@@ -288,6 +345,7 @@ def make_dmpo_kl_anchor_slow_networks(
         shared_weights=shared_weights,
         residual_mode=residual_mode,
         residual_scale=residual_scale,
+        cell_type=rnn_cell,
     )
 
     critic = _ValueVisionCriticNet(

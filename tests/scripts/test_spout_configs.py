@@ -85,7 +85,7 @@ def test_smoke_t_config():
     # hangs off the prior root.
     assert smoke["checkpoint_dir"] == f"{CKPT_ROOT}/_smoke_t_ff_c3"
     assert smoke["transfer"]["graft_ff_checkpoint"] == (
-        f"{CKPT_ROOT}/maze_gen1_prior_mlp/DMPONetwork_482816000"
+        f"{CKPT_ROOT}/unified_maze_gen1_prior_mlp/DMPONetwork_482816000"
     )
     assert smoke["transfer"]["prior_checkpoint_path"] == (
         f"{PRIOR_ROOT}/260827_153154_576196"

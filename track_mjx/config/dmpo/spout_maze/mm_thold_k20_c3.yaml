@@ -119,7 +119,7 @@ transfer:
   prior_checkpoint_step: 24
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
-  graft_ff_checkpoint: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/maze_gen1_prior_mlp/DMPONetwork_482816000
+  graft_ff_checkpoint: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/unified_maze_gen1_prior_mlp/DMPONetwork_482816000
 
 kl_anchor:
   alpha_anchor: 0.0

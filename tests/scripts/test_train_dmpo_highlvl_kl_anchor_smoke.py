@@ -59,12 +59,8 @@ ARMS = {
     ),
 }
 
-# Extra overrides per smoke. The spout arm's graft source was saved before the
-# alignment fields existed, so the entry refuses it under the aligned defaults
-# unless the mismatch is allowed explicitly.
-EXTRA_OVERRIDES = {
-    "mm_l0a_k10_c3": ("++transfer.graft_allow_algorithm_mismatch=true",),
-}
+# Extra overrides per smoke.
+EXTRA_OVERRIDES: dict[str, tuple[str, ...]] = {}
 
 
 @pytest.mark.parametrize("arm", list(ARMS))

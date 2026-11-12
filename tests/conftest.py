@@ -33,5 +33,7 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 # EGL-less runner regardless of MUJOCO_GL's value; only *creating* a
 # GLContext/Renderer would fail. The ~7 test files that need a real (or
 # best-effort) render backend already do their own
-# `os.environ.setdefault("MUJOCO_GL", "egl")` at module level, and CI does
-# not set MUJOCO_GL at all (the runner has no GPU) — see .github/workflows/ci.yml.
+# `os.environ.setdefault("MUJOCO_GL", "egl")` at module level. CI sets
+# MUJOCO_GL=disable for the test job (see .github/workflows/ci.yml): with
+# MUJOCO_GL=egl, importing the vnl-playground rodent tasks also loads
+# dm_control's EGL renderer, which does raise when libEGL is missing.

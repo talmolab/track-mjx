@@ -33,6 +33,7 @@ from track_mjx.agent.recurrent_ppo import (
     ppo as recurrent_ppo,
 )
 from track_mjx.config import utils
+from track_mjx.imitation import get_imitation_episode_length
 
 
 def _setup_environment() -> None:
@@ -161,13 +162,8 @@ def main(cfg: DictConfig) -> None:
     logging.info(f"Environment config: {cfg.env_config}")
     logging.info(f"Train environment: {env.unwrapped}")
 
-    # Episode length is equal to (clip length - random init range - traj length) * steps per cur frame.
-    steps_per_frame = (1 / cfg.env_config.mocap_hz) / (cfg.env_config.ctrl_dt)
-    episode_length = (
-        cfg.env_config.clip_length
-        - cfg.env_config.start_frame_range[-1]
-        - cfg.env_config.reference_length
-    ) * steps_per_frame
+    # Dense tasks end at VNL's lookahead boundary; sparse tasks allow repeated matches.
+    episode_length = get_imitation_episode_length(env)
     logging.info(f"episode_length {episode_length}")
 
     logging.info("Using PPO Pipeline")
@@ -279,13 +275,10 @@ def main(cfg: DictConfig) -> None:
 
     train_fn = functools.partial(ppo_module.train, **train_kwargs)
 
-    # Set the render env start frame to always be 0
-    rollout_cfg = env_cfg_ml.copy_and_resolve_references()
-    rollout_cfg.start_frame_range = [0, 0]
     rollout_env = rodent_wrappers.TrackMjxObsWrapper(
         registry.load(
             env_name,
-            config=rollout_cfg,
+            config=env_cfg_ml,
             clips=reference_clips,
             flatten_obs=False,
             num_worlds=1,

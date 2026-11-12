@@ -623,9 +623,7 @@ class _RolloutEnv:
     """Minimal stand-in for the eval rollout environment."""
 
     _config = _RolloutEnvConfig()
-
-    def _clip_length(self):
-        return 4
+    num_control_steps_per_clip = 4
 
 
 def test_rollout_logging_fn_calls_cumulative_reward_helper(monkeypatch, logged):
@@ -642,7 +640,8 @@ def test_rollout_logging_fn_calls_cumulative_reward_helper(monkeypatch, logged):
         lambda env, current_step, rollout: calls.append((env, current_step, rollout)),
     )
 
-    def jit_reset(rng):
+    def jit_reset(rng, start_frame=None):
+        assert start_frame == 0
         return _FakeState(reward=0.0, metrics={"rewards/upright": 0.0}, obs={})
 
     def jit_step(state, ctrl):

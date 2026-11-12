@@ -7,7 +7,7 @@ build functions, restores each checkpoint's policy parameters, observation
 normalizer and step counter, and runs the entry's eval function
 (``_run_entry_eval``) on them. Every evaluated checkpoint becomes one JSON line
 holding the keys the in-run eval logs to wandb (``eval/<key>``,
-``spout/<key>``, ``eval/vision_sensitivity``) plus ``env_steps``,
+``spout/<key>``, ``maze/<key>``, ``eval/vision_sensitivity``) plus ``env_steps``,
 ``eval_seed`` and the eval settings.
 
 Nothing is written next to the checkpoints, no wandb run is started and no
@@ -326,6 +326,8 @@ def eval_record(ev: Any, step: int, seed: int, extra: dict) -> dict:
         record.update({f"eval/{k}": v for k, v in ev.metrics.items()})
     if ev.spout is not None:
         record.update({f"spout/{k}": v for k, v in ev.spout.items()})
+    if ev.maze is not None:
+        record.update({f"maze/{k}": v for k, v in ev.maze.items()})
     if ev.vision_sensitivity is not None:
         record["eval/vision_sensitivity"] = ev.vision_sensitivity
     return record

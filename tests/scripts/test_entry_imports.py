@@ -1,8 +1,9 @@
 """The DMPO entry scripts load cleanly, and their CPU-checkable helpers behave.
 
 Loading an entry (see ``tests.scripts._entries.load_entry``) must not import the spout-maze
-eval helpers: they are needed only when the built env is a
-``RodentSpoutMazeVision``, and ``main()`` imports them in that case alone.
+or full-maze eval helpers: they are needed only when the built env is a
+``RodentSpoutMazeVision`` or a full ``MazeForageVision``, and the entry imports
+them in that case alone.
 """
 
 import ast
@@ -14,14 +15,17 @@ from omegaconf import OmegaConf
 from tests.scripts._entries import ENTRIES, SCRIPTS_DIR, load_entry
 
 SPOUT_EVAL = "vnl_playground.tasks.rodent.spout_eval"
+MAZE_EVAL = "vnl_playground.tasks.rodent.maze_eval"
 
 
 @pytest.mark.parametrize("entry", sorted(ENTRIES))
 def test_entries_import(entry, monkeypatch):
     monkeypatch.delitem(sys.modules, SPOUT_EVAL, raising=False)
+    monkeypatch.delitem(sys.modules, MAZE_EVAL, raising=False)
     namespace = load_entry(entry, monkeypatch)
     assert callable(namespace["main"])
     assert SPOUT_EVAL not in sys.modules
+    assert MAZE_EVAL not in sys.modules
 
 
 @pytest.mark.parametrize("entry", sorted(ENTRIES))
@@ -68,11 +72,13 @@ class _StubWrapper:
 
 def test_spout_eval_is_not_imported_for_other_envs(kl_anchor_entry, monkeypatch):
     monkeypatch.delitem(sys.modules, SPOUT_EVAL, raising=False)
+    monkeypatch.delitem(sys.modules, MAZE_EVAL, raising=False)
     stack = _StubWrapper(_StubWrapper(_StubEnv()))
     eval_env, spout_eval = kl_anchor_entry["_make_eval_env"](stack)
     assert eval_env is stack
     assert spout_eval is None
     assert SPOUT_EVAL not in sys.modules
+    assert MAZE_EVAL not in sys.modules
 
 
 def test_spout_maze_env_gets_the_metric_alias(kl_anchor_entry):

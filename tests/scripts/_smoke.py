@@ -313,8 +313,13 @@ def assert_finite_chunk_losses(log: str) -> None:
 
 _EVAL_LINE = re.compile(r"eval env_steps=\d+ ")
 
-# Log text of an eval that failed, or whose video or spout statistics did.
-EVAL_FAILURE_MARKERS = ("Eval render failed", "eval/failed", "SPOUT_EVAL failed")
+# Log text of an eval that failed, or whose video, spout or maze statistics did.
+EVAL_FAILURE_MARKERS = (
+    "Eval render failed",
+    "eval/failed",
+    "SPOUT_EVAL failed",
+    "MAZE_EVAL failed",
+)
 
 
 def assert_eval_ran(log: str) -> None:

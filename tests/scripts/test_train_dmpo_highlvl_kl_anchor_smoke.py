@@ -4,7 +4,8 @@ One arm per head the entry supports, each run through a replay warm-up and one
 training chunk on 64 envs. The chunk ends in an eval, which must log its
 metrics and write its video without a failure:
 
-* the feed-forward head on the maze task;
+* the feed-forward head on the maze task, whose eval also logs the full-maze
+  summary line;
 * the GRU head on the run-gap task, whose startup probe must report the frozen
   prior and decoder unchanged (``r_anchor`` near 1);
 * the slow-core head with a privileged critic on the spout-maze task, grafted
@@ -35,7 +36,7 @@ ARMS = {
     "maze_gen1_prior_mlp": (
         "maze/maze_gen1_prior_mlp",
         (PRIOR,),
-        ("replay warm-up complete", "chunk env_steps="),
+        ("replay warm-up complete", "chunk env_steps=", "MAZE_EVAL env_steps="),
         None,
     ),
     "arm_r2_rnn_k50": (

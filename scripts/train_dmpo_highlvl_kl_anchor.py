@@ -642,6 +642,22 @@ def _graft_invariance_probe(
 # generic eval metrics before logging. spout_eval is imported only for a
 # spout-maze env.
 _SPOUT_MAZE_MODULE = "vnl_playground.tasks.rodent.spout_maze"
+# ---- Full-maze eval (MAZE_EVAL) --------------------------------------------
+# vnl_playground.tasks.rodent.maze_eval summarizes each env's first eval
+# episode on the full maze (`MazeForageVision`, not its spout-maze subclass):
+# one `MAZE_EVAL env_steps=...` line per eval, for every full-maze arm. The
+# visited-cell count exists only with `env_config.maze_critic_priv`, as the env
+# metric `maze/visited_cells`; the eval env of such an arm mirrors it under
+# `MAZE_ALIAS + "visited_cells"` like the spout shim above. maze_eval is
+# imported only for a full-maze env.
+_MAZE_MODULE = "vnl_playground.tasks.rodent.maze_forage_vision"
+
+
+def _innermost_env(env):
+    """The env at the bottom of a wrapper stack (each wrapper has ``.env``)."""
+    while hasattr(env, "env"):
+        env = env.env
+    return env
 
 
 def _is_spout_maze_env(env) -> bool:
@@ -652,13 +668,90 @@ def _is_spout_maze_env(env) -> bool:
     (The entry's own ``from vnl_playground import tasks`` already imports the
     spout-maze env modules; only ``spout_eval`` is gated on this check.)
     """
-    raw_env = env
-    while hasattr(raw_env, "env"):
-        raw_env = raw_env.env
     spout_maze = sys.modules.get(_SPOUT_MAZE_MODULE)
     return spout_maze is not None and isinstance(
-        raw_env, spout_maze.RodentSpoutMazeVision
+        _innermost_env(env), spout_maze.RodentSpoutMazeVision
     )
+
+
+def _full_maze_env(env):
+    """The innermost env if it is the full maze, else None.
+
+    The full maze is a ``MazeForageVision`` that is not the spout-maze
+    subclass, which has its own eval summary. The class is looked up through
+    ``sys.modules``, as in ``_is_spout_maze_env``.
+    """
+    maze = sys.modules.get(_MAZE_MODULE)
+    raw_env = _innermost_env(env)
+    if maze is None or not isinstance(raw_env, maze.MazeForageVision):
+        return None
+    return None if _is_spout_maze_env(raw_env) else raw_env
+
+
+def _check_maze_critic_priv_horizon(raw_env, episode_length: int) -> None:
+    """A ``maze_critic_priv`` env must normalise its time entry by the real horizon.
+
+    The last entry of ``info["critic_priv"]`` is ``step_count /
+    env_config.episode_length`` as the env reads it, while the training
+    wrapper truncates at ``episode_length`` (``env_config.episode_length``,
+    else ``train_config.unroll_length``). An env config without the key keeps
+    the env's own default, and the critic would see a mis-scaled time in the
+    episode with no error. No-op for any env without the flag.
+
+    Args:
+        raw_env: The innermost env.
+        episode_length: The truncation horizon of the training wrapper.
+
+    Raises:
+        ValueError: If the two horizons differ.
+    """
+    if not getattr(raw_env, "_maze_critic_priv", False):
+        return
+    env_horizon = int(raw_env._config.episode_length)
+    if env_horizon != int(episode_length):
+        raise ValueError(
+            f"maze_critic_priv=True but the env's episode_length={env_horizon} "
+            "differs from the training wrapper's truncation horizon "
+            f"{int(episode_length)}: the critic's step_count / episode_length "
+            "entry would be mis-scaled. Set env_config.episode_length to the "
+            "horizon (it is the one the wrapper truncates at)."
+        )
+
+
+def _check_maze_critic_priv_dim(raw_env, critic_privileged_dim: int) -> None:
+    """The critic's privileged width must be the width the full maze writes.
+
+    A full-maze env writes ``info["critic_priv"]`` of ``env.critic_priv_dim``
+    entries when built with ``env_config.maze_critic_priv``, and nothing
+    otherwise, so ``network_config.critic_privileged_dim`` must be that width
+    or 0. Any other env (the spout maze writes its own vector) is not checked
+    here; the startup probe checks the shape it resets.
+
+    Args:
+        raw_env: The innermost env.
+        critic_privileged_dim: ``network_config.critic_privileged_dim``.
+
+    Raises:
+        ValueError: If the widths differ.
+    """
+    if _full_maze_env(raw_env) is None:
+        return
+    if getattr(raw_env, "_maze_critic_priv", False):
+        env_dim = int(raw_env.critic_priv_dim)
+        if int(critic_privileged_dim) != env_dim:
+            raise ValueError(
+                f"network_config.critic_privileged_dim={critic_privileged_dim} "
+                f"but the env writes info['critic_priv'] of width {env_dim} "
+                "(env_config.maze_critic_priv=true): set "
+                f"critic_privileged_dim: {env_dim}."
+            )
+    elif int(critic_privileged_dim) != 0:
+        raise ValueError(
+            f"network_config.critic_privileged_dim={critic_privileged_dim} but "
+            "the full-maze env writes no info['critic_priv'] "
+            "(env_config.maze_critic_priv is off): set maze_critic_priv: true "
+            "or critic_privileged_dim: 0."
+        )
 
 
 def _make_eval_env(base_env_wrapped):
@@ -670,11 +763,30 @@ def _make_eval_env(base_env_wrapped):
     Returns:
         ``(eval_env, spout_eval)``. For a ``RodentSpoutMazeVision`` env,
         ``eval_env`` mirrors ``spout/*`` metrics and ``spout_eval`` is the
-        ``vnl_playground.tasks.rodent.spout_eval`` module; for any other env
-        ``eval_env`` is ``base_env_wrapped`` itself and ``spout_eval`` is None.
+        ``vnl_playground.tasks.rodent.spout_eval`` module. For a full-maze env
+        built with ``maze_critic_priv``, ``eval_env`` mirrors
+        ``maze/visited_cells`` (``maze_eval.MazeEvalMetricAlias``). For any
+        other env ``eval_env`` is ``base_env_wrapped`` itself. ``spout_eval``
+        is None off the spout maze.
     """
     if not _is_spout_maze_env(base_env_wrapped):
-        return base_env_wrapped, None
+        maze_env = _full_maze_env(base_env_wrapped)
+        if maze_env is None:
+            return base_env_wrapped, None
+        if not getattr(maze_env, "_maze_critic_priv", False):
+            log.info(
+                "MAZE_EVAL active: one summary line per eval; no "
+                "maze/visited_cells (maze_critic_priv off): visited_ep1=nan"
+            )
+            return base_env_wrapped, None
+        from vnl_playground.tasks.rodent import maze_eval
+
+        log.info(
+            "MAZE_EVAL active: one summary line per eval; eval env mirrors "
+            "maze/visited_cells to %svisited_cells (the training env is untouched)",
+            maze_eval.MAZE_ALIAS,
+        )
+        return maze_eval.MazeEvalMetricAlias(base_env_wrapped, ("visited_cells",)), None
     from vnl_playground.tasks.rodent import spout_eval
     from vnl_playground.tasks.rodent.spout_maze import SPOUT_METRICS
 
@@ -716,6 +828,18 @@ def _build_env(
     env_args = {k: v for k, v in env_args.items() if k in valid_keys}
     base_env = tasks.load(env_name, flatten_obs=False, config_overrides=env_args)
     _validate_reset_requirements(hydra_cfg, base_env, env_name)
+    episode_length = int(
+        hydra_cfg.env_config.get(
+            "episode_length", hydra_cfg.train_config.get("unroll_length", 1000)
+        )
+    )
+    # The full maze's optional critic vector must match the critic's input
+    # width and the horizon the wrapper truncates at; both are no-ops off it.
+    _check_maze_critic_priv_horizon(_innermost_env(base_env), episode_length)
+    _check_maze_critic_priv_dim(
+        _innermost_env(base_env),
+        int(hydra_cfg.network_config.get("critic_privileged_dim", 0) or 0),
+    )
     raw_env = base_env.env if hasattr(base_env, "env") else base_env
     mj_model = getattr(raw_env, "mj_model", None)
     mjx_model = getattr(raw_env, "mjx_model", None)
@@ -751,11 +875,6 @@ def _build_env(
 
     from vnl_playground.tasks.rodent.vision_jax import BinocularVisionRenderWrapper
 
-    episode_length = int(
-        hydra_cfg.env_config.get(
-            "episode_length", hydra_cfg.train_config.get("unroll_length", 1000)
-        )
-    )
     action_repeat = int(hydra_cfg.env_config.get("action_repeat", 1))
     # Optional per-episode resets, read from the top-level `wrappers:` block.
     # With no such block this is the historical brax training stack with
@@ -1540,13 +1659,16 @@ class _EvalResult(NamedTuple):
 
     ``metrics`` holds the keys the eval logs as ``eval/<key>`` (None when the
     rollout came back empty), ``spout`` the ``spout/<key>`` summary (None off the
-    spout maze, or when that summary failed) and ``vision_sensitivity`` the
-    ``eval/vision_sensitivity`` of a recurrent head (None otherwise). The other
-    fields are what the eval video is rendered from.
+    spout maze, or when that summary failed), ``maze`` the ``maze/<key>``
+    summary (None off the full maze, or when that summary failed) and
+    ``vision_sensitivity`` the ``eval/vision_sensitivity`` of a recurrent head
+    (None otherwise). The other fields are what the eval video is rendered
+    from.
     """
 
     metrics: dict | None
     spout: dict | None
+    maze: dict | None
     vision_sensitivity: float | None
     rollout: list
     term_events: list
@@ -1575,8 +1697,12 @@ def _run_entry_eval(
     reports the same keys. Metrics go to stdout, and to wandb when a wandb run
     is active.
 
+    On the full maze (``_full_maze_env``) it also logs one ``MAZE_EVAL ...``
+    line, from ``vnl_playground.tasks.rodent.maze_eval``.
+
     Args:
-        hydra_cfg: The entry's hydra config (``eval_render_config`` is read).
+        hydra_cfg: The entry's hydra config (``eval_render_config`` is read;
+            ``env_config.action_repeat`` on the full maze).
         cfg: The resolved learner config (``_resolve_run_setup``).
         K: SGD updates per rollout, for the reward-anneal lambda.
         nets: The DMPO networks (``_make_networks``).
@@ -1588,7 +1714,7 @@ def _run_entry_eval(
         env_steps: The env step the eval is reported at.
         k_eval: PRNG key of the eval rollout.
     """
-    sp = rm = sens = None
+    sp = sm = rm = sens = None
 
     erc_raw = hydra_cfg.get("eval_render_config", {})
     erc = OmegaConf.to_container(erc_raw, resolve=True) if erc_raw else {}
@@ -1633,6 +1759,30 @@ def _run_entry_eval(
                 )
         except Exception as exc:  # logged loudly
             log.warning("SPOUT_EVAL failed: %s", exc, exc_info=True)
+    maze_env = _full_maze_env(eval_env)
+    maze_alias = None
+    if maze_env is not None:
+        # Own handler, for the same reason as SPOUT_EVAL above.
+        try:
+            from vnl_playground.tasks.rodent import maze_eval
+
+            maze_alias = maze_eval.MAZE_ALIAS
+            # Seconds per eval step: the env's control dt times the repeat.
+            step_dt = float(maze_env._config.ctrl_dt) * int(
+                hydra_cfg.get("env_config", {}).get("action_repeat", 1)
+            )
+            sm = maze_eval.maze_eval_summary(allenv, step_dt)
+            log.info("%s", maze_eval.maze_eval_log_line(env_steps, sm))
+            if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+                wandb.log(
+                    {f"maze/{k}": v for k, v in sm.items()}
+                    | {"env_steps": int(env_steps)},
+                    step=int(env_steps),
+                    commit=False,
+                )
+        except Exception as exc:  # logged loudly
+            sm = None
+            log.warning("MAZE_EVAL failed: %s", exc, exc_info=True)
     if rollout:
         rm = compute_rollout_metrics(rollout, remix_key, remix_lambda)
         # All-env estimator. `rm` starts as the legacy env-0 statistic,
@@ -1646,6 +1796,9 @@ def _run_entry_eval(
             # full prefix); SPOUT_EVAL reports them properly.
             alias = spout_eval.SPOUT_ALIAS
             rm = {k: v for k, v in rm.items() if alias not in k}
+        if maze_alias is not None:
+            # Same for the full maze's mirrored keys; MAZE_EVAL reports them.
+            rm = {k: v for k, v in rm.items() if maze_alias not in k}
         # Mirror eval metrics to stdout, so the run log alone answers
         # questions like "did it ever cross a gap?" without parsing
         # wandb's binary log.
@@ -1695,6 +1848,7 @@ def _run_entry_eval(
     return _EvalResult(
         metrics=rm,
         spout=sp,
+        maze=sm,
         vision_sensitivity=sens,
         rollout=rollout,
         term_events=term_events,
@@ -1958,9 +2112,15 @@ def main(hydra_cfg: DictConfig):
     for _k in anchor_extras:
         transition_template[_k] = jnp.zeros((action_size,), dtype=jnp.float32)
     # Critic-only privileged vector, stored from the PRE-step state like the
-    # anchor extras (absent when critic_privileged_dim == 0).
+    # anchor extras (absent when critic_privileged_dim == 0). Its dtype is the
+    # one the env writes: env_config.maze_critic_priv_dtype on the full maze
+    # (float32 unless set; the spout maze always writes float32). The startup
+    # probe below checks it against the env.
+    priv_dtype = jnp.dtype(
+        str(hydra_cfg.env_config.get("maze_critic_priv_dtype", "float32"))
+    )
     for _k in priv_extras:
-        transition_template[_k] = jnp.zeros((critic_privileged_dim,), dtype=jnp.float32)
+        transition_template[_k] = jnp.zeros((critic_privileged_dim,), dtype=priv_dtype)
     if bool(getattr(cfg, "store_next_observation", True)):
         transition_template["next_observation"] = obs_template
     else:
@@ -2202,7 +2362,7 @@ def main(hydra_cfg: DictConfig):
     # working warm-start should observe r_anchor very close to 1.0 (the policy's
     # mode action equals tanh(mu_imit_pretanh) up to numerics). If r_anchor drops,
     # the prior/decoder warm-start splice (or the normalizer seeding) regressed.
-    priv_probe_shape = None
+    priv_probe_shape = priv_probe_dtype = None
     if from_scratch:
         # st0.info has no `anchor_mu_imit` -- EndToEndWrapper does not populate
         # it. Skipping explicitly beats letting the probe raise into its own
@@ -2238,6 +2398,7 @@ def main(hydra_cfg: DictConfig):
             st0 = env.reset(keys)
             if priv_extras:
                 priv_probe_shape = tuple(st0.info[priv_extras[0]].shape)
+                priv_probe_dtype = jnp.dtype(st0.info[priv_extras[0]].dtype)
             norm_obs = _normalize_obs(st0.obs, state.normalizer_params)
             # Online policy distribution at the spawn obs.
             if recurrent:
@@ -2293,12 +2454,19 @@ def main(hydra_cfg: DictConfig):
                 f"expected (num_envs, critic_privileged_dim) = "
                 f"({cfg.num_envs}, {critic_privileged_dim})."
             )
+        elif priv_probe_dtype != transition_template[priv_extras[0]].dtype:
+            raise ValueError(
+                f"env info[{priv_extras[0]!r}] has dtype {priv_probe_dtype}, but "
+                f"the replay field is {transition_template[priv_extras[0]].dtype} "
+                "(env_config.maze_critic_priv_dtype)."
+            )
         else:
             log.info(
-                "critic_priv width verified: env info[%r] %s == "
+                "critic_priv width verified: env info[%r] %s %s == "
                 "critic_privileged_dim %d",
                 priv_extras[0],
                 priv_probe_shape,
+                priv_probe_dtype,
                 critic_privileged_dim,
             )
     # ----------------------------------------------------------------------------

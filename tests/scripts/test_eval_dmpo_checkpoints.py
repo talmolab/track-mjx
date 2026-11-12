@@ -169,6 +169,7 @@ def _fake_entry(cfg, nets, calls, recurrent=False):
                 "episode_rewards/treat_collected": np.float32(1.5),
             },
             spout=None,
+            maze=None,
             vision_sensitivity=None,
             erc={"episode_length": 7},
         )
@@ -600,6 +601,92 @@ def test_entry_eval_logs_the_keys_the_posthoc_records(
     }
     for key in metric_keys | {"spout/hit_rate", "eval/vision_sensitivity"}:
         assert record[key] == logged[key], key
+
+
+@pytest.fixture
+def maze_stub():
+    """A full-maze env that skips building its model, with ``ctrl_dt`` 0.01."""
+    maze = pytest.importorskip(
+        "vnl_playground.tasks.rodent.maze_forage_vision",
+        reason="needs the maze-forage env, which the pinned vnl-playground lacks",
+    )
+    pytest.importorskip(
+        "vnl_playground.tasks.rodent.maze_eval",
+        reason="needs the maze eval helpers, which the pinned vnl-playground lacks",
+    )
+
+    class _MazeStub(maze.MazeForageVision):
+        def __init__(self, flag):
+            self._maze_critic_priv = flag
+            self._config = SimpleNamespace(ctrl_dt=0.01)
+
+    return _MazeStub
+
+
+class _StubOnMaze(_StubEnv):
+    """The stub env over a full maze, emitting ``maze/visited_cells`` = steps."""
+
+    def __init__(self, maze):
+        super().__init__()
+        self.env = maze
+
+    def _with_visited(self, st):
+        return st.replace(metrics={**st.metrics, "maze/visited_cells": st.data["t"]})
+
+    def reset(self, keys):
+        return self._with_visited(super().reset(keys))
+
+    def step(self, st, action):
+        return self._with_visited(super().step(st, action))
+
+
+@pytest.mark.parametrize("critic_priv", [False, True])
+def test_full_maze_eval_logs_maze_eval_and_the_posthoc_records_it(
+    kl_anchor_entry, evaluator, monkeypatch, caplog, maze_stub, critic_priv
+):
+    """One MAZE_EVAL line per eval of the full maze, logged to wandb under
+    ``maze/`` and held in the post-hoc record; the visited-cell mirror of a
+    critic-vector arm is not an ``eval/`` key."""
+    stack = _StubOnMaze(maze_stub(critic_priv))
+    eval_env, spout_eval = kl_anchor_entry["_make_eval_env"](stack)
+    assert spout_eval is None
+    wandb = _FakeWandb()
+    _patch_entry(kl_anchor_entry, monkeypatch, wandb)
+    with caplog.at_level(logging.INFO):
+        ev = kl_anchor_entry["_run_entry_eval"](*_eval_args(env=eval_env))
+
+    # Episode 1 of env e is its first e + 2 steps, one treat per step.
+    sm = ev.maze
+    assert sm["envs"] == EVAL_ENVS
+    assert sm["treats_ep1"] == pytest.approx(3.5)
+    assert sm["len_ep1_s"] == pytest.approx(0.035)
+    # The stub carries no termination flags.
+    assert np.isnan(sm["fall_frac"]) and np.isnan(sm["timeout_frac"])
+    if critic_priv:
+        # maze/visited_cells (= steps) at the last step of episode 1.
+        assert sm["visited_ep1"] == pytest.approx(3.5)
+    else:
+        assert np.isnan(sm["visited_ep1"])
+    assert "MAZE_EVAL env_steps=1000 envs=4 treats_ep1=3.5 " in caplog.text
+    assert "MAZE_EVAL failed" not in caplog.text
+    assert not [k for k in ev.metrics if "_maze_eval" in k]
+
+    logged: dict = {}
+    for payload in wandb.logged:
+        logged.update(payload)
+    assert {k for k in logged if k.startswith("maze/")} == {f"maze/{k}" for k in sm}
+    assert not [k for k in logged if "_maze_eval" in k]
+    record = evaluator["eval_record"](ev, 1000, 0, {})
+    assert {k for k in record if k.startswith("maze/")} == {
+        k for k in logged if k.startswith("maze/")
+    }
+
+
+def test_maze_eval_is_skipped_off_the_full_maze(kl_anchor_entry, caplog):
+    with caplog.at_level(logging.INFO):
+        ev = kl_anchor_entry["_run_entry_eval"](*_eval_args())
+    assert ev.maze is None
+    assert "MAZE_EVAL" not in caplog.text
 
 
 def _in_run_eval(entry, tmp_path, mj_model="mj_model"):

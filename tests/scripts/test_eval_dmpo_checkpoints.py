@@ -184,7 +184,7 @@ def _fake_entry(cfg, nets, calls, recurrent=False):
         ),
         "_make_networks": lambda h, setup, prior, built: nets,
         "_env_spec": lambda built: ENV_SPEC,
-        "_make_eval_env": lambda base: (f"eval({base})", None),
+        "_make_eval_env": lambda base, hydra_cfg: (f"eval({base})", None),
         "_run_entry_eval": run_entry_eval,
     }
 
@@ -613,6 +613,35 @@ def test_entry_eval_runs_on_eval_render_num_envs(kl_anchor_entry):
     ev = kl_anchor_entry["_run_entry_eval"](*args)
     # Envs 0 and 1 have episodes of length 2 and 3: 3 + 2 complete in 6 steps.
     assert ev.metrics["batch/n_complete_episodes"] == 5.0
+
+
+@pytest.mark.parametrize("eval_num_envs", [None, 64, 32])
+def test_eval_batch_of_its_own_gets_its_own_vision_wrapper(
+    kl_anchor_entry, eval_num_envs
+):
+    """The vision wrapper renders the batch of its first reset (the training
+    one), so an eval on another batch must not reuse it."""
+    vision_jax = pytest.importorskip(
+        "vnl_playground.tasks.rodent.vision_jax",
+        reason="needs the vision wrapper, which the pinned vnl-playground lacks",
+    )
+    raw = SimpleNamespace(mj_model="mj_model", mjx_model="mjx_model")
+    inner = SimpleNamespace(env=raw)
+    stack = vision_jax.BinocularVisionRenderWrapper(
+        inner, mj_model="mj_model", mjx_model="mjx_model"
+    )
+    erc = {} if eval_num_envs is None else {"num_envs": eval_num_envs}
+    hydra_cfg = OmegaConf.create(
+        {"train_config": {"num_envs": 64}, "eval_render_config": erc, "env_config": {}}
+    )
+    eval_env, spout_eval = kl_anchor_entry["_make_eval_env"](stack, hydra_cfg)
+    assert spout_eval is None
+    if eval_num_envs in (None, 64):
+        assert eval_env is stack
+    else:
+        assert isinstance(eval_env, vision_jax.BinocularVisionRenderWrapper)
+        assert eval_env is not stack and eval_env.env is inner
+        assert eval_env.left_renderer is None and eval_env.right_renderer is None
 
 
 @pytest.fixture

@@ -447,7 +447,7 @@ def evaluate(
     template = init_training_state(
         jax.random.PRNGKey(0), nets, entry["_env_spec"](built), cfg
     )
-    eval_env, spout_eval = entry["_make_eval_env"](built.base_env_wrapped)
+    eval_env, spout_eval = entry["_make_eval_env"](built.base_env_wrapped, hydra_cfg)
     K = resolve_sgd_steps_per_rollout(cfg)
 
     records = []

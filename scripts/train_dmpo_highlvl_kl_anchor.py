@@ -754,11 +754,14 @@ def _check_maze_critic_priv_dim(raw_env, critic_privileged_dim: int) -> None:
         )
 
 
-def _make_eval_env(base_env_wrapped):
+def _make_eval_env(base_env_wrapped, hydra_cfg=None):
     """The env the eval rollout runs on, plus the spout eval module if it applies.
 
     Args:
         base_env_wrapped: The fully wrapped (training-stack) env.
+        hydra_cfg: The entry's hydra config. With it, an
+            ``eval_render_config.num_envs`` other than the training
+            ``num_envs`` gets its own vision wrapper (``_eval_render_env``).
 
     Returns:
         ``(eval_env, spout_eval)``. For a ``RodentSpoutMazeVision`` env,
@@ -766,9 +769,11 @@ def _make_eval_env(base_env_wrapped):
         ``vnl_playground.tasks.rodent.spout_eval`` module. For a full-maze env
         built with ``maze_critic_priv``, ``eval_env`` mirrors
         ``maze/visited_cells`` (``maze_eval.MazeEvalMetricAlias``). For any
-        other env ``eval_env`` is ``base_env_wrapped`` itself. ``spout_eval``
-        is None off the spout maze.
+        other env ``eval_env`` is the stack itself. ``spout_eval`` is None off
+        the spout maze.
     """
+    if hydra_cfg is not None:
+        base_env_wrapped = _eval_render_env(base_env_wrapped, hydra_cfg)
     if not _is_spout_maze_env(base_env_wrapped):
         maze_env = _full_maze_env(base_env_wrapped)
         if maze_env is None:
@@ -873,8 +878,6 @@ def _build_env(
             alpha_anchor=float(hydra_cfg.kl_anchor.alpha_anchor),
         )
 
-    from vnl_playground.tasks.rodent.vision_jax import BinocularVisionRenderWrapper
-
     action_repeat = int(hydra_cfg.env_config.get("action_repeat", 1))
     # Optional per-episode resets, read from the top-level `wrappers:` block.
     # With no such block this is the historical brax training stack with
@@ -885,8 +888,25 @@ def _build_env(
         episode_length=episode_length,
         action_repeat=action_repeat,
     )
-    base_env = BinocularVisionRenderWrapper(
-        base_env,
+    base_env = _vision_render_wrapper(base_env, hydra_cfg, mj_model, mjx_model)
+    env_adapter = _VnlPlaygroundEnvAdapter(base_env, pre_batched=True)
+    vision_shape = tuple(
+        getattr(
+            base_env, "vision_shape", getattr(base_env.env, "vision_shape", (32, 32, 2))
+        )
+    )
+    return env_adapter, base_env, mj_model, mjx_model, vision_shape
+
+
+def _vision_render_wrapper(env, hydra_cfg, mj_model, mjx_model):
+    """``BinocularVisionRenderWrapper`` around ``env``, set from ``env_config``.
+
+    The wrapper builds its renderers for the batch of its first reset.
+    """
+    from vnl_playground.tasks.rodent.vision_jax import BinocularVisionRenderWrapper
+
+    return BinocularVisionRenderWrapper(
+        env,
         mj_model=mj_model,
         mjx_model=mjx_model,
         width=int(hydra_cfg.env_config.get("vision_width", 32)),
@@ -912,13 +932,39 @@ def _build_env(
         vision_blur_tau_ms=float(hydra_cfg.env_config.get("vision_blur_tau_ms", 0.0)),
         ctrl_dt=float(hydra_cfg.env_config.get("ctrl_dt", 0.02)),
     )
-    env_adapter = _VnlPlaygroundEnvAdapter(base_env, pre_batched=True)
-    vision_shape = tuple(
-        getattr(
-            base_env, "vision_shape", getattr(base_env.env, "vision_shape", (32, 32, 2))
-        )
+
+
+def _eval_render_env(base_env_wrapped, hydra_cfg):
+    """The training stack, or one that renders the eval's own batch.
+
+    The vision wrapper's renderers are built for the batch of its first reset,
+    the training ``num_envs``. An ``eval_render_config.num_envs`` other than
+    that needs renderers of its own, so the eval then runs on a second vision
+    wrapper around the same inner stack.
+
+    Args:
+        base_env_wrapped: The training stack (a vision wrapper outermost).
+        hydra_cfg: The entry's hydra config.
+
+    Returns:
+        ``base_env_wrapped`` itself unless the two batches differ.
+    """
+    erc = hydra_cfg.get("eval_render_config", None) or {}
+    eval_num_envs = erc.get("num_envs", None)
+    train_num_envs = int(
+        hydra_cfg.get("train_config", {}).get("num_envs", DMPOConfig().num_envs)
     )
-    return env_adapter, base_env, mj_model, mjx_model, vision_shape
+    if eval_num_envs is None or int(eval_num_envs) == train_num_envs:
+        return base_env_wrapped
+    raw_env = _innermost_env(base_env_wrapped)
+    log.info(
+        "Eval batch: %d envs (training %d), rendered by its own vision wrapper",
+        int(eval_num_envs),
+        train_num_envs,
+    )
+    return _vision_render_wrapper(
+        base_env_wrapped.env, hydra_cfg, raw_env.mj_model, raw_env.mjx_model
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2556,7 +2602,7 @@ def main(hydra_cfg: DictConfig):
 
     # Spout-maze eval statistics (SPOUT_EVAL). Any other env: eval_env IS
     # base_env_wrapped, spout_eval is None and nothing below changes.
-    eval_env, spout_eval = _make_eval_env(base_env_wrapped)
+    eval_env, spout_eval = _make_eval_env(base_env_wrapped, hydra_cfg)
 
     def eval_cb(state, env_steps, k_eval):
         if not erc_enable:

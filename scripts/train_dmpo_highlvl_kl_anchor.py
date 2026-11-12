@@ -1637,6 +1637,137 @@ def _run_entry_eval(
     )
 
 
+def _report_eval_failure(env_steps: int, exc: Exception) -> None:
+    """Report a failed in-run eval at ERROR and as ``eval/failed=1`` in wandb.
+
+    Training goes on without that eval's metrics; the ERROR line and the wandb
+    key make the gap visible in the log and on the dashboard.
+    """
+    log.error(
+        "Eval failed at env_steps=%d (eval/failed=1); training continues: %s",
+        int(env_steps),
+        exc,
+        exc_info=exc,
+    )
+    if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+        try:
+            wandb.log(
+                {"eval/failed": 1, "env_steps": int(env_steps)},
+                step=int(env_steps),
+                commit=False,
+            )
+        except Exception as log_exc:  # the eval failure is already logged
+            log.error("Could not log eval/failed to wandb: %s", log_exc)
+
+
+def _eval_and_render(
+    hydra_cfg,
+    cfg: DMPOConfig,
+    K: int,
+    nets,
+    recurrent: bool,
+    eval_env,
+    spout_eval,
+    state,
+    env_steps: int,
+    k_eval: jax.Array,
+    *,
+    mj_model,
+    ckpt_dir: str,
+) -> _EvalResult | None:
+    """One in-run eval: its metrics (``_run_entry_eval``), then its video.
+
+    The training run's eval callback calls this at every eval. The two stages
+    fail separately and neither raises, so training goes on either way:
+
+    * a failed metric eval is logged at ERROR and as ``eval/failed=1``
+      (``_report_eval_failure``), and nothing is rendered;
+    * a failed render is a WARNING ("Eval render failed"); the metrics,
+      already logged by then, stand.
+
+    Args:
+        hydra_cfg, cfg, K, nets, recurrent, eval_env, spout_eval, state,
+        env_steps, k_eval: As for ``_run_entry_eval``.
+        mj_model: The MuJoCo model the video is rendered with; None renders
+            nothing.
+        ckpt_dir: Directory the video is written to, as ``eval_<env_steps>.mp4``.
+
+    Returns:
+        The eval result, or None when the metric eval failed.
+    """
+    try:
+        ev = _run_entry_eval(
+            hydra_cfg,
+            cfg,
+            K,
+            nets,
+            recurrent,
+            eval_env,
+            spout_eval,
+            state,
+            env_steps,
+            k_eval,
+        )
+    except Exception as exc:
+        _report_eval_failure(env_steps, exc)
+        return None
+    rollout, term_events, erc = ev.rollout, ev.term_events, ev.erc
+    remix_key, remix_lambda = ev.remix_key, ev.remix_lambda
+    if mj_model is None or not rollout:
+        return ev
+    try:
+        video_path = Path(ckpt_dir) / f"eval_{int(env_steps)}.mp4"
+        hud_cfg = erc.get("hud") if isinstance(erc, dict) else None
+        rew_cfg_raw = hydra_cfg.get("env_config", {}).get("reward_terms", None)
+        rew_cfg = (
+            OmegaConf.to_container(rew_cfg_raw, resolve=True)
+            if rew_cfg_raw is not None
+            else None
+        )
+        # `camera` below is a dead parameter (never forwarded --
+        # render_video builds its own tracking camera). `cameras` is
+        # the live one: a list of panel specs rendered side by side.
+        # Absent -> the historical single camera, unchanged.
+        #
+        # `erc` has ALREADY been converted to a plain dict by the time
+        # we get here (see the isinstance check above), so `cameras` is
+        # a plain list and OmegaConf.to_container REJECTS it --
+        # "Input cfg is not an OmegaConf config object (list)". That
+        # raises inside the eval-render try/except, which logs a
+        # warning and continues, so the eval produces no video while
+        # training carries on looking healthy. Convert only when it
+        # really is an OmegaConf node.
+        cam_specs = erc.get("cameras", None)
+        if OmegaConf.is_config(cam_specs):
+            cam_specs = OmegaConf.to_container(cam_specs, resolve=True)
+        render_eval_video(
+            rollout,
+            mj_model,
+            video_path,
+            fps=int(erc.get("fps", 50)),
+            height=int(erc.get("height", 480)),
+            width=int(erc.get("width", 640)),
+            camera=str(erc.get("camera", "close_profile-rodent")),
+            cameras=cam_specs,
+            hud_config=hud_cfg,
+            reward_config=rew_cfg,
+            termination_events=term_events,
+            reward_remix=(
+                {"sparse_key": remix_key, "lambda": remix_lambda}
+                if remix_key is not None
+                else None
+            ),
+        )
+        if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+            wandb.log(
+                {"videos/eval": wandb.Video(str(video_path), format="mp4")},
+                step=int(env_steps),
+            )
+    except Exception as e:
+        log.warning("Eval render failed: %s", e, exc_info=True)
+    return ev
+
+
 @hydra.main(
     config_path="../track_mjx/config/dmpo",
     config_name="run_gap/velocity_only_kl_anchor",
@@ -2171,7 +2302,7 @@ def main(hydra_cfg: DictConfig):
         if not erc_enable:
             return
         try:
-            ev = _run_entry_eval(
+            _eval_and_render(
                 hydra_cfg,
                 cfg,
                 K,
@@ -2182,59 +2313,9 @@ def main(hydra_cfg: DictConfig):
                 state,
                 env_steps,
                 k_eval,
+                mj_model=mj_model,
+                ckpt_dir=ckpt_dir,
             )
-            rollout, term_events, erc = ev.rollout, ev.term_events, ev.erc
-            remix_key, remix_lambda = ev.remix_key, ev.remix_lambda
-            if mj_model is not None and rollout:
-                video_path = Path(ckpt_dir) / f"eval_{int(env_steps)}.mp4"
-                hud_cfg = erc.get("hud") if isinstance(erc, dict) else None
-                rew_cfg_raw = hydra_cfg.get("env_config", {}).get("reward_terms", None)
-                rew_cfg = (
-                    OmegaConf.to_container(rew_cfg_raw, resolve=True)
-                    if rew_cfg_raw is not None
-                    else None
-                )
-                # `camera` below is a dead parameter (never forwarded --
-                # render_video builds its own tracking camera). `cameras` is
-                # the live one: a list of panel specs rendered side by side.
-                # Absent -> the historical single camera, unchanged.
-                #
-                # `erc` has ALREADY been converted to a plain dict by the time
-                # we get here (see the isinstance check above), so `cameras` is
-                # a plain list and OmegaConf.to_container REJECTS it --
-                # "Input cfg is not an OmegaConf config object (list)". That
-                # raises inside the eval-render try/except, which logs a
-                # warning and continues, so the eval produces no video while
-                # training carries on looking healthy. Convert only when it
-                # really is an OmegaConf node.
-                cam_specs = erc.get("cameras", None)
-                if OmegaConf.is_config(cam_specs):
-                    cam_specs = OmegaConf.to_container(cam_specs, resolve=True)
-                render_eval_video(
-                    rollout,
-                    mj_model,
-                    video_path,
-                    fps=int(erc.get("fps", 50)),
-                    height=int(erc.get("height", 480)),
-                    width=int(erc.get("width", 640)),
-                    camera=str(erc.get("camera", "close_profile-rodent")),
-                    cameras=cam_specs,
-                    hud_config=hud_cfg,
-                    reward_config=rew_cfg,
-                    termination_events=term_events,
-                    reward_remix=(
-                        {"sparse_key": remix_key, "lambda": remix_lambda}
-                        if remix_key is not None
-                        else None
-                    ),
-                )
-                if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
-                    wandb.log(
-                        {"videos/eval": wandb.Video(str(video_path), format="mp4")},
-                        step=int(env_steps),
-                    )
-        except Exception as e:
-            log.warning("Eval render failed: %s", e, exc_info=True)
         finally:
             import gc
 

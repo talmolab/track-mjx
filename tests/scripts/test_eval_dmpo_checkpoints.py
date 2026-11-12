@@ -4,10 +4,13 @@
 training entry's own eval (``_run_entry_eval``) on them. These tests run on CPU
 with toy networks and a stub env: they check which checkpoints are evaluated,
 what is restored, and what is written, and that the shared eval produces the
-gate keys from a state that holds unbatched leaves.
+gate keys from a state that holds unbatched leaves. The training run's eval
+callback (``_eval_and_render``) is checked for how it reports a failed eval or
+render.
 """
 
 import json
+import logging
 import os
 import runpy
 from types import SimpleNamespace
@@ -456,29 +459,64 @@ class _StubEnv:
         )
 
 
-def test_entry_eval_reports_the_gate_keys(kl_anchor_entry):
-    """The shared eval runs the rollout and returns the keys the run logs."""
+class _Mode:
+    def mode(self):
+        return jnp.zeros((3,))
 
-    class _Mode:
-        def mode(self):
-            return jnp.zeros((3,))
 
-    num_envs, episode_length = 4, 6
-    ev = kl_anchor_entry["_run_entry_eval"](
-        OmegaConf.create({"eval_render_config": {"episode_length": episode_length}}),
-        DMPOConfig(num_envs=num_envs),
+EVAL_ENVS, EVAL_LENGTH = 4, 6
+
+
+def _eval_args(env=None, recurrent=False, spout_eval=None, recurrent_meta=None):
+    """Positional arguments of ``_run_entry_eval`` for the stub env, at 1000 steps."""
+    return (
+        OmegaConf.create({"eval_render_config": {"episode_length": EVAL_LENGTH}}),
+        DMPOConfig(num_envs=EVAL_ENVS),
         50,
         SimpleNamespace(
             policy=SimpleNamespace(apply=lambda params, obs: _Mode()),
-            recurrent_meta=None,
+            recurrent_meta=recurrent_meta,
         ),
-        False,
-        _StubEnv(),
-        None,
+        recurrent,
+        _StubEnv() if env is None else env,
+        spout_eval,
         SimpleNamespace(policy_params=None, normalizer_params=None, steps=0),
         1000,
         jax.random.key(0),
     )
+
+
+class _FakeWandb:
+    """Records ``wandb.log`` payloads; ``fail`` makes every log call raise."""
+
+    def __init__(self, fail=False):
+        self.run = object()
+        self.logged: list[dict] = []
+        self.fail = fail
+
+    def log(self, payload, step=None, commit=None):
+        if self.fail:
+            raise RuntimeError("wandb is down")
+        self.logged.append(dict(payload))
+
+    def Video(self, path, format=None):
+        return f"video:{path}"
+
+
+def _patch_entry(entry, monkeypatch, wandb=None, **names):
+    """Replace module globals of the loaded entry (its functions read these)."""
+    module_globals = entry["_run_entry_eval"].__globals__
+    if wandb is not None:
+        monkeypatch.setitem(module_globals, "_WANDB_IMPORTED", True)
+        monkeypatch.setitem(module_globals, "wandb", wandb)
+    for name, value in names.items():
+        monkeypatch.setitem(module_globals, name, value)
+
+
+def test_entry_eval_reports_the_gate_keys(kl_anchor_entry):
+    """The shared eval runs the rollout and returns the keys the run logs."""
+    episode_length = EVAL_LENGTH
+    ev = kl_anchor_entry["_run_entry_eval"](*_eval_args())
     assert ev.erc == {"episode_length": episode_length}
     assert len(ev.rollout) == episode_length + 1
     assert ev.spout is None and ev.vision_sensitivity is None
@@ -489,3 +527,78 @@ def test_entry_eval_reports_the_gate_keys(kl_anchor_entry):
     assert m["batch/gap_crossings_per_episode"] == 1.0
     # First episode of each env, censored at 6 steps: 1 treat per step.
     assert m["episode_rewards/treat_collected"] == pytest.approx((2 + 3 + 4 + 5) / 4)
+
+
+def _in_run_eval(entry, tmp_path, mj_model="mj_model"):
+    return entry["_eval_and_render"](
+        *_eval_args(), mj_model=mj_model, ckpt_dir=str(tmp_path)
+    )
+
+
+def test_in_run_eval_renders_the_rollout_it_evaluated(
+    kl_anchor_entry, monkeypatch, tmp_path
+):
+    wandb, renders = _FakeWandb(), []
+    _patch_entry(
+        kl_anchor_entry,
+        monkeypatch,
+        wandb,
+        render_eval_video=lambda rollout, mj_model, path, **kw: renders.append(
+            (len(rollout), mj_model, path)
+        ),
+    )
+    ev = _in_run_eval(kl_anchor_entry, tmp_path)
+    assert ev.metrics["batch/gap_crossings_per_episode"] == 1.0
+    assert renders == [(EVAL_LENGTH + 1, "mj_model", tmp_path / "eval_1000.mp4")]
+    assert wandb.logged[-1] == {"videos/eval": f"video:{tmp_path / 'eval_1000.mp4'}"}
+
+
+def test_in_run_render_failure_keeps_the_eval_metrics(
+    kl_anchor_entry, monkeypatch, tmp_path, caplog
+):
+    def broken_render(*args, **kwargs):
+        raise RuntimeError("no GL context")
+
+    wandb = _FakeWandb()
+    _patch_entry(kl_anchor_entry, monkeypatch, wandb, render_eval_video=broken_render)
+    with caplog.at_level(logging.INFO):
+        ev = _in_run_eval(kl_anchor_entry, tmp_path)
+    assert ev.metrics["batch/gap_crossings_per_episode"] == 1.0
+    assert "eval env_steps=1000 " in caplog.text
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert [r.getMessage() for r in warnings] == ["Eval render failed: no GL context"]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    logged = set().union(*wandb.logged)
+    assert "eval/batch/gap_crossings_per_episode" in logged
+    assert "eval/failed" not in logged
+
+
+@pytest.mark.parametrize("wandb_fails", [False, True])
+def test_in_run_eval_failure_is_an_error_and_a_metric(
+    kl_anchor_entry, monkeypatch, tmp_path, caplog, wandb_fails
+):
+    """A failed eval does not stop training, and is not reported as a render
+    failure."""
+
+    def broken_eval(*args, **kwargs):
+        raise IndexError("index 0 is out of bounds")
+
+    wandb, renders = _FakeWandb(fail=wandb_fails), []
+    _patch_entry(
+        kl_anchor_entry,
+        monkeypatch,
+        wandb,
+        _run_entry_eval=broken_eval,
+        render_eval_video=lambda *a, **k: renders.append(a),
+    )
+    with caplog.at_level(logging.INFO):
+        assert _in_run_eval(kl_anchor_entry, tmp_path) is None
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert "env_steps=1000" in errors[0].getMessage()
+    assert "eval/failed=1" in errors[0].getMessage()
+    assert errors[0].exc_info[0] is IndexError
+    assert "Eval render failed" not in caplog.text
+    assert renders == []
+    assert wandb.logged == (
+        [] if wandb_fails else [{"eval/failed": 1, "env_steps": 1000}]
+    )

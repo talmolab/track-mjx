@@ -51,6 +51,30 @@ Overrides use hydra syntax, e.g. `++train_config.num_envs=1024`. A run writes
 every one of them (`checkpoint_max_to_keep` absent or `null`). Launching again
 with the same `checkpoint_dir` resumes from the newest checkpoint.
 
+### Graft sources
+
+Every spout-maze arm (`spout_maze/`) and every full-maze arm
+(`full_maze_memory/`) starts from the feed-forward maze arm's checkpoint at
+482,816,000 env steps:
+
+```yaml
+transfer:
+  graft_ff_checkpoint: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/unified_maze_gen1_prior_mlp/DMPONetwork_482816000
+```
+
+That is the maze arm trained into `unified_maze_gen1_prior_mlp`, not into the
+`maze_gen1_prior_mlp` directory its config names by default. Train the source
+with that `checkpoint_dir`:
+
+```bash
+python scripts/train_dmpo_highlvl_kl_anchor.py --config-name=maze/maze_gen1_prior_mlp \
+  ++checkpoint_dir=${DMPO_CKPT_ROOT}/unified_maze_gen1_prior_mlp
+```
+
+To graft from another checkpoint, override
+`++transfer.graft_ff_checkpoint=<run dir>/DMPONetwork_<env step>`. A missing
+graft source stops the entry at startup.
+
 ## Startup markers
 
 Read these log lines before committing a long run to the GPU:

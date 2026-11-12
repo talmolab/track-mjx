@@ -116,7 +116,7 @@ def test_spread_q_restores_a_downward_gradient_at_small_t():
     g = float(jax.grad(loss)(jnp.array(1e-4)))
     assert g < 0, "with spread Q a tiny temperature must be pushed back UP"
     # small-t limit is epsilon - log N (the mean(max Q) term stops depending on t)
-    assert g == pytest.approx(EPSILON - jnp.log(N_ACTIONS), abs=0.05)
+    assert float(g) == pytest.approx(float(EPSILON - jnp.log(N_ACTIONS)), abs=0.05)
 
 
 def test_flat_q_weights_are_uniform_at_every_temperature():

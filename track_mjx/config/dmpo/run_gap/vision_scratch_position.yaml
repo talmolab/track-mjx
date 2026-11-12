@@ -1,0 +1,149 @@
+# @package _global_
+# DMPO from scratch with binocular vision and POSITION actuators. Apples-to-
+# apples against the PPO velocity_only_scratch_position config: same env, same
+# actuator mode, same observation modalities; differs only in algorithm (DMPO
+# instead of PPO) and network shape (no 16-D fusion bottleneck in this run).
+#
+# No ported entry point runs this arm as-is, so it is kept for the record:
+# scripts/train_dmpo_highlvl.py reads transfer.prior_checkpoint_path
+# unconditionally and this arm is from_scratch with no prior, and the from-
+# scratch path of scripts/train_dmpo_highlvl_kl_anchor.py requires a recurrent
+# policy head, which this feedforward arm does not have.
+defaults:
+  - /base
+  - _self_
+
+env_name: RodentRunGapBinocularVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentRunGapBinocularVision
+  binocular: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  flatten_obs: false
+  episode_length: 1000
+  action_repeat: 1
+  use_textures: true
+  use_shadows: true
+  eye_dropout_rate: 0.0
+  eval_eye_mode: binocular
+  # ---- Match velocity_only_scratch_position.yaml env_args ----
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  # naconmax = num_envs * per_env_contacts.
+  # 12/env (24576) overflows: Warp emits
+  # "broadphase overflow - please increase nconmax to 14 or naconmax to 28672"
+  # repeatedly within minutes of training at 2048 envs on mesh terrain. Contact
+  # truncation gives the rodent unstable ground reaction -> it cannot learn to
+  # walk. 32768 (16/env) is above Warp's stated minimum (28672) with a safety
+  # margin. Cost is ~5 MiB of GPU memory.
+  naconmax: 32768   # = 2048 envs × 16 contacts/env
+  njmax: 400
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  torque_actuators: false   # POSITION control (the whole point)
+  rescale_factor: 0.9
+  corridor_length: 4.0
+  corridor_width: 2.0
+  platform_length_range: [0.3, 0.6]
+  gap_length_range: [0.03, 0.2]
+  n_platforms: 20
+  spawn_x: 0.5
+  randomize_gaps: true
+  aesthetic: "outdoor_natural"
+  use_mesh_platforms: true
+  reward_terms:
+    forward_velocity:
+      weight: 1.0
+      target_speed: 0.8
+  termination_criteria:
+    # Relaxed: keep z-axis (below_ground) check, disable angle check.
+    # max_torso_angle=180 → max_cos_angle=-1, so the upright_z<-1 test never
+    # fires. Only the rodent dropping below `min_torso_z` ends the episode.
+    fallen:
+      min_torso_z: 0.0325
+      max_torso_angle: 180
+    nan_termination: {}
+
+network_config:
+  arch_name: dmpo_binocular_vision_scratch
+  binocular_mode: shared
+  vision_feature_size: 32
+  vision_channels: [4, 8, 16, 32]
+
+transfer:
+  mode: from_scratch
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: rodent-dmpo-vision-scratch-position
+  group_name: RodentRunGapBinocularVision
+  notes: "DMPO from scratch with binocular vision and POSITION actuators. Apples-to-apples against the PPO velocity_only_scratch_position config: same env, same actuator mode, same observation modalities; differs only in algorithm (DMPO instead of PPO) and network shape (no 16-D fusion bottleneck in this run)."
+
+eval_render_config:
+  fps: 50
+  height: 480
+  width: 640
+  camera: close_profile-rodent
+  episode_length: 500  # short episodes keep the eval render fast
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_gap_crossing: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_distance_to_gap: true
+    show_lateral_deviation: true
+    show_action_magnitude: true
+    gap_flash_duration: 1.5
+
+train_config:
+  # Tuned for GPU saturation at 2048 envs with N=8 fused iterations per chunk.
+  num_envs: 2048
+  num_timesteps: 2_000_000_000
+  unroll_length: 50
+  batch_size: 1024   # K = unroll * num_envs / (batch * samples_per_insert) = 50
+  # Replay sized in transitions globally; flashbax slices per-env internally.
+  # max_replay_size = 400K. 500K fails: XLA's autotuner cannot compile the rb
+  # scatter at shape f32[2048, 244, 2048] ("NOT_FOUND: No valid config found").
+  # 400K (max_per_env=195) compiles cleanly. ~6.8 GiB on GPU, ~5 GiB headroom.
+  # The right unlock for bigger replay is uint8 vision storage -- a separate
+  # refactor.
+  min_replay_size: 50_000
+  max_replay_size: 400_000
+  sequence_length: 50
+  # samples_per_insert=2.0 (reference-implementation default) — keeps K=50 at
+  # 2048 envs.
+  # Misleading name: this controls K (= unroll*num_envs / (batch*spi)),
+  # which is in the DENOMINATOR. The actual algorithmically-relevant
+  # quantity is uses_per_insert = K*batch*sequence / (num_envs*unroll).
+  # At num_envs=512, K=12, spi=2.0 uses_per_insert is ~24; at num_envs=2048, K=50,
+  # spi=2.0 it is ~25 -- a match. Setting spi=8.0 to bring K back to 12 would
+  # quarter uses_per_insert to 6 AND quarter the target-net update frequency per
+  # env-step, and training stalls (rat stationary at 40M env steps).
+  samples_per_insert: 2.0
+  # Number of fused training iterations packed into one jax.lax.scan + jit
+  # dispatch. N=8 hits the throughput plateau at ~50 s compile; N=16 doubles
+  # compile for ~zero gain, N=32 quadruples compile and trends slightly slower
+  # per step (likely XLA rematerialization).
+  iters_per_chunk: 8
+
+  # log_every_steps: 1_000_000 — match ff_ppo cadence. Each rollout produces
+  # ~25 600 env steps (unroll_length × num_envs); the previous 10K threshold
+  # fired wandb.log every iteration, and the float(v) host-transfers blocked
+  # the JIT/warp pipeline. PPO logs at the eval cadence (5–10M); 1M is a
+  # middle ground that gives ~40 points per 50M-step segment.
+  log_every_steps: 1_000_000
+  eval_every_steps: 10_000_000  # eval videos about every 6 min at steady-state throughput

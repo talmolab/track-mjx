@@ -40,7 +40,12 @@ dependencies = [
     "jaxtyping>=0.2.34",
     "playground @ git+https://github.com/google-deepmind/mujoco_playground.git@b63fcb5db02a0f27aaf2b29ce6fc14c75489fa16",
     "ipykernel",
-    "vnl-playground @ git+https://github.com/talmolab/vnl-playground.git@v0.0.15",
+    "vnl-playground @ git+https://github.com/talmolab/vnl-playground.git@9f22f9fb36f22ccd7264b269c30cc260f637893a",
+    "flashbax==0.1.3",
+    "omegaconf==2.3.1",
+    # tfp 0.25.0 (latest stable) is incompatible with jax 0.10.2; pinned to a
+    # nightly build until a compatible stable release exists.
+    "tfp-nightly==0.26.0.dev20260916",
 ]
 
 dynamic = ["version", "readme"]
@@ -78,7 +83,19 @@ Repository = "https://github.com/talmolab/track-mjx"
 include = ["track_mjx*"]
 
 [tool.setuptools.package-data]
-track_mjx = ["py.typed", "config/*.yaml"]
+track_mjx = [
+    "py.typed",
+    "config/**/*.yaml",
+    "agent/dmpo/LICENSE-ACME",
+    "agent/dmpo/LICENSE-RLAX",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "gpu: needs a CUDA GPU (warp backend or renderer)",
+    "slow: > 30 s",
+    "artifact: needs DMPO_PRIOR_ROOT or DMPO_CKPT_ROOT",
+]
 
 [tool.ruff]
 line-length = 88

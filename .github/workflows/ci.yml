@@ -26,8 +26,43 @@ jobs:
 
       - name: Run Ruff format check
         run: |
-          ruff format --check track_mjx/ scripts/
+          ruff format --check track_mjx/ scripts/ tests/
 
       - name: Run Ruff lint
         run: |
-          ruff check track_mjx/ scripts/
+          ruff check track_mjx/ scripts/ tests/
+
+  test:
+    name: Tests (CPU)
+    runs-on: ubuntu-latest
+    env:
+      # The runner has no GPU and may lack libEGL. With MUJOCO_GL=egl, which
+      # the entry scripts and some test files set by default, importing the
+      # vnl-playground rodent tasks loads dm_control's EGL renderer and fails.
+      # The CPU tests render nothing.
+      MUJOCO_GL: disable
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package with dev dependencies
+        run: |
+          pip install -e ".[dev]"
+
+      # SCAMPER pins numpy, brax and wandb versions that conflict with this
+      # package, so it is installed without its dependencies from a pinned
+      # commit rather than declared in pyproject.toml.
+      - name: Install the pinned SCAMPER
+        run: |
+          pip install --no-deps -r requirements-dmpo-prior.txt
+
+      # Tests marked gpu, slow (> 30 s) or artifact (local checkpoints or
+      # priors) are deselected.
+      - name: Run tests
+        run: |
+          JAX_PLATFORMS=cpu python -m pytest -q tests -m "not gpu and not slow and not artifact"

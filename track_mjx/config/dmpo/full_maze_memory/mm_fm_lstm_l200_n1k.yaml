@@ -1,0 +1,185 @@
+# @package _global_
+# LSTM-512 (forget-gate bias 1.0) slow core, tick stride 10, BPTT over 200
+# core ticks (a 20 s window), batch 51 sequences, so batch x ticks stays near
+# 10,240 loss ticks per update.
+#
+# Full maze (RodentMazeForageVision, 10x10 cells, 20 treats): 100 s episodes
+# (10,000 steps at ctrl_dt 0.01) with full resets, the privileged critic
+# vector (env_config.maze_critic_priv, stored as float16, width 264), 1024
+# envs, unroll 64, 32 SGD steps per rollout and the in-place replay add. Warm
+# start: transfer.graft_ff_checkpoint = the feed-forward maze arm
+# (maze/maze_gen1_prior_mlp) at 482.8M env steps (new rows zero-filled; the
+# startup gate is the GRAFT invariance line).
+#
+# Entry point: python scripts/train_dmpo_highlvl_kl_anchor.py --config-name=full_maze_memory/<file name>
+
+defaults:
+  - /base
+  - _self_
+
+env_name: RodentMazeForageVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentMazeForageVision
+  task_name: maze_forage_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  flatten_obs: false
+  episode_length: 10000
+  action_repeat: 1
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  naconmax: 65536
+  njmax: 400
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  torque_actuators: true
+  rescale_factor: 0.9
+  maze_extent: 6.46
+  maze_cells: 10
+  cell_size: null
+  wall_height: 0.3
+  wall_thickness: 0.15
+  maze_seed: 0
+  maze_loop_fraction: 0.0
+  wall_texture: "style_03/gray_bright"
+  wall_lights: 4
+  wall_light_elevation: 0.35
+  key_light_diffuse: 0.30
+  wall_light_diffuse: 0.25
+  sky: true
+  n_treats: 20
+  treat_radius: 0.05
+  treat_height: 0.125
+  treat_reach_threshold: 0.1
+  park_depth: 1.0
+  spawn_height: 0.005
+  include_origin: false
+  maze_critic_priv: true
+  maze_critic_priv_dtype: "float16"
+  reward_terms:
+    treat_collected:
+      weight: 1.0
+  termination_criteria:
+    belly_up:
+      max_tilt_angle: 140.0
+      fallen_tilt_angle: 90.0
+      fallen_max_torso_z: 0.10
+      patience: 50
+    torso_too_low: {min_torso_z: 0.0325, patience: 50}
+    all_treats_collected: {}
+    nan_termination: {}
+
+network_config:
+  binocular_mode: shared
+  critic_use_proprio: true
+  residual_mode: sigma_ball
+  residual_scale: 5.0
+  vision_feature_size: 64
+  vision_channels: [4, 8, 16, 32]
+  policy_head_layer_sizes: [256, 256, 256]
+  value_hidden_layer_sizes: [1024, 1024, 1024, 1024]
+  policy_head_slow_core:
+    hidden_size: 512
+    tick_stride: 10
+    cell: lstm
+    forget_bias: 1.0
+  # Width of env info['critic_priv'] (env.critic_priv_dim).
+  critic_privileged_dim: 264
+
+transfer:
+  prior_checkpoint_path: ${oc.env:DMPO_PRIOR_ROOT}/260827_153154_576196
+  prior_checkpoint_step: 24
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+  graft_ff_checkpoint: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/unified_maze_gen1_prior_mlp/DMPONetwork_482816000
+
+kl_anchor:
+  alpha_anchor: 0.0
+  w_anchor: 0.5
+  w_anchor_floor: 0.0
+  decay_sgd_steps: 0
+  prior_lr_mult: 0.0
+  decoder_lr_mult: 0.0
+  policy_head_lr_mult: 1.0
+
+train_config:
+  num_envs: 1024
+  num_timesteps: 250000000
+  # Inert on this entry point (not a DMPOConfig field); the live horizon is
+  # env_config.episode_length. Kept so env and train agree on paper.
+  episode_length: 10000
+  unroll_length: 64
+  batch_size: 51
+  min_replay_size: 50_000
+  max_replay_size: 2162688
+  rnn_bptt_length: 200
+  sequence_length: 2100
+  store_next_observation: false
+  replay_inplace_add: true
+  vision_uint8_storage: true
+  samples_per_insert: 2.0
+  sgd_steps_per_rollout: 32
+  iters_per_chunk: 8
+  log_every_steps: 1_000_000
+  eval_every_steps: 25000000
+  use_n_step: true
+  n_step: 100
+  min_log_temperature: -7.0
+  discount: 0.995
+  vmin: 0.0
+  vmax: 20.0
+  num_atoms: 101
+  action_penalization: false
+  init_log_alpha_stddev: 1.0
+  epsilon_stddev: 1.0e-3
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: mm_fm_lstm_l200_n1k
+  group_name: RodentMazeForageVision-fullmaze-memory
+  notes: "LSTM-512 (forget-gate bias 1.0) slow core, tick stride 10, BPTT over 200 core ticks (a 20 s window), batch 51 sequences, so batch x ticks stays near 10,240 loss ticks per update."
+
+checkpoint_dir: ${oc.env:DMPO_CKPT_ROOT,dmpo_checkpoints}/mm_fm_lstm_l200_n1k
+checkpoint_max_to_keep: null
+
+wrappers:
+  full_reset: true
+
+eval_render_config:
+  enable: true
+  num_envs: 1024
+  fps: 50
+  height: 480
+  width: 640
+  camera: close_profile-rodent
+  cameras:
+    - {label: "top",   elevation: -90, azimuth: 90, distance: 2.2}
+    - {label: "close", elevation: -70, azimuth: 90, distance: 0.6}
+  episode_length: 10000
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_action_magnitude: true

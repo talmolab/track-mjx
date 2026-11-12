@@ -1,0 +1,132 @@
+# @package _global_
+# DMPO + frozen prior + decoder + binocular vision on RodentRunGap. Apples-to-
+# apples against the PPO velocity_only config: same env (binocular vision,
+# torque actuators, target_speed 0.9, textures + shadows on, fallen=85 deg) and
+# the same network capacity (matching binocular_shared_vision_task_obs via the
+# bottleneck DMPO factory); differs only in algorithm. Textures stay on: the
+# eval video texture regression seen earlier was just vision.yaml's
+# use_textures=false. num_envs=2048 with batch_size=1024 (NOT 256) keeps K =
+# unroll * num_envs / (batch * spi) = 50; batch_size=256 at 2048 envs gives
+# K=200, which is severely off-policy and stagnates.
+#
+# Entry point: python scripts/train_dmpo_highlvl.py --config-name=run_gap/<file name>
+defaults:
+  - /base
+  - _self_
+
+env_name: RodentRunGapBinocularVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentRunGapBinocularVision
+  task_name: run_gap_binocular_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  flatten_obs: false
+  episode_length: 1000
+  action_repeat: 1
+  # ---- Mirror PPO velocity_only.yaml env_args (flat under env_config so that
+  # train_dmpo / train_dmpo_highlvl's tasks.load passthrough picks them up) ----
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  # naconmax = num_envs * per_env_contacts. 2048 envs × 16 contacts/env.
+  # Matches vision_scratch_position.yaml; well above Warp's 28672 minimum.
+  naconmax: 32768
+  njmax: 400
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  torque_actuators: true        # match PPO velocity_only.yaml
+  rescale_factor: 0.9
+  corridor_length: 4.0
+  corridor_width: 2.0
+  platform_length_range: [0.3, 0.6]
+  gap_length_range: [0.03, 0.2]
+  n_platforms: 20
+  spawn_x: 0.5
+  randomize_gaps: true
+  aesthetic: "outdoor_natural"
+  use_mesh_platforms: true
+  reward_terms:
+    forward_velocity:
+      weight: 1.0
+      target_speed: 0.9         # match PPO velocity_only.yaml
+  termination_criteria:
+    fallen:
+      min_torso_z: 0.0325
+      max_torso_angle: 85       # match PPO velocity_only.yaml (strict)
+    nan_termination: {}
+
+network_config:
+  arch_name: dmpo_binocular_vision_bottleneck
+  binocular_mode: shared
+  vision_latent_size: 16
+  vision_feature_size: 32
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256, 256, 256]
+  decoder_hidden_layer_sizes: [512, 512, 512]
+  value_hidden_layer_sizes: [512, 512, 512, 512]
+
+transfer:
+  mode: prior_decoder
+  prior_checkpoint_path: ${oc.env:DMPO_PRIOR_ROOT}/default
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+  deterministic_prior: true
+  noise_logvar: -2.0
+
+train_config:
+  # Throughput-saturating settings from vision_scratch_position.yaml (K=50).
+  num_envs: 2048
+  num_timesteps: 1_000_000_000
+  unroll_length: 50
+  batch_size: 1024
+  min_replay_size: 50_000
+  max_replay_size: 400_000
+  sequence_length: 50
+  samples_per_insert: 2.0
+  iters_per_chunk: 8
+  log_every_steps: 1_000_000
+  eval_every_steps: 10_000_000
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: dmpo-highlvl-velocity09
+  group_name: RodentRunGapBinocularVision
+  notes: "DMPO + frozen prior + decoder + binocular vision on RodentRunGap. Apples-to-apples against the PPO velocity_only config: same env (binocular vision, torque actuators, target_speed 0.9, textures + shadows on, fallen=85 deg) and the same network capacity (matching binocular_shared_vision_task_obs via the bottleneck DMPO factory); differs only in algorithm. Textures stay on: the eval video texture regression seen earlier was just vision.yaml's use_textures=false."
+
+eval_render_config:
+  fps: 50
+  height: 480
+  width: 640
+  camera: close_profile-rodent
+  episode_length: 500
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_gap_crossing: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_distance_to_gap: true
+    show_lateral_deviation: true
+    show_action_magnitude: true
+    gap_flash_duration: 1.5

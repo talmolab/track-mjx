@@ -11,9 +11,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import orbax.checkpoint as ocp
+import pytest
 
 from track_mjx.agent.dmpo.checkpoint import (
     EMPTY_LEAVES_ITEM,
+    _restore_empty,
     load_policy,
     load_train_state_items_numpy,
     make_checkpointer,
@@ -194,3 +196,50 @@ def test_state_without_empty_leaves_is_saved_unchanged(tmp_path, rng, env_spec):
     restored = restore(mgr, state_template=state)
     assert _equal(state.normalizer_params, restored.normalizer_params)
     assert _equal(state.critic_params, restored.critic_params)
+
+
+@pytest.mark.parametrize(
+    ("saved_width", "template_width"),
+    [
+        # The checkpoint has statistics the template would drop.
+        (4, 0),
+        # The checkpoint has no statistics for leaves the template holds.
+        (0, 4),
+    ],
+)
+def test_restore_refuses_a_template_with_other_empty_leaves(
+    tmp_path, rng, env_spec, saved_width, template_width
+):
+    mgr = make_checkpointer(str(tmp_path))
+    save(mgr, step=1, state=_state(rng, env_spec, proprio_width=saved_width))
+    mgr.wait_until_finished()
+    template = _state(rng, env_spec, proprio_width=template_width)
+    with pytest.raises(ValueError, match="zero-size leaves") as err:
+        restore(mgr, state_template=template)
+    assert "normalizer_params/proprioception/mean" in str(err.value)
+    assert str(tmp_path / "DMPONetwork_1") in str(err.value)
+
+
+def test_load_policy_refuses_a_template_with_other_empty_leaves(
+    tmp_path, rng, env_spec
+):
+    state = _state(rng, env_spec, proprio_width=3)
+    params = state.policy_params
+    empty_head = {"bias": jnp.zeros((0,), jnp.float32)}
+    with_empty = {**params, "params": {**params["params"], "head": empty_head}}
+    mgr = make_checkpointer(str(tmp_path))
+    save(mgr, step=1, state=state._replace(policy_params=with_empty))
+    mgr.wait_until_finished()
+    full_head = {"bias": jnp.zeros((2,), jnp.float32)}
+    template = {**params, "params": {**params["params"], "head": full_head}}
+    with pytest.raises(ValueError, match="zero-size leaves"):
+        load_policy(mgr, template)
+
+
+def test_restore_empty_refuses_a_missing_value_for_a_nonempty_leaf():
+    template = {"a": jnp.ones(3), "b": jnp.zeros((0,))}
+    restored = _restore_empty({"a": jnp.full(3, 2.0), "b": None}, template)
+    assert restored["b"].shape == (0,)
+    np.testing.assert_array_equal(restored["a"], [2.0, 2.0, 2.0])
+    with pytest.raises(ValueError, match=r"\['a'\]"):
+        _restore_empty({"a": None, "b": jnp.zeros((0,))}, template)

@@ -19,7 +19,9 @@ zero gives the running normalizer such arrays. A leaf of that kind is left out
 of the saved pytree and its shape and dtype are written to an ``empty_leaves``
 item instead; restore puts it back from the template (or, for
 ``load_train_state_items_numpy``, from that item). A state with no such leaf
-is saved exactly as before and gets no ``empty_leaves`` item.
+is saved exactly as before and gets no ``empty_leaves`` item. ``restore`` and
+``load_policy`` refuse a template whose zero-size leaves are not the ones the
+checkpoint recorded.
 """
 
 from __future__ import annotations
@@ -80,16 +82,82 @@ def _strip_empty(tree: Any) -> tuple[Any, dict[str, dict[str, Any]]]:
 
 
 def _restore_empty(restored: Any, template: Any) -> Any:
-    """Put the zero-size leaves of ``template`` back into ``restored``."""
+    """Put the zero-size leaves of ``template`` back into ``restored``.
 
-    def fill(value, like):
+    Raises:
+      ValueError: if ``restored`` has no value where ``template`` holds a leaf
+        that is not zero-size.
+    """
+
+    def fill(path, value, like):
         if value is not None:
             return value
-        if _is_empty_leaf(like) and not isinstance(like, (jax.Array, np.ndarray)):
+        if not _is_empty_leaf(like):
+            raise ValueError(
+                f"the checkpoint has no value for {jax.tree_util.keystr(path)}, "
+                f"which the template holds with shape {getattr(like, 'shape', None)}"
+            )
+        if not isinstance(like, (jax.Array, np.ndarray)):
             return jnp.zeros(like.shape, like.dtype)
         return like
 
-    return jax.tree.map(fill, restored, template, is_leaf=lambda x: x is None)
+    return jax.tree_util.tree_map_with_path(
+        fill, restored, template, is_leaf=lambda x: x is None
+    )
+
+
+def _step_dir(mgr: ocp.CheckpointManager, step: int) -> pathlib.Path | None:
+    """The directory of ``step`` under ``mgr``, or None when there is none.
+
+    ``DMPONetwork_<step>``, or the bare step number of the legacy layout.
+    """
+    root = pathlib.Path(str(mgr.directory))
+    for name in (f"{STEP_PREFIX}_{step}", str(step)):
+        if (root / name).is_dir():
+            return root / name
+    return None
+
+
+def _saved_empties(ckpt_step_dir: pathlib.Path, item: str) -> dict[str, Any]:
+    """The zero-size leaves a checkpoint recorded for ``item``; ``{}`` if none."""
+    record_dir = pathlib.Path(ckpt_step_dir) / EMPTY_LEAVES_ITEM
+    if not record_dir.is_dir():
+        return {}
+    record = ocp.Checkpointer(ocp.JsonCheckpointHandler()).restore(str(record_dir))
+    return dict(record.get(item, {}))
+
+
+def _check_saved_empties(
+    mgr: ocp.CheckpointManager, step: int, item: str, template_empties: dict
+) -> None:
+    """Refuse a template whose zero-size leaves differ from the checkpoint's.
+
+    The template decides which leaves are read from the checkpoint and which
+    are put back as zero-size arrays. If the two disagree, a restore would
+    drop saved values (the template has a zero-size leaf the checkpoint saved
+    with values) or leave a leaf without values (the checkpoint recorded a
+    zero-size leaf the template holds with values).
+
+    Raises:
+      ValueError: listing both sets of zero-size leaves, e.g. when an
+        observation key's width differs between the checkpoint and the
+        template.
+    """
+    step_dir = _step_dir(mgr, step)
+    if step_dir is None:
+        return
+    saved = {k: list(v["shape"]) for k, v in _saved_empties(step_dir, item).items()}
+    want = {k: list(v["shape"]) for k, v in template_empties.items()}
+    if saved != want:
+        raise ValueError(
+            f"the template's zero-size leaves differ from the ones the checkpoint "
+            f"at {step_dir} recorded for its {item!r} item:\n"
+            f"  checkpoint: {saved or 'none'}\n"
+            f"  template:   {want or 'none'}\n"
+            "Restoring would drop saved values or leave leaves without values. "
+            "An observation key's width probably differs between the checkpoint "
+            "and the template."
+        )
 
 
 def make_checkpointer(
@@ -228,11 +296,16 @@ def restore(
     checkpoint is restored into a typed-key ``state_template``.
 
     Returns ``None`` if no checkpoint exists.
+
+    Raises:
+      ValueError: if the template's zero-size leaves are not the ones the
+        checkpoint recorded (``_check_saved_empties``).
     """
     target_step = step if step is not None else mgr.latest_step()
     if target_step is None:
         return None
     template, empties = _strip_empty(state_template._asdict())
+    _check_saved_empties(mgr, target_step, "train_state", empties)
     try:
         restored = mgr.restore(
             target_step,
@@ -268,11 +341,16 @@ def load_policy(
 
     Mirrors ``track_mjx.agent.checkpointing.load_policy`` for the DMPO layout.
     Useful for analysis scripts that don't need optimizer state or dual vars.
+
+    Raises:
+      ValueError: if the template's zero-size leaves are not the ones the
+        checkpoint recorded (``_check_saved_empties``).
     """
     target_step = step if step is not None else mgr.latest_step()
     if target_step is None:
         raise FileNotFoundError("No DMPO checkpoint found in manager")
     template, empties = _strip_empty(policy_template)
+    _check_saved_empties(mgr, target_step, "policy", empties)
     restored = mgr.restore(
         target_step,
         args=ocp.args.Composite(policy=ocp.args.StandardRestore(template)),
@@ -335,12 +413,13 @@ def load_train_state_items_numpy(
 
 
 def _add_saved_empty_leaves(out: dict, ckpt_step_dir: pathlib.Path) -> None:
-    """Put back the zero-size ``train_state`` leaves recorded with a checkpoint."""
-    record_dir = ckpt_step_dir / EMPTY_LEAVES_ITEM
-    if not record_dir.is_dir():
-        return
-    record = ocp.Checkpointer(ocp.JsonCheckpointHandler()).restore(str(record_dir))
-    for path, info in record.get("train_state", {}).items():
+    """Put back the zero-size ``train_state`` leaves recorded with a checkpoint.
+
+    A leaf is placed by walking mappings only. Orbax restores a tuple or list
+    node without a target as a sequence, so a leaf recorded below one (only
+    possible in optimizer states) raises.
+    """
+    for path, info in _saved_empties(ckpt_step_dir, "train_state").items():
         keys = path.split("/")
         if keys[0] not in out:
             continue

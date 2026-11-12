@@ -223,6 +223,39 @@ def test_evaluate_runs_the_entry_eval_on_each_saved_checkpoint(evaluator, tmp_pa
     assert len(out.read_text().splitlines()) == 3
 
 
+def test_restore_eval_state_refuses_policy_keys_the_networks_lack(evaluator, tmp_path):
+    _, _, template = _template()
+    params = template.policy_params
+    extra = {**params, "params": {**params["params"], "extra": {"b": jnp.ones(3)}}}
+    _save_steps(tmp_path, template._replace(policy_params=extra), [100])
+    with pytest.raises(ValueError, match=r"only in the checkpoint: \[.*'extra'"):
+        evaluator["restore_eval_state"](template, tmp_path / "DMPONetwork_100")
+
+
+def test_evaluate_keeps_the_records_of_each_run_apart(evaluator, tmp_path):
+    """Two runs (e.g. two seeds of one arm) share a step grid; writing both to
+    one file evaluates both."""
+    cfg, nets, template = _template(dict_normalizer=False)
+    out = tmp_path / "o.jsonl"
+    calls: list[dict] = []
+    entry = _fake_entry(cfg, nets, calls)
+    for run in ("seed_0", "seed_1"):
+        _save_steps(tmp_path / run, template, [100])
+        evaluator["evaluate"](entry, OmegaConf.create({}), tmp_path / run, out)
+    assert len(calls) == 2
+    lines = [json.loads(line) for line in out.read_text().splitlines()]
+    assert [line["checkpoint"] for line in lines] == [
+        str(tmp_path / run / "DMPONetwork_100") for run in ("seed_0", "seed_1")
+    ]
+    # Each run's records are still skipped on a re-run.
+    for run in ("seed_0", "seed_1"):
+        assert (
+            evaluator["evaluate"](entry, OmegaConf.create({}), tmp_path / run, out)
+            == []
+        )
+    assert len(calls) == 2
+
+
 def test_evaluate_refuses_a_step_without_a_finished_checkpoint(evaluator, tmp_path):
     cfg, nets, template = _template(dict_normalizer=False)
     _save_steps(tmp_path, template, [100])

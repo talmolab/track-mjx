@@ -23,8 +23,9 @@ Usage:
 ``checkpoint_dir`` is the training entry's own key, so the same config and
 overrides that launched a run point this script at that run's checkpoints.
 Without ``posthoc.steps`` every finished checkpoint in it is evaluated.
-(step, seed) pairs already in ``posthoc.out`` are skipped, so a re-run after
-more checkpoints are saved evaluates only the new ones.
+(checkpoint, seed) pairs already in ``posthoc.out`` are skipped, so a re-run
+after more checkpoints are saved evaluates only the new ones, and the runs of
+several checkpoint directories can share one file.
 
 Each checkpoint's saved ``config`` item is compared with the config given here
 (``config_diff``) before anything is evaluated. Keys that differ between a
@@ -126,6 +127,26 @@ def checkpoint_steps(ckpt_dir: str | Path) -> list[int]:
     return sorted(steps)
 
 
+def _check_keys(saved: Any, like: Any, name: str, where: Path) -> None:
+    """Raise unless the saved tree has exactly the keys of ``like``'s state dict.
+
+    ``flax.serialization.from_state_dict`` drops saved keys the target lacks,
+    so this runs before it.
+    """
+
+    def paths(tree: Any) -> set[str]:
+        flat = jax.tree_util.tree_flatten_with_path(tree)[0]
+        return {jax.tree_util.keystr(path) for path, _ in flat}
+
+    got, want = paths(saved), paths(flax.serialization.to_state_dict(like))
+    if got != want:
+        raise ValueError(
+            f"{name} in {where} does not have the networks' tree: only in the "
+            f"checkpoint: {sorted(got - want)}; only in the networks: "
+            f"{sorted(want - got)}"
+        )
+
+
 def _check_like(restored: Any, like: Any, name: str, where: Path) -> None:
     """Raise unless every leaf of ``restored`` has the shape and dtype of ``like``'s."""
     like_leaves = jax.tree_util.tree_flatten_with_path(like)[0]
@@ -168,6 +189,7 @@ def restore_eval_state(template: Any, step_dir: str | Path) -> Any:
     fields = {}
     for name in ("policy_params", "steps"):
         like = getattr(template, name)
+        _check_keys(saved[name], like, name, step_dir)
         restored = flax.serialization.from_state_dict(like, saved[name])
         _check_like(restored, like, name, step_dir)
         fields[name] = jax.tree.map(jnp.asarray, restored)
@@ -309,8 +331,16 @@ def eval_record(ev: Any, step: int, seed: int, extra: dict) -> dict:
     return record
 
 
-def recorded(out_path: str | Path) -> set[tuple[int, int]]:
-    """The (env_steps, eval_seed) pairs already in ``out_path``."""
+def _checkpoint_key(step_dir: str | Path) -> str:
+    return str(Path(step_dir).resolve())
+
+
+def recorded(out_path: str | Path) -> set[tuple[str, int]]:
+    """The (checkpoint, eval_seed) pairs already in ``out_path``.
+
+    A checkpoint is its resolved ``DMPONetwork_<step>`` path, so two runs that
+    share a step grid (e.g. two seeds of one arm) are told apart.
+    """
     path = Path(out_path)
     if not path.exists():
         return set()
@@ -318,7 +348,7 @@ def recorded(out_path: str | Path) -> set[tuple[int, int]]:
     for line in path.read_text().splitlines():
         if line.strip():
             rec = json.loads(line)
-            done.add((int(rec["env_steps"]), int(rec["eval_seed"])))
+            done.add((_checkpoint_key(rec["checkpoint"]), int(rec["eval_seed"])))
     return done
 
 
@@ -363,13 +393,18 @@ def evaluate(
             f"(present: {present})"
         )
     done = recorded(out_path)
-    todo = [(s, seed) for s in sorted(steps) for seed in seeds if (s, seed) not in done]
+    todo = [
+        (s, seed)
+        for s in sorted(steps)
+        for seed in seeds
+        if (_checkpoint_key(ckpt_dir / f"{STEP_PREFIX}_{s}"), seed) not in done
+    ]
     log.info(
         "posthoc eval: %d checkpoint(s) in %s, %d eval(s) to run, %d already in %s",
         len(present),
         ckpt_dir,
         len(todo),
-        len(done),
+        len(steps) * len(seeds) - len(todo),
         out_path,
     )
     if not todo:

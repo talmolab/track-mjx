@@ -2042,4 +2042,15 @@ def _sgd_step_rnn(
         # Fraction of tick slots padded because a row had < L ticks in W.
         # Must be 0 (see tick_indices); tick path only.
         metrics["rnn/tick_fill_frac"] = tick_fill_frac
+        if getattr(meta, "cell_type", None) == "lstm":
+            # LSTM slow core only: max |c| over the sampled batch's stored
+            # hidden, c being the FIRST H entries of the packed [c, h] leaf
+            # (networks_kl_anchor_slow). c is not squashed, and replay stores
+            # it at store_dtype (float16 by default), so this is the f16
+            # headroom watch (|c| is bounded by the ticks since the last
+            # reset; an inf here means the replay copy overflowed). GRU
+            # metrics are unchanged.
+            mem_leaf = next(i for i in range(len(h_all)) if i != phase_leaf)
+            c_stored = h_all[mem_leaf][..., : int(meta.hidden_sizes[0])]
+            metrics["rnn/lstm_c_absmax"] = jnp.max(jnp.abs(c_stored))
     return new_state, metrics

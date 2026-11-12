@@ -980,3 +980,164 @@ def test_lstm_reset_zeroes_whole_packed_leaf(cfg):
     np.testing.assert_array_equal(
         np.asarray(stored[meta.phase_leaf].astype(jnp.float32)), np.asarray(reset[1])
     )
+
+
+# ---------------------------------------------------------------------------
+# LSTM forget-gate bias knob (`lstm_forget_bias`) and hidden-width checks
+# ---------------------------------------------------------------------------
+
+_HF_BIAS_PATH = ("policy_head", "slow_core", "hf", "bias")
+
+
+def _hf_bias(params):
+    node = params["params"]
+    for k in _HF_BIAS_PATH:
+        node = node[k]
+    return np.asarray(node)
+
+
+def test_lstm_forget_bias_default_zero_is_identical(cfg):
+    """Default 0.0 changes nothing: explicit 0.0 and the omitted kwarg give
+    identical params, and flax's own forget-gate bias is the zeros init."""
+    default = _init(_lstm_nets(cfg), key=7)
+    explicit = _init(_lstm_nets(cfg, lstm_forget_bias=0.0), key=7)
+    assert jax.tree.structure(default) == jax.tree.structure(explicit)
+    jax.tree.map(np.testing.assert_array_equal, default, explicit)
+    np.testing.assert_array_equal(_hf_bias(default), np.zeros(SLOW_H))
+
+
+def test_lstm_forget_bias_writes_only_the_forget_gate_bias(cfg):
+    base = _init(_lstm_nets(cfg), key=7)
+    biased = _init(_lstm_nets(cfg, lstm_forget_bias=1.0), key=7)
+    # The exact leaf: policy_head/slow_core/hf/bias, all H entries.
+    assert _hf_bias(biased).shape == (SLOW_H,)
+    np.testing.assert_array_equal(_hf_bias(biased), np.ones(SLOW_H))
+    assert _hf_bias(biased).dtype == _hf_bias(base).dtype
+    # Every OTHER leaf (incl. the hi/hg/ho biases) is exactly the default init.
+    base_flat = flatten_dict(base["params"])
+    biased_flat = flatten_dict(biased["params"])
+    assert set(base_flat) == set(biased_flat)
+    for k, v in base_flat.items():
+        if k == _HF_BIAS_PATH:
+            continue
+        np.testing.assert_array_equal(
+            np.asarray(v), np.asarray(biased_flat[k]), err_msg=str(k)
+        )
+    for gate in ("hi", "hg", "ho"):
+        np.testing.assert_array_equal(
+            np.asarray(biased["params"]["policy_head"]["slow_core"][gate]["bias"]),
+            np.zeros(SLOW_H),
+        )
+    # A non-trivial value too (not just 1.0).
+    np.testing.assert_array_equal(
+        _hf_bias(_init(_lstm_nets(cfg, lstm_forget_bias=-0.5))), np.full(SLOW_H, -0.5)
+    )
+
+
+def test_lstm_forget_bias_is_used_by_the_cell(cfg):
+    """The written bias is the one the tick step applies (module output equals
+    an independent LSTMCell step on the same params) and it changes the
+    result relative to bias 0."""
+    nets0 = _lstm_nets(cfg)
+    nets1 = _lstm_nets(cfg, lstm_forget_bias=1.0)
+    params1 = _init(nets1, key=7)
+    params0 = _init(nets0, key=7)
+    obs = _random_obs(jax.random.PRNGKey(2))
+    packed = jax.random.normal(jax.random.PRNGKey(3), (LSTM_ROWS,))
+    hidden = (packed, jnp.zeros((1,)))
+    _, _, (new1, _) = _raw(nets1, params1, obs, hidden)
+    ref1, _ = _lstm_cell_ref(params1, packed, _ff_input(params1, obs))
+    np.testing.assert_allclose(np.asarray(new1), np.asarray(ref1), rtol=1e-6, atol=1e-6)
+    _, _, (new0, _) = _raw(nets0, params0, obs, hidden)
+    assert not np.allclose(np.asarray(new0[:SLOW_H]), np.asarray(new1[:SLOW_H]))
+
+
+def test_lstm_forget_bias_survives_graft(cfg):
+    """graft_params keeps target-only leaves, so the biased hf survives an FF
+    graft -- and the step-0 FF-equality contract still holds with bias 1."""
+    # residual_mode / scale are net hyperparameters and must match between
+    # the FF source and the slow target (the factories' defaults differ).
+    ff_nets = _ff_nets(cfg, residual_mode="tanh", residual_scale=2.0)
+    lstm_nets = _lstm_nets(
+        cfg, lstm_forget_bias=1.0, residual_mode="tanh", residual_scale=2.0
+    )
+    obs = _random_obs(jax.random.PRNGKey(1))
+    ff_params = _perturb(
+        ff_nets.policy.init(jax.random.PRNGKey(0), obs), jax.random.PRNGKey(8)
+    )
+    lstm_init = _init(lstm_nets, key=3)
+    np.testing.assert_array_equal(_hf_bias(lstm_init), np.ones(SLOW_H))
+    grafted, report = graft_params(lstm_init, jax.tree.map(np.asarray, ff_params))
+    assert "params/policy_head/slow_core/hf/bias" in report["new"]
+    np.testing.assert_array_equal(_hf_bias(grafted), np.ones(SLOW_H))
+    for i, phase in enumerate([0, 1, 2]):
+        o = _random_obs(jax.random.PRNGKey(40 + i))
+        hidden = _lstm_hidden(jax.random.PRNGKey(50 + i), phase, scale=3.0)
+        mu, scale, _ = _raw(lstm_nets, grafted, o, hidden)
+        ff_dist = ff_nets.policy.apply(ff_params, o)
+        np.testing.assert_allclose(
+            np.asarray(mu), np.asarray(ff_dist.mean()), atol=1e-6
+        )
+        np.testing.assert_allclose(
+            np.asarray(scale), np.asarray(ff_dist.stddev()), atol=1e-6
+        )
+
+
+def test_lstm_forget_bias_survives_warm_start_splice(cfg):
+    donor = _ff_nets(cfg)
+    obs = _random_obs(jax.random.PRNGKey(1))
+    donor_params = donor.policy.init(jax.random.PRNGKey(7), obs)
+    nets = _lstm_nets(
+        cfg,
+        lstm_forget_bias=1.0,
+        warm_start_prior_params=donor_params["params"]["prior"],
+        warm_start_decoder_params=donor_params["params"]["decoder"],
+    )
+    params = _init(nets, key=11)
+    np.testing.assert_array_equal(_hf_bias(params), np.ones(SLOW_H))
+    jax.tree_util.tree_map(
+        np.testing.assert_array_equal,
+        params["params"]["prior"],
+        donor_params["params"]["prior"],
+    )
+
+
+def test_gru_rejects_nonzero_forget_bias(cfg):
+    with pytest.raises(ValueError, match="lstm_forget_bias"):
+        _slow_nets(cfg, lstm_forget_bias=1.0)
+    # 0.0 is accepted and leaves the GRU net exactly as before.
+    a = _init(_slow_nets(cfg), key=5)
+    b = _init(_slow_nets(cfg, lstm_forget_bias=0.0), key=5)
+    jax.tree.map(np.testing.assert_array_equal, a, b)
+    with pytest.raises(ValueError, match="lstm_forget_bias"):
+        _lstm_nets(cfg, lstm_forget_bias=float("nan"))
+    with pytest.raises(ValueError, match="lstm_forget_bias"):
+        _lstm_nets(cfg, lstm_forget_bias=float("inf"))
+
+
+def test_lstm_rejects_h_wide_hidden_with_clear_error(cfg):
+    """An LSTM net fed a GRU-shaped (H-wide) hidden fails with a ValueError
+    naming the expected 2H width -- not an opaque flax shape/ZeroDivision
+    error from inside the cell."""
+    nets = _lstm_nets(cfg)
+    params = _init(nets)
+    obs = _random_obs(jax.random.PRNGKey(2))
+    bad = (jnp.zeros((SLOW_H,)), jnp.zeros((1,)))
+    with pytest.raises(ValueError, match=rf"2H={LSTM_ROWS}.*got {SLOW_H}"):
+        _raw(nets, params, obs, bad)
+    with pytest.raises(ValueError, match=rf"2H={LSTM_ROWS}"):
+        nets.policy.init(jax.random.PRNGKey(0), obs, bad)
+    # Batched leading dims are checked on the trailing axis too.
+    with pytest.raises(ValueError, match=rf"2H={LSTM_ROWS}"):
+        _raw(nets, params, obs, (jnp.zeros((3, SLOW_H)), jnp.zeros((3, 1))))
+    # The right width still works.
+    _raw(nets, params, obs, nets.recurrent_meta.init_hidden())
+
+
+def test_gru_rejects_2h_wide_hidden_with_clear_error(cfg):
+    """The mirror misconfiguration (an LSTM-shaped hidden into a GRU net)."""
+    nets = _slow_nets(cfg)
+    params = _init(nets)
+    obs = _random_obs(jax.random.PRNGKey(2))
+    with pytest.raises(ValueError, match=rf"H={SLOW_H}.*got {LSTM_ROWS}"):
+        _raw(nets, params, obs, (jnp.zeros((LSTM_ROWS,)), jnp.zeros((1,))))

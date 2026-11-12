@@ -994,18 +994,25 @@ def test_lstm_sgd_step_ticks_smoke_jit(aligned):
     for key, v in metrics.items():
         assert np.isfinite(np.asarray(v)).all(), f"non-finite metric {key}"
     assert float(metrics["rnn/tick_fill_frac"]) == 0.0
-    assert float(metrics["rnn/hidden_staleness"]) < 1e-4
+    # The stored hidden is the rollout's own, so staleness is f16 rounding
+    # only (about 3e-8 here, as for the GRU); 1e-6 keeps headroom while still
+    # catching a partially wrong hold.
+    assert float(metrics["rnn/hidden_staleness"]) < 1e-6
     assert float(metrics["rnn/hidden_abs_mean"]) > 0.0
     assert int(new_state.steps) == 1
     assert np.isfinite(float(metrics["policy_loss"]))
     assert np.isfinite(float(metrics["critic_loss"]))
 
-    # Same metric keys as the GRU tick path.
+    # Same metric keys as the GRU tick path, plus the LSTM-only c headroom
+    # watch (max |c| over the sampled batch's stored hidden).
     s = _setup_legacy()
     _, legacy_m = _sgd_step_rnn(
         s["state"], s["batch"], s["nets"], s["optimizers"], s["cfg"]
     )
-    assert set(metrics) == set(legacy_m) | {"rnn/tick_fill_frac"}
+    assert set(metrics) == set(legacy_m) | {"rnn/tick_fill_frac", "rnn/lstm_c_absmax"}
+    c_stored = slow[..., :SLOW_H].astype(jnp.float32)
+    assert float(metrics["rnn/lstm_c_absmax"]) == float(jnp.max(jnp.abs(c_stored)))
+    assert float(metrics["rnn/lstm_c_absmax"]) > 0.0
 
     core_delta = jax.tree.map(
         lambda a, b: float(jnp.max(jnp.abs(a - b))),
@@ -1030,3 +1037,50 @@ def test_lstm_rnn_metrics_cover_the_whole_packed_leaf():
     assert w["h_stored_tm"][0].shape[-1] == LSTM_W
     slow_abs = float(jnp.mean(jnp.abs(w["h_stored_tm"][0])))
     np.testing.assert_allclose(float(m["rnn/hidden_abs_mean"]), slow_abs, rtol=1e-2)
+
+
+def test_lstm_c_absmax_metric_covers_the_whole_stored_window():
+    """`rnn/lstm_c_absmax` = max |c| over the sampled batch's stored hidden
+    (all [B, T] steps, held or tick, incl. the n-step tail), c being the FIRST
+    H entries of the packed leaf. A spike in c shows up exactly; a spike in h
+    (the second half) does not."""
+    k = 10
+    cfg = _cfg(L=4, n=3, k=k)
+    nets = _slow_nets(cfg, k, cell="lstm")
+    state = _state(nets, cfg)
+    batch = _make_batch(nets, state, cfg, phase0=(0, 3, 7, 9))
+    opt = make_optimizers(cfg)
+    slow, phase = batch["policy_hidden"]
+    T = cfg.sequence_length
+
+    _, m0 = _sgd_step_rnn(state, batch, nets, opt, cfg)
+    base = float(m0["rnn/lstm_c_absmax"])
+    assert base == float(jnp.max(jnp.abs(slow[..., :SLOW_H].astype(jnp.float32))))
+
+    # 1000.0 is exact in f16; the last step is in the n-step tail (never a
+    # loss point), so this also pins "whole window, not just the ticks".
+    spike_c = slow.at[0, T - 1, 2].set(-1000.0)
+    _, m1 = _sgd_step_rnn(
+        state, dict(batch, policy_hidden=(spike_c, phase)), nets, opt, cfg
+    )
+    assert float(m1["rnn/lstm_c_absmax"]) == 1000.0
+    assert np.isfinite(np.asarray(m1["policy_loss"])).all()
+
+    # The same spike in the h half is not a c headroom event.
+    spike_h = slow.at[0, T - 1, SLOW_H + 2].set(-1000.0)
+    _, m2 = _sgd_step_rnn(
+        state, dict(batch, policy_hidden=(spike_h, phase)), nets, opt, cfg
+    )
+    assert float(m2["rnn/lstm_c_absmax"]) == base
+
+
+def test_gru_tick_path_has_no_lstm_metric():
+    """The c headroom watch is LSTM-only: the GRU tick path keeps its keys."""
+    k = 10
+    cfg = _cfg(L=4, n=3, k=k)
+    nets = _slow_nets(cfg, k)
+    state = _state(nets, cfg)
+    batch = _make_batch(nets, state, cfg, phase0=(0, 3, 7, 9))
+    _, m = _sgd_step_rnn(state, batch, nets, make_optimizers(cfg), cfg)
+    assert "rnn/tick_fill_frac" in m
+    assert "rnn/lstm_c_absmax" not in m

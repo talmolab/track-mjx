@@ -27,10 +27,24 @@ trailing rows and one extra subtree, `slow_core`:
         and the FF graft (zero-filled `hidden_0` rows) are identical to the
         GRU's. `rnn_store_dtype` (float16 by default) is applied to the
         whole `slow_h` leaf. Unlike the GRU's h (in [-1, 1]), c is not
-        squashed (only the emitted h = o * tanh(c) is), so at f16 it is
-        range-limited (|c| <= 65504) and rounded to ~3 decimal digits in
-        replay. The live rollout carry stays f32; only the replay copy is
-        rounded.
+        squashed (only the emitted h = o * tanh(c) is), but it is bounded by
+        the tick count: c_t = f * c_{t-1} + i * g with f, i in (0, 1) and
+        |g| < 1, so |c_t| <= |c_{t-1}| + 1 -- at most +1 per tick -- and the
+        rollout / learner zero c at every done, so |c| <= the number of ticks
+        since the episode start (e.g. 1000 for a 100 s episode ticking at
+        10 Hz, far below the f16 maximum of 65504). Rounding c to f16
+        (relative 2^-11) moves the emitted h by at most
+        2^-11 * max_x(x * sech^2 x) ~ 2.2e-4, the same order as the GRU's own
+        f16 error on h. The live rollout carry stays f32; only the replay
+        copy is rounded. The strided learner logs `rnn/lstm_c_absmax` (max
+        |c| over the sampled batch's stored hidden, LSTM only; like every
+        metric it is averaged over the SGD steps of a chunk) to watch this.
+  * LSTM forget-gate bias: flax's `LSTMCell` has one `bias_init` for all
+    gates (zeros), so the forget gate starts at f = sigmoid(~N(0, 1)),
+    mean 0.5. The factory's `lstm_forget_bias` (default 0.0 = that flax
+    init, bit-identical) overwrites ONLY `slow_core/hf/bias` after init.
+    `slow_core` is a target-only subtree under `graft_params`, so the value
+    survives an FF graft.
 
 Prior and Decoder are the modules from networks_kl_anchor (warm-start splice
 unchanged) and the head stays under `policy_head`, so
@@ -122,7 +136,9 @@ class _SlowCorePolicyHeadModule(nn.Module):
     [.., 2H] = `concat([c, h], -1)`; the cell runs on the carry `(c, h)` and
     BOTH halves are held on non-tick steps. In either case the MLP reads
     `concat([x, h])` with the H-wide output h LAST (never c). `c` is not
-    squashed; the replay store dtype applies to the whole leaf.
+    squashed but |c| <= ticks since the last reset (see the module
+    docstring); the replay store dtype applies to the whole leaf. A hidden
+    of the wrong width raises a ValueError naming the expected width.
     """
 
     layer_sizes: Sequence[int]
@@ -139,6 +155,26 @@ class _SlowCorePolicyHeadModule(nn.Module):
     @nn.compact
     def __call__(self, vision, task_obs, proprio, hidden):
         slow_h, phase = hidden
+        # Static (trace-time) width check: a GRU-shaped hidden fed to an LSTM
+        # net (or the reverse) otherwise fails deep inside flax with an
+        # opaque error (a ZeroDivisionError for H into the LSTM split).
+        H = self.slow_hidden_size
+        if self.cell_type == "gru":
+            expected, layout = H, f"H={H}"
+        elif self.cell_type == "lstm":
+            expected, layout = 2 * H, f"2H={2 * H} (concat([c, h]))"
+        else:
+            raise ValueError(
+                f"unknown slow-core cell_type {self.cell_type!r}; "
+                "expected 'gru' or 'lstm'"
+            )
+        if slow_h.shape[-1] != expected:
+            raise ValueError(
+                f"{self.cell_type} slow_h must be {layout} wide on its last "
+                f"axis, got {slow_h.shape[-1]} (shape {tuple(slow_h.shape)}); "
+                "check that the replay / init hidden was built from this "
+                "net's recurrent_meta.init_hidden()."
+            )
         vis = BinocularVisionEncoder(
             feature_size=self.cnn_feature_size,
             channels=tuple(self.cnn_channels),
@@ -152,7 +188,6 @@ class _SlowCorePolicyHeadModule(nn.Module):
         # per-env vmap anyway). kernel_init matches the repo's recurrent heads
         # (recurrent_ppo.get_rnn_cell), which cannot take an explicit name.
         tick = phase[..., :1] < 0.5  # [..., 1]; broadcasts over the leaf width
-        H = self.slow_hidden_size
         if self.cell_type == "gru":
             g, _ = nn.GRUCell(
                 features=H,
@@ -161,7 +196,7 @@ class _SlowCorePolicyHeadModule(nn.Module):
             )(slow_h, x)
             slow_h = jnp.where(tick, g, slow_h)
             out = slow_h
-        elif self.cell_type == "lstm":
+        else:  # "lstm" (validated above)
             # slow_h = concat([c, h]); one where() over the packed leaf holds
             # BOTH c and h on non-tick steps.
             carry = (slow_h[..., :H], slow_h[..., H:])
@@ -172,11 +207,6 @@ class _SlowCorePolicyHeadModule(nn.Module):
             )(carry, x)
             slow_h = jnp.where(tick, jnp.concatenate([new_c, new_h], axis=-1), slow_h)
             out = slow_h[..., H:]  # the output h only -- never c
-        else:
-            raise ValueError(
-                f"unknown slow-core cell_type {self.cell_type!r}; "
-                "expected 'gru' or 'lstm'"
-            )
 
         h = jnp.concatenate([x, out], axis=-1)  # output LAST -> graftable
         for i, size in enumerate(self.layer_sizes):
@@ -263,6 +293,22 @@ class _BAggressiveSlowCorePolicyNet(nn.Module):
         return tfd.MultivariateNormalDiag(loc=mu, scale_diag=scale), new_hidden
 
 
+def _with_forget_bias(params: dict, value: float) -> dict:
+    """Copy of `params` with the LSTM slow core's forget-gate bias
+    (`params/policy_head/slow_core/hf/bias`, the h-side bias of gate "f";
+    flax's LSTMCell puts a bias on hi/hf/hg/ho and none on ii/if/ig/io) set
+    to `value`. Every other leaf is shared with the input."""
+    inner = dict(params["params"])
+    head = dict(inner["policy_head"])
+    core = dict(head["slow_core"])
+    gate = dict(core["hf"])
+    gate["bias"] = jnp.full_like(gate["bias"], value)
+    core["hf"] = gate
+    head["slow_core"] = core
+    inner["policy_head"] = head
+    return {**params, "params": inner}
+
+
 def make_dmpo_kl_anchor_slow_networks(
     *,
     proprio_size: int,
@@ -277,6 +323,7 @@ def make_dmpo_kl_anchor_slow_networks(
     slow_hidden_size: int = 512,
     tick_stride: int = 10,
     rnn_cell: str = "gru",
+    lstm_forget_bias: float = 0.0,
     rnn_store_dtype: Any = "float16",
     cnn_feature_size: int = 32,
     cnn_channels: Sequence[int] = (4, 8, 16, 32),
@@ -302,7 +349,13 @@ def make_dmpo_kl_anchor_slow_networks(
     module docstring). `rnn_store_dtype` is the replay dtype of the stored
     hidden, both leaves -- it must hold every phase value 0..k-1 exactly
     (float16: k <= 2049); for an LSTM it also stores the cell state c,
-    which float16 limits to |c| <= 65504 at ~3 digits.
+    which float16 holds to ~3 digits and |c| <= 65504; |c| <= ticks since
+    the last reset, far below that (see the module docstring).
+    `lstm_forget_bias` (LSTM only; default 0.0 = flax's zeros init, so the
+    default is bit-identical to a net built without it) is written into
+    the forget-gate bias `params/policy_head/slow_core/hf/bias` after init
+    (flax has one `bias_init` for all four gates); a nonzero value with
+    `rnn_cell="gru"`, or a non-finite value, raises.
 
     Like the recurrent factory, `policy.init(rng, obs, hidden)` takes a
     hidden (use `recurrent_meta.init_hidden()`), and the warm-start
@@ -316,6 +369,14 @@ def make_dmpo_kl_anchor_slow_networks(
     if rnn_cell not in _STATE_WIDTH_MULT:
         raise ValueError(
             f"slow core cell {rnn_cell!r} is not supported; expected 'gru' or 'lstm'."
+        )
+    lstm_forget_bias = float(lstm_forget_bias)
+    if not np.isfinite(lstm_forget_bias):
+        raise ValueError(f"lstm_forget_bias must be finite, got {lstm_forget_bias}.")
+    if rnn_cell != "lstm" and lstm_forget_bias != 0.0:
+        raise ValueError(
+            f"lstm_forget_bias={lstm_forget_bias} only applies to "
+            f"rnn_cell='lstm' (got rnn_cell={rnn_cell!r}); leave it at 0.0."
         )
     tick_stride = int(tick_stride)
     if tick_stride < 1:
@@ -373,6 +434,8 @@ def make_dmpo_kl_anchor_slow_networks(
 
     def policy_init(rng, obs, hidden):
         params = _orig_init(rng, obs, hidden)
+        if lstm_forget_bias != 0.0:
+            params = _with_forget_bias(params, lstm_forget_bias)
         return _splice_warm_start(
             params, warm_start_prior_params, warm_start_decoder_params
         )

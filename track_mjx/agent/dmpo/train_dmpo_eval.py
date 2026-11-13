@@ -386,6 +386,8 @@ def run_eval_rollout_envzero(
                         # Per-step scalars a task reports under its own
                         # `spout/` namespace.
                         or mk.startswith("spout/")
+                        # prior_gating: per-step gate state (1 = policy, 0 = behavior prior).
+                        or mk.startswith("gate/")
                     ):
                         arr = jnp.asarray(mv, dtype=new_st.reward.dtype)
                         # Only per-env scalars are aggregatable. Anything else
@@ -685,6 +687,10 @@ def compute_batch_rollout_metrics(
             s = _first_ep_sum(v)
             out[f"episode_{k}"] = float(s.mean())
             out[f"episode_{k}_std"] = float(s.std())
+        elif k.startswith("gate/"):
+            # prior_gating per-step diagnostics: report the first episode's per-step MEAN (a fraction), not a sum.
+            s = _first_ep_sum(v)
+            out[f"{k}_frac"] = float(np.mean(s / np.maximum(alive.sum(axis=0), 1)))
     return out
 
 

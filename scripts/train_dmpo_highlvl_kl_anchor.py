@@ -379,6 +379,15 @@ _PRIOR_MANIFEST = (
 _MANIFEST_ALIAS_ROW = re.compile(r"^\| `([^`]+)` \| `([^`]+)` \| yes \|$")
 
 
+def _gating_cfg(hydra_cfg):
+    """The ``prior_gating:`` block (learned behavior/motion-prior gate, track_mjx.agent.dmpo.prior_gating) when
+    enabled, else None."""
+    g = hydra_cfg.get("prior_gating", None)
+    if g is None or not bool(g.get("enabled", False)):
+        return None
+    return g
+
+
 def _is_latent_action(hydra_cfg) -> bool:
     """``transfer.mode: latent_action``: MPO acts on the latent residual (track_mjx.agent.dmpo.latent_action)."""
     return str(hydra_cfg.get("transfer", {}).get("mode", "")) == "latent_action"
@@ -707,6 +716,7 @@ def _build_env(
     latent_size,
     action_size,
     from_scratch=False,
+    gating_bp_fn=None,
 ):
     """Load registry env, wrap in KLAnchorPriorDecoderWrapper (or
     EndToEndWrapper on the from-scratch arm) + wrap_for_dmpo_training (the brax
@@ -774,6 +784,28 @@ def _build_env(
             action_size=action_size,
             w_anchor=float(hydra_cfg.kl_anchor.w_anchor),
             alpha_anchor=float(hydra_cfg.kl_anchor.alpha_anchor),
+        )
+
+    _gate = _gating_cfg(hydra_cfg)
+    if _gate is not None:
+        from track_mjx.agent.dmpo.prior_gating import PriorGatingWrapper
+
+        if gating_bp_fn is None:
+            raise ValueError("prior_gating is enabled but no behavior-prior inference fn was built")
+        bp_logvar = _gate.get("bp_logvar", -2.25)
+        base_env = PriorGatingWrapper(
+            base_env,
+            kind="latent" if _is_latent_action(hydra_cfg) else "motor",
+            prior_fn=prior_fn,
+            bp_fn=gating_bp_fn,
+            decoder_logits_fn=decoder_logits_fn,
+            latent_size=int(latent_size),
+            motor_size=int(action_size),
+            latent_scale=float(hydra_cfg.network_config.get("latent_action_scale", 1.0)),
+            gate_bias=float(_gate.get("gate_bias", 0.5)),
+            gate_margin=float(_gate.get("gate_margin", 0.2)),
+            bp_logvar=None if bp_logvar is None else float(bp_logvar),
+            gate_obs=bool(_gate.get("gate_obs", True)),
         )
 
     from vnl_playground.tasks.rodent.vision_jax import BinocularVisionRenderWrapper
@@ -1027,6 +1059,39 @@ def _resolve_run_setup(hydra_cfg) -> _RunSetup:
             "LATENT-ACTION arm ACTIVE: MPO samples the latent residual delta=tanh(raw) in [-1,1]^L; "
             "z = mu_prior + %.3g * delta -> frozen decoder mean -> motor (env-side)",
             float(hydra_cfg.network_config.get("latent_action_scale", 1.0)),
+        )
+    _gate = _gating_cfg(hydra_cfg)
+    if _gate is not None:
+        # Learned behavior/motion-prior gate (SCAMPER prior_gating): one extra gate action dim, env-side switch.
+        _bad = []
+        if from_scratch:
+            _bad.append("transfer.mode=from_scratch")
+        if str(hydra_cfg.transfer.get("prior_format", "mlp_prior")) != "scamper_main":
+            _bad.append("a prior without a behavior prior (needs transfer.prior_format: scamper_main)")
+        if (
+            recurrent
+            or hydra_cfg.network_config.get("policy_head_slow_core", None) is not None
+        ):
+            _bad.append("a recurrent / slow-core policy head")
+        if bool(hydra_cfg.get("dual_prior", {}).get("enabled", False)):
+            _bad.append("dual_prior (the scheduled gate)")
+        if hydra_cfg.transfer.get(
+            "warm_start_dmpo_checkpoint", None
+        ) or hydra_cfg.transfer.get("graft_ff_checkpoint", None):
+            _bad.append("a warm start / graft")
+        if cfg.kl_anchor_alpha != 0.0 or cfg.kl_anchor_beta_linear != 0.0:
+            _bad.append("a non-zero kl-anchor term")
+        if _bad:
+            raise ValueError(f"prior_gating does not support {', '.join(_bad)}")
+        log.info(
+            "PRIOR GATING ACTIVE: kind=%s gate_bias=%.3g gate_margin=%.3g bp_logvar=%s gate_obs=%s "
+            "gate_init_std=%.3g (gate=0 -> behavior prior z = mu_BP + sigma*eps; gate=1 -> the policy)",
+            "latent" if transfer_mode == "latent_action" else "motor",
+            float(_gate.get("gate_bias", 0.5)),
+            float(_gate.get("gate_margin", 0.2)),
+            _gate.get("bp_logvar", -2.25),
+            bool(_gate.get("gate_obs", True)),
+            float(_gate.get("gate_init_std", 0.7)),
         )
     # network_config.policy_head_slow_core: the slow-clock memory core
     # (networks_kl_anchor_slow). Absent/null => nothing below changes.
@@ -1393,6 +1458,18 @@ def _make_env(hydra_cfg, prior: _FrozenPrior, from_scratch: bool) -> _EnvBuild:
     # --- 2. Build env ---
     base_env_for_size = tasks.load(str(hydra_cfg.env_name), flatten_obs=False)
     action_size_base = int(base_env_for_size.action_size)
+    gating_bp_fn = None
+    if _gating_cfg(hydra_cfg) is not None:
+        from track_mjx.agent.dmpo.prior_gating import make_bp_inference_fn
+
+        if prior.behavior_prior_params is None:
+            raise ValueError("prior_gating needs a behavior prior (transfer.prior_format: scamper_main)")
+        gating_bp_fn = make_bp_inference_fn(
+            prior.behavior_prior_params,
+            prior.normalizer_params,
+            latent_size,
+            prior.behavior_prior_layer_sizes,
+        )
     env, base_env_wrapped, mj_model, mjx_model, vision_shape = _build_env(
         hydra_cfg,
         prior_fn,
@@ -1400,6 +1477,7 @@ def _make_env(hydra_cfg, prior: _FrozenPrior, from_scratch: bool) -> _EnvBuild:
         latent_size,
         action_size_base,
         from_scratch=from_scratch,
+        gating_bp_fn=gating_bp_fn,
     )
     obs_size_dict = dict(env.observation_size)
     proprio_size = int(obs_size_dict.get("proprioception", 0))
@@ -1566,10 +1644,24 @@ def _make_networks(hydra_cfg, setup: _RunSetup, prior: _FrozenPrior, built: _Env
             critic_privileged_dim=critic_privileged_dim,
             init_std=float(hydra_cfg.network_config.get("latent_action_init_std", 0.7)),
         )
-        if action_size != latent_size:
+        _expect = latent_size + (1 if _gating_cfg(hydra_cfg) is not None else 0)
+        if action_size != _expect:
             raise RuntimeError(
-                f"latent_action: env action_size {action_size} != prior latent size {latent_size}"
+                f"latent_action: env action_size {action_size} != {_expect} "
+                "(prior latent size, + 1 gate dim under prior_gating)"
             )
+    elif _gating_cfg(hydra_cfg) is not None:
+        from track_mjx.agent.dmpo.prior_gating import make_dmpo_gated_motor_networks
+
+        _gk = {k: v for k, v in _shared_net_kwargs.items() if k not in ("proprio_size", "task_obs_size", "action_size")}
+        nets = make_dmpo_gated_motor_networks(
+            motor_size=action_size - 1,
+            policy_head_layer_sizes=tuple(
+                hydra_cfg.network_config.get("policy_head_layer_sizes", [256, 256, 256])
+            ),
+            gate_init_std=float(_gating_cfg(hydra_cfg).get("gate_init_std", 0.7)),
+            **_gk,
+        )
     else:
         nets = make_dmpo_kl_anchor_networks(
             policy_head_layer_sizes=tuple(
@@ -2317,6 +2409,11 @@ def main(hydra_cfg: DictConfig):
         log.info(
             "anchor_invariant_probe SKIPPED (latent_action: the policy acts on the latent, "
             "not on motor actions)"
+        )
+    elif _gating_cfg(hydra_cfg) is not None:
+        log.info(
+            "anchor_invariant_probe SKIPPED (prior_gating: the action carries a gate dim and the gate starts on "
+            "the behavior prior)"
         )
     elif from_scratch:
         # st0.info has no `anchor_mu_imit` -- EndToEndWrapper does not populate

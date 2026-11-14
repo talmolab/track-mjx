@@ -1093,6 +1093,27 @@ def _resolve_run_setup(hydra_cfg) -> _RunSetup:
             bool(_gate.get("gate_obs", True)),
             float(_gate.get("gate_init_std", 0.7)),
         )
+    if cfg.push_cost_beta != 0.0:
+        # Latent push cost (learner._policy_loss_fn): needs the FF kl-anchor motor head's `latent_push` method.
+        _bad = []
+        if from_scratch:
+            _bad.append("transfer.mode=from_scratch")
+        if transfer_mode == "latent_action":
+            _bad.append("transfer.mode=latent_action")
+        if (
+            recurrent
+            or hydra_cfg.network_config.get("policy_head_slow_core", None) is not None
+        ):
+            _bad.append("a recurrent / slow-core policy head")
+        if _bad:
+            raise ValueError(f"train_config.push_cost_beta does not support {', '.join(_bad)}")
+        log.info(
+            "PUSH COST ACTIVE: beta=%.4g (policy loss += beta * 0.5 * mean ||raw||^2, raw = the latent push before the "
+            "%s cap, in prior-sigma units) | residual cap r=%.3g",
+            cfg.push_cost_beta,
+            str(hydra_cfg.network_config.get("residual_mode", "sigma_tanh")),
+            float(hydra_cfg.network_config.get("residual_scale", 2.0)),
+        )
     # network_config.policy_head_slow_core: the slow-clock memory core
     # (networks_kl_anchor_slow). Absent/null => nothing below changes.
     slow_core_cfg = hydra_cfg.network_config.get("policy_head_slow_core", None)

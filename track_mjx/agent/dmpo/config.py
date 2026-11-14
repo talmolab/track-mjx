@@ -97,6 +97,12 @@ class DMPOConfig:
     # brake brax PPO gets for free from entropy_cost (TanhBijector's
     # forward_log_det_jacobian -> -2|x|).
     kl_anchor_beta_linear: float = 0.0
+    # LATENT PUSH COST: `loss += push_cost_beta * 0.5 * mean ||raw||^2`, where raw is the policy head's latent push
+    # BEFORE the residual soft-clip (for residual_mode sigma_ball: eps in prior-sigma units). 0.5 ||eps||^2 is the KL
+    # between N(mu + sigma*eps, sigma^2) and the prior N(mu, sigma^2), so beta is a KL-to-prior weight in latent space.
+    # Taken pre-clip so its gradient does not vanish at the cap (the soft clip's radial slope is sech^2). Policy loss
+    # only (the critic and the reward are untouched); FF kl-anchor motor head only. 0 = off (bit-identical).
+    push_cost_beta: float = 0.0
     # EXPLICIT number of SGD updates per rollout. When None (default), K keeps
     # being derived from `samples_per_insert` by whatever formula the entry point
     # already used, so every previously-run arm stays bit-reproducible.

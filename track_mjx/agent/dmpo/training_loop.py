@@ -235,6 +235,14 @@ def run(
             float(last_train_metrics.get("policy_loss", 0.0)),
             float(last_train_metrics.get("critic_loss", 0.0)),
         )
+        if float(last_train_metrics.get("push_cost", 0.0)) != 0.0:
+            # Push-cost arms only (DMPOConfig.push_cost_beta != 0), so every other arm's log stays line-identical.
+            log.info(
+                "push_cost env_steps=%d push_cost=%.4g push_raw_norm=%.4g",
+                int(total_env_steps),
+                float(last_train_metrics.get("push_cost", 0.0)),
+                float(last_train_metrics.get("push_raw_norm", 0.0)),
+            )
         if "schedule/dual_prior_p" in last_train_metrics:
             # Dual-prior arms only, so every other arm's log stays line-identical.
             log.info(

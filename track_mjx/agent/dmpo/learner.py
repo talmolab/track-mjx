@@ -5,6 +5,7 @@
 - single SGD step (policy + critic + dual updates).
 """
 
+import collections
 import functools
 from collections.abc import Mapping
 from typing import Any, NamedTuple
@@ -19,7 +20,7 @@ from tensorflow_probability.substrates import jax as tfp
 from track_mjx.agent.dmpo import action_utils
 from track_mjx.agent.dmpo.categorical import categorical_l2_project
 from track_mjx.agent.dmpo.config import DMPOConfig, validate_alignment
-from track_mjx.agent.dmpo.losses import MPO, MPOParams, clip_mpo_params
+from track_mjx.agent.dmpo.losses import MPO, MPOParams, MPOStats, clip_mpo_params
 from track_mjx.agent.dmpo.networks import DMPONetworks
 from track_mjx.agent.dmpo.obs_utils import (
     DictRunningStatisticsState,
@@ -628,6 +629,10 @@ def _critic_loss_fn(
     return -(jnp.sum(weights * per_row) * (1.0 / jnp.maximum(jnp.sum(weights), 1.0)))
 
 
+# MPOStats + the latent push-cost fields (DMPOConfig.push_cost_beta != 0 only).
+PolicyLossStats = collections.namedtuple("PolicyLossStats", (*MPOStats._fields, "push_cost", "push_raw_norm"))
+
+
 def _policy_loss_fn(
     policy_params: Any,
     dual_params: MPOParams,
@@ -747,12 +752,32 @@ def _policy_loss_fn(
         anchor_w_now = w_now
         loss = loss + anchor_loss_term
 
+    # Optional latent push cost (DMPOConfig.push_cost_beta): beta * 0.5 * ||raw||^2 on the PRE-clip push, a
+    # KL-to-prior penalty in latent space whose gradient survives the residual cap. Skipped at trace time when 0.
+    push_cost = None
+    push_raw_norm = None
+    if cfg.push_cost_beta != 0.0:
+        raw = jax.vmap(lambda o: nets.policy.apply(policy_params, o, method="latent_push"))(obs_t0)
+        sq = jnp.sum(raw * raw, axis=-1)
+        if batch_weights is None:
+            msq = jnp.mean(sq)
+            push_raw_norm = jnp.mean(jnp.sqrt(sq))
+        else:
+            wsum = jnp.maximum(jnp.sum(batch_weights), 1e-12)
+            msq = jnp.sum(batch_weights * sq) / wsum
+            push_raw_norm = jnp.sum(batch_weights * jnp.sqrt(sq)) / wsum
+        push_cost = cfg.push_cost_beta * 0.5 * msq
+        loss = loss + push_cost
+
     stats = stats._replace(
         anchor_kl_mean=anchor_kl_mean,
         anchor_reward_mean=anchor_reward_mean,
         anchor_loss_term=anchor_loss_term,
         anchor_w_now=anchor_w_now,
     )
+    if push_cost is not None:
+        # Extended stats only on push-cost arms; every other config returns MPOStats unchanged.
+        stats = PolicyLossStats(*stats, push_cost=push_cost, push_raw_norm=push_raw_norm)
     return loss.squeeze(), stats
 
 
@@ -1195,6 +1220,10 @@ def sgd_step(
         # Convenience: surface log_temperature as a scalar.
         "log_temperature": new_dual_params.log_temperature.squeeze(),
     }
+    if cfg.push_cost_beta != 0.0:
+        # Latent push cost: only on push-cost arms, so every other config's metric set is unchanged.
+        metrics["push_cost"] = stats.push_cost
+        metrics["push_raw_norm"] = stats.push_raw_norm
     return new_state, metrics
 
 

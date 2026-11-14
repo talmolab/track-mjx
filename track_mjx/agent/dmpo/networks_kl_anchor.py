@@ -287,6 +287,11 @@ class _BAggressivePolicyNet(nn.Module):
         scale = jax.nn.softplus(log_std) + 1e-3
         return tfd.MultivariateNormalDiag(loc=mu, scale_diag=scale)
 
+    def latent_push(self, obs):
+        """The policy head's raw latent push, BEFORE ``latent_residual``'s bound (for ``sigma_ball``: the commanded
+        eps in prior-sigma units). Used by the push cost (``DMPOConfig.push_cost_beta``)."""
+        return self.policy_head(obs["vision"], obs["imitation_target"], obs["proprioception"])
+
 
 def _splice_warm_start(
     params: dict, prior_params: dict | None, decoder_params: dict | None

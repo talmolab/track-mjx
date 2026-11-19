@@ -1,3 +1,9 @@
+defaults:
+  - override hydra/launcher: submitit_slurm
+hydra:
+  launcher:
+    setup:
+      - export PYTHONPATH=$PYTHONPATH:/orcd/data/flavell/001/om/aaprasad/projects/con3trol/src/track-mjx/scripts
 task:
 env_overrides:
 seed: 0
@@ -5,6 +11,10 @@ mimic:
   checkpoint: "260210_013247_285744"
   step: null
 checkpoint_dir: highlvl_checkpoints
+# Multiplier on the high-level latent before the frozen decoder (see
+# HighLevelWrapper.latent_scale). With distribution_type=tanh_normal the policy emits
+# [-1, 1], so this sets the latent range in decoder units; 1.0 = unscaled.
+latent_scale: 1.0
 obs_keys:
   highlvl: task_obs
   policy: state
@@ -23,15 +33,21 @@ ppo:
   num_updates_per_batch: 4
   discounting: 0.99
   learning_rate: 1e-4
-  entropy_cost: 0.01
+  entropy_cost: 0.002
   num_envs: 4096
   batch_size: 1024
   max_grad_norm: 1.0
   eval_every: 5e6
+  deterministic_eval: true
+  clipping_epsilon: 0.2
   network_factory:
     policy_hidden_layer_sizes: [1024, 512, 256]
     value_hidden_layer_sizes: [1024, 512, 256]
     distribution_type: normal
-    state_dependent_std: true
-    init_noise_std: 0.0
+    state_dependent_std: false
+    init_noise_std: 1.0
     noise_std_type: "log"
+    # Clamp on the policy std, normal head only (null = unbounded). Stops the
+    # entropy-driven std runaway; keep init_noise_std inside the bounds.
+    min_std: null
+    max_std: null

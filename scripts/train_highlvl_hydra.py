@@ -32,6 +32,7 @@ Usage:
 
 import os
 
+os.environ.pop("SLURM_CPU_BIND", False)
 xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
@@ -47,6 +48,8 @@ from typing import Any
 import hydra
 import jax
 import wandb
+import traceback
+import sys
 from omegaconf import DictConfig
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
@@ -59,12 +62,14 @@ from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
+from track_mjx.agent import networks as hl_networks
 from utils import (
     apply_env_overrides,
     configure_warp_backend,
     create_base_parser,
     create_policy_params_fn,
     create_ppo_params,
+    flatten_env_overrides,
     get_training_params,
     make_logging_inference_fn,
     parse_env_overrides_str,
@@ -103,6 +108,7 @@ def create_environments(
     highlvl_obs_key: str,
     policy_obs_key: str = "state",
     value_obs_key: str = "state",
+    latent_scale: float = 1.0,
 ):
     """Create training and eval environments with HighLevelWrapper."""
     wrapper_kwargs = dict(
@@ -112,6 +118,7 @@ def create_environments(
         value_obs_key=value_obs_key,
         highlvl_obs_key=highlvl_obs_key,
         lowlvl_obs_key="proprioception",
+        latent_scale=latent_scale,
     )
     env = rodent_wrappers.HighLevelWrapper(
         registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False),
@@ -124,12 +131,7 @@ def create_environments(
     return env, eval_env
 
 
-@hydra.main(
-    version_base=None,
-    config_path="../track_mjx/config",
-    config_name="highlvl",
-)
-def main(cfg: DictConfig):
+def run(cfg: DictConfig):
     """Main training entry point."""
     print(f"Task: {cfg.task}")
 
@@ -142,7 +144,10 @@ def main(cfg: DictConfig):
     # Create configs
     env_cfg = create_env_config(cfg.task, mimic_cfg)
     if cfg.env_overrides is not None:
-        env_overrides = cfg.env_overrides
+        # Flatten to dotted leaf keys: a nested dict would replace the whole subtree.
+        env_overrides = flatten_env_overrides(
+            OmegaConf.to_container(cfg.env_overrides, resolve=True)
+        )
     else:
         env_overrides = {}
     ppo_params = cfg.ppo
@@ -157,7 +162,9 @@ def main(cfg: DictConfig):
     # Set Warp defaults first, then apply all user overrides (can override naconmax, njmax)
     if is_warp:
         configure_warp_backend(env_cfg, cfg.ppo.num_envs, task_name=cfg.task)
-    apply_env_overrides(env_cfg, env_overrides)
+    env_cfg = env_cfg.lock()
+    if env_overrides:
+        env_cfg.update_from_flattened_dict(env_overrides)
 
     print(f"env_cfg:\n{env_cfg}")
     print(f"ppo_params:\n{ppo_params}")
@@ -180,9 +187,27 @@ def main(cfg: DictConfig):
         notes=f"task: {cfg.task}, mimic: {cfg.mimic.checkpoint}, step: {cfg.mimic.step}",
     )
 
-    def wandb_progress(num_steps, metrics):
-        print(f"Step {num_steps}")
-        print(f"Metrics: {metrics}")
+    def wandb_progress(num_steps: int, metrics: dict[str, Any]) -> None:
+        """Log training progress metrics to Weights & Biases.
+
+        Adds the step count to metrics and commits the log entry.
+
+        Args:
+            num_steps: Current training step count (logged as num_steps_thousands).
+            metrics: Dictionary of metric names to values to log.
+
+        Note:
+            This function commits the log (unlike other logging functions in this
+            module), so it should be called last in a logging batch.
+        """
+        metrics["num_steps_thousands"] = num_steps
+        for metric in metrics:
+            if metric not in wandb.run.summary.keys():
+                if "reward" in metric or "episode_length" in metric:
+                    mode = "max"
+                else:
+                    mode = "mean"
+                wandb.run.define_metric(metric, summary=mode)
         wandb.log(metrics)
 
     # Create environments
@@ -194,7 +219,16 @@ def main(cfg: DictConfig):
         cfg.obs_keys.highlvl,
         policy_obs_key=cfg.obs_keys.policy,
         value_obs_key=cfg.obs_keys.value,
+        # Scalar in the yaml; a list override is passed through to the wrapper as-is.
+        latent_scale=OmegaConf.to_container(cfg.latent_scale)
+        if OmegaConf.is_config(cfg.latent_scale)
+        else cfg.latent_scale,
     )
+
+    print("Env Observation Sizes:")
+    print(f"\t-Task: {env.non_proprioceptive_obs_size}")
+    print(f"\t-Proprioceptive: {env.proprioceptive_obs_size}")
+    print(f"\t-Total: {env.observation_size}")
 
     try:
         wandb.log(
@@ -208,7 +242,7 @@ def main(cfg: DictConfig):
     training_params = get_training_params(ppo_params)
 
     network_factory = functools.partial(
-        ppo_networks.make_ppo_networks,
+        hl_networks.make_ppo_networks,
         policy_obs_key=cfg.obs_keys.policy,
         value_obs_key=cfg.obs_keys.value,
         **ppo_params.network_factory,
@@ -257,14 +291,27 @@ def main(cfg: DictConfig):
     )
 
     # Run training
+    train_fn(environment=env, eval_env=eval_env, policy_params_fn=policy_params_fn)
+    print("Training complete!")
+    wandb.finish()
+
+
+@hydra.main(
+    version_base=None,
+    config_path="../track_mjx/config",
+    config_name="highlvl",
+)
+def main(cfg: DictConfig):
     try:
-        train_fn(environment=env, eval_env=eval_env, policy_params_fn=policy_params_fn)
-    except KeyboardInterrupt as e:
-        print("Training interrupted by user")
-        raise (e)
+        run(cfg)
+    except Exception:
+        print("run failed!")
+        traceback.print_exc(file=sys.stderr)
+        raise
     finally:
-        print("Training complete!")
-        wandb.finish()
+        # fflush everything
+        sys.stdout.flush()
+        sys.stderr.flush()
 
 
 if __name__ == "__main__":

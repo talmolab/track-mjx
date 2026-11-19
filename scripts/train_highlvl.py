@@ -58,6 +58,7 @@ from vnl_playground import registry
 from vnl_playground.tasks import wrappers as rodent_wrappers
 from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
+from track_mjx.agent import networks as hl_networks
 from utils import (
     apply_env_overrides,
     configure_warp_backend,
@@ -102,6 +103,7 @@ def create_environments(
     highlvl_obs_key: str,
     policy_obs_key: str = "state",
     value_obs_key: str = "state",
+    latent_scale: float = 1.0,
 ):
     """Create training and eval environments with HighLevelWrapper."""
     wrapper_kwargs = dict(
@@ -111,6 +113,7 @@ def create_environments(
         value_obs_key=value_obs_key,
         highlvl_obs_key=highlvl_obs_key,
         lowlvl_obs_key="proprioception",
+        latent_scale=latent_scale,
     )
     env = rodent_wrappers.HighLevelWrapper(
         registry.load(task_name, config=env_cfg, clips=None, flatten_obs=False),
@@ -151,6 +154,13 @@ Examples:
         type=str,
         default="task_obs",
         help="Observation key for high-level policy passed to HighLevelWrapper (default: task_obs)",
+    )
+    parser.add_argument(
+        "--latent_scale",
+        type=float,
+        default=1.0,
+        help="Multiplier on the latent before the decoder (see HighLevelWrapper); "
+        "use with --distribution_type tanh_normal (default: 1.0)",
     )
 
     args = parser.parse_args()
@@ -203,6 +213,7 @@ def main():
         "highlvl_obs_key": args.highlvl_obs_key,
         "policy_obs_key": args.policy_obs_key,
         "value_obs_key": args.value_obs_key,
+        "latent_scale": args.latent_scale,
         "seed": args.seed,
     }
     with open(ckpt_path / "config.json", "w") as fp:
@@ -230,13 +241,14 @@ def main():
         args.highlvl_obs_key,
         policy_obs_key=args.policy_obs_key,
         value_obs_key=args.value_obs_key,
+        latent_scale=args.latent_scale,
     )
 
     # Setup training
     training_params = get_training_params(ppo_params)
 
     network_factory = functools.partial(
-        ppo_networks.make_ppo_networks,
+        hl_networks.make_ppo_networks,
         policy_obs_key=args.policy_obs_key,
         value_obs_key=args.value_obs_key,
         **ppo_params.network_factory,

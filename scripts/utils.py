@@ -51,6 +51,32 @@ def apply_env_overrides(env_cfg: Any, overrides: dict) -> None:
             ) from e
 
 
+def flatten_env_overrides(overrides: dict, prefix: str = "") -> dict:
+    """Flatten a nested override dict into dot-notation leaf keys.
+
+    Hydra turns `+env_overrides.reward_terms.wall_impact.weight=1.0` into a nested
+    dict, but `ConfigDict.update_from_flattened_dict` splits on "." and assigns the
+    value as-is -- so a nested dict REPLACES the whole subtree instead of patching
+    one leaf. Flattening first means each override touches exactly the key it names.
+
+    Args:
+        overrides: Possibly nested override dict.
+        prefix: Dotted path accumulated by recursion (internal).
+
+    Returns:
+        Dict mapping dotted paths to leaf values. Empty dicts are kept as leaves so
+        an explicit `key={}` override still assigns.
+    """
+    flat = {}
+    for key, value in overrides.items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict) and value:
+            flat.update(flatten_env_overrides(value, prefix=f"{path}."))
+        else:
+            flat[path] = value
+    return flat
+
+
 def parse_env_overrides_str(overrides_str: Optional[str]) -> dict:
     """Parse space-separated key=value overrides string."""
     if not overrides_str:
@@ -95,6 +121,7 @@ DEFAULT_PPO_PARAMS = {
     "discounting": 0.99,
     "learning_rate": 1e-4,
     "entropy_cost": 0.01,
+    "clipping_epsilon": 0.3,
     "num_envs": 4096,
     "batch_size": 1024,
     "max_grad_norm": 1.0,
@@ -123,6 +150,7 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
     distribution_type = args.distribution_type
     state_dependent_std = False
     init_noise_std = args.init_noise_std
+    noise_std_type = args.noise_std_type
     if distribution_type == "normal":
         state_dependent_std = True
     params["network_factory"] = config_dict.create(
@@ -131,11 +159,15 @@ def create_ppo_params(args: argparse.Namespace, default_num_envs: int = 4096):
         distribution_type=distribution_type,
         state_dependent_std=state_dependent_std,
         init_noise_std=init_noise_std,
+        noise_std_type=noise_std_type,
+        min_std=args.min_std,
+        max_std=args.max_std,
     )
 
     # Apply CLI overrides (None means "use default")
     override_keys = [
         "entropy_cost",
+        "clipping_epsilon",
         "episode_length",
         "eval_every",
         "learning_rate",
@@ -227,57 +259,77 @@ def create_policy_params_fn(
         rng, reset_rng = jax.random.split(rng)
         state = jit_reset(reset_rng)
         rollout = [state]
-        latent_means = []
-        ctrls = []
+        # HighLevelWrapper records what crossed the decoder in info. A plain env
+        # (train_task.py) has no latents, so those stay None and are not logged; its
+        # ctrl is the env's own `action`.
+        has_latents = "latent" in state.info
+        latents, latents_scaled, ctrls = [], [], []
         for _ in range(int(ppo_params.episode_length)):
             _, rng = jax.random.split(rng)
             action, extras = jit_logging_inference_fn(params, state.obs, rng)
             state = jit_step(state, action)
             rollout.append(state)
-            latent_means.append(action)
-            ctrls.append(state.info["action"])
+            if has_latents:
+                latents.append(state.info["latent"])
+                latents_scaled.append(state.info["latent_scaled"])
+            ctrls.append(state.info.get("ctrl", state.info["action"]))
 
-        latent_means = jp.stack(latent_means)
-
-        means_mean = jp.mean(latent_means, axis=0)
-        means_std = jp.std(latent_means, axis=0)
-
+        latents = jp.stack(latents) if has_latents else None
+        latents_scaled = jp.stack(latents_scaled) if has_latents else None
         ctrls = jp.stack(ctrls)
-        ctrls_mean = jp.mean(ctrls, axis=0)
-        ctrls_std = jp.std(ctrls, axis=0)
+
+        def log_per_dim(group: str, stem: str, series, title: str) -> None:
+            """Per-dim mean/std scalars plus a per-frame line plot of `series` (T, D)."""
+            mean, std = jp.mean(series, axis=0), jp.std(series, axis=0)
+            for i in range(series.shape[1]):
+                wandb.log(
+                    {f"{group}/{stem}_mean{i}": mean[i], f"{group}/{stem}_std{i}": std[i]},
+                    commit=False,
+                )
+                log_lineplot_to_wandb(
+                    name=f"{group}/{stem}{i}",
+                    metric_name=f"{stem}{i}",
+                    data=list(enumerate(series[:, i])),
+                    title=title,
+                )
 
         if rollout_metrics is not None:
             for metric in rollout_metrics:
-                if metric.lower() == "latents":
-                    for i in range(means_mean.shape[0]):
-                        wandb.log(
-                            {
-                                f"latents/latent_means_mean{i}": means_mean[i],
-                                f"latents/latent_means_std{i}": means_std[i],
-                            },
-                            commit=False,
-                        )
-                        log_lineplot_to_wandb(
-                            name=f"latents/latent_means{i}",
-                            metric_name=f"latent_means{i}",
-                            data=list(enumerate(latent_means[:, i])),
-                            title="Latent mean per rollout frame",
-                        )
+                # Either name logs both groups; the raw and scaled latents are one
+                # rollout read two ways.
+                if metric.lower() in ("latents", "latents_scaled"):
+                    if latents is None:
+                        print("Rollout metric 'latents' skipped: env has no latent in info.")
+                        continue
+                    # Raw keeps its historical names; scaled is what the decoder saw.
+                    log_per_dim("latents", "latent_means", latents, "Latent mean per rollout frame")
+                    log_per_dim(
+                        "latents_scaled",
+                        "latent_scaled",
+                        latents_scaled,
+                        "Scaled latent (decoder input) per rollout frame",
+                    )
                 elif metric.lower() == "ctrl":
-                    for i in range(ctrls_mean.shape[0]):
-                        wandb.log(
-                            {
-                                f"ctrls/ctrls_mean{i}": ctrls_mean[i],
-                                f"ctrls/ctrls_std{i}": ctrls_std[i],
-                            },
-                            commit=False,
-                        )
-                        log_lineplot_to_wandb(
-                            name="ctrls/ctrls{i}",
-                            metric_name=f"ctrls{i}",
-                            data=list(enumerate(ctrls[:, i])),
-                            title="Ctrl per rollout frame",
-                        )
+                    log_per_dim("ctrls", "ctrls", ctrls, "Ctrl per rollout frame")
+                elif metric.lower() == "obs_temp":
+                    # Observed (what the policy sees) vs true sensor temperature.
+                    if "obs_temp" not in state.info:
+                        print("Rollout metric 'obs_temp' skipped: env has no obs_temp in info.")
+                        continue
+                    observed = jp.stack([s.info["obs_temp"] for s in rollout])
+                    true = jp.stack([s.info["true_temp"] for s in rollout])
+                    wandb.log(
+                        {
+                            "obs/temp": wandb.plot.line_series(
+                                xs=list(range(len(rollout))),
+                                ys=[observed.tolist(), true.tolist()],
+                                keys=["observed", "true"],
+                                title="Temperature - setpoint per rollout frame",
+                                xname="frame",
+                            )
+                        },
+                        commit=False,
+                    )
                 else:
                     if metric in rollout[0].metrics:
                         log_lineplot_to_wandb(
@@ -348,6 +400,9 @@ def create_base_parser(
         "--entropy_cost", type=float, default=None, help="Override entropy_cost"
     )
     parser.add_argument(
+        "--clipping_epsilon", type=float, default=None, help="Override clipping_epsilon"
+    )
+    parser.add_argument(
         "--episode_length", type=int, default=None, help="Override episode_length"
     )
     parser.add_argument(
@@ -393,6 +448,25 @@ def create_base_parser(
         type=float,
         default=1.0,
         help="Initial noise std (default: 0.0)",
+    )
+    parser.add_argument(
+        "--noise_std_type",
+        type=str,
+        default="scalar",
+        help="Noise std type (default: scalar)",
+        choices=["scalar", "log"],
+    )
+    parser.add_argument(
+        "--min_std",
+        type=float,
+        default=None,
+        help="Floor on the policy std, normal head only (default: unbounded)",
+    )
+    parser.add_argument(
+        "--max_std",
+        type=float,
+        default=None,
+        help="Ceiling on the policy std, normal head only (default: unbounded)",
     )
 
     # Env config overrides

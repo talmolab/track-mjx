@@ -99,15 +99,16 @@ _TRACK_ENV_OVERRIDES_BY_ENV_NAME: dict[str, dict[str, Any]] = {
     "StickImitation": {
         "reference_data_path": _resolve_data_path("data/stick/stick_mesh_reference.h5"),
     },
+    # The worm clips are scaled by 0.1 to match the vnl-playground worm model.
     "WormImitation": {
         "reference_data_path": _resolve_data_path(
-            "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5"
+            "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d_scale-0.1.h5"
         ),
     },
     # CelegansImitation is a backwards-compatible registry alias for WormImitation.
     "CelegansImitation": {
         "reference_data_path": _resolve_data_path(
-            "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d.h5"
+            "data/worm/celegans_ik_only_04182019am_centerline_locomotion_2d_scale-0.1.h5"
         ),
     },
 }
@@ -183,6 +184,15 @@ def _merge_env_config_with_defaults(cfg: DictConfig) -> DictConfig:
     for key in ("walker_xml_path", "arena_xml_path", "reference_data_path"):
         if key in track_overrides:
             OmegaConf.update(merged_env_cfg, key, track_overrides[key], merge=False)
+
+    # Checkpoint configs store absolute model paths from the training machine;
+    # fall back to the installed vnl-playground model when they do not exist here.
+    for key in ("walker_xml_path", "arena_xml_path"):
+        path = OmegaConf.select(merged_env_cfg, key, default=None)
+        if path is not None and not Path(path).exists() and key in default_env_cfg:
+            default = str(default_env_cfg[key])
+            logging.warning(f"{key} not found: {path}; using {default}")
+            OmegaConf.update(merged_env_cfg, key, default, merge=False)
 
     OmegaConf.update(cfg, "env_config", merged_env_cfg, merge=False)
     return cfg

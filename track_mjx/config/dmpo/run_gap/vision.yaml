@@ -1,0 +1,63 @@
+# @package _global_
+# DMPO high-level transfer on RodentRunGapBinocularVision with the frozen
+# default prior and decoder (transfer.mode prior_decoder). Inherits the DMPO
+# knobs of the base config and overrides: the vision env, the vision rendering
+# settings, the CNN encoder hyper-parameters, the transfer paths, and a smaller
+# batch (the vision env is heavier).
+#
+# Entry point: python scripts/train_dmpo_highlvl.py --config-name=run_gap/<file name>
+defaults:
+  - /base
+  - _self_
+
+env_name: RodentRunGapBinocularVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentRunGapBinocularVision
+  binocular: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  flatten_obs: false
+  # Match the binocular-transfer episode budget. Without this
+  # the brax EpisodeWrapper truncates at unroll_length=50 instead of the
+  # natural episode horizon, hurting credit assignment.
+  episode_length: 1000
+  action_repeat: 1
+  use_textures: false
+  use_shadows: false
+  eye_dropout_rate: 0.0
+  eval_eye_mode: binocular
+
+network_config:
+  arch_name: dmpo_binocular_vision_feedforward
+  binocular_mode: shared
+  vision_feature_size: 32
+  vision_channels: [4, 8, 16, 32]
+
+transfer:
+  mode: prior_decoder
+  prior_checkpoint_path: ${oc.env:DMPO_PRIOR_ROOT}/default
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+  deterministic_prior: true
+  noise_logvar: -2.0
+
+train_config:
+  # Vision env is heavier than non-vision; smaller batch.
+  num_envs: 1024
+  num_timesteps: 1_000_000_000
+  unroll_length: 50
+  batch_size: 256
+  # Replay tuned per-env so the total stays at the reference implementation's defaults:
+  min_replay_size: 50_000
+  max_replay_size: 4_000_000
+  sequence_length: 50
+  samples_per_insert: 2.0
+
+  log_every_steps: 10_000
+  eval_every_steps: 1_000_000

@@ -153,6 +153,7 @@ nav:
   - Overview: overview.md
   - API Reference: api.md
   - Quick Training: train.md
+  - DMPO: dmpo.md
   # - Examples: examples.md
   # - Changelog: changelog.md
   # - Releases: https://github.com/talmolab/sleap-io/releases

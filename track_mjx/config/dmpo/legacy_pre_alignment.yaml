@@ -1,0 +1,13 @@
+# @package _global_
+# Legacy (pre-alignment) DMPO numerics: restores the historical value of every
+# acme-alignment switch in DMPOConfig. Add `- /legacy_pre_alignment` to an arm's
+# defaults (after `/base`, before `_self_`) to reproduce a run made before the
+# alignment switches existed.
+# The values mirror track_mjx.agent.dmpo.config.LEGACY_ALIGNMENT.
+train_config:
+  critic_target_mode: mean_action
+  bootstrap_on_truncation: false
+  critic_action_input: raw
+  action_penalty_formula: vnl_ray
+  policy_loss_state: current
+  policy_grad_clip_scope: per_block
